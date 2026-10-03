@@ -143,32 +143,6 @@ export const routes: RouteRecordRaw[] = [
     ],
   },
   {
-    path: "/about",
-    name: "About",
-    meta: { isMainMenu: true, keepAlive: true },
-    children: [
-      {
-        path: "/technology-stack",
-        name: "TechnologyStack",
-        meta: { icon: "mdi-developer-board" },
-        component: () => import("../views/About/TechnologyStack.vue"),
-      },
-      {
-        path: "/special-thank",
-        name: "SpecialThank",
-        meta: { icon: "mdi-account-multiple" },
-        component: () => import("../views/About/SpecialThank.vue"),
-      },
-      {
-        path: "/logger",
-        name: "Logger",
-        meta: { icon: "mdi-text-box-search" },
-        component: () => import("../views/About/Logger.vue"),
-      },
-    ],
-  },
-
-  {
     path: "/devtools",
     name: "Devtools",
     meta: { isMainMenu: false },

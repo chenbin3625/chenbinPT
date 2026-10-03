@@ -112,11 +112,6 @@
       "title": "Warning:"
     }
   },
-  "Logger": {
-    "action": {
-      "details": "Details"
-    }
-  },
   "MediaServerEntity": {
     "ItemInformationDialog": {
       "duration": "Duration: ",
@@ -979,26 +974,6 @@
       "trying": "Trying to import site [{name}] ..."
     }
   },
-  "SpecialThank": {
-    "contributor": "Contributors",
-    "issue": "Suggesters",
-    "langContributor": "@:SpecialThank.contributor For Language",
-    "preWorkContributor": "@:SpecialThank.contributor For preliminary work",
-    "sortByName": "The list is sorted by name",
-    "thankNote": [
-      "During the development and testing of this project, they have given a lot of help and support (or development, or testing, or sending invite, or suggesting, or encouraging, or spurring), thank you.",
-      "Since we can't list all the people who helped, Please understand if there are any omissions.",
-      "Thanks for these at the same time:"
-    ]
-  },
-  "TechnologyStack": {
-    "dependency": "Dependencies of this Project",
-    "ptppHistory": "History of @:common.project",
-    "stackTableColumn": {
-      "homepage": "Homepage"
-    },
-    "thankNote": "The birth of 'PT Plugin Plus' is established on the base of these projects. Thanks all the participants of the project, thanks for your contribution!"
-  },
   "UserDataStatistic": {
     "chart": {
       "chartSettings": "Chart Settings",
@@ -1322,12 +1297,6 @@
     "working": "Fetching..."
   },
   "route": {
-    "About": {
-      "Logger": "Runtime Log",
-      "SpecialThank": "Special Thanks",
-      "TechnologyStack": "Project Reference",
-      "default": "About"
-    },
     "Devtools": {
       "Debugger": "Debugger",
       "SystemLog": "System Log",
