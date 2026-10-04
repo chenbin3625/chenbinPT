@@ -235,5 +235,10 @@ CLAUDE.md
 .tmp-*/
 .kunsdd/
 
+# 代码审查/运行时探针的临时输出（截图、探测脚本、日志），不属交付物。
+# 注（2026-10-04）：这个目录曾被 `git add -A` 误提交 106 个文件（8.3 MB），
+# 因为它此前未被忽略。已改用忽略规则并移除跟踪。
+.review-logs/
+
 # docker
 docker-compose.yml
