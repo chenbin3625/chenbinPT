@@ -1,6 +1,6 @@
 /**
  * metadata store：搜索方案展开 / 站点增删 / 写入合并
- * （B-8、B-13、V-6、V-7、V-8，见 docs/code-review-2026-10-04.md）。
+ * （B-8、B-13、V-6、V-7、V-8；代码审查报告已移出仓库树，可在提交 3b066d59 中查阅）。
  *
  * 依赖处理：
  * - `@ptd/site` 只暴露 metadata.ts 真正用到的两个运行时函数（`getHostFromUrl` 与

@@ -1,5 +1,5 @@
 /**
- * B-19：内容脚本实例不得读写宿主页面的 sessionStorage（见 docs/code-review-2026-10-04.md）。
+ * B-19：内容脚本实例不得读写宿主页面的 sessionStorage（见代码审查报告 B-19；报告已移出仓库树，可在提交 3b066d59 中查阅）。
  *
  * 背景：`useRuntimeStore` 会被 content-script 注册（content-script/app/App.vue、app/utils.ts），
  * 而内容脚本里的 `sessionStorage` 与宿主页面**同一个**：

@@ -341,7 +341,7 @@ export function isTrustedTorrent(torrent: ITorrent | undefined, trustedHosts: It
  * 2. `metadata.siteHostMap` 中映射到本站点的 host（含用户在站点配置里自定义的地址与 `merge.urls`）；
  * 3. 当前页面自身（解析就发生在这一页）。
  *
- * 站点定义层的 host 体检结论（见 code-review-2026-10-04 §7.9）：341 个定义的 513 个 host 无跨站污染，
+ * 站点定义层的 host 体检结论（见代码审查报告 §7.9；该报告已移出仓库树，可在提交 3b066d59 中查阅）：341 个定义的 513 个 host 无跨站污染，
  * 因此这里不需要再去收集 `searchEntry` / `detail` 等 requestConfig 的 host。
  */
 export async function getTrustedLinkHosts(siteId?: string): Promise<Set<string>> {
