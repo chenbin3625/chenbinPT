@@ -354,6 +354,16 @@ async function verifyCrx(crxBuffer, keyMaterial, zipFileCount) {
 
 // ---------------------------------------------------------------- 主流程
 
+/**
+ * 陈旧检查要跳过**构建自己生成**的文件。
+ *
+ * `public/_locales/` 正是这种情况：它由 `vite/plugin/generateWebextLocales.ts` 在构建期间写入
+ * （所以它已在 .gitignore 里），而它写在 `dist-{chrome,firefox}` 里的 `manifest.json` **之后** ——
+ * 于是每次全新构建完，「源码比产物新」都成立，警告必然误报。生成物不是输入，不该参与陈旧判断。
+ * 2026-10-04 修复：此前每次发布都会看到这条无意义的警告。
+ */
+const STALE_SCAN_IGNORED = [path.join("public", "_locales")];
+
 /** 源码比产物新时给出提醒（不阻断：DIST 可能由 CI 产出） */
 function warnIfStale(dir) {
   const marker = path.join(path.resolve(ROOT, dir), "manifest.json");
@@ -362,6 +372,8 @@ function warnIfStale(dir) {
   const watched = ["src", "public", "vite", "package.json", "vite.config.ts"];
   let newest = 0;
   const walk = (p) => {
+    const rel = path.relative(ROOT, p);
+    if (STALE_SCAN_IGNORED.some((ig) => rel === ig || rel.startsWith(ig + path.sep))) return;
     const stat = fs.statSync(p);
     if (stat.isDirectory()) for (const e of fs.readdirSync(p)) walk(path.join(p, e));
     else newest = Math.max(newest, stat.mtimeMs);
