@@ -538,3 +538,40 @@ describe("E-3：Gazelle JSON API 的失败响应不再被当成搜索成功", ()
     await expect(newSite().transformSearchPage({ status: "success" }, {} as any)).resolves.toEqual([]);
   });
 });
+
+describe("上游 #1543：NexusPHP 下载状态进度条不在标题单元格第一个 div 时仍能解析", () => {
+  const { progress, status } = (NexusPHPSchema as any).search.selectors;
+
+  /** 构造标题单元格：`beforeHtml` 放在进度条之前（Depth Studio 会在这里放标题说明 div） */
+  const makeTitleLink = (beforeHtml: string, progressTitle: string) => {
+    const cell = document.createElement("td");
+    cell.innerHTML = `${beforeHtml}<a href="details.php?id=1" title="Example">Example</a><div title="${progressTitle}"></div>`;
+    return cell.querySelector("a") as HTMLElement;
+  };
+
+  it("进度条前面有不带 title 的说明 div 时，跳过它取到进度条", async () => {
+    const { ETorrentStatus } = await import("@ptd/site/types/torrent.ts");
+    const link = makeTitleLink(`<div class="torrent-desc">说明</div>`, "seeding 100%");
+
+    expect(progress.elementProcess(link)).toBe(100);
+    expect(status.elementProcess(link)).toBe(ETorrentStatus.seeding);
+  });
+
+  it("NPHP 默认输出（进度条就是第一个 div）保持原有行为", async () => {
+    const { ETorrentStatus } = await import("@ptd/site/types/torrent.ts");
+    const link = makeTitleLink("", "leeching 42.5%");
+
+    expect(progress.elementProcess(link)).toBe(42.5);
+    expect(status.elementProcess(link)).toBe(ETorrentStatus.downloading);
+  });
+
+  it("没有任何进度条时回落为 0 / unknown", async () => {
+    const { ETorrentStatus } = await import("@ptd/site/types/torrent.ts");
+    const cell = document.createElement("td");
+    cell.innerHTML = `<div class="torrent-desc">说明</div><a href="details.php?id=1">Example</a>`;
+    const link = cell.querySelector("a") as HTMLElement;
+
+    expect(progress.elementProcess(link)).toBe("0");
+    expect(status.elementProcess(link)).toBe(ETorrentStatus.unknown);
+  });
+});
