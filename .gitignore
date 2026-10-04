@@ -227,6 +227,9 @@ docs/superpowers/
 .kiro/
 .openhands/
 .windsurf/
+# DSH 的本地技能目录：与上面几个 AI 工具目录同理，只保留在本地、不入库。
+# （2026-10-04：它曾被 `git add -A` 误提交 16 个文件，已取消跟踪。）
+.dsh/
 AGENTS.md
 GEMINI.md
 CLAUDE.md
