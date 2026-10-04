@@ -2,10 +2,14 @@
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/tokyopt.json
  */
 import type { ISiteMetadata } from "../types";
-//import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
+// B-20j：站点迁域后已恢复服务（见下方 urls 注释），但这里长期被注释掉，
+// 导致 checkSiteMetadataAllow 认为没有 search、该站点从所有搜索入口消失。
+// 仅展开 SchemaMetadata 以恢复基本搜索能力；category 仍保持注释——它需要对照存活站点
+// 的实际分类 id 才能确认（原 id 来自关站前的域名）。
+import { SchemaMetadata } from "../schemas/NexusPHP";
 
 export const siteMetadata: ISiteMetadata = {
-  //...SchemaMetadata,
+  ...SchemaMetadata,
 
   version: 1,
   id: "tokyopt",

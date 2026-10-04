@@ -1,12 +1,12 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/sportscult.yml
  * @JackettIssue https://github.com/Jackett/Jackett/issues/1330
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/sportscult.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/sportscult.org/config.json
  */
 import type { ISiteMetadata, IUserInfo } from "../types.ts";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import { parseSizeString, buildCategoryOptionsFromDict } from "../utils.ts";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 const categoryMap: Record<number, string> = {
   47: "EPL",
@@ -309,10 +309,10 @@ export default class SportsCult extends PrivateSite {
   ): Promise<Partial<IUserInfo>> {
     if (!(dataDocument instanceof Document)) return flushUserInfo;
 
-    const seedingTrs = Sizzle("#mcol div.b-content table.lista:eq(2) tbody tr:gt(1)", dataDocument);
+    const seedingTrs = selectElements("#mcol div.b-content table.lista:eq(2) tbody tr:gt(1)", dataDocument);
     const seedingNum = seedingTrs.length;
     const seedingSize = seedingTrs.reduce((size, tr) => {
-      const sizeTd = Sizzle("td:eq(1)", tr);
+      const sizeTd = selectElements("td:eq(1)", tr);
       if (sizeTd.length < 1) return size;
       return size + parseSizeString(sizeTd[0].textContent || "");
     }, 0);

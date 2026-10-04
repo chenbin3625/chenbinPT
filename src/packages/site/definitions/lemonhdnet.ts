@@ -9,7 +9,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "柠檬不甜",
   description: "柠檬不甜",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

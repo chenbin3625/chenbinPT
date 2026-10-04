@@ -20,8 +20,9 @@ const tagIs = props.tag ?? "a";
 
 const renderProp = reactive<Record<string, any>>({
   ...attrs,
-  class: props.class ?? ["text-body-small", "text-decoration-none", "text-grey", "text-no-wrap"],
+  class: props.class,
 });
+const explicitTitle = attrs.title;
 
 if (tagIs === "a") {
   renderProp.href = "#";
@@ -36,6 +37,7 @@ if (tagIs === "a") {
 function updateSiteName(siteId: TSiteID) {
   // 首先赋值为 siteId，防止空白
   siteName.value = siteId;
+  if (explicitTitle === undefined) renderProp.title = siteId;
 
   // 优先从缓存中读取
   if (metadataStore.siteNameMap?.[siteId]) {
@@ -44,6 +46,7 @@ function updateSiteName(siteId: TSiteID) {
     // 如果缓存中没有/或者没有生成缓存，则按之前的逻辑读取
     metadataStore.getSiteName(siteId).then((name) => {
       siteName.value = name;
+      if (explicitTitle === undefined) renderProp.title = name;
     });
   }
 }
@@ -59,8 +62,7 @@ watch(
 
 <template>
   <slot :name="siteName">
-    <component :is="tagIs" v-bind="renderProp">{{ siteName }}</component>
+    <a-typography-link v-if="tagIs === 'a'" v-bind="renderProp">{{ siteName }}</a-typography-link>
+    <component :is="tagIs" v-else v-bind="renderProp">{{ siteName }}</component>
   </slot>
 </template>
-
-<style scoped lang="scss"></style>

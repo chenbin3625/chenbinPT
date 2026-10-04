@@ -1,18 +1,34 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
+import {
+  CloudUploadOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  ExportOutlined,
+  FilterOutlined,
+  ImportOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  SearchOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons-vue";
 import { getBackupServerIcon } from "@ptd/backupServer";
 import { hasBackupRetentionToApply } from "@ptd/backupServer/utils.ts";
-import type { DataTableHeader } from "vuetify";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
-import { formatDate } from "@/options/utils.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
+import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
+import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import { BackupFields, type IBackupServerMetadata, type TBackupServerKey } from "@/shared/types.ts";
+import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
 
 import NavButton from "@/options/components/NavButton.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import AddDialog from "./AddDialog.vue";
 import EditDialog from "./EditDialog.vue";
 import LocalExportConfirmDialog from "./LocalExportConfirmDialog.vue";
@@ -22,6 +38,10 @@ import RestoreDialog from "./RestoreDialog.vue";
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
+const configStore = useConfigStore();
+
+// 备份服务器列表来自 metadata store，异步水合完成前不能把空列表当成「暂无数据」
+const isStoreHydrating = useStoreHydrating(metadataStore);
 
 const showAddDialog = ref<boolean>(false);
 const showLocalExportConfirmDialog = ref<boolean>(false);
@@ -30,23 +50,82 @@ const showEditDialog = ref<boolean>(false);
 const showRestoreDialog = ref<boolean>(false);
 const showDeleteDialog = ref<boolean>(false);
 
-const fullTableHeader = [
-  { title: t("common.type"), key: "type", align: "center" },
-  { title: t("common.name"), key: "name", align: "start" },
-  {
-    title: t("SetBackup.table.backupFields"),
-    key: "backupFields",
-    align: "start",
-    sortable: false,
-    cellProps: { class: "pt-1" },
-  },
-  { title: t("SetBackup.table.backupInterval"), key: "backupInterval", align: "center" },
-  { title: t("SetBackup.table.retention"), key: "retention", align: "center" },
-  { title: t("SetBackup.table.lastBackupAt"), key: "lastBackupAt", align: "end" },
-  { title: t("common.enable"), key: "enabled", align: "center" },
-  { title: t("common.action"), key: "action", sortable: false },
-] as DataTableHeader[];
+const columns = computed(() => {
+  const multiple = configStore.enableTableMultiSort ? 4 : undefined;
+  return [
+    { title: t("common.type"), dataIndex: "type", key: "type", align: "center" as const, width: 90 },
+    withEllipsisCell(
+      {
+        title: t("common.name"),
+        dataIndex: "name",
+        key: "name",
+        sorter: {
+          compare: (a: IBackupServerMetadata, b: IBackupServerMetadata) =>
+            String(a.name ?? "").localeCompare(String(b.name ?? "")),
+          multiple,
+        },
+      },
+      "12rem",
+    ),
+    { title: t("SetBackup.table.backupFields"), key: "backupFields" },
+    {
+      title: t("SetBackup.table.backupInterval"),
+      dataIndex: "backupInterval",
+      key: "backupInterval",
+      align: "center" as const,
+      sorter: {
+        compare: (a: IBackupServerMetadata, b: IBackupServerMetadata) =>
+          Number(a.backupInterval ?? 0) - Number(b.backupInterval ?? 0),
+        multiple,
+      },
+    },
+    { title: t("SetBackup.table.retention"), key: "retention", align: "center" as const },
+    {
+      title: t("SetBackup.table.lastBackupAt"),
+      dataIndex: "lastBackupAt",
+      key: "lastBackupAt",
+      align: "right" as const,
+      sorter: {
+        compare: (a: IBackupServerMetadata, b: IBackupServerMetadata) =>
+          Number(a.lastBackupAt ?? 0) - Number(b.lastBackupAt ?? 0),
+        multiple,
+      },
+    },
+    {
+      title: t("common.enable"),
+      dataIndex: "enabled",
+      key: "enabled",
+      align: "center" as const,
+      sorter: {
+        compare: (a: IBackupServerMetadata, b: IBackupServerMetadata) => Number(a.enabled) - Number(b.enabled),
+        multiple,
+      },
+    },
+    { title: t("common.action"), key: "action" },
+  ];
+});
 const tableSelected = ref<TBackupServerKey[]>([]);
+/** 工具条搜索词：按名称 / 类型过滤备份服务器列表 */
+const tableFilter = ref("");
+
+const tableData = computed(() =>
+  metadataStore.getBackupServers.filter((server) => {
+    if (!tableFilter.value) return true;
+    const keyword = tableFilter.value.toLowerCase();
+    return (
+      String(server.type ?? "")
+        .toLowerCase()
+        .includes(keyword) ||
+      String(server.name ?? "")
+        .toLowerCase()
+        .includes(keyword)
+    );
+  }),
+);
+
+function onSelectionChange(keys: (string | number)[]) {
+  tableSelected.value = keys.map((key) => String(key));
+}
 
 /** 自动备份间隔（小时），支持小数以表达不足 1 小时的间隔 */
 function formatBackupInterval(serverConfig: IBackupServerMetadata): string {
@@ -111,128 +190,138 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
 </script>
 
 <template>
-  <v-alert :title="t('route.Settings.SetBackup')" type="info" />
-  <v-card class="set-backup">
-    <v-card-title>
-      <v-row gap="0" class="ma-0">
-        <NavButton :text="t('common.btn.add')" color="success" icon="mdi-plus" @click="showAddDialog = true" />
+  <a-card class="ptd-settings-card">
+    <template #title>
+      <a-flex class="page-toolbar" align="center" :gap="8">
+        <NavButton :icon="PlusOutlined" :text="t('common.btn.add')" color="success" @click="showAddDialog = true" />
         <NavButton
           :disabled="tableSelected.length === 0"
+          :icon="MinusOutlined"
           :text="t('common.remove')"
           color="error"
-          icon="mdi-minus"
           @click="deleteBackupServer(tableSelected)"
         />
 
-        <v-divider class="mx-2" inset vertical />
+        <a-divider style="margin: 0 8px" type="vertical" />
 
         <NavButton
+          :icon="ExportOutlined"
           :loading="doBackupStatus[localBackup]"
-          color="success"
-          icon="mdi-database-export"
+          color="info"
           :text="t('SetBackup.localExport')"
           @click="doBackup(localBackup)"
         />
         <NavButton
+          :icon="ImportOutlined"
           color="blue"
-          icon="mdi-database-import"
           :text="t('SetBackup.localImport')"
           @click="() => (showRestoreDialog = true)"
         />
 
-        <v-spacer />
+        <span style="flex: 1 1 auto" />
 
-        <v-text-field clearable density="compact" hide-details label="Search" max-width="500" single-line />
-      </v-row>
-    </v-card-title>
+        <a-input v-model:value="tableFilter" allow-clear placeholder="Search" style="max-width: 500px">
+          <template #suffix><SearchOutlined /></template>
+        </a-input>
+      </a-flex>
+    </template>
 
-    <v-data-table
-      v-model="tableSelected"
-      :headers="fullTableHeader"
-      :filter-keys="['id']"
-      :items="metadataStore.getBackupServers"
-      item-value="id"
+    <a-table
+      :columns="columns"
+      :data-source="tableData"
+      :loading="isStoreHydrating"
+      :pagination="{ pageSize: 25, pageSizeOptions: ['5', '10', '25', '50', '100'], showSizeChanger: true }"
+      :row-key="'id'"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
       class="table-stripe table-header-no-wrap"
-      show-select
+      size="small"
     >
-      <template #item.type="{ item }">
-        <v-avatar :image="getBackupServerIcon(item.type)" :alt="item.type" :title="item.type" />
-      </template>
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'type'">
+          <a-avatar :alt="record.type" :src="getBackupServerIcon(record.type)" :title="record.type" />
+        </template>
 
-      <template #item.backupFields="{ item }">
-        <v-chip v-for="backupField in item.backupFields" label :key="backupField" class="mr-1 mb-1">
-          {{ t(`SetBackup.fields.${backupField}`) }}
-        </v-chip>
-      </template>
+        <template v-else-if="column.key === 'backupFields'">
+          <a-tag v-for="backupField in record.backupFields" :key="backupField" style="margin-bottom: 2px">
+            <!-- 备份项标签很长（“站点与用户数据 (metadata)”），限宽省略 + 悬停看全文，
+                 避免这一格把整行撑到三行高 -->
+            <span class="ptd-cell-ellipsis" style="max-width: 7rem" :title="t(`SetBackup.fields.${backupField}`)">{{
+              t(`SetBackup.fields.${backupField}`)
+            }}</span>
+          </a-tag>
+        </template>
 
-      <template #item.backupInterval="{ item }">
-        <span v-if="item.backupInterval && item.backupInterval > 0" class="text-no-wrap">
-          {{ formatBackupInterval(item) }}
-        </span>
-        <span v-else class="text-disabled">—</span>
-      </template>
+        <template v-else-if="column.key === 'backupInterval'">
+          <span v-if="record.backupInterval && record.backupInterval > 0" style="white-space: nowrap">
+            {{ formatBackupInterval(record) }}
+          </span>
+          <a-typography-text v-else type="secondary">—</a-typography-text>
+        </template>
 
-      <template #item.retention="{ item }">
-        <v-icon
-          :color="hasBackupRetentionToApply(item.retention) ? 'success' : undefined"
-          :icon="hasBackupRetentionToApply(item.retention) ? 'mdi-filter-check' : 'mdi-filter-off-outline'"
-          :title="
-            hasBackupRetentionToApply(item.retention)
-              ? t('SetBackup.table.retentionEnabled')
-              : t('SetBackup.table.retentionDisabled')
-          "
-        />
-      </template>
+        <template v-else-if="column.key === 'retention'">
+          <a-tooltip
+            :title="
+              hasBackupRetentionToApply(record.retention)
+                ? t('SetBackup.table.retentionEnabled')
+                : t('SetBackup.table.retentionDisabled')
+            "
+          >
+            <FilterOutlined
+              :style="{ color: hasBackupRetentionToApply(record.retention) ? resolveColor('success') : undefined }"
+            />
+          </a-tooltip>
+        </template>
 
-      <template #item.lastBackupAt="{ item }">
-        {{ item.lastBackupAt ? formatDate(item.lastBackupAt) : "notBackup" }}
-      </template>
+        <template v-else-if="column.key === 'lastBackupAt'">
+          <span class="ptd-date-time">{{
+            record.lastBackupAt ? formatDateTimeForTable(record.lastBackupAt) : "notBackup"
+          }}</span>
+        </template>
 
-      <template #item.enabled="{ item }">
-        <v-switch
-          v-model="item.enabled"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="(v) => metadataStore.simplePatch('backupServers', item.id, 'enabled', v as boolean)"
-        />
-      </template>
-      <template #item.action="{ item }">
-        <v-btn-group class="table-action" density="compact" variant="plain">
-          <v-btn
-            :title="t('SetBackup.table.action.backupNow')"
-            :loading="doBackupStatus[item.id]"
-            color="green"
-            icon="mdi-cloud-upload"
-            size="small"
-            @click="doBackup(item.id)"
+        <template v-else-if="column.key === 'enabled'">
+          <a-switch
+            v-model:checked="record.enabled"
+            class="table-switch-btn"
+            @change="(v: any) => metadataStore.simplePatch('backupServers', record.id, 'enabled', v as boolean)"
           />
-          <v-btn
-            :title="t('SetBackup.table.action.viewHistoryBackup')"
-            icon="mdi-view-list"
-            size="small"
-            @click="showHistory(item.id)"
-          />
+        </template>
 
-          <v-btn
-            :title="t('common.edit')"
-            color="info"
-            icon="mdi-pencil"
-            size="small"
-            @click="editBackupServer(item.id)"
-          />
+        <template v-else-if="column.key === 'action'">
+          <a-button-group class="table-action">
+            <a-button
+              :loading="doBackupStatus[record.id]"
+              :title="t('SetBackup.table.action.backupNow')"
+              size="small"
+              type="primary"
+              @click="doBackup(record.id)"
+            >
+              <template #icon><CloudUploadOutlined /></template>
+            </a-button>
+            <a-button
+              :title="t('SetBackup.table.action.viewHistoryBackup')"
+              size="small"
+              @click="showHistory(record.id)"
+            >
+              <template #icon><UnorderedListOutlined /></template>
+            </a-button>
 
-          <v-btn
-            :title="t('common.remove')"
-            color="error"
-            icon="mdi-delete"
-            size="small"
-            @click="deleteBackupServer([item.id])"
-          />
-        </v-btn-group>
+            <a-button :title="t('common.edit')" size="small" @click="editBackupServer(record.id)">
+              <template #icon><EditOutlined /></template>
+            </a-button>
+
+            <a-button danger :title="t('common.remove')" size="small" @click="deleteBackupServer([record.id])">
+              <template #icon><DeleteOutlined /></template>
+            </a-button>
+          </a-button-group>
+        </template>
       </template>
-    </v-data-table>
-  </v-card>
+
+      <!-- 无任何备份服务器时的空状态占位 -->
+      <template #emptyText>
+        <NoDataPlaceholder compact />
+      </template>
+    </a-table>
+  </a-card>
 
   <AddDialog v-model="showAddDialog" />
   <EditDialog v-model="showEditDialog" :client-id="toEditBackupServerId!" />
@@ -241,5 +330,3 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
   <LocalExportConfirmDialog v-model="showLocalExportConfirmDialog" />
   <RestoreDialog v-model="showRestoreDialog" :restore-metadata="{ type: 'file' }" />
 </template>
-
-<style scoped lang="scss"></style>

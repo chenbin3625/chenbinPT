@@ -1,9 +1,9 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/torrentleech.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/torrentleech.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/torrentleech.org/config.json
  */
 import urlJoin from "url-join";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { mergeWith } from "es-toolkit";
 
 import type { ISearchInput, ISiteMetadata, ITorrent, IUserInfo } from "../types";
@@ -413,7 +413,7 @@ export default class TorrentLeech extends PrivateSite {
       const userSeedingPage = createDocument(data);
 
       // 直接获取所有大小列的元素
-      const sizeElements = Sizzle(
+      const sizeElements = selectElements(
         "table#profile-seedingTable > tbody > tr > td:nth-child(2)",
         userSeedingPage as Document,
       );

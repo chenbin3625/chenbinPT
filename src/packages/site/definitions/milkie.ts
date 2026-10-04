@@ -135,14 +135,14 @@ export default class Milkie extends PrivateSite {
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      "x-milkie-auth": this.userConfig.inputSetting!.token ?? "",
+      "x-milkie-auth": this.userConfig.inputSetting?.token ?? "",
     };
 
     return super.request<T>(axiosConfig, checkLogin);
   }
 
   protected parseTorrentRowForLink(torrent: Partial<ITorrent>): Partial<ITorrent> {
-    torrent.link = `/api/v1/torrents/${torrent.id}/torrent?key=${encodeURIComponent(this.userConfig.inputSetting!.token)}`;
+    torrent.link = `/api/v1/torrents/${torrent.id}/torrent?key=${encodeURIComponent(this.userConfig.inputSetting?.token ?? "")}`;
     return torrent;
   }
 }

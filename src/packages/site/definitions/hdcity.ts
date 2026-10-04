@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdcity.city/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdcity.city/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hdcity.json
  */
 import { type ILevelRequirement, ISearchInput, type ISiteMetadata, ITorrent, ITorrentTag } from "../types";
@@ -9,21 +9,18 @@ import NexusPHP, {
   CategorySpstate,
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
+import { extractTextExcludingByPredicate } from "../utils/html.ts";
 import { parseSizeString, parseValidTimeString } from "../utils";
 
 // 清理用户名中的 star 相关元素和文本
-const cleanUsername = (element: Element): string => {
-  const clone = element.cloneNode(true) as Element;
-
-  // 移除包含 star 的元素
-  clone.querySelectorAll("i, span, div").forEach((el) => {
-    if (el.textContent?.toLowerCase().includes("star")) {
-      el.remove();
-    }
-  });
-
-  // 清理文本
-  let result = clone.textContent?.replace(/\b(starbig|star)\b/gi, "") || "";
+export const cleanUsername = (element: Element): string => {
+  // 等价于旧写法「cloneNode → 逐个删除 textContent 含 star 的 i/span/div → textContent」：
+  // 被删元素的 textContent 是自身固有属性，不因兄弟/子元素先被删而改变，
+  // 因此"按谓词跳过"与"逐个 remove"保留的元素集合相同（见 docs/performance-audit.md P2-14）。
+  let result = extractTextExcludingByPredicate(
+    element,
+    (el) => el.matches("i, span, div") && !!el.textContent?.toLowerCase().includes("star"),
+  ).replace(/\b(starbig|star)\b/gi, "");
   result = result.replace(/\s+/g, " ").replace(/^[\s\-_\.=]+|[\s\-_\.=]+$/g, "");
 
   return result || element.textContent?.trim() || "";
@@ -167,7 +164,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "HDCity",
   aka: ["城市"],
   tags: ["综合", "影视"],
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 

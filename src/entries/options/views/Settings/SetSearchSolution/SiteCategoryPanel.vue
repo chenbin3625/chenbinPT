@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
+import { ArrowRightOutlined, EditOutlined, SyncOutlined } from "@ant-design/icons-vue";
 import type { ISearchCategories, TSiteID } from "@ptd/site";
 
 import {
@@ -12,6 +13,8 @@ import {
 } from "./utils.ts";
 
 import CustomSolutionDialog from "./CustomSolutionDialog.vue";
+import PageSkeleton from "@/options/components/PageSkeleton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import type { ISearchSolution } from "@/shared/types/storages/metadata.ts";
 
 const { siteId } = defineProps<{
@@ -25,6 +28,8 @@ const showCustomSolutionDialog = ref(false);
 
 const selectCategory = ref<TSelectCategory>({});
 const siteMetaCategory = shallowRef<ISearchCategories[]>([]);
+// 站点搜索分类需按站点定义异步读取，加载完成前不能把空数组渲染成「该站点未定义搜索模块」
+const isLoadingSiteMetaCategory = ref<boolean>(true);
 
 function resetSelectCategory() {
   for (const category of siteMetaCategory.value) {
@@ -68,126 +73,108 @@ async function generateSolution() {
 }
 
 onMounted(async () => {
-  siteMetaCategory.value = await getSiteMetaCategory(siteId);
-  resetSelectCategory();
+  isLoadingSiteMetaCategory.value = true;
+  try {
+    siteMetaCategory.value = await getSiteMetaCategory(siteId);
+    resetSelectCategory();
+  } finally {
+    isLoadingSiteMetaCategory.value = false;
+  }
 });
 </script>
 
 <template>
-  <v-container class="pa-0">
-    <v-row no-gutters>
-      <v-col class="v-col-category-select">
-        <v-expansion-panels v-if="siteMetaCategory!.length > 0" v-model="showPanel" multiple>
-          <v-expansion-panel v-for="category in siteMetaCategory" :key="category.key">
-            <v-expansion-panel-title>
-              {{ category.name }}
-              <span class="ml-1 text-grey-darken-1">{{ category.notes ?? "" }}</span>
-              <v-spacer />
-              <v-chip :color="isDefaultCategory(selectCategory[category.key]) ? '' : 'info'" label>
-                {{ category.key }}
-              </v-chip>
-            </v-expansion-panel-title>
-            <v-expansion-panel-text>
-              <v-container class="pa-0">
-                <!-- 如果该类别支持多选，则显示全选按钮 -->
-                <v-row v-if="category.cross && category.cross.mode" no-gutters>
-                  <v-col cols="12">
-                    <v-checkbox
-                      :indeterminate="
-                        (selectCategory[category.key] as any[])?.length > 0 && checkBtnIndeterminate(category)
-                      "
-                      :model-value="!checkBtnIndeterminate(category)"
-                      hide-details
-                      @update:model-value="(e) => clickAllBtn(category, e as boolean)"
-                    >
-                      <template #label>
-                        <p class="font-weight-bold">
-                          {{ t("common.checkbox.all") }}
-                        </p>
-                        <p v-if="!checkBtnIndeterminate(category)" class="text-red-lighten-1">
-                          &nbsp;{{ t("SetSearchSolution.spDialog.selectAllNotice") }}
-                        </p>
-                      </template>
-                    </v-checkbox>
-                  </v-col>
-                </v-row>
-                <v-row no-gutters>
-                  <!-- 多选类别选项 -->
-                  <template v-if="category.cross && category.cross.mode">
-                    <v-col
-                      v-for="options in category.options"
-                      :key="options.value"
-                      class="py-0"
-                      cols="12"
-                      lg="2"
-                      md="4"
-                      sm="6"
-                    >
-                      <v-checkbox
-                        v-model="selectCategory[category.key]"
-                        :label="options.name"
-                        :value="options.value"
-                        hide-details
-                      />
-                    </v-col>
-                  </template>
-                  <!-- 单选类别选项 -->
-                  <template v-else>
-                    <v-radio-group
-                      v-model="selectCategory[category.key]"
-                      class="justify-space-between"
-                      hide-details
-                      inline
-                    >
+  <div>
+    <a-row :gutter="0" align="middle">
+      <a-col class="ptd-col-category-select" :flex="1">
+        <!-- 分类列表按站点定义异步加载：加载中用骨架屏，加载完成后为空才是真正的「无分类」 -->
+        <PageSkeleton v-if="isLoadingSiteMetaCategory" :count="3" :rows="3" variant="list" />
+        <a-collapse v-else-if="siteMetaCategory!.length > 0" v-model:active-key="showPanel">
+          <a-collapse-panel v-for="category in siteMetaCategory" :key="category.key">
+            <template #header>
+              <a-flex align="center" :gap="4">
+                <span>{{ category.name }}</span>
+                <a-typography-text type="secondary">{{ category.notes ?? "" }}</a-typography-text>
+                <span style="flex: 1 1 auto; min-width: 8px" />
+                <a-tag :color="isDefaultCategory(selectCategory[category.key]) ? undefined : 'blue'">
+                  {{ category.key }}
+                </a-tag>
+              </a-flex>
+            </template>
+
+            <div>
+              <!-- 如果该类别支持多选，则显示全选按钮 -->
+              <a-row v-if="category.cross && category.cross.mode" :gutter="0">
+                <a-col :span="24">
+                  <a-checkbox
+                    :checked="!checkBtnIndeterminate(category)"
+                    :indeterminate="
+                      (selectCategory[category.key] as any[])?.length > 0 && checkBtnIndeterminate(category)
+                    "
+                    @change="(e: any) => clickAllBtn(category, e.target.checked)"
+                  >
+                    <strong>{{ t("common.checkbox.all") }}</strong>
+                    <span v-if="!checkBtnIndeterminate(category)" style="color: var(--ptd-danger)">
+                      &nbsp;{{ t("SetSearchSolution.spDialog.selectAllNotice") }}
+                    </span>
+                  </a-checkbox>
+                </a-col>
+              </a-row>
+              <a-row :gutter="0">
+                <!-- 多选类别选项 -->
+                <template v-if="category.cross && category.cross.mode">
+                  <a-checkbox-group v-model:value="selectCategory[category.key]" style="width: 100%">
+                    <a-row :gutter="0">
+                      <a-col v-for="options in category.options" :key="options.value" :lg="4" :md="8" :sm="12" :xs="24">
+                        <a-checkbox :value="options.value">{{ options.name }}</a-checkbox>
+                      </a-col>
+                    </a-row>
+                  </a-checkbox-group>
+                </template>
+                <!-- 单选类别选项 -->
+                <template v-else>
+                  <a-radio-group v-model:value="selectCategory[category.key]" style="width: 100%">
+                    <a-row :gutter="0">
                       <!-- 增加一个代表默认的值，说明该类别什么都不选（尊重站点默认）。（不然的话，只能全部重置才能取消选择） -->
-                      <v-col class="py-0" cols="12" lg="2" md="4" sm="6">
-                        <v-radio :label="t('SetSite.SiteCategoryPanel.siteDefault')" :value="radioDefault"></v-radio>
-                      </v-col>
-                      <v-col v-for="options in category.options" class="py-0" cols="12" lg="2" md="4" sm="6">
-                        <v-radio :key="options.value" :label="options.name" :value="options.value" />
-                      </v-col>
-                    </v-radio-group>
-                  </template>
-                </v-row>
-              </v-container>
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-        </v-expansion-panels>
-        <div v-else>
-          {{ t("SetSearchSolution.spDialog.noDefNotice") }}
-        </div>
-      </v-col>
-      <v-col class="align-self-center">
-        <v-row class="justify-end">
-          <v-btn
+                      <a-col :lg="4" :md="8" :sm="12" :xs="24">
+                        <a-radio :value="radioDefault">{{ t("SetSite.SiteCategoryPanel.siteDefault") }}</a-radio>
+                      </a-col>
+                      <a-col v-for="options in category.options" :key="options.value" :lg="4" :md="8" :sm="12" :xs="24">
+                        <a-radio :value="options.value">{{ options.name }}</a-radio>
+                      </a-col>
+                    </a-row>
+                  </a-radio-group>
+                </template>
+              </a-row>
+            </div>
+          </a-collapse-panel>
+        </a-collapse>
+        <NoDataPlaceholder v-else :description="t('SetSearchSolution.spDialog.noDefNotice')" />
+      </a-col>
+      <a-col>
+        <a-flex :gap="4" justify="end" vertical>
+          <a-button
             :title="t('SetSearchSolution.spDialog.action.reset')"
-            color="red"
-            icon="mdi-cached"
-            variant="text"
-            @click="() => resetSelectCategory()"
-          />
-        </v-row>
-        <v-row class="justify-end">
-          <v-btn
+            danger
+            type="text"
+            @click="resetSelectCategory"
+          >
+            <template #icon><SyncOutlined /></template>
+          </a-button>
+          <a-button
             :title="t('SetSearchSolution.spDialog.action.create')"
-            color="indigo"
-            icon="mdi-pencil-plus"
-            variant="text"
-            @click="() => showCustomSolutionDialogFn()"
-          ></v-btn>
-        </v-row>
-        <v-row class="justify-end">
-          <v-btn
-            :title="t('SetSearchSolution.spDialog.action.add')"
-            color="blue"
-            icon="mdi-arrow-right-bold"
-            variant="text"
-            @click="() => generateSolution()"
-          />
-        </v-row>
-      </v-col>
-    </v-row>
-  </v-container>
+            type="text"
+            @click="showCustomSolutionDialogFn"
+          >
+            <template #icon><EditOutlined /></template>
+          </a-button>
+          <a-button :title="t('SetSearchSolution.spDialog.action.add')" type="text" @click="generateSolution">
+            <template #icon><ArrowRightOutlined /></template>
+          </a-button>
+        </a-flex>
+      </a-col>
+    </a-row>
+  </div>
 
   <CustomSolutionDialog
     v-model="showCustomSolutionDialog"
@@ -196,10 +183,3 @@ onMounted(async () => {
     :site-id="siteId"
   />
 </template>
-
-<style scoped lang="scss">
-.v-col-category-select {
-  max-width: calc(100% - 48px);
-  flex-basis: calc(100% - 48px);
-}
-</style>

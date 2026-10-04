@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/ihdbits.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/ihdbits.me/config.json
  */
 import type { ISiteMetadata } from "../types";
 
@@ -18,6 +18,6 @@ export const siteMetadata: ISiteMetadata = {
 
   favicon: "./_default_nexusphp.png",
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/7c9be82dc112cdc93525c2d46296b9454a4a7b1a
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/7c9be82dc112cdc93525c2d46296b9454a4a7b1a
   isDead: true,
 };

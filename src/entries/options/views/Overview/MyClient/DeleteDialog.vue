@@ -34,15 +34,7 @@ function wrappedConfirmDelete(id: string) {
     @all-delete="emits('allDelete')"
   >
     <template #append-text>
-      <v-checkbox
-        v-model="removeData"
-        :label="t('MyClient.dialog.removeData')"
-        color="error"
-        density="compact"
-        hide-details
-      />
+      <a-checkbox v-model:checked="removeData">{{ t("MyClient.dialog.removeData") }}</a-checkbox>
     </template>
   </BaseDeleteDialog>
 </template>
-
-<style scoped lang="scss"></style>

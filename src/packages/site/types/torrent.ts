@@ -1,4 +1,5 @@
-import type { TAdvanceSearchKeyword } from "@ptd/site";
+// P1-4：不再从 @ptd/site 桶入口自引用（会牵入整份 types 图），改为指向定义所在模块
+import type { TAdvanceSearchKeyword } from "./search";
 import type { TSiteID } from "./base";
 
 // 种子当前状态 - 使用字符串字面量枚举支持 i18n

@@ -18,7 +18,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["瞬间"],
   description: "Moment 是摄影爱好者的净土。只有影像与心灵的对话，故本站禁止发布影视资源，望谅解",
   tags: ["摄影", "图片", "艺术"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

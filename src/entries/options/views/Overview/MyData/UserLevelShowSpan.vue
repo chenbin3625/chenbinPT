@@ -1,4 +1,22 @@
 <script setup lang="ts">
+import {
+  CloudServerOutlined,
+  DashboardOutlined,
+  DollarOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
+  DownOutlined,
+  DownloadOutlined,
+  ExperimentOutlined,
+  FieldTimeOutlined,
+  FileDoneOutlined,
+  HeartOutlined,
+  PlusSquareOutlined,
+  SwapOutlined,
+  ThunderboltOutlined,
+  UpOutlined,
+  UploadOutlined,
+} from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
 import {
   IImplicitUserInfo,
@@ -107,7 +125,7 @@ function formatBonus(bonusKey: "bonus" | "seedingBonus") {
 <template>
   <slot name="prepend"></slot>
   <template v-if="levelRequirement.interval">
-    <v-icon :title="t('levelRequirement.interval')" icon="mdi-calendar-clock" size="small" />
+    <FieldTimeOutlined :title="t('levelRequirement.interval')" />
     <span
       :title="getIntervalDisplay(levelRequirement.interval).title"
       @dblclick="toggleIntervalDisplay"
@@ -117,69 +135,59 @@ function formatBonus(bonusKey: "bonus" | "seedingBonus") {
     >;
   </template>
   <template v-if="levelRequirement.uploaded">
-    <v-icon :title="t('levelRequirement.uploaded')" color="green-darken-4" icon="mdi-chevron-up" size="small" />
+    <UpOutlined :title="t('levelRequirement.uploaded')" style="color: var(--ptd-success)" />
     {{ formatSize(levelRequirement.uploaded) }};
   </template>
   <template v-if="levelRequirement.trueUploaded">
-    <v-icon
-      :title="t('levelRequirement.trueUploaded')"
-      color="green-darken-4"
-      icon="mdi-chevron-double-up"
-      size="small"
-    />
+    <DoubleLeftOutlined :title="t('levelRequirement.trueUploaded')" style="color: var(--ptd-success)" />
     {{ formatSize(levelRequirement.trueUploaded) }};
   </template>
   <template v-if="levelRequirement.downloaded">
-    <v-icon :title="t('levelRequirement.downloaded')" color="red-darken-4" icon="mdi-chevron-down" size="small" />
+    <DownOutlined :title="t('levelRequirement.downloaded')" style="color: var(--ptd-danger)" />
     {{ formatSize(levelRequirement.downloaded) }};
   </template>
   <template v-if="levelRequirement.trueDownloaded">
-    <v-icon
-      :title="t('levelRequirement.trueDownloaded')"
-      color="red-darken-4"
-      icon="mdi-chevron-double-down"
-      size="small"
-    />
+    <DoubleRightOutlined :title="t('levelRequirement.trueDownloaded')" style="color: var(--ptd-danger)" />
     {{ formatSize(levelRequirement.trueDownloaded) }};
   </template>
 
   <template v-if="levelRequirement.totalTraffic">
-    <v-icon :title="t('levelRequirement.totalTraffic')" color="orange-darken-4" icon="mdi-swap-vertical" size="small" />
+    <SwapOutlined :title="t('levelRequirement.totalTraffic')" style="color: var(--ptd-warning)" />
     {{ formatSize(levelRequirement.totalTraffic) }};
   </template>
 
   <template v-if="levelRequirement.ratio && !hideRatioInTable">
-    <v-icon :title="t('levelRequirement.ratio')" color="orange-darken-4" icon="mdi-scale-balance" size="small" />
+    <DashboardOutlined :title="t('levelRequirement.ratio')" style="color: var(--ptd-warning)" />
     {{ levelRequirement.ratio }};
   </template>
 
   <template v-if="levelRequirement.trueRatio && !hideRatioInTable">
-    <v-icon :title="t('levelRequirement.trueRatio')" color="orange-darken-4" icon="mdi-scale" size="small" />
+    <DashboardOutlined :title="t('levelRequirement.trueRatio')" style="color: var(--ptd-warning)" />
     {{ levelRequirement.trueRatio }};
   </template>
 
   <template v-if="levelRequirement.seeding">
-    <v-icon :title="t('levelRequirement.seeding')" color="green-darken-4" icon="mdi-sprout" size="small" />
+    <ExperimentOutlined :title="t('levelRequirement.seeding')" style="color: var(--ptd-success)" />
     {{ formatNumber(levelRequirement.seeding, { minimumFractionDigits: 0 }) }};
   </template>
 
   <template v-if="levelRequirement.seedingSize">
-    <v-icon :title="t('levelRequirement.seedingSize')" color="blue-darken-4" icon="mdi-dns" size="small" />
+    <CloudServerOutlined :title="t('levelRequirement.seedingSize')" style="color: var(--ptd-primary)" />
     {{ formatSize(levelRequirement.seedingSize) }};
   </template>
 
   <template v-if="levelRequirement.seedingTime">
-    <v-icon :title="t('levelRequirement.seedingTime')" color="green-darken-4" icon="mdi-timer" size="small" />
+    <FieldTimeOutlined :title="t('levelRequirement.seedingTime')" style="color: var(--ptd-success)" />
     {{ formatDuration(levelRequirement.seedingTime) }};
   </template>
 
   <template v-if="levelRequirement.averageSeedingTime">
-    <v-icon :title="t('levelRequirement.averageSeedingTime')" color="blue-darken-4" icon="mdi-timer" size="small" />
+    <FieldTimeOutlined :title="t('levelRequirement.averageSeedingTime')" style="color: var(--ptd-primary)" />
     {{ formatDuration(levelRequirement.averageSeedingTime) }};
   </template>
 
   <template v-if="levelRequirement.bonus">
-    <v-icon :title="t('levelRequirement.bonus')" color="green-darken-4" icon="mdi-currency-usd" size="small" />
+    <DollarOutlined :title="t('levelRequirement.bonus')" style="color: var(--ptd-success)" />
     <span
       :title="formatNumber(levelRequirement.bonus)"
       @dblclick="toggleNumberSimplification"
@@ -190,12 +198,7 @@ function formatBonus(bonusKey: "bonus" | "seedingBonus") {
   </template>
 
   <template v-if="levelRequirement.seedingBonus">
-    <v-icon
-      :title="t('levelRequirement.seedingBonus')"
-      color="green-darken-4"
-      icon="mdi-lightning-bolt-circle"
-      size="small"
-    />
+    <ThunderboltOutlined :title="t('levelRequirement.seedingBonus')" style="color: var(--ptd-success)" />
     <span
       :title="formatNumber(levelRequirement.seedingBonus)"
       @dblclick="toggleNumberSimplification"
@@ -206,34 +209,34 @@ function formatBonus(bonusKey: "bonus" | "seedingBonus") {
   </template>
 
   <template v-if="levelRequirement.bonusPerHour">
-    <v-icon :title="t('levelRequirement.bonusPerHour')" color="green-darken-4" icon="mdi-leaf" size="small" />
+    <ExperimentOutlined :title="t('levelRequirement.bonusPerHour')" style="color: var(--ptd-success)" />
     {{ formatNumber(levelRequirement.bonusPerHour) }};
   </template>
 
   <template v-if="levelRequirement.uploads">
-    <v-icon :title="t('levelRequirement.uploads')" color="green-darken-4" icon="mdi-file-upload" size="small" />
+    <UploadOutlined :title="t('levelRequirement.uploads')" style="color: var(--ptd-success)" />
     {{ formatNumber(levelRequirement.uploads, { minimumFractionDigits: 0 }) }};
   </template>
 
   <template v-if="levelRequirement.leeching">
-    <v-icon :title="t('levelRequirement.leeching')" color="red-darken-4" icon="mdi-file-download" size="small" />
+    <DownloadOutlined :title="t('levelRequirement.leeching')" style="color: var(--ptd-danger)" />
     {{ formatNumber(levelRequirement.leeching, { minimumFractionDigits: 0 }) }};
   </template>
 
   <template v-if="levelRequirement.snatches">
-    <v-icon :title="t('levelRequirement.snatches')" color="orange-darken-4" icon="mdi-file-check" size="small" />
+    <FileDoneOutlined :title="t('levelRequirement.snatches')" style="color: var(--ptd-warning)" />
     {{ formatNumber(levelRequirement.snatches, { minimumFractionDigits: 0 }) }};
   </template>
 
   <template v-if="levelRequirement.posts">
-    <v-icon :title="t('levelRequirement.posts')" color="green darken-4" icon="mdi-note-plus" small />
+    <!-- A-23：原写法 `color: green darken-4` 是 Vuetify token 残留在 style 里，非法 CSS 会被丢弃；
+         同文件其它图标早已改用十六进制，这里统一为 green darken-4 的等价色值（见 src/entries/shared/colors.ts） -->
+    <PlusSquareOutlined :title="t('levelRequirement.posts')" style="color: var(--ptd-success)" />
     {{ formatNumber(levelRequirement.posts, { minimumFractionDigits: 0 }) }};
   </template>
 
   <template v-if="levelRequirement.adoptions">
-    <v-icon :title="t('levelRequirement.adoptions')" color="green-darken-4" icon="mdi-hand-extended" small />
+    <HeartOutlined :title="t('levelRequirement.adoptions')" style="color: var(--ptd-success)" />
     {{ formatNumber(levelRequirement.adoptions, { minimumFractionDigits: 0 }) }};
   </template>
 </template>
-
-<style scoped lang="scss"></style>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>chenbinPT (preview)</title>
+    <link href="style.css" rel="stylesheet" />
+    <script>
+      // 仅用于本地浏览器预览的 chrome.* 最小 mock，不提交
+      (function () {
+        const store = {};
+        const listeners = () => ({ addListener() {}, removeListener() {}, hasListener: () => false });
+        const storageArea = {
+          get: (keys, cb) => {
+            const r = {};
+            (Array.isArray(keys) ? keys : keys == null ? Object.keys(store) : [keys]).forEach((k) => {
+              if (k in store) r[k] = store[k];
+            });
+            return cb ? cb(r) : Promise.resolve(r);
+          },
+          set: (obj, cb) => (Object.assign(store, obj), cb ? cb() : Promise.resolve()),
+          remove: (k, cb) => (cb ? cb() : Promise.resolve()),
+          onChanged: listeners(),
+        };
+        window.chrome = {
+          storage: { local: storageArea, session: storageArea, sync: storageArea, onChanged: listeners() },
+          runtime: {
+            id: "preview",
+            getURL: (p) => p,
+            sendMessage: (_message, callback) => {
+              const response = {
+                err: {
+                  name: "PreviewBackgroundUnavailableError",
+                  message: "Background services are unavailable in the options preview.",
+                  stack: "",
+                },
+              };
+              if (typeof callback === "function") {
+                queueMicrotask(() => callback(response));
+                return;
+              }
+              return Promise.resolve(response);
+            },
+            onMessage: listeners(),
+            connect: () => ({ onMessage: listeners(), onDisconnect: listeners(), postMessage() {} }),
+            getManifest: () => ({ version: "0.0.0" }),
+          },
+          i18n: { getUILanguage: () => "zh-CN", getMessage: (k) => k },
+          permissions: { contains: () => Promise.resolve(false), request: () => Promise.resolve(false) },
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+  <script src="./main.ts" type="module"></script>
+</html>

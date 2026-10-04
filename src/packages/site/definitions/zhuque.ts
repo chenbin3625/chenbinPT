@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/zhuque.in/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/zhuque.in/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/zhuque.json
  */
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
@@ -317,7 +317,7 @@ export default class Zhuque extends PrivateSite {
       return csrfToken;
     } else {
       // 如果没有设置 csrfToken，则从扩展存储中获取（兼容之前写法）
-      const csrfToken = retrieveStore("metadata", `lastUserInfo.${this.metadata.id}.csrfToken`);
+      const csrfToken = await retrieveStore("metadata", `lastUserInfo.${this.metadata.id}.csrfToken`);
       if (csrfToken) {
         await this.storeRuntimeSettings("csrfToken", csrfToken);
         return csrfToken;

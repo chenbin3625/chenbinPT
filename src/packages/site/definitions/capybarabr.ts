@@ -10,7 +10,6 @@ export const siteMetadata: ISiteMetadata = {
   id: "capybarabr",
   name: "CapybaraBR",
   tags: ["巴西"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

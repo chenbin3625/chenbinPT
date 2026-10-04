@@ -1,0 +1,165 @@
+{
+  "steps": [
+    {
+      "name": "route:set-site",
+      "result": {
+        "hash": "#/set-site",
+        "main": "增加\n删除\n一键导入站点\n刷新站点图标\n重建站点映射\n\t\n№\n\t站点名称\t站点分类\t网站链接\t\n已离线\n\t\n允许搜索\n\t\n获取个人信息\n\t操作\n\n\n暂无数据"
+      }
+    },
+    {
+      "name": "click 添加站点",
+      "result": {
+        "found": true,
+        "text": "增加"
+      }
+    },
+    {
+      "name": "dialog state",
+      "result": {
+        "modal": true,
+        "title": "添加站点",
+        "selects": 1,
+        "options": 0,
+        "buttons": ["取消", "下一步"],
+        "text": "添加站点\n请选择一个站点（支持搜索）\n展示已死亡站点\n取消\n下一步"
+      }
+    },
+    {
+      "name": "open select",
+      "result": {
+        "found": true
+      }
+    },
+    {
+      "name": "type nyaa",
+      "result": {
+        "found": true,
+        "value": "nyaa",
+        "options": [
+          "0Magnet\nAbstractBittorrentSite\nv1\nØMagne",
+          "1337x\nAbstractBittorrentSite\nv1\n1337X is",
+          "13city\nNexusPHP\nv1\n一切美好源于分享\n影视, 综合",
+          "1PTBar\nNexusPHP\nv1\n分享互联，收获快乐\n综合, 影视",
+          "52movie\nNexusPHP\nv1\nThe Ultimate File Sh"
+        ]
+      }
+    },
+    {
+      "name": "pick first option",
+      "result": {
+        "found": true,
+        "text": "Nyaa\nAbstractBittorrentSite\nv1\n综合"
+      }
+    },
+    {
+      "name": "select value",
+      "result": {
+        "text": "添加站点\nNyaa\nNyaa\n展示已死亡站点\n取消\n下一步",
+        "nextDisabled": [false]
+      }
+    },
+    {
+      "name": "click 下一步",
+      "result": {
+        "found": true
+      }
+    },
+    {
+      "name": "editor state",
+      "result": {
+        "text": "添加站点\n基本信息\n站点名称\n类型\n优先级\n站点分类\n综合\n时区\n(UTC ±00:00) Casablanca, Dublin, London, Lisbon, Monrovia\n网站链接\nhttps://nyaa.si/\nhttps://sukebei.nyaa.si/\n其他设置\n下载链接后缀\n该字段会被自动添加到该站点的下载链接后\n请求超时\n00:30\n影响该站点请求（种子搜索、用户信息获取）的超时等待时间\n下载间隔\n00:00\n影响该站点的下载间隔时间（为了安全考虑，插件不会严格遵守该设置，实际间隔总是会略大于等于设置的间隔）\n上传速度\n0 MiB/s\n设置向下载器推送种子时的上传速度",
+        "inputs": 10,
+        "buttons": [
+          {
+            "t": "00:30",
+            "d": false
+          },
+          {
+            "t": "00:00",
+            "d": false
+          },
+          {
+            "t": "0 MiB/s",
+            "d": false
+          },
+          {
+            "t": "取消",
+            "d": false
+          },
+          {
+            "t": "上一步",
+            "d": false
+          },
+          {
+            "t": "完成",
+            "d": false
+          }
+        ],
+        "invalid": 0
+      }
+    },
+    {
+      "name": "click 保存/确定",
+      "result": {
+        "found": false
+      }
+    },
+    {
+      "name": "site table",
+      "result": {
+        "modalOpen": true,
+        "rows": 1,
+        "text": "增加\n删除\n一键导入站点\n刷新站点图标\n重建站点映射\n\t\n№\n\t站点名称\t站点分类\t网站链接\t\n已离线\n\t\n允许搜索\n\t\n获取个人信息\n\t操作\n\n\n暂无数据"
+      }
+    },
+    {
+      "name": "route:search-entity",
+      "result": {
+        "hash": "#/search-entity",
+        "text": "SearchEntity.index.alert.enterKeyword\n暂停\n重试\n重试失败\n搜索快照\n展示偏好\n 全部站点\n\t\n站点\n\t\n标题\n\t\n分类\n\t\n大小\n\t\n上传\n\t\n下载\n\t\n完成\n\t\n评论\n\t\n发布于(≈)\n\t操作\n\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\n\n\n暂无搜索结果，请在上方输入关键词或选择搜索方案后开始搜索"
+      }
+    },
+    {
+      "name": "type keyword",
+      "result": {
+        "found": true,
+        "value": "test"
+      }
+    },
+    {
+      "name": "click 开始",
+      "result": {
+        "found": true,
+        "hidden": true
+      }
+    },
+    {
+      "name": "search state",
+      "result": {
+        "rows": 2,
+        "text": "SearchEntity.index.alert.enterKeyword\n暂停\n重试\n重试失败\n搜索快照\n展示偏好\n 全部站点\n\t\n站点\n\t\n标题\n\t\n分类\n\t\n大小\n\t\n上传\n\t\n下载\n\t\n完成\n\t\n评论\n\t\n发布于(≈)\n\t操作\n\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\n\n\n暂无搜索结果，请在上方输入关键词或选择搜索方案后开始搜索",
+        "flushPlan": "null"
+      }
+    },
+    {
+      "name": "search state final",
+      "result": {
+        "rows": 2,
+        "text": "SearchEntity.index.alert.enterKeyword\n暂停\n重试\n重试失败\n搜索快照\n展示偏好\n 全部站点\n\t\n站点\n\t\n标题\n\t\n分类\n\t\n大小\n\t\n上传\n\t\n下载\n\t\n完成\n\t\n评论\n\t\n发布于(≈)\n\t操作\n\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\n\n\n暂无搜索结果，请在上方输入关键词或选择搜索方案后开始搜索"
+      }
+    }
+  ],
+  "console": [
+    "debug: setupReplaceUnsafeHeader() should be called only once",
+    "debug: Restoring state for key: config from storage: local",
+    "debug: Restoring state for key: metadata from storage: local",
+    "debug: initSiteData nyaa false"
+  ],
+  "exceptions": [],
+  "storage": {
+    "sites": [],
+    "lastUserInfo": [],
+    "snapshots": []
+  }
+}

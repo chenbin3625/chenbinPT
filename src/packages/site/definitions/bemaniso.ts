@@ -1,6 +1,6 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/bemaniso.ws/config.json
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/bemaniso.ws/config.json
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 站点使用 GazelleJSONAPI 引擎，以游戏原声与音乐（Bemani 系音游）资源为主。
  * 注意：Jackett 未收录该站索引器，但站点本身仍在运行（2026-09-19 复核首页与 login.php 均可访问），

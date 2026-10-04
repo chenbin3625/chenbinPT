@@ -23,7 +23,7 @@ import {
   CTrackerState,
   TorrentFilePriority,
 } from "../types";
-import { AxiosRequestConfig, AxiosResponse } from "axios";
+import { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import urlJoin from "url-join";
 import { axios, getRemoteTorrentFile } from "../utils";
 import { merge } from "es-toolkit";
@@ -288,6 +288,12 @@ function normalizePieces(pieces: string | string[], joinBy: string = "|"): strin
   return pieces;
 }
 
+/** 是否为「未认证」类响应：qBittorrent 4.x 用 401，5.x 起用 403（SID 过期或凭据错误） */
+function isAuthError(error: unknown): boolean {
+  const status = (error as AxiosError | undefined)?.response?.status;
+  return status === 401 || status === 403;
+}
+
 // noinspection JSUnusedGlobalSymbols
 export default class QBittorrent extends AbstractBittorrentClient<TorrentClientConfig> {
   readonly version = "v0.1.0";
@@ -381,7 +387,11 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     });
   }
 
-  private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<AxiosResponse<T>> {
+  private async request<T>(
+    path: string,
+    config: AxiosRequestConfig = {},
+    skipAuthRetry = false,
+  ): Promise<AxiosResponse<T>> {
     if (this.isLogin === null && !this.isApiKeyAuth) {
       await this.ping();
     }
@@ -407,12 +417,39 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       };
     }
 
-    return await axios.request<T>({
-      baseURL: this.config.address,
-      url: urlJoin("/api/v2", path),
-      timeout: this.config.timeout,
-      ...config,
-    });
+    try {
+      return await axios.request<T>({
+        baseURL: this.config.address,
+        url: urlJoin("/api/v2", path),
+        timeout: this.config.timeout,
+        ...config,
+      });
+    } catch (e) {
+      /**
+       * SID 有效期默认 3600s，过期后 qBittorrent 对所有 WebAPI 返回 401（部分版本为 403），
+       * 而实例会被 getDownloader() 的缓存长期持有（isLogin 一旦为 true 就再不复位），
+       * 因此必须在认证失败时复位登录态并重新登录后重试一次，否则用户会持续看到 401，直到实例被重建。
+       *
+       * - API Key 认证不依赖 SID，不参与重登；
+       * - 只重试一次（skipAuthRetry），避免凭据错误时无限递归。
+       */
+      if (!skipAuthRetry && !this.isApiKeyAuth && isAuthError(e)) {
+        this.isLogin = null;
+        if (await this.ping()) {
+          try {
+            return await this.request<T>(path, config, true);
+          } catch (retryError) {
+            // 重登后仍然认证失败：不能留下「已登录」的假状态，交给下一次请求重新登录
+            if (isAuthError(retryError)) {
+              this.isLogin = null;
+            }
+            throw retryError;
+          }
+        }
+      }
+
+      throw e;
+    }
   }
 
   private async getSyncData(fullSync: boolean = false) {
@@ -711,7 +748,8 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
 
     if (typeof limits.download !== "undefined") {
       requests.push(
-        this.request("/torrents/setLimit", {
+        // qBittorrent WebAPI 只有 setDownloadLimit / setUploadLimit，没有 setLimit
+        this.request("/torrents/setDownloadLimit", {
           method: "post",
           data: { hashes: hash, limit: limits.download > 0 ? limits.download * 1024 : -1 },
         }),

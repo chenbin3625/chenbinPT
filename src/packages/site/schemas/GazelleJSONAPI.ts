@@ -1,15 +1,8 @@
 import type { AxiosResponse } from "axios";
 
 import { GazelleBase } from "./Gazelle";
-import { parseTimeWithZone, extractContent } from "../utils";
-import {
-  EResultParseStatus,
-  type IUserInfo,
-  type ITorrent,
-  type ISiteMetadata,
-  type ISearchInput,
-  NeedLoginError,
-} from "../types";
+import { classifySiteError, extractContent, logMessage, parseTimeWithZone, siteErrorLogData } from "../utils";
+import { EResultParseStatus, type IUserInfo, type ITorrent, type ISiteMetadata, type ISearchInput } from "../types";
 
 /**
  * @refs: https://github.com/WhatCD/Gazelle/blob/63b337026d49b5cf63ce4be20fdabdc880112fa3/sections/ajax/index.php#L16
@@ -298,7 +291,9 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
 };
 
 export default class GazelleJSONAPI extends GazelleBase {
-  private _authKey?: { authkey: string; passkey: string };
+  // 凭据通过 runtimeSettings 持久化（带过期时间），避免每次搜索重建实例后都重新请求 /ajax.php?action=index
+  private static readonly authKeyCacheKey = "authKey";
+  private static readonly authKeyCacheTtl = 12 * 60 * 60; // 12 小时
 
   protected async requestApi<T extends jsonResponse>(
     action: apiType,
@@ -316,14 +311,42 @@ export default class GazelleJSONAPI extends GazelleBase {
   }
 
   protected async getAuthKey(): Promise<{ authkey: string; passkey: string }> {
-    if (!this._authKey) {
-      const apiInfo = await this.requestApiInfo();
-      this._authKey = {
-        authkey: apiInfo.response.authkey,
-        passkey: apiInfo.response.passkey,
-      };
+    const currentTime = Math.floor(Date.now() / 1000);
+
+    const cachedAuthKey = await this.retrieveRuntimeSettings<{
+      authkey?: string;
+      passkey?: string;
+      expiry?: number;
+    }>(GazelleJSONAPI.authKeyCacheKey);
+
+    if (
+      typeof cachedAuthKey?.authkey === "string" &&
+      cachedAuthKey.authkey.trim().length > 0 &&
+      typeof cachedAuthKey?.passkey === "string" &&
+      cachedAuthKey.passkey.trim().length > 0 &&
+      typeof cachedAuthKey?.expiry === "number" &&
+      Number.isFinite(cachedAuthKey.expiry) &&
+      cachedAuthKey.expiry > currentTime
+    ) {
+      return { authkey: cachedAuthKey.authkey.trim(), passkey: cachedAuthKey.passkey.trim() };
     }
-    return this._authKey;
+
+    const apiInfo = await this.requestApiInfo();
+    const authKey = {
+      authkey: (apiInfo.response.authkey ?? "").trim(),
+      passkey: (apiInfo.response.passkey ?? "").trim(),
+    };
+
+    // 空凭据不写入持久化缓存：否则后续 12 小时内的下载链接都会复用空 authkey/passkey；
+    // 读取侧本来就有非空校验，因此跳过写缓存即可。
+    if (authKey.authkey.length > 0 && authKey.passkey.length > 0) {
+      await this.storeRuntimeSettings(GazelleJSONAPI.authKeyCacheKey, {
+        ...authKey,
+        expiry: currentTime + GazelleJSONAPI.authKeyCacheTtl,
+      });
+    }
+
+    return authKey;
   }
 
   protected async transformUnGroupTorrent(group: torrentBrowseResult): Promise<ITorrent> {
@@ -397,19 +420,24 @@ export default class GazelleJSONAPI extends GazelleBase {
   ): Promise<ITorrent[]> {
     const torrents: ITorrent[] = [];
 
-    if (doc.status === "success") {
-      const rows = doc.response.results;
-      for (const group of rows) {
-        if ("torrents" in group) {
-          // is groupBrowseResult
-          for (const rawTorrent of group.torrents) {
-            const torrent: ITorrent = await this.transformGroupTorrent(group, rawTorrent);
-            torrents.push(torrent);
-          }
-        } else {
-          const torrent: ITorrent = await this.transformUnGroupTorrent(group);
+    // E-3：status 非 success（账号停用 / ratio watch / 限流等）时 Gazelle 会在 error 里给出原因，
+    // 之前静默返回空数组会被上层当成「搜索成功但 0 结果」，错误信息被丢弃、用户只看到「无结果」。
+    if (doc?.status !== "success") {
+      throw new Error(`Gazelle API error: ${doc?.error ?? doc?.status ?? "unknown"}`);
+    }
+
+    // doc.response 缺失时不能直接 .results，否则会抛 TypeError 掩盖上面的原始错误
+    const rows = doc.response?.results ?? [];
+    for (const group of rows) {
+      if ("torrents" in group) {
+        // is groupBrowseResult
+        for (const rawTorrent of group.torrents) {
+          const torrent: ITorrent = await this.transformGroupTorrent(group, rawTorrent);
           torrents.push(torrent);
         }
+      } else {
+        const torrent: ITorrent = await this.transformUnGroupTorrent(group);
+        torrents.push(torrent);
       }
     }
 
@@ -458,11 +486,22 @@ export default class GazelleJSONAPI extends GazelleBase {
 
       flushUserInfo.status = EResultParseStatus.success;
     } catch (error) {
-      flushUserInfo.status = EResultParseStatus.parseError;
+      // 与 AbstractBittorrentSite / AbstractPrivateSite 保持一致：区分网络/服务端错误与解析失败，
+      // 并把错误信息透传到 statusMsg，避免网络错误被误标为 parseError 且没有可展示原因。
+      const { status, statusMsg, retryable } = classifySiteError(error);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
 
-      if (error instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      }
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        {
+          site: this.metadata.id,
+          status,
+          retryable,
+          error: siteErrorLogData(error),
+        },
+        retryable ? "warn" : "error",
+      );
     }
 
     return flushUserInfo;

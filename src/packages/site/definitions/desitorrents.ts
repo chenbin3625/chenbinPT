@@ -1,7 +1,7 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/torrent.desi/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/torrent.desi/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/desitorrents-api.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 站点为 UNIT3D 9.2.0 (custom)，Jackett 侧已改走 API v1（api/v1/torrents/filter）。
  * 保留 Unit3D 引擎，只覆写与 JSON 响应相关的搜索配置；注意 API v1 的响应带 data 包装，

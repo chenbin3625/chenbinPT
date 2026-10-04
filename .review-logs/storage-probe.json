@@ -1,0 +1,68 @@
+{
+  "steps": [
+    [
+      "getExtStoragePath config.userInfo.queueConcurrency",
+      {
+        "res": "5"
+      }
+    ],
+    [
+      "getExtStoragePath metadata.lastUserInfo.X default {}",
+      {
+        "res": "{}"
+      }
+    ],
+    [
+      "patch set metadata.lastUserInfo.T",
+      {
+        "throw": "Cannot read properties of undefined (reading 'slice')"
+      }
+    ],
+    [
+      "read back metadata.lastUserInfo.T",
+      {
+        "res": "{\"hello\":1}"
+      }
+    ],
+    [
+      "whole metadata.lastUserInfo",
+      {
+        "res": "{\"T\":{\"hello\":1}}"
+      }
+    ],
+    [
+      "patch set userInfo.T.2026-01-01",
+      {
+        "throw": "Cannot read properties of undefined (reading 'slice')"
+      }
+    ],
+    [
+      "read userInfo.T",
+      {
+        "res": "{\"2026-01-01\":{\"a\":2}}"
+      }
+    ],
+    [
+      "patch remove metadata.lastUserInfo.T",
+      {
+        "throw": "Cannot read properties of undefined (reading 'slice')"
+      }
+    ],
+    [
+      "read back after remove",
+      {
+        "res": "null"
+      }
+    ],
+    ["direct storage keys", ["config:object", "metadata:object", "userInfo:object"]],
+    ["storage metadata.lastUserInfo direct", "{}"],
+    ["storage userInfo direct", "{\"T\":{\"2026-01-01\":{\"a\":2}}}"],
+    [
+      "getSiteList",
+      {
+        "res": "[]"
+      }
+    ]
+  ],
+  "swLogs": []
+}

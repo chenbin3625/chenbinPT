@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { computedAsync } from "@vueuse/core";
 import { cloneDeep } from "es-toolkit";
+import { EyeInvisibleOutlined, EyeOutlined, FilterOutlined } from "@ant-design/icons-vue";
 import { getBackupServer, getBackupServerMetaData, IBackupMetadata } from "@ptd/backupServer";
 import type { IBackupRetention } from "@ptd/backupServer";
 import { DEFAULT_BACKUP_RETENTION_SAMPLE_RULES, hasBackupRetentionToApply } from "@ptd/backupServer/utils.ts";
@@ -20,6 +21,35 @@ const emits = defineEmits<{
 }>();
 
 const hasRetention = computed(() => hasBackupRetentionToApply(clientConfig.value?.retention));
+
+/**
+ * B-31：备份服务器的凭据字段默认掩码显示，可逐个切换明文。
+ *
+ * 哪些字段是凭据由 `packages/backupServer` 的 requiredField 显式声明（`secret?: boolean`），
+ * 不再按字段名猜测；未声明 secret 的字段保持历史行为（普通明文输入框）。
+ */
+const revealedConfigFields = ref<Set<string>>(new Set());
+
+/** 该字段在 metaField 中被显式标记为凭据（密码 / 令牌 / 密钥） */
+function isSecretConfigField(metaField: { secret?: boolean }): boolean {
+  return metaField.secret === true;
+}
+
+/** 该字段当前是否以掩码显示 */
+function isConfigFieldMasked(metaField: { secret?: boolean; key?: unknown }): boolean {
+  // revealedConfigFields 是 ref：在 <script setup> 的普通函数体里不会自动解包（模板里才会）
+  return isSecretConfigField(metaField) && !revealedConfigFields.value.has(String(metaField.key));
+}
+
+function toggleConfigFieldReveal(key: string) {
+  const next = new Set(revealedConfigFields.value);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  revealedConfigFields.value = next;
+}
 
 /* -------------------------------------------------------------------------- */
 /*                              备份保留策略（内联）                            */
@@ -54,7 +84,15 @@ function hasEnabledRetentionRule(value: IBackupRetention): boolean {
   );
 }
 
-const retentionSampleRules = computed(() => Object.entries(retentionDraft.value.sample?.rules ?? {}));
+const retentionSampleRows = computed(() =>
+  Object.entries(retentionDraft.value.sample?.rules ?? {}).map(([type, rule]) => ({ key: type, type, rule })),
+);
+
+const retentionSampleColumns = computed(() => [
+  { title: "", dataIndex: "type", key: "type", width: 110 },
+  { title: t("SetBackup.RetentionDialog.sample.horizon"), dataIndex: "horizon", key: "horizon" },
+  { title: t("SetBackup.RetentionDialog.sample.interval"), dataIndex: "interval", key: "interval" },
+]);
 
 /**
  * 把已保存的保留策略同步到本地草稿，使界面回显保存过的配置。
@@ -163,7 +201,19 @@ const clientMeta = computedAsync<IBackupMetadata<any>>(
   { requiredField: [] } as IBackupMetadata<any>,
 );
 
-const formValid = ref<boolean>(false);
+const nameRules = [formValidateRules.require(t("SetDownloader.editor.nameTip"))];
+
+function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
+  for (const rule of rules) {
+    const result = rule(value);
+    if (result !== true) return typeof result === "string" ? result : String(result);
+  }
+  return undefined;
+}
+
+const nameError = computed(() => firstError(nameRules, clientConfig.value?.name));
+// 与迁移前 PtdForm 广播的「表单是否合法」语义一致：任一字段的 rules 未通过即为不合法
+const formValid = computed(() => !nameError.value);
 
 async function checkConnect() {
   const clientType = clientConfig.value?.type;
@@ -176,244 +226,205 @@ async function checkConnect() {
 </script>
 
 <template>
-  <v-card class="mb-5">
-    <v-form v-if="clientConfig" v-model="formValid" fast-fail>
-      <v-container class="pa-0">
-        <v-label class="my-2">{{ t("common.basicInfo") }}</v-label>
-        <v-row>
-          <v-col cols="12" md="4">
-            <v-text-field v-model="clientConfig.type" :label="t('common.type')" disabled hide-details />
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="clientConfig.name"
-              :label="t('SetDownloader.common.name')"
-              :placeholder="t('SetDownloader.common.name')"
-              :rules="[formValidateRules.require(t('SetDownloader.editor.nameTip'))]"
-              hide-details
-              required
-            />
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="clientConfig.id"
-              :label="t('SetDownloader.common.uid') + t('SetDownloader.editor.uidPlaceholder')"
-              disabled
-              hide-details
-            />
-          </v-col>
-        </v-row>
+  <a-card style="margin-bottom: 20px">
+    <a-form v-if="clientConfig" layout="vertical">
+      <div>
+        <a-typography-text strong style="display: block; margin: 8px 0">{{ t("common.basicInfo") }}</a-typography-text>
+        <a-row :gutter="16">
+          <a-col :md="8" :xs="24">
+            <a-form-item :label="t('common.type')">
+              <a-input v-model:value="clientConfig.type" disabled />
+            </a-form-item>
+          </a-col>
+          <a-col :md="8" :xs="24">
+            <a-form-item :help="nameError" :label="t('SetDownloader.common.name')" required>
+              <a-input
+                v-model:value="clientConfig.name"
+                :placeholder="t('SetDownloader.common.name')"
+                :status="nameError ? 'error' : undefined"
+              />
+            </a-form-item>
+          </a-col>
+          <a-col :md="8" :xs="24">
+            <a-form-item :label="t('SetDownloader.common.uid') + t('SetDownloader.editor.uidPlaceholder')">
+              <a-input v-model:value="clientConfig.id" disabled />
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <v-label class="my-2">{{ t("SetBackup.Editor.serverConfig") }}</v-label>
+        <a-typography-text strong style="display: block; margin: 8px 0">
+          {{ t("SetBackup.Editor.serverConfig") }}
+        </a-typography-text>
 
-        <v-row no-gutters>
-          <v-col v-for="metaField in clientMeta.requiredField" :key="metaField.key" cols="12">
-            <v-textarea
-              v-if="metaField.type === 'strings'"
-              v-model="clientConfig.config[metaField.key! as string]"
-              :hide-details="false"
-              :label="metaField.name"
-              :messages="metaField.description ?? undefined"
-            />
-            <v-text-field
-              v-else-if="metaField.type === 'string'"
-              v-model="clientConfig.config[metaField.key! as string]"
-              :hide-details="false"
-              :label="metaField.name"
-              :messages="metaField.description ?? undefined"
-            />
-            <v-switch
-              v-else-if="metaField.type === 'boolean'"
-              v-model="clientConfig.config[metaField.key! as string]"
-              :hide-details="false"
-              :label="metaField.name"
-              :messages="metaField.description ?? undefined"
-              color="success"
-            />
-          </v-col>
-        </v-row>
+        <a-row :gutter="0">
+          <a-col v-for="metaField in clientMeta.requiredField" :key="metaField.key" :span="24">
+            <a-form-item :extra="metaField.description ?? undefined" :label="metaField.name">
+              <a-textarea
+                v-if="metaField.type === 'strings'"
+                v-model:value="clientConfig.config[metaField.key! as string]"
+                :rows="3"
+              />
+              <a-input
+                v-else-if="metaField.type === 'string'"
+                v-model:value="clientConfig.config[metaField.key! as string]"
+                :type="isConfigFieldMasked(metaField) ? 'password' : 'text'"
+              >
+                <template v-if="isSecretConfigField(metaField)" #suffix>
+                  <EyeOutlined
+                    v-if="revealedConfigFields.has(metaField.key as string)"
+                    style="cursor: pointer"
+                    @click="toggleConfigFieldReveal(metaField.key as string)"
+                  />
+                  <EyeInvisibleOutlined
+                    v-else
+                    style="cursor: pointer"
+                    @click="toggleConfigFieldReveal(metaField.key as string)"
+                  />
+                </template>
+              </a-input>
+              <a-switch
+                v-else-if="metaField.type === 'boolean'"
+                v-model:checked="clientConfig.config[metaField.key! as string]"
+              />
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <v-divider class="my-2" />
+        <a-divider style="margin: 8px 0" />
 
-        <v-label class="my-2">{{ t("SetBackup.Editor.backupConfig") }}</v-label>
+        <a-typography-text strong style="display: block; margin: 8px 0">
+          {{ t("SetBackup.Editor.backupConfig") }}
+        </a-typography-text>
 
         <!-- 以下三项为相互独立的备份设置，分别用子标题区分：备份内容 / 自动备份间隔 / 备份保留策略 -->
         <!-- 备份内容 -->
-        <v-row density="compact" no-gutters>
-          <v-col cols="12">
-            <v-label class="text-body-medium font-weight-medium text-medium-emphasis">
-              {{ t("SetBackup.Editor.backupFields") }}
-            </v-label>
-          </v-col>
-          <v-col v-for="backupField in BackupFields" :key="backupField" cols="12" md="4">
-            <v-switch
-              v-model="clientConfig.backupFields"
-              :label="t(`SetBackup.fields.${backupField}`)"
-              :value="backupField"
-              color="success"
-              density="compact"
-              hide-details
-            />
-          </v-col>
-        </v-row>
+        <div>
+          <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.backupFields") }}</a-typography-text>
+          <a-checkbox-group v-model:value="clientConfig.backupFields" style="width: 100%">
+            <a-row :gutter="[0, 8]">
+              <a-col v-for="backupField in BackupFields" :key="backupField" :md="8" :xs="24">
+                <a-checkbox :value="backupField">{{ t(`SetBackup.fields.${backupField}`) }}</a-checkbox>
+              </a-col>
+            </a-row>
+          </a-checkbox-group>
+        </div>
 
-        <v-divider class="my-3" />
+        <a-divider style="margin: 12px 0" />
 
         <!-- 自动备份间隔 -->
-        <v-row density="compact" no-gutters>
-          <v-col cols="12">
-            <v-label class="text-body-medium font-weight-medium text-medium-emphasis">
-              {{ t("SetBackup.Editor.backupInterval") }}
-            </v-label>
-          </v-col>
-          <v-col cols="12">
-            <!-- 子标题已说明用途，此处标签仅表示单位，避免与子标题重复 -->
-            <v-text-field
-              v-model.number="clientConfig.backupInterval"
-              :label="t('SetBackup.Editor.backupIntervalField')"
-              :messages="t('SetBackup.Editor.backupIntervalHint')"
-              :min="0"
-              clearable
-              hide-details="auto"
-              suffix="h"
-              type="number"
-            />
-          </v-col>
-        </v-row>
+        <div>
+          <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.backupInterval") }}</a-typography-text>
+          <!-- 子标题已说明用途，此处标签仅表示单位，避免与子标题重复 -->
+          <a-form-item
+            :extra="t('SetBackup.Editor.backupIntervalHint')"
+            :label="t('SetBackup.Editor.backupIntervalField')"
+          >
+            <a-input-number v-model:value="clientConfig.backupInterval" addon-after="h" :min="0" style="width: 100%" />
+          </a-form-item>
+        </div>
 
-        <v-divider class="my-3" />
+        <a-divider style="margin: 12px 0" />
 
         <!-- 备份保留策略：设置项直接内联展示，不再单独弹出对话框 -->
-        <v-row density="compact" no-gutters>
-          <v-col class="d-flex flex-wrap align-center ga-2" cols="12">
-            <v-label class="text-body-medium font-weight-medium text-medium-emphasis">
-              {{ t("SetBackup.Editor.retention") }}
-            </v-label>
+        <div>
+          <a-flex align="center" :gap="8" wrap>
+            <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.retention") }}</a-typography-text>
             <!-- 仅在启用了保留策略时展示摘要，避免未启用时出现无意义的提示文字 -->
-            <span v-if="hasRetention" class="text-body-small retention-summary">{{ retentionSummary }}</span>
-            <v-btn
+            <a-typography-text v-if="hasRetention" type="secondary">{{ retentionSummary }}</a-typography-text>
+            <a-button
               v-if="hasRetention"
-              color="error"
-              density="comfortable"
-              icon="mdi-filter-remove-outline"
-              size="x-small"
-              variant="text"
+              danger
               :title="t('SetBackup.Editor.clearRetention')"
+              type="text"
               @click="clearRetention"
-            />
-          </v-col>
+            >
+              <template #icon><FilterOutlined /></template>
+            </a-button>
+          </a-flex>
 
-          <v-col class="text-body-small text-medium-emphasis" cols="12">
+          <a-typography-text style="display: block" type="secondary">
             {{ t("SetBackup.RetentionDialog.tip") }}
-          </v-col>
+          </a-typography-text>
 
-          <v-col cols="12" class="retention-group pa-4">
+          <div class="retention-group" style="padding: 16px">
             <!-- 按时间期限保留 -->
-            <v-row density="compact" no-gutters>
-              <v-col cols="auto">
-                <v-switch
-                  v-model="retentionDraft.time!.enabled"
-                  color="success"
-                  density="compact"
-                  hide-details
-                  :label="t('SetBackup.RetentionDialog.time.title')"
-                />
-              </v-col>
-              <v-col class="retention-field" cols="12" sm="6" md="4">
-                <v-text-field
-                  v-model.number="retentionDraft.time!.maxAge"
+            <div class="retention-row">
+              <a-switch v-model:checked="retentionDraft.time!.enabled" />
+              <a-typography-text>{{ t("SetBackup.RetentionDialog.time.title") }}</a-typography-text>
+              <div class="retention-field">
+                <a-input-number
+                  v-model:value="retentionDraft.time!.maxAge"
+                  :addon-after="t('SetBackup.RetentionDialog.daySuffix')"
                   :disabled="!retentionDraft.time!.enabled"
-                  :label="t('SetBackup.RetentionDialog.time.maxAge')"
                   :min="1"
-                  :suffix="t('SetBackup.RetentionDialog.daySuffix')"
-                  density="compact"
-                  hide-details
-                  type="number"
+                  style="width: 100%"
                 />
-              </v-col>
-            </v-row>
+              </div>
+            </div>
 
-            <v-divider class="my-2" />
+            <a-divider style="margin: 8px 0" />
 
             <!-- 按数量保留 -->
-            <v-row density="compact" no-gutters>
-              <v-col cols="auto">
-                <v-switch
-                  v-model="retentionDraft.count!.enabled"
-                  color="success"
-                  density="compact"
-                  hide-details
-                  :label="t('SetBackup.RetentionDialog.count.title')"
-                />
-              </v-col>
-              <v-col class="retention-field" cols="12" sm="6" md="4">
-                <v-text-field
-                  v-model.number="retentionDraft.count!.maxCount"
+            <div class="retention-row">
+              <a-switch v-model:checked="retentionDraft.count!.enabled" />
+              <a-typography-text>{{ t("SetBackup.RetentionDialog.count.title") }}</a-typography-text>
+              <div class="retention-field">
+                <a-input-number
+                  v-model:value="retentionDraft.count!.maxCount"
+                  :addon-after="t('SetBackup.RetentionDialog.countSuffix')"
                   :disabled="!retentionDraft.count!.enabled"
-                  :label="t('SetBackup.RetentionDialog.count.maxCount')"
                   :min="1"
-                  :suffix="t('SetBackup.RetentionDialog.countSuffix')"
-                  density="compact"
-                  hide-details
-                  type="number"
+                  style="width: 100%"
                 />
-              </v-col>
-            </v-row>
+              </div>
+            </div>
 
-            <v-divider class="my-2" />
+            <a-divider style="margin: 8px 0" />
 
             <!-- 按时间窗口采样保留 -->
-            <v-row density="compact" no-gutters>
-              <v-col cols="12">
-                <v-switch
-                  v-model="retentionDraft.sample!.enabled"
-                  color="success"
-                  density="compact"
-                  hide-details
-                  :label="t('SetBackup.RetentionDialog.sample.title')"
-                />
-              </v-col>
-              <v-col class="text-body-small text-medium-emphasis" cols="12">
+            <div>
+              <div class="retention-row">
+                <a-switch v-model:checked="retentionDraft.sample!.enabled" />
+                <a-typography-text>{{ t("SetBackup.RetentionDialog.sample.title") }}</a-typography-text>
+              </div>
+              <a-typography-text style="display: block" type="secondary">
                 {{ t("SetBackup.RetentionDialog.sample.hint") }}
-              </v-col>
+              </a-typography-text>
 
               <!-- 采样规则：窗口名称 / 保留窗口数 / 窗口宽度（天） -->
-              <v-col cols="12">
-                <div class="retention-table" :class="{ 'retention-table--disabled': !retentionDraft.sample!.enabled }">
-                  <div class="retention-table__row retention-table__head text-body-small text-medium-emphasis">
-                    <div />
-                    <div>{{ t("SetBackup.RetentionDialog.sample.horizon") }}</div>
-                    <div>{{ t("SetBackup.RetentionDialog.sample.interval") }}</div>
-                  </div>
-
-                  <div v-for="[type, rule] in retentionSampleRules" :key="type" class="retention-table__row">
-                    <div class="text-no-wrap">{{ t(`SetBackup.RetentionDialog.sample.type.${type}`) }}</div>
-                    <!-- 展示顺序为「窗口名称 / 保留窗口数 / 窗口宽度」，与表头一致 -->
-                    <v-text-field
-                      v-model.number="rule.horizon"
+              <a-table
+                :columns="retentionSampleColumns"
+                :data-source="retentionSampleRows"
+                :pagination="false"
+                size="small"
+                :style="{ opacity: retentionDraft.sample!.enabled ? 1 : 0.5 }"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'type'">
+                    <span style="white-space: nowrap">
+                      {{ t(`SetBackup.RetentionDialog.sample.type.${record.type}`) }}
+                    </span>
+                  </template>
+                  <template v-else-if="column.key === 'horizon'">
+                    <a-input-number
+                      v-model:value="record.rule.horizon"
                       :disabled="!retentionDraft.sample!.enabled"
                       :min="0"
-                      density="compact"
-                      hide-details
-                      type="number"
-                      variant="outlined"
                     />
-                    <v-text-field
-                      v-model.number="rule.interval"
+                  </template>
+                  <template v-else-if="column.key === 'interval'">
+                    <a-input-number
+                      v-model:value="record.rule.interval"
+                      :addon-after="t('SetBackup.RetentionDialog.daySuffix')"
                       :disabled="!retentionDraft.sample!.enabled"
                       :min="0"
-                      :suffix="t('SetBackup.RetentionDialog.daySuffix')"
-                      density="compact"
-                      hide-details
-                      type="number"
-                      variant="outlined"
                     />
-                  </div>
-                </div>
-              </v-col>
-            </v-row>
-          </v-col>
-        </v-row>
+                  </template>
+                </template>
+              </a-table>
+            </div>
+          </div>
+        </div>
 
         <ConnectCheckButton
           :check-fn="checkConnect"
@@ -422,56 +433,7 @@ async function checkConnect() {
             () => emits('update:configValid', formValid && true) // 不管是否测试成功，都允许用户进行下一步操作（保存下载服务器配置）
           "
         />
-      </v-container>
-    </v-form>
-  </v-card>
+      </div>
+    </a-form>
+  </a-card>
 </template>
-
-<style scoped lang="scss">
-/* 已启用保留策略时，摘要使用成功色以突出状态（Vuetify 4 未生成 text-success 之类的工具类） */
-.retention-summary {
-  color: rgb(var(--v-theme-success));
-}
-
-/* 数值输入框不铺满整行，避免数字输入框被拉得过长（与开关之间的间距由 v-col cols="auto" 提供） */
-.retention-field {
-  max-width: 260px;
-}
-
-/* 采样规则表：三列对齐（窗口名称 / 保留窗口数 / 窗口宽度），用 Grid 比嵌套 v-row 更直观 */
-.retention-table {
-  display: grid;
-  gap: 6px;
-}
-
-.retention-table__row {
-  display: grid;
-  grid-template-columns: minmax(56px, 1fr) minmax(0, 190px) minmax(0, 190px);
-  align-items: center;
-  gap: 12px;
-}
-
-.retention-table--disabled {
-  opacity: 0.55;
-}
-
-/**
- * 保留策略容器的可用宽度受外层对话框与浏览器窗口限制，
- * 与 Vuetify 基于视口宽度的断点无关，因此这里用容器查询。
- */
-.retention-group {
-  container-type: inline-size;
-}
-
-/* 容器较窄时隐藏表头，采样规则改为紧凑三列（窗口名称 + 两个铺满的输入框） */
-@container (max-width: 479px) {
-  .retention-table__row {
-    grid-template-columns: minmax(36px, auto) minmax(0, 1fr) minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .retention-table__head {
-    display: none;
-  }
-}
-</style>

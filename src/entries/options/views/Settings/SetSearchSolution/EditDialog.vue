@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { nanoid } from "nanoid";
-import { ref, computed, shallowRef } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { cloneDeep, isEqual } from "es-toolkit";
 import { find, isEmpty } from "es-toolkit/compat";
 import { refDebounced } from "@vueuse/core";
+import { ClusterOutlined, SearchOutlined } from "@ant-design/icons-vue";
 
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -36,7 +37,20 @@ const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
 
 const solution = ref<ISearchSolutionMetadata>(initSolution());
-const formValid = ref<boolean>(false);
+
+const nameRules = [formValidateRules.require()];
+
+function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
+  for (const rule of rules) {
+    const result = rule(value);
+    if (result !== true) return typeof result === "string" ? result : String(result);
+  }
+  return undefined;
+}
+
+const nameError = computed(() => firstError(nameRules, solution.value.name));
+// 与迁移前 PtdForm 广播的「表单是否合法」语义一致：任一字段的 rules 未通过即为不合法
+const formValid = computed(() => !nameError.value);
 
 const siteWaitFilter = ref("");
 const siteFilter = refDebounced(siteWaitFilter, 500); // 延迟搜索过滤词的生成
@@ -112,108 +126,86 @@ function dialogEnter() {
 function dialogLeave() {
   solution.value = initSolution();
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" fullscreen @after-enter="dialogEnter" @after-leave="dialogLeave">
-    <v-card class="overflow-y-auto">
-      <v-card-title class="pa-0">
-        <v-toolbar :title="t('SetSearchSolution.edit.title')" color="blue-grey-darken-2">
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-form v-model="formValid">
-          <v-row>
-            <v-col>
-              <v-text-field
-                v-model="solution.name"
-                :label="t('common.name')"
-                :rules="[formValidateRules.require()]"
-                autofocus
-                required
-              />
-            </v-col>
-            <v-col cols="3">
-              <v-text-field v-model="solution.id" disabled label="ID" />
-            </v-col>
-            <v-col cols="2">
-              <v-text-field v-model="solution.sort" :label="t('common.sortIndex')" max="100" min="0" type="number" />
-            </v-col>
-          </v-row>
-          <v-row>
-            <v-col cols="12" md="8">
-              <v-text-field
-                v-model="siteWaitFilter"
-                :placeholder="t('SetSearchSolution.edit.filterPlaceholder')"
-                append-inner-icon="mdi-magnify"
-                clearable
-                prepend-icon="mdi-sitemap"
-              />
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-button-props="{ disabled: !formValid || solution.solutions.length === 0 }"
+    :ok-text="t('common.dialog.ok')"
+    :style="{ top: 0, paddingBottom: 0, maxWidth: 'none' }"
+    :title="t('SetSearchSolution.edit.title')"
+    :width="'100vw'"
+    :after-close="dialogLeave"
+    @ok="saveSolutionState"
+  >
+    <a-form layout="vertical">
+      <a-row :gutter="16">
+        <a-col :flex="1">
+          <a-form-item :help="nameError" :label="t('common.name')" required>
+            <a-input v-model:value="solution.name" :status="nameError ? 'error' : undefined" />
+          </a-form-item>
+        </a-col>
+        <a-col :span="6">
+          <a-form-item label="ID">
+            <a-input v-model:value="solution.id" disabled />
+          </a-form-item>
+        </a-col>
+        <a-col :span="4">
+          <a-form-item :label="t('common.sortIndex')">
+            <a-input-number v-model:value="solution.sort" :max="100" :min="0" style="width: 100%" />
+          </a-form-item>
+        </a-col>
+      </a-row>
+      <a-row :gutter="16">
+        <a-col :md="16" :xs="24">
+          <a-form-item>
+            <a-input
+              v-model:value="siteWaitFilter"
+              allow-clear
+              :placeholder="t('SetSearchSolution.edit.filterPlaceholder')"
+            >
+              <template #prefix><ClusterOutlined /></template>
+              <template #suffix><SearchOutlined /></template>
+            </a-input>
+          </a-form-item>
 
-              <v-card class="overflow-y-auto" height="calc(100vh - 340px)">
-                <v-expansion-panels>
-                  <v-expansion-panel
-                    v-for="site in filteredSite"
-                    :key="site"
-                    :disabled="!!metadataStore.sites[site].isOffline"
-                  >
-                    <v-expansion-panel-title>
-                      <SiteFavicon :site-id="site" class="mr-2" inline />
+          <a-card :bordered="false" :style="{ height: 'calc(100vh - 340px)', overflowY: 'auto' }">
+            <a-collapse>
+              <a-collapse-panel
+                v-for="site in filteredSite"
+                :key="site"
+                :disabled="!!metadataStore.sites[site].isOffline"
+              >
+                <template #header>
+                  <a-flex align="center" :gap="8">
+                    <SiteFavicon :site-id="site" :size="18" style="margin-right: 8px" />
+                    <a-tag color="green">
+                      <SiteName :site-id="site" />
+                    </a-tag>
+                  </a-flex>
+                </template>
+                <SiteCategoryPanel :site-id="site" @update:solution="addSolution" />
+              </a-collapse-panel>
+            </a-collapse>
+          </a-card>
+        </a-col>
+        <a-col :md="8" :xs="24">
+          <div class="ptd-section-heading" style="margin-top: 0">
+            {{ t("SetSearchSolution.edit.addCount", [solution.solutions.length]) }}
+          </div>
 
-                      <v-chip color="green" label>
-                        <SiteName :class="['text-no-wrap']" :site-id="site" />
-                      </v-chip>
-                    </v-expansion-panel-title>
-                    <v-expansion-panel-text>
-                      <SiteCategoryPanel :site-id="site" @update:solution="addSolution" />
-                    </v-expansion-panel-text>
-                  </v-expansion-panel>
-                </v-expansion-panels>
-              </v-card>
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-alert class="mb-2" type="success">
-                <v-alert-title>
-                  {{ t("SetSearchSolution.edit.addCount", [solution.solutions.length]) }}
-                </v-alert-title>
-              </v-alert>
-
-              <v-card class="overflow-y-auto" height="calc(100vh - 330px)">
-                <v-card-text class="pl-3 py-0 pr-1">
-                  <SolutionLabel
-                    :group-props="{ column: true }"
-                    :solutions="solution.solutions"
-                    closable
-                    @remove:solution="removeSolution"
-                  />
-                </v-card-text>
-              </v-card>
-            </v-col>
-          </v-row>
-        </v-form>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn
-          :disabled="!formValid || solution.solutions.length === 0"
-          color="success"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
-          @click="saveSolutionState"
-        >
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+          <a-card :bordered="false" :style="{ height: 'calc(100vh - 330px)', overflowY: 'auto' }">
+            <SolutionLabel closable column :solutions="solution.solutions" @remove:solution="removeSolution" />
+          </a-card>
+        </a-col>
+      </a-row>
+    </a-form>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

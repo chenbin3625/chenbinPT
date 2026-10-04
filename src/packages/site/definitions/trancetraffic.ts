@@ -1,7 +1,7 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/www.trancetraffic.com/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/www.trancetraffic.com/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/trancetraffic.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  */
 import type { ISiteMetadata } from "../types";
 

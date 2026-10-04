@@ -15,8 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   tags: ["综合", "影视"],
   collaborator: ["lr42"],
 
-  timezoneOffset: "+0800",
-
   type: "private",
   schema: "NexusPHP",
 
@@ -25,7 +23,7 @@ export const siteMetadata: ISiteMetadata = {
 
   category: [CategoryIncldead, CategorySpstate, CategoryInclbookmarked],
 
-  // from https://github.com/pt-plugins/PT-Plugin-Plus/issues/30#issuecomment-1794597279
+  // from https://github.com/chenbin3625/PT-Plugin-Plus/issues/30#issuecomment-1794597279
   levelRequirements: [
     {
       id: 0,

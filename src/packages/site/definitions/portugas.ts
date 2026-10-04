@@ -25,7 +25,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "Portugas",
   description: "Portugas is a UNIT3D Private Torrent Tracker for Portuguese content.",
   tags: ["葡萄牙"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

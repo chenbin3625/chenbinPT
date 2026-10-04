@@ -1,107 +1,176 @@
-<p align="center">
-  <img alt="Logo" width="100" src="./public/icons/logo/128.png?raw=true">
-</p>
+<div align="center">
 
-<p align="center">
-    <a href="../../releases?include_prereleases/latest" title="GitHub Releases"><img src="https://img.shields.io/github/v/release/pt-plugins/PT-depiler.svg?include_prereleases"></a>
-    <a href="../../releases" title="GitHub Download"><img src="https://img.shields.io/github/downloads/pt-plugins/PT-depiler/total.svg?label=Downloads"></a>
-    <img src="https://img.shields.io/badge/Used-TypeScript%20Vue-blue.svg">
-    <a href="./LICENSE" title="GitHub license"><img src="https://img.shields.io/github/license/pt-plugins/PT-depiler.svg?label=License" alt="GitHub license"/></a>
-    <a href="https://t.me/joinchat/NZ9NCxPKXyby8f35rn_QTw"><img src="https://img.shields.io/badge/Telegram-Chat-blue.svg?logo=telegram" alt="Telegram"/></a>
-    <a href="https://deepwiki.com/pt-plugins/PT-depiler"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"/></a>
-</p>
+# chenbinPT
 
-### 🚀 关于 Introduction
+**PT 站点辅助工具（浏览器扩展）** —— 在一个界面里管理你所有的 PT 站点：搜索、用户信息、推送到下载器、辅种、备份。
 
-PT-depiler 是在原 [PT-Plugin-Plus](https://github.com/pt-plugins/PT-Plugin-Plus) 基础上，
-基于浏览器最新的 [Manifest v3](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3) 标准开发的一款浏览器插件（Web Extensions），
-一个可以提升 PT 站点使用效率的工具。
+[![release](https://img.shields.io/github/v/release/chenbin3625/chenbinPT?include_prereleases&label=release)](https://github.com/chenbin3625/chenbinPT/releases)
+[![license](https://img.shields.io/github/license/chenbin3625/chenbinPT)](./LICENSE)
+![chrome](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)
+![firefox](https://img.shields.io/badge/Firefox-MV3-FF7139?logo=firefoxbrowser&logoColor=white)
+![node](https://img.shields.io/badge/node-%E2%89%A524-339933?logo=node.js&logoColor=white)
 
-适用于各 PT 站，可使下载种子等各项操作变化更简单、快捷。配合下载服务器（如 Transmission、qBittorrent 等），可一键下载指定的种子。
+</div>
 
-### 🖥️ 功能 Features
+---
 
-- **多站点支持**：兼容 NexusPHP、Unit3D、Gazelle 等多种类型的 PT 站点，提供聚合搜索相同关键字的种子、批量下载等功能 （ 支持站点列表见： [PT Site Status](https://pt-plugins.github.io/monitor/)  ）
-- **下载器集成**：支持 qBittorrent、Transmission、Deluge、ruTorrent、Synology Download Station、Aria2 等多种下载器，并保存下载历史记录
-- **备份服务器管理**：集成 WebDav、Gist、CookieCloud、Google Drive、DropBox、OWSS 等备份服务，方便数据同步
-- **智能搜索**：增强搜索功能，支持多站点同时搜索并合并结果
-- **用户信息管理**：集中显示和管理各站点的用户信息和统计数据
-- **地址栏快速搜索**：在浏览器地址栏中输入 `ptd` 后按 Tab 键即可快速调用智能搜索功能
-- 更多功能请参考 [Wiki](../../wiki)
+## 这是什么
 
-### 🔧 安装 Installation
+chenbinPT 是一个浏览器扩展，把散落在几十个 PT 站点上的日常操作收拢到一处：
 
-#### 1. 从各个浏览器的扩展商店安装
+- 不必逐站打开页面找种子，**一次搜索覆盖你添加的所有站点**；
+- 不必逐站看自己的分享率/等级/做种量，**一处汇总并可看时间线与统计**；
+- 找到种子后**直接推送到本地下载器**（含批量与发送前确认）；
+- 做种任务、下载历史、媒体服务器查重、配置备份都在同一个界面里。
 
-在各主流浏览器的扩展商店中均已上架 PT-Depiler，您可以直接前往对应的扩展商店搜索 "PT-Depiler" 进行安装，或点击表格状态列的徽标图片直接跳转到对应的扩展商店页面进行安装。
+它基于 [PT-depiler](https://github.com/rhilip/PT-depiler)（MIT）发展而来，当前分支 `refactor/antd` 正在把界面层从 Vuetify 迁移到 ant-design-vue。
 
-|          浏览器           | 状态                                                                                                                                                                                                                                                                                                                                |
-|:----------------------:|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|    Chrome Web Store    | [![Google Chrome](https://img.shields.io/chrome-web-store/v/iloddidemhbedaopmipajgclofjocogb.svg?label=Google%20Chrome)](https://chromewebstore.google.com/detail/pt-depiler/iloddidemhbedaopmipajgclofjocogb)                                                                                                                    | 
-|    Firefox Add-ons     | [![Mozilla Firefox](https://img.shields.io/amo/v/pt-depiler.svg?label=Mozilla%20Firefox)](https://addons.mozilla.org/zh-CN/firefox/addon/pt-depiler/)                                                                                                                                                                             | 
-| Microsoft Edge Add-ons | [![Microsoft Edge](https://img.shields.io/badge/dynamic/json?label=Edge%20Addons&prefix=v&query=%24.version&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2FAddons%2Fgetproductdetailsbycrxid%2Fkbijhmckhndmeckonoikakdfdlbnlkde)](https://microsoftedge.microsoft.com/addons/detail/pt-depiler/kbijhmckhndmeckonoikakdfdlbnlkde) |
+## 功能
 
-#### 2. 从 Github Action 或者 Release 中获取并安装
+| 模块 | 能做什么 |
+| --- | --- |
+| **搜索** | 多站点并行搜索、按站点/方案筛选、高级筛选（分类、媒介、编码、分辨率、制作组…）、结果快照与分页、按大小排序、批量复制链接或推送下载 |
+| **我的数据** | 汇总各站用户信息（上传/下载/分享率/做种量/做种数/时魔/等级/邀请…），时间线趋势图与分站统计，等级需求与下一级还差多少 |
+| **我的下载器** | 统一查看各下载器的种子列表与进度，支持暂停/继续/重新校验/改标签/限速/删除，详情弹窗看文件、Peers、Tracker |
+| **下载历史** | 每次推送的记录与状态轮询，失败原因可追溯（是否真的加进了下载器） |
+| **辅种任务** | 把已下载的种子重新加入做种（keepUploadTask），可批量 |
+| **媒体服务器** | 在 emby / jellyfin / plex / fnOS 中搜索是否已有该影片，避免重复下载 |
+| **内容脚本** | 直接在你打开的站点页面上工作：悬浮球、列表/详情页的下载列、拖拽任意链接到悬浮球、高级列表弹窗、社区域解析。在站点页面上就能完成"搜索→推送"而不必切到扩展页 |
+| **备份与恢复** | 本地文件或 8 种远端后端，支持加密；可定时自动备份、按策略保留历史 |
+| **社交信息** | 从 Bangumi / AniDB / TMDB / IMDb / Douban / TVMaze 拉取条目信息，用于搜索与展示 |
 
-[![Build Action Release](../../actions/workflows/action_build.yml/badge.svg)](../../actions/workflows/action_build.yml)
+## 支持范围
 
-我们使用 Github Action 自动构建了基于 master 分支的最新版本，你可以在 [Github Action](../../actions/workflows/action_build.yml)
-或者 [Release](../../releases) 页面中下载最新的版本。
+| 类别 | 数量 | 明细 |
+| --- | --- | --- |
+| 站点定义 | **341** | 见 [`src/packages/site/definitions/`](src/packages/site/definitions) |
+| 解析引擎 | 10 | NexusPHP、Unit3D、Gazelle、GazelleJSONAPI、AvistazNetwork、Luminance、Rartracker、TCG + 两个基类（AbstractPrivateSite / AbstractBittorrentSite） |
+| 下载器 | 8 | qBittorrent、Transmission、Deluge、Aria2、ruTorrent、uTorrent、Synology Download Station、Flood |
+| 媒体服务器 | 4 | emby、jellyfin、plex、fnOS |
+| 备份后端 | 8 | WebDAV、S3、Backblaze B2、Dropbox、Google Drive、Gist、CookieCloud、OWSS |
+| 社交站点 | 6 | Bangumi、AniDB、TMDB、IMDb、Douban、TVMaze |
 
-#### 3. 从源码构建
+## 安装
 
-请预先准备好 [Git](https://git-scm.com/) 、 [Node.js](https://nodejs.org/en) 和 [pnpm](https://pnpm.io/) 环境。
-建议使用 [VSCode](https://code.visualstudio.com/) 或 [WebStorm](https://www.jetbrains.com/webstorm/) 作为开发工具。
+### 方式一：下载 Release（推荐普通用户）
+
+到 [Releases](https://github.com/chenbin3625/chenbinPT/releases) 下载：
+
+- `extension-chrome.zip` —— Chrome / Edge 等 Chromium 内核浏览器；
+- `extension-firefox.zip` —— Firefox。
+
+**Chrome / Edge**：解压后打开 `chrome://extensions`（Edge 为 `edge://extensions`），打开右上角「开发者模式」，点「加载已解压的扩展程序」，选择解压出来的目录。
+
+**Firefox**：打开 `about:debugging#/runtime/this-firefox` → 「临时载入附加组件」→ 选择解压目录里的 `manifest.json`。
+
+> 注：Firefox 的临时载入在浏览器重启后失效。需要长期使用请用开发者版签名，或参考 CI 的发布流程提交到 AMO。
+
+### 方式二：从源码构建
 
 ```bash
-git clone https://github.com/pt-plugins/PT-depiler
-cd PT-depiler
-pnpm install
-# pnpm dev
-pnpm build:dist    # or pnpm build:dist-firefox
+git clone https://github.com/chenbin3625/chenbinPT.git
+cd chenbinPT
+npm ci
+
+npm run build:dist            # Chrome（输出 dist-chrome/）
+npm run build:dist-firefox    # Firefox（输出 dist-firefox/）
 ```
 
-### 📝 改动说明 Changelog
+构建完按上文的「加载已解压的扩展程序」指向 `dist-chrome/` 或 `dist-firefox/` 即可。
 
-PT-Depiler 并不是对 PT-Plugin-Plus 的简单移植，而是对其进行了全面的重构和改进，以获得更好的使用体验。
+打包成可分发的压缩包与自签名 CRX：
 
-> 目前， PT-Depiler 仅支持**已适配站点**的PTPP历史用户数据迁移。
-> 请勿将 [PT-Plugin-Plus](https://github.com/pt-plugins/PT-Plugin-Plus) 或者 [PT 助手](https://github.com/ronggang/PT-Plugin) 的配置文件直接导入 PT-Depiler。
+```bash
+(cd dist-chrome && zip -qr ../build/extension-chrome.zip .)
+(cd dist-firefox && zip -qr ../build/extension-firefox.zip .)
+npm run pack:crx              # → build/extension.crx（自实现 CRX3 并自验签）
+```
 
-更新记录请见： [CHANGELOG.md](./CHANGELOG.md)
+## 开发
 
-### 💁‍♂️ 贡献 Contributors
+### 环境要求
 
-✨ 欢迎 Star & 提 Issue，共同完善 PT-Depiler！ 有兴趣贡献的开发者请阅读[行为准则](./CODE_OF_CONDUCT.md)
+- **Node ≥ 24**、**npm ≥ 11**（仓库用 npm workspaces 之外的单包结构，锁文件为 `package-lock.json`）
+- 可选：Playwright 的 Chromium（跑端到端冒烟测试用）
 
-> 请不要在 Issue 中提出一般性问题。Issue 仅用于报告错误、提出改进建议或请求新功能。
+### 常用命令
 
-我们还有一个 [help wanted](../../labels/%22help%20wanted%22) 的问题列表，您可能会感兴趣。
+| 命令 | 作用 |
+| --- | --- |
+| `npm run dev` | Vite 开发服务器（含扩展热更新） |
+| `npm run check` | `vue-tsc --noEmit` 全量类型检查 |
+| `npm run lint` | ESLint（历史违规由 `eslint-suppressions.json` 基线豁免，**基线只减不增**） |
+| `npm test` | Vitest 单元/组件测试 |
+| `npm run check:antd` | antd 迁移验收（禁止 Vuetify 残留、`<Ptd*` 兼容组件、原生控件等 12 项） |
+| `npm run check:bundle` | 构建产物完整性 + 体积预算（`--target=firefox` 校验 firefox） |
+| `npm run check:pins` | 校验 CI 里的 action 全部固定在 commit SHA |
+| `npm run test:e2e` | Playwright + 真实 Chromium 加载构建产物做冒烟测试 |
+| `npm run build:watch` | 开发态增量构建（不压缩） |
 
-![Alt](https://repobeats.axiom.co/api/embed/9d98187b3a4c57e8c3a7087ff45d61bc03741af0.svg "Repobeats analytics image")
+提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)（`<type>(<scope>): <subject>`），由 husky + commitlint 在提交时校验；pre-commit 只对**暂存文件**跑 prettier/eslint。
 
-### 🔒 隐私权保护政策 Privacy Policy
+### 项目结构
 
-PT-Depiler 不含任何统计、埋点或遥测代码，您的数据默认仅保存在本机浏览器中。详细的数据处理说明（收集范围、使用方式、存储位置、共享对象、保留期限与联系渠道）请见 [隐私权保护政策](./privacy-statement.md)。
+```
+src/
+├── entries/                 # 扩展的各个运行上下文
+│   ├── background/          # Service Worker（MV3）/ 后台脚本（MV2）
+│   ├── offscreen/           # Offscreen Document：真正发请求、读写 IndexedDB 的地方
+│   ├── content-script/      # 注入到 PT 站点的浮层（shadow DOM）
+│   ├── options/             # 选项页 SPA（Vue 3 + ant-design-vue）
+│   ├── shared/              # 跨上下文共享的类型与工具
+│   ├── messages.ts          # 跨上下文消息协议（类型化）
+│   └── storage.ts           # 存储层
+├── packages/                # 与平台无关（或尽量无关）的核心能力
+│   ├── site/                # 站点元数据、10 个解析引擎、341 个站点定义
+│   ├── downloader/          # 8 种下载器客户端
+│   ├── mediaServer/         # 4 种媒体服务器客户端
+│   ├── backupServer/        # 8 种备份后端 + ZIP/加密
+│   └── social/              # 6 个社交/元数据站点
+├── extends/                 # axios / pinia 的扩展（DNR 请求头、持久化）
+└── locales/                 # i18n（en / zh_CN）
 
-### 📝 许可证 License
+tests/                       # Vitest（单元 / 组件 / 契约 / Sizzle 差分 oracle）
+scripts/                     # 构建与门禁脚本（打包 CRX、包体预算、antd 验收、action 固定校验…）
+```
 
-PT-Depiler 是一个开源项目，遵循 [MIT 许可证](http://opensource.org/licenses/MIT)
+**架构要点**：消息拓扑为 `content-script / options ⇄ background ⇄ offscreen`。所有需要凭据的跨站请求、去重与队列、以及 IndexedDB 读写都集中在 offscreen 文档里，站点解析逻辑主体在 `packages/site`。Firefox 下 offscreen 的 handler 会被注册进 background 本身（本地消息快路径）。
 
-Copyright (c) 2020-present [pt-plugins](https://github.com/pt-plugins)
+## 数据、权限与隐私
 
-## Star History
+这一点值得你花两分钟读完：
 
-<a href="https://www.star-history.com/?type=date&repos=pt-plugins%2FPT-depiler">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pt-plugins/PT-depiler&type=date&theme=dark&legend=top-left&sealed_token=OpJ3esFdalMwUXwBy-fVSBoD13v91i_UOr42DGy3YnLp1vYTmzz-HlmjbwfzTMJK22WAF77Mxee0x-lJe92NjXvP49gWWVu7EhT84a48k1NhYwnbtC2LOXyqDKThfZBnFF8pXClgBHQlFQbuo9ECpgC4u4Srg412B8A4rCyBbHovALa7zXcHckFLy0CV" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pt-plugins/PT-depiler&type=date&legend=top-left&sealed_token=OpJ3esFdalMwUXwBy-fVSBoD13v91i_UOr42DGy3YnLp1vYTmzz-HlmjbwfzTMJK22WAF77Mxee0x-lJe92NjXvP49gWWVu7EhT84a48k1NhYwnbtC2LOXyqDKThfZBnFF8pXClgBHQlFQbuo9ECpgC4u4Srg412B8A4rCyBbHovALa7zXcHckFLy0CV" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pt-plugins/PT-depiler&type=date&legend=top-left&sealed_token=OpJ3esFdalMwUXwBy-fVSBoD13v91i_UOr42DGy3YnLp1vYTmzz-HlmjbwfzTMJK22WAF77Mxee0x-lJe92NjXvP49gWWVu7EhT84a48k1NhYwnbtC2LOXyqDKThfZBnFF8pXClgBHQlFQbuo9ECpgC4u4Srg412B8A4rCyBbHovALa7zXcHckFLy0CV" />
- </picture>
-</a>
+- **扩展申请了 `<all_urls>` 级别的 host 权限**。这是"一次搜索覆盖所有站点"的前提，但也意味着扩展**有能力**代你请求任意站点。代码里对可下载链接做了来源校验（只允许站点自身的域名族 / `magnet:`），但请仍然只从可信来源安装。
+- **你的站点凭据（passkey、Cookie）与下载器密码只保存在浏览器本地**（`chrome.storage.local` + IndexedDB），不会上传到任何第三方服务器。
+- **备份功能是唯一的例外**：如果你启用远端备份，备份内容（可能含 Cookie、下载器密码、站点 passkey）会被**加密后上传到你自己配置的服务器**。因此：不要恢复来源不明的备份文件——一份他人分享的备份可以植入指向攻击者的备份服务器，从而让你的凭据在下次自动备份时被上传。当前版本的恢复流程默认**不恢复**备份里的服务器配置，并在界面上给出显著警示。
+- **`web_accessible_resources` 目前对全部站点开放**（`assets/*`、`vendor/*`），任何网站都能据此探测你是否安装了本扩展。这是已知的隐私面，收窄方案需要配合构建期 chunk 清单，见代码注释。
 
---------------
+## 版本号规则
 
-特别感谢以下所有为本项目做出贡献的人 😍！
+构建时自动派生，无需手工维护：
 
-[![Contributors](https://contrib.rocks/image?repo=pt-plugins/PT-depiler)](../../graphs/contributors)
+```
+<package.json version>.<git rev-list --all --count>[+<short sha>]
+例：0.0.6.1954+1a2b3c4d
+```
+
+`manifest.json` 的 `version` 用前三段（Chrome 要求纯数字点分），`version_name` 额外带 commit，便于排查"用户装的是哪一次构建"。
+
+## 相关文档
+
+- **[代码审查报告（2026-10-04）](docs/code-review-2026-10-04.md)** —— 一次全量审查的完整结果：116 条发现（含阻断级 S-1/S-2/S-3）、逐条修复状态、独立对抗性验证结论、以及未修项与理由。**建议在改动 `background` / `offscreen` / 存储与消息层之前先读它。**
+
+## 致谢
+
+- [PT-depiler](https://github.com/rhilip/PT-depiler) —— 本项目的直接来源。
+- [Jackett](https://github.com/Jackett/Jackett) —— 大量站点定义与解析规则的参考来源。
+- [PTPP / PT-Plugin-Plus](https://github.com/pt-plugins/PT-Plugin-Plus) —— 同领域的先行者。
+- [pt-plugins](https://github.com/pt-plugins) 及各站点定义的上游贡献者。
+
+## 许可证
+
+[MIT](./LICENSE)。本项目源自 PT-depiler，保留上游版权声明（`Copyright (c) 2020 pt-plugins`）。
+
+---
+
+> **免责声明**：本工具只做"自动化你在浏览器里本来就能做的事"，不提供任何站点内容，也不绕过站点的邀请/权限体系。请遵守你所在站点的规则与当地法律；因使用本工具导致的账号问题（包括因过于频繁的请求被站点判定为滥用）由使用者自行承担。

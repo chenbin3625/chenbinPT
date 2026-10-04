@@ -55,7 +55,6 @@ async function updateStoredMediaServerConfigByDefault(e: TDownloaderKey) {
     enabled: true,
     id: nanoid(),
   };
-  console.log("storedDownloaderConfig", storedMediaServerConfig.value);
 }
 
 async function saveStoredMediaServerConfig() {
@@ -65,94 +64,60 @@ async function saveStoredMediaServerConfig() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable @after-leave="resetDialog">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetMediaServer.add.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-window v-model="currentStep">
-          <v-window-item :value="0">
-            <v-autocomplete
-              v-model="selectedMediaServerType"
-              :filter-keys="['raw.type']"
-              :hint="
-                allMediaServerMetaData[selectedMediaServerType!]?.description ?? t('SetDownloader.add.NoneSelectNotice')
-              "
-              :items="Object.values(allMediaServerMetaData)"
-              :multiple="false"
-              :placeholder="t('SetDownloader.add.selectPlaceholder')"
-              item-title="type"
-              item-value="type"
-              persistent-hint
-              @update:model-value="(e) => updateStoredMediaServerConfigByDefault(e)"
-            >
-              <template #selection="{ item: downloader }">
-                <v-list-item :prepend-avatar="getMediaServerIcon(downloader.type)" :title="downloader.type" />
-              </template>
-              <template #item="{ props, item: downloader }">
-                <v-list-item
-                  v-bind="props"
-                  :prepend-avatar="getMediaServerIcon(downloader.type)"
-                  :title="downloader.type"
-                >
-                </v-list-item>
-              </template>
-            </v-autocomplete>
-          </v-window-item>
-          <v-window-item :value="1">
-            <Editor
-              v-if="storedMediaServerConfig.type"
-              v-model="storedMediaServerConfig as IMediaServerUserConfig"
-              @update:config-valid="(e) => (isMediaServerConfigValid = e)"
-            />
-          </v-window-item>
-        </v-window>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 1"
-          color="blue-darken-1"
-          prepend-icon="mdi-chevron-left"
-          variant="text"
-          @click="currentStep--"
+  <a-modal v-model:open="showDialog" :title="t('SetMediaServer.add.title')" :width="800" :after-close="resetDialog">
+    <div v-if="currentStep === 0">
+      <a-select
+        v-model:value="selectedMediaServerType"
+        :placeholder="t('SetDownloader.add.selectPlaceholder')"
+        option-label-prop="children"
+        show-search
+        style="width: 100%"
+        @update:value="(e: any) => updateStoredMediaServerConfigByDefault(e)"
+      >
+        <a-select-option
+          v-for="mediaServer in Object.values(allMediaServerMetaData)"
+          :key="mediaServer.type"
+          :value="mediaServer.type"
         >
-          {{ t("common.dialog.prev") }}
-        </v-btn>
-        <v-btn
+          <a-avatar :size="20" :src="getMediaServerIcon(mediaServer.type)" />
+          {{ mediaServer.type }}
+        </a-select-option>
+      </a-select>
+      <div style="margin-top: 4px">
+        <a-typography-text type="secondary">
+          {{ allMediaServerMetaData[selectedMediaServerType!]?.description ?? t("SetDownloader.add.NoneSelectNotice") }}
+        </a-typography-text>
+      </div>
+    </div>
+    <div v-if="currentStep === 1">
+      <Editor
+        v-if="storedMediaServerConfig.type"
+        v-model="storedMediaServerConfig as IMediaServerUserConfig"
+        @update:config-valid="(e: any) => (isMediaServerConfigValid = e)"
+      />
+    </div>
+
+    <template #footer>
+      <a-flex align="center" justify="flex-end" :gap="8">
+        <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+        <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+        <a-button
           v-if="currentStep === 0"
           :disabled="selectedMediaServerType == null"
-          append-icon="mdi-chevron-right"
-          color="blue-darken-1"
-          variant="text"
+          type="primary"
           @click="currentStep++"
         >
           {{ t("common.dialog.next") }}
-        </v-btn>
-        <v-btn
+        </a-button>
+        <a-button
           v-if="currentStep === 1"
           :disabled="!isMediaServerConfigValid"
-          color="success"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
+          type="primary"
           @click="saveStoredMediaServerConfig"
         >
           {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        </a-button>
+      </a-flex>
+    </template>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

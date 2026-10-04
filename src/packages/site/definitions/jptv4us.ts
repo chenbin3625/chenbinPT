@@ -11,7 +11,6 @@ export const siteMetadata: ISiteMetadata = {
   version: 1,
   name: "JPTV4us",
   tags: ["综合"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

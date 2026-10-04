@@ -1,4 +1,969 @@
-@import "../../styles/vuetify/styles.scss";
+/*
+ * chenbinPT options 页面全局样式
+ *
+ * 迁移收口（task-8）后的约定：
+ * 1. 主题变量 --ptd-* 由 plugins/antd.ts 的 themeVars（antd Design Token）+ App.vue 写到 <html>，
+ *    本文件不再定义任何 --ptd-* 变量，只使用 var(--ptd-x, 回退值)。
+ * 2. 兼容层（plugins/ptdAntdCompat.ts）生成的类钩子已随组件删除清理，本文件不再为它们提供样式。
+ * 3. 迁移期的「临时工具类垫片」段与兼容层类钩子均已删除；调用点改用 antd 组件、
+ *    组件自有类（.ptd-*）或 var(--ptd-*) 内联样式。全站只有本文件与
+ *    content-script/app/app.css 两个全局样式表，组件 scoped style 仅 5 个文件。
+ * 4. 对 antd 内部类的覆写逐条注明「为什么 antd 原生做不到」；能用 ConfigProvider
+ *    token / 组件 props 表达的已在代码注释里标为「需求」。
+ */
 
-@import "../shared/common.scss";
-@import "./main.scss";
+/* ── 基础骨架 ──────────────────────────────────────────────────────────── */
+
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ptd-bg, #f5f5f5);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+#ptd {
+  min-height: 100vh;
+  background: var(--ptd-bg, #f5f5f5);
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+
+  /* 基准排版：全站唯一的一份声明，与 antd token 同源（见 plugins/antd.ts 的 buildThemeVars）。
+   *
+   * 本项目给 ConfigProvider 挂了 compactAlgorithm，它把基准字号取成 fontSizeSM，
+   * 于是 token.fontSize = 12px —— antd 组件内部就是 12px（表格单元格是下面那条 13px 的
+   * 覆写、少量 14px 是刻意的强调）。而项目此前从未声明过基准字体，组件之外的裸文本继承的是
+   * reset.css 的 `html { font-family: sans-serif }` 与浏览器默认 16px，同一个页面里
+   * 「组件文字 12px、裸文本 16px」并存。content-script overlay 侧同理
+   * （`all: initial` 拿到 16px、并手抄了一遍字体栈），两个 surface 的基准排版并不一致。
+   *
+   * 现在 options（本规则）与 overlay（content-script/app/app.css）读同一组变量，
+   * 值随 algorithm 变化，改一处即可同时覆盖两者。
+   * 下面三个回退值 = antd 官方默认（不挂 compact）的 token 值，只在变量尚未写入的首帧生效。 */
+  font-family: var(
+    --ptd-font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    "Noto Sans",
+    sans-serif
+  );
+  font-size: var(--ptd-font-size, 14px);
+  line-height: var(--ptd-line-height, 1.5714);
+}
+
+/*
+ * 图标文字按钮统一使用「文字在左、图标在右」。
+ * antd 4.x 的 Button 没有 iconPosition prop，并且总会把 #icon 插槽渲染在文案前；
+ * 用 flex order 同时覆盖插槽图标、直接子级图标和 loading 图标。重复类名用于压过
+ * antd 运行时注入的 :where(...).ant-btn display:inline-block。
+ */
+.ant-btn.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ant-btn:not(.ant-btn-icon-only):not(.status-btn) > .anticon,
+.ant-btn:not(.ant-btn-icon-only):not(.status-btn) > .ant-btn-loading-icon {
+  order: 1;
+}
+
+/* 间距由 flex gap 统一提供，清掉 antd 按 DOM 顺序添加的图标外边距。 */
+.ant-btn > .anticon + span,
+.ant-btn > span + .anticon,
+.ant-btn:not(.ant-btn-icon-only) > .ant-btn-loading-icon > .anticon {
+  margin-inline-start: 0;
+  margin-inline-end: 0;
+}
+
+/* ── 顶栏 ─────────────────────────────────────────────────────────────── */
+
+#ptd-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--ptd-surface, #fff);
+  border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  line-height: normal;
+}
+
+.ptd-inline-center {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ptd-secondary-text {
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+}
+
+.ptd-meta-text {
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+}
+
+.ptd-topbar-title,
+.ptd-single-site-item {
+  gap: 8px;
+  min-width: 0;
+}
+
+.ptd-topbar-title {
+  flex: 0 0 auto;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ptd-search-input {
+  display: flex;
+  align-items: stretch;
+  /* 搜索框贴到标题栏右侧：宽屏下 max-width 封顶后剩下的空白由 auto 外边距吸收；
+     窄屏时搜索框本来就会撑满剩余空间，不受影响 */
+  margin-left: auto;
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 680px;
+  height: 28px;
+}
+
+.ptd-search-input > .ptd-search-key {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ptd-search-plan-btn {
+  max-width: 220px;
+}
+
+.ptd-search-plan-label {
+  display: inline-block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.ptd-search-plan-subtitle {
+  margin-left: 6px;
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+}
+
+/* ── 热门推荐气泡 ─────────────────────────────────────────────────────── */
+
+.hot-recommendation-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hot-recommendation-spacer {
+  flex: 1 1 auto;
+}
+
+/*
+ * 气泡（面板 + popover 自身 12px×2 内边距）必须能塞进「图标右侧到视口左侧」这段空间，
+ * 否则 antd/rc-align 会把整块气泡水平平移进视口，箭头随之脱离图标、看起来像从别处弹出。
+ * 搜索框贴右后，火苗图标右边缘距视口右侧 ≈ 58px（顶栏 16px 留白 + 41px 搜索按钮），
+ * 再叠加 popover 内边距 24px 与滚动条/缩放余量，这里预留 104px。
+ * 若顶栏右侧新增控件，需要同步放大这里的留白，否则气泡会再次失去锚点。
+ */
+.hot-recommendation-panel {
+  width: min(1120px, calc(100vw - 104px));
+  max-width: calc(100vw - 104px);
+}
+
+.hot-recommendation-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 96px;
+}
+
+.hot-recommendation-list {
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.hot-recommendation-empty-list {
+  min-height: 40px;
+  padding: 12px;
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+  text-align: center;
+}
+
+/*
+ * 海报与右侧文字之间留 8px 空隙：antd 的 list-item 本身是 flex 容器（justify-content: space-between），
+ * 但 .hot-recommendation-body 带 flex: 1 1 auto，会把剩余宽度全部吃掉，space-between 不起作用，
+ * 文字仍然紧贴海报，所以这里显式写 gap。
+ * 首个子元素即 <a-image> 外层容器（a-image 把 class 透传到内部 <img>，容器本身拿不到自有 class），
+ * 用 :first-child 定位可以避免写 antd 的 image 容器类。
+ */
+.hot-recommendation-item {
+  min-height: 118px;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.hot-recommendation-item > :first-child {
+  flex: 0 0 60px;
+  width: 60px;
+  height: 84px;
+}
+
+.hot-recommendation-item:hover {
+  background: var(--ptd-hover, rgba(0, 0, 0, 0.04));
+}
+
+/*
+ * 海报缩略图固定 60x84，不随原始海报的宽高比变化。
+ * 需求：`<a-image>` 加 `:width="60" :height="84"` + `:style="{ objectFit: 'cover', borderRadius: '4px' }"`
+ * 后，本规则可删。用 CSS 的原因是 antd 自带
+ * 的 image 规则（`:where(.css-x)` + 容器 + image-img，实际权重 0,2,0）会强制 width:100%/height:auto，
+ * 单类选择器压不住它，必须补到 (0,3,0)。
+ */
+.hot-recommendation-item .hot-recommendation-poster.ant-image-img {
+  width: 60px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.hot-recommendation-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hot-recommendation-title-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.hot-recommendation-title {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hot-recommendation-rating {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+}
+
+.hot-recommendation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  margin-top: 3px;
+  margin-bottom: 3px;
+}
+
+/*
+ * 需求：把这三个 <a-tag> 包进 `<a-space :size="4">`（或给 a-tag 内联 margin-inline-end: 0）后即可。
+ * antd 的 Tag 自带 margin-inline-end: 8px，叠在上面的 flex gap 上会把标签间距撑到 12px；
+ * 全局 token（marginXS）会影响所有 Tag，不能用。
+ * 需求：a-col 的直接子元素 `<a-typography-text strong>` 需要「块级 + 8px 下边距」，
+ * antd 的 Typography 没有对应 prop；给它加一个自有 class（如 .hot-recommendation-group-title）后补规则。
+ */
+.hot-recommendation-summary {
+  display: -webkit-box;
+  min-height: 36px;
+  margin-bottom: 0;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ── 左侧导航 ─────────────────────────────────────────────────────────── */
+
+/* 左侧导航固定在视口（顶栏 48px 之下），页面滚动时不再被卷走 */
+#ptd-navigation {
+  position: sticky;
+  top: 48px;
+  align-self: flex-start;
+  height: calc(100vh - 48px);
+  min-height: calc(100vh - 48px);
+  border-right: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+}
+
+/* 注意：这里**不能**给 #ptd-navigation 加 overflow: hidden，
+   否则窄屏折叠时 antd 原生的零宽触发器（绝对定位在侧栏右侧外面）会被裁掉。 */
+.ptd-navigation-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 菜单自身滚动，页脚（.ptd-navigation-footer，margin-top: auto）固定在底部。
+ * antd Menu 没有「撑满剩余高度并内部滚动」的 prop，只能覆写其 flex/overflow。 */
+.ptd-navigation-inner > .ant-menu {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 左侧菜单文案保持紧凑，不改变图标尺寸和菜单项高度。 */
+#ptd-navigation .ant-menu-item-group-title,
+#ptd-navigation .ant-menu-title-content {
+  font-size: 13px;
+}
+
+/* 原生零宽触发器：默认 top 是 antd 的 header 高度(48px)，本项目顶栏也为 48px，贴合其下沿。
+ * antd 未暴露该偏移量的 prop。 */
+#ptd-navigation.ant-layout-sider-zero-width .ant-layout-sider-zero-width-trigger {
+  top: 0;
+}
+
+/* ── 主内容区 ─────────────────────────────────────────────────────────── */
+
+#ptd-main {
+  min-width: 0;
+  min-height: calc(100vh - 48px);
+  padding: 12px;
+  overflow: auto;
+}
+
+#ptd-main > .ant-card,
+#ptd-main > .ant-tabs {
+  margin-bottom: 12px;
+}
+
+#ptd-main .ant-card > .ant-card-body {
+  padding: 12px;
+}
+
+/* ── 列表页工具条 ─────────────────────────────────────────────────────── */
+
+/*
+ * a-flex 默认输出 nowrap 类（antd 运行时注入，晚于本文件），单类选择器会被它改回 nowrap。
+ * 这里用页面容器 id 提供优先级实现换行，不再写「flex + page-toolbar」双类提权。
+ * 需求：调用点改为 `<a-flex class="page-toolbar" wrap="wrap" align="center" :gap="8">` 后，本规则可删。
+ */
+#ptd-main .page-toolbar {
+  flex-wrap: wrap;
+}
+
+/*
+ * 搜索/筛选框固定 320px（最少 160px）并始终贴右。
+ * 需求：调用点给搜索控件内联 `style="flex: 0 1 320px; min-width: 160px; margin-inline-start: auto"` 后可删。
+ * margin-inline-start: auto 让它在「按钮 + 搜索」同排、以及换行后独占一行两种情形下
+ * 都停在右侧，而不会像纯 wrap 那样落到第二行行首、右侧留出一大片空白。
+ */
+.page-toolbar > .ant-input-affix-wrapper {
+  flex: 0 1 320px;
+  min-width: 160px;
+  margin-inline-start: auto;
+}
+
+/* ── 设置页（SetBase / SetSite / SetDownloader / SetSearchSolution / SetBackup / SetMediaServer）── */
+
+/* 列表页卡片：表格自带边框，卡片本身只做裁切，避免表格圆角顶出卡片 */
+.ptd-settings-card {
+  overflow: hidden;
+}
+
+/*
+ * 卡片体去内边距，让表格/工具条贴着卡片边缘。
+ * 需求（可选）：各卡片调用点改用 `:body-style="{ padding: 0 }"` 后可删。
+ */
+.ptd-settings-card > .ant-card-body {
+  padding: 0;
+}
+
+.ptd-settings-card .ptd-data-table {
+  border-top: 0;
+}
+
+/* 普通分组标题与说明。Alert 只留给需要用户注意的状态。 */
+.ptd-section-heading,
+.ptd-inline-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ptd-section-heading {
+  min-height: 32px;
+  margin: 8px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  font-weight: 600;
+}
+
+.ptd-inline-toolbar {
+  margin-bottom: 12px;
+}
+
+.ptd-section-description {
+  display: block;
+  margin: 4px 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+:where(.ptd-section-description, .ptd-setting-group__title, .ptd-setting-note, .ptd-selection-bar__size) {
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+}
+
+/* 设置页内容区的内边距，分两档：
+ * - .ptd-settings-form 是通用档，四边 16px（layoutDensity.test.ts 直接断言这个计算值）；
+ * - SetBase 页在这个类之上再挂 .ptd-set-base-form，把上边距收紧为 12px
+ *   （`12px 16px 16px`，见 setBaseLayout.test.ts）。两条规则权重相同、后者在文件中靠后，
+ *   因此带两个类的元素最终是 12px 16px 16px，只有通用类的元素是 16px。
+ * 左右都是 16px，与页签栏（.ant-tabs-nav 的 padding: 0 16px）对齐到同一条竖线。
+ * （此前本注释写的是「均为 24px」，与两条规则的实际取值都不符。）
+ *
+ * 布局约定：
+ * - 每个板块（.ptd-settings-section）独占整行、自上而下堆叠，板块之间用分隔线 + 上下留白隔开；
+ * - 板块内一行只放一个选项：文案（含说明）在左、控件/按钮在右，所有控件的右边缘对齐到同一条竖线；
+ * - 内容区限制最大宽度，避免宽屏下左侧文案与右侧开关相距过远。 */
+.ptd-settings-form {
+  padding: 16px;
+}
+
+.ptd-set-base-card > .ant-card-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ptd-set-base-card .ant-tabs-nav {
+  margin: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+}
+
+.ptd-set-base-card .ant-tabs-nav-wrap {
+  min-width: 0;
+}
+
+.ptd-set-base-card .ant-tabs-extra-content {
+  margin-left: 12px;
+}
+
+.ptd-set-base-form {
+  padding: 12px 16px 16px;
+}
+
+.ptd-set-base-form .ptd-settings-grid {
+  margin: 0 auto;
+}
+
+.ptd-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  align-items: start;
+  max-width: 960px;
+}
+
+.ptd-settings-section {
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+}
+
+.ptd-settings-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* 板块内的子分组（“基础设置”“侧边栏样式”“筛选”等）：标题 + 若干选项行 */
+.ptd-setting-group {
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.ptd-setting-group__title {
+  padding-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 一行一个选项：文案居左，控件/按钮统一右对齐。
+ * 各设置页在模板里显式用 .ptd-settings-row 包裹，不再依赖 `.ptd-field`/`.ptd-switch` 等兼容层类钩子。 */
+.ptd-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 24px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 0;
+}
+
+/* 板块标题行：模板里用 <strong> 表示加粗，这里只保留语义钩子 */
+.ptd-settings-row--title {
+  min-width: 0;
+}
+
+/* 选项下方的说明块（如“自动刷新”“自动延长 cookies”的配置提示） */
+.ptd-setting-note {
+  padding: 4px 0 8px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+/* 「插件重置」页的列表行：同样是一行一个选项，文案在左、按钮在右；
+ * 去掉左右内边距，让按钮右边缘与其它页签的控件对齐到同一条竖线。 */
+.ptd-settings-form .ptd-list-item {
+  padding: 8px 0;
+  gap: 16px;
+}
+
+/* ── 数据表 ───────────────────────────────────────────────────────────── */
+
+/*
+ * 表格与上方组件之间的空隙。
+ *
+ * 卡片里「工具条 + 表格」是最常见的组合（我的数据 / 下载历史 / 辅种任务 / 搜索结果 …），
+ * 此前表格紧跟工具条，看起来是粘在一起的。这里统一给表格留出上边距；
+ * 表格本来就是容器的第一个元素时（设置页卡片 body 的 padding 为 0、弹层正文首元素）不留，
+ * 否则会在卡片标题 / 弹层标题下方凭空多出一段空白。
+ */
+.ant-table-wrapper {
+  margin-top: 12px;
+}
+
+.ant-table-wrapper:first-child {
+  margin-top: 0;
+}
+
+.ptd-data-table,
+.ant-table-wrapper {
+  width: 100%;
+}
+
+.ptd-data-table table,
+.ant-table-wrapper table {
+  width: 100%;
+  table-layout: auto;
+}
+
+/*
+ * 兜底：各列宽度之和确实超过容器时（例如窄窗口下的下载历史表），
+ * 让表格在自己的容器里横向滚动，而不是把卡片/内容区顶出去。
+ */
+.ptd-data-table .ant-table-content,
+.ptd-data-table .ant-table-body,
+.ant-table-wrapper .ant-table-content,
+.ant-table-wrapper .ant-table-body {
+  overflow-x: auto;
+}
+
+/*
+ * 统一紧凑单元格。
+ *
+ * 作用域刻意不写 `#ptd-main`：弹层（我的数据历史 / 客户端详情 / 路径标签说明）里的表格
+ * 没有 #ptd-main 祖先，此前吃 antd 默认内边距，行高明显比页面内表格大。
+ *
+ * 为什么用 CSS 而不是 ConfigProvider 的 Table token：
+ * - 无 size 的表格，纵向内边距取的是全局 token `paddingContentVerticalLG`，不是 Table 组件 token；
+ * - 表头字号没有对应 token（tableFontSize 同时作用于表头与表体，而两者需要不同字号）。
+ * 内边距同时覆盖 size="middle"/"small" 的表格（antd 的大小类规则在 :where() 里，权重为 0）。
+ */
+.ant-table-wrapper .ant-table-thead > tr > th {
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1.3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * 单元格文本：限制最大宽度、超出单行省略，悬停由 Tooltip 展示全文。
+ * 渲染入口见 views/Overview/utils/antdTable.ts 的 renderEllipsisCell / withEllipsisCell。
+ * 需求：调用点给出 maxWidth 时用内联 max-width 覆盖兜底值。
+ */
+.ptd-cell-ellipsis {
+  display: block;
+  max-width: var(--ptd-cell-max-width, 20rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ptd-date-time {
+  white-space: pre-line;
+}
+
+.ant-table-wrapper .ant-table-title {
+  padding: 6px;
+}
+
+.ant-table-wrapper .ant-table-pagination.ant-pagination {
+  margin: 8px 0 0;
+}
+
+.ant-table-wrapper .ant-table-column-sorters {
+  gap: 4px;
+}
+
+/*
+ * 这里原本还有一条 `.ant-table-filter-column { gap: 4px }`：本项目没有任何一列使用
+ * antd 的列筛选（`column.filters` / `filterDropdown`），筛选全部走 useAdvanceFilter 的
+ * 工具条 + 高级筛选对话框，这条规则从未命中过任何元素，已删除。
+ */
+
+/*
+ * 斑马纹：antd 没有斑马纹 token，只能自定义。染在 <tr> 上（权重最低），
+ * 行 hover / 选中 / 排序列的底色由 antd 画在 <td> 上，天然覆盖本规则，不需要权重工程。
+ * 同时命中 content-script 里直接用 `.table-stripe` 的 a-table。
+ */
+.table-stripe tbody > tr:nth-child(2n),
+.ptd-data-table .ant-table-tbody > tr:nth-child(2n) {
+  background-color: var(--ptd-stripe, #fafafa);
+}
+
+/*
+ * 搜索页分组色条：选中列之后紧邻的单元格画一条竖色条（颜色由组件内联 --ptd-size-group-color 提供）。
+ * antd Table 没有「给某列画左侧色条」的能力。
+ */
+#ptd-search-entity-table td.ant-table-selection-column + td {
+  box-shadow: inset 3px 0 0 var(--ptd-size-group-color, transparent);
+}
+
+/* 操作栏：一组自带边框的图标按钮，一行排开不折叠，用 .table-action 单类控制 */
+.table-action {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+/* 多选操作条（a-button-group 外层）与文字按钮组：仅布局，按钮圆角交给 antd */
+.ptd-action-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+/* 语义钩子：带文案的按钮组由 antd a-button-group 自行处理首尾圆角，这里不额外加样式 */
+.ptd-action-text {
+  min-width: 0;
+}
+
+/* 表头不折行：用元素选择器直接命中 th，避免写 antd 内部类 */
+.table-header-no-wrap th {
+  white-space: nowrap;
+}
+
+/* ── 应用内组件类 ─────────────────────────────────────────────────────── */
+.ptd-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+.downloader_label,
+.downloader_info {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.downloader_label {
+  gap: 8px;
+}
+
+.downloader_info {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.downloader_icon {
+  flex: 0 0 auto;
+}
+
+.table-switch-btn,
+.status-btn.status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-btn__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 图标尺寸：默认不写尺寸，跟随所在文本（@ant-design/icons 的 svg 是 1em）。
+ * 只有需要脱离正文档次的图标才显式给档位——全站仅下面两档，各一处定义
+ * （此前散落 13 处内联 font-size: 12px 与 2 处 36px）。 */
+.ptd-icon-sm {
+  font-size: 12px;
+}
+
+/* 状态大图标：媒体信息弹层里「已观看 / 已收藏」这类独立成行的状态标记 */
+.ptd-icon-lg {
+  font-size: 36px;
+}
+
+.info-label {
+  font-size: 12px;
+}
+
+:where(.info-label) {
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+}
+
+.chart {
+  min-height: 240px;
+}
+
+.raw-json {
+  max-width: 100%;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 快速站点筛选（QuickFilterNotice）：普通行内布局，不再用 alert 承载 */
+.quick-site-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.quick-site-filter__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.12));
+  border-radius: 4px;
+  background: var(--ptd-surface, #fff);
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.quick-site-filter__option:hover {
+  border-color: var(--ptd-primary, #1677ff);
+  color: var(--ptd-primary, #1677ff);
+}
+
+.quick-site-filter__option--active {
+  border-color: var(--ptd-primary, #1677ff);
+  background: color-mix(in srgb, var(--ptd-primary, #1677ff) 10%, transparent);
+  color: var(--ptd-primary, #1677ff);
+}
+
+.quick-site-filter__option--icon-only {
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+}
+
+.quick-site-filter__icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+}
+
+.quick-site-filter__favicon {
+  flex: 0 0 auto;
+}
+
+.quick-site-filter__name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  text-overflow: ellipsis;
+}
+
+.quick-site-filter__option .ant-image {
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.quick-site-filter__option .ant-image-img {
+  display: block;
+}
+
+/* 搜索结果页底部多选操作条（SelectionBar）：仅在选中种子后出现，不使用 alert 样式。
+ * 位置不用 sticky —— #ptd-main 带 overflow:auto 是 sticky 的滚动容器且自身从不滚动；
+ * 这里由组件按 #ptd-main 的实际内边界算出 left/right/bottom 内联样式，position:fixed 贴在视口底部。 */
+.ptd-selection-bar {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--ptd-surface, #fff);
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.ptd-selection-bar__info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ptd-selection-bar__size {
+  font-weight: 400;
+}
+
+.ptd-selection-bar .ptd-selection-bar__divider {
+  align-self: center;
+  height: 18px;
+}
+
+.ptd-selection-bar .ptd-selection-bar__spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.ptd-col-category-select {
+  flex: 1 1 calc(100% - 48px);
+  max-width: calc(100% - 48px);
+}
+
+.retention-group {
+  display: grid;
+  gap: 12px;
+}
+
+.retention-field {
+  max-width: 260px;
+}
+
+.retention-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 我的数据设置弹层：设置名在左，开关固定在右侧，便于纵向扫描。 */
+.my-data-setting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 320px;
+}
+
+.my-data-setting-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ── 海报墙（MyData / MediaServerEntity）──────────────────────────────── */
+
+.masonry-grid {
+  width: 100%;
+  padding: 10px 1%;
+  column-width: 180px;
+  column-gap: 12px;
+}
+
+.masonry-item {
+  break-inside: avoid;
+  margin-bottom: 12px;
+}
+
+.masonry-left-label,
+.masonry-right-label {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  max-width: calc(100% - 50px);
+  overflow: hidden;
+}
+
+.masonry-left-label {
+  left: 8px;
+}
+
+.masonry-right-label {
+  right: 8px;
+}
+
+/* ── 响应式断点 ───────────────────────────────────────────────────────── */
+
+@media (max-width: 840px) {
+  #ptd-topbar {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  #ptd-main {
+    padding: 8px;
+  }
+
+  .ptd-search-plan-label {
+    max-width: 96px;
+  }
+
+  /* 窄屏：按钮只显示图标，搜索框独占一整行（宽度吃满，方便输入）。
+   * 需求：调用点加 `wrap="wrap"` + 内联 `flex: 1 1 100%` 后可删。 */
+  .page-toolbar > .ant-input-affix-wrapper {
+    flex: 1 1 100%;
+    min-width: 100%;
+  }
+}

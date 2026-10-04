@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "咖啡",
   aka: ["PTCafe", "咖啡PT"],
   description: "热爱生活·享受咖啡",
-  timezoneOffset: "+0800",
   favicon: "./ptcafe.ico",
 
   collaborator: ["yanleichang"],

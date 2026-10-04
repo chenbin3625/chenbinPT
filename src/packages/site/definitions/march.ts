@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["三月传媒"],
   description: "分享所爱，开放交流", // 站点说明
   tags: ["WEB", "综合"],
-  timezoneOffset: "+0800",
   type: "private",
   schema: "NexusPHP",
   urls: ["https://duckboobee.org/", "https://marchcms.org/"],

@@ -1,7 +1,7 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/TorrentDay.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/www.torrentday.com/config.json
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/www.torrentday.com/config.json
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * TorrentDay (TD) 是一个综合类私有站点。
  *

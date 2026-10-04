@@ -19,18 +19,18 @@ jobs:
       # 安装 wepub CLI（iorate/wepub），用于发布到 Chrome / Firefox / Edge 扩展商店
       # Chrome Web Store API v2 / Firefox Add-ons API v5 / Edge Add-ons API v1.1
       - name: Setup wepub
-        uses: iorate/wepub/setup@v1
+        uses: iorate/wepub/setup@cc561a13c1b2a0eb32e0e56aadeef79a289d4acc # v1
 
       # 下载 action_build.yml 构造出来的 extension-chrome.zip, extension-firefox.zip 两个文件
       - name: Download Chrome Built Artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: build-zip-*
           merge-multiple: true
 
       # 发布 GitHub Release
       - id: github_release
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           name: v${{ needs.build.outputs.version }}
           tag: v${{ needs.build.outputs.version }}

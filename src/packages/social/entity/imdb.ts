@@ -1,4 +1,5 @@
 import axios from "axios";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 import {
   IFetchSocialSiteInformationConfig,
   IPtgenApiResponse,
@@ -45,7 +46,14 @@ export const pageParserMatches: TSupportSocialSitePageParserMatches = [
         if (page_json && page_json.name) {
           titles.push(page_json.name);
         }
-      } catch (e) {}
+      } catch (e) {
+        // P1-5：IMDb 页面可能没有 ld+json 或内容不是合法 JSON，此时仅拿不到标题、
+        // 不影响 id 解析，属于良性降级；记录原因便于排查站点改版。
+        logMessage("[Imdb] 解析页面 ld+json 失败，标题将为空", {
+          url: doc.URL,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
 
       return {
         site: "imdb",

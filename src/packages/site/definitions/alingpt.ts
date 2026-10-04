@@ -10,7 +10,6 @@ export const siteMetadata: ISiteMetadata = {
   version: 1,
   id: "alingpt",
   name: "alingPT",
-  timezoneOffset: "+0800",
   type: "private",
   schema: "NexusPHP",
   urls: ["https://pt.aling.de/"],

@@ -1,11 +1,14 @@
-import Sizzle from "sizzle";
+import { matchesSelector, selectElements } from "../utils/selector";
 import { get, isEmpty, set } from "es-toolkit/compat";
 import { chunk, pascalCase, pick, toMerged, union } from "es-toolkit";
 import { type AxiosError, type AxiosRequestConfig, type AxiosResponse } from "axios";
+import PQueue from "p-queue";
 import { supportSocialSite } from "@ptd/social";
 
+import { isDebug } from "~/helper.ts";
+
 // noinspection ES6PreferShortImport
-import { axios, isCloudflareBlocked, retrieve, sleep, store } from "../utils/adapter";
+import { axios, isCloudflareBlocked, retrieve, sleep, store, logMessage } from "../utils/adapter";
 import {
   EResultParseStatus,
   IElementQuery,
@@ -15,7 +18,6 @@ import {
   NeedLoginError,
   CFBlockedError,
   NoTorrentsError,
-  NoUserInputError,
   IAdvanceKeywordSearchConfig,
   ISearchInput,
   ITorrentTag,
@@ -35,6 +37,11 @@ import {
   parseTimeWithZone,
   tryToNumber,
   hasNonLatinCharacters,
+  classifySiteError,
+  redactSensitive,
+  siteErrorLogData,
+  NetworkError,
+  ServerError,
 } from "../utils";
 
 export const SchemaMetadata: Partial<ISiteMetadata> = {
@@ -61,15 +68,69 @@ const defaultTorrentSelectorKey = [
   "status",
 ];
 
+/**
+ * 按 searchEntry.selectors 记忆化的「逐字段解析计划」，
+ * 避免每一行都重复 Object.keys/union/pascalCase 及 `in this` 反射
+ */
+type TorrentRowParsePlanItem = {
+  key: keyof Omit<ITorrent, "site">;
+  fnKey?: string;
+  selector?: IElementQuery;
+};
+
+// Sizzle 的位置伪类（:first/:last/:eq/:gt/:lt/:even/:odd）在 matchesSelector 下语义不完整，命中时回落为逐个查询
+const positionalSelectorPattern = /:(?:first|last|eq|gt|lt|even|odd)(?![\w-])/;
+
+/**
+ * fixLink 允许出现的协议白名单（S-2）。
+ *
+ * 站点数据全部来自页面解析结果（拖拽载荷甚至可以被页面完全伪造），
+ * 而 `new URL(uri, base)` 会原样保留 javascript: / data: / file: 等绝对 scheme，
+ * 这些值随后会流向扩展特权请求、chrome.downloads 与 window.open，
+ * 因此这里只放行真正可用于下载的三种协议。
+ */
+const allowedLinkProtocols = ["http:", "https:", "magnet:"];
+
+/** 显式 scheme 的正则：没有 scheme 的输入是相对路径，会由 fixLink 按站点基址解析 */
+const explicitSchemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+/**
+ * 判断链接的协议是否在白名单内。
+ * 没有显式 scheme 的相对路径（`./x`、`x`、`/x`）直接放行——它们最终会落到站点的 http(s) 基址上。
+ *
+ * 这里只做「文本层面的 scheme 提取」，不再重新 `new URL()` 解析：
+ * `//` 分支按既有逻辑会产出 `https:://host/path` 这种浏览器可容错、但 URL 解析器不保证接受的形式，
+ * 重新解析会把这个既有的合法输入误判成危险链接。
+ */
+function hasAllowedLinkProtocol(url: string): boolean {
+  const scheme = url.match(explicitSchemePattern)?.[0];
+  return scheme ? allowedLinkProtocols.includes(scheme.toLowerCase()) : true;
+}
+
 // 适用于公网BT站点，同时也作为 所有站点方法 的基类
 export default class BittorrentSite {
   public readonly metadata: ISiteMetadata; // 实际过程中使用的配置文件
   public readonly userConfig: ISiteUserConfig;
 
+  // 行级选择器结果缓存：同一行内相同的选择器只求值一次（键为行元素，值为 选择器 -> 结果元素）
+  private _rowElementQueryCache = new WeakMap<Element, Map<string, Element | null>>();
+  // 逐字段解析计划的记忆化缓存（键为 searchEntry.selectors 对象）
+  private _torrentRowParsePlanCache = new WeakMap<object, TorrentRowParsePlanItem[]>();
+
   constructor(metadata: ISiteMetadata, userConfig: ISiteUserConfig = {}) {
     this.metadata = toMerged(metadata, userConfig.merge ?? {});
     this.userConfig = userConfig;
-    console?.log(`[Site] ${this.name} Initialized with Metadata: `, this.metadata, "UserConfig: ", this.userConfig);
+
+    // P1-2：metadata / userConfig 中可能包含 token、cookie、passkey 等敏感信息，
+    // 因此详细内容只在调试构建下打印，并且必须先经过 redactSensitive 脱敏。
+    if (isDebug) {
+      console.log(
+        `[Site] ${this.name} Initialized with Metadata: `,
+        redactSensitive(this.metadata),
+        "UserConfig: ",
+        redactSensitive(this.userConfig),
+      );
+    }
   }
 
   get name(): string {
@@ -126,45 +187,113 @@ export default class BittorrentSite {
     // 如果站点有请求延迟，则等待一段时间
     await this.sleepAction(this.metadata.requestDelay ?? 0);
 
-    let req: AxiosResponse;
-    try {
-      req = await axios.request<T>(axiosConfig);
+    // 对网络错误（没有拿到 response）/ 超时 / 5xx / 429 做 1~2 次指数退避重试
+    const maxRetryTimes = 2;
+    const retryableStatusCodes = [429, 500, 502, 503, 504];
 
-      // 全局性的替换 span.__cf_email__
-      if (axiosConfig.responseType === "document") {
-        const doc = req.data;
+    let req: AxiosResponse<T> | undefined;
+    let lastError: unknown;
+    let cloudflareBlocked = false;
 
-        // 进行简单的检查，防止无意义的替换
-        if (doc instanceof Document && doc.documentElement.outerHTML.search("__cf_email__")) {
-          const cfProtectSpan = Sizzle(".__cf_email__", doc);
-
-          cfProtectSpan.forEach((element) => {
-            element.replaceWith(cfDecodeEmail((element as HTMLElement).dataset.cfemail!));
-          });
-        }
-
-        req.data = doc;
+    for (let attempt = 0; attempt <= maxRetryTimes; attempt++) {
+      // 指数退避：500ms、1000ms
+      if (attempt > 0) {
+        await this.sleepAction(500 * 2 ** (attempt - 1));
       }
-    } catch (e) {
-      // 从 AxiosError 中获取 response
-      req = (e as AxiosError).response!;
+
+      try {
+        req = await axios.request<T>(axiosConfig);
+
+        // 全局性的替换 span.__cf_email__
+        if (axiosConfig.responseType === "document") {
+          const doc = req.data;
+
+          // 进行简单的检查，防止无意义的替换
+          if (doc instanceof Document && doc.documentElement.outerHTML.search("__cf_email__")) {
+            const cfProtectSpan = selectElements(".__cf_email__", doc);
+
+            cfProtectSpan.forEach((element) => {
+              element.replaceWith(cfDecodeEmail((element as HTMLElement).dataset.cfemail!));
+            });
+          }
+
+          req.data = doc;
+        }
+      } catch (e) {
+        lastError = e;
+        // 从 AxiosError 中获取 response（网络错误/超时时为 undefined）
+        req = (e as AxiosError).response as AxiosResponse<T> | undefined;
+      }
+
+      // Cloudflare 拦截交由后续逻辑抛出 CFBlockedError，不在此处重试
+      if (req !== undefined && isCloudflareBlocked(req)) {
+        cloudflareBlocked = true;
+        break;
+      }
+
+      // 网络错误 / 超时：没有拿到任何响应
+      if (req === undefined) {
+        const isCanceled = (lastError as AxiosError | undefined)?.code === "ERR_CANCELED";
+        if (isCanceled || attempt >= maxRetryTimes) {
+          break;
+        }
+        continue;
+      }
+
+      // 限流或服务端错误：还有重试次数则重试
+      if (retryableStatusCodes.includes(req.status) && attempt < maxRetryTimes) {
+        continue;
+      }
+
+      break;
     }
 
-    if (isCloudflareBlocked(req)) {
+    if (cloudflareBlocked) {
       throw new CFBlockedError();
     }
 
+    if (req === undefined) {
+      // 显式处理没有拿到响应的情况，避免后续访问 req.status 抛出 TypeError 而被误记为 parseError
+      const error = lastError as AxiosError | undefined;
+      // 用 NetworkError 标记「网络/超时」来源，便于上层区分「网络问题」与「真正的解析失败」（P1-3）
+      throw new NetworkError(`Network Error: ${error?.message || error?.code || "No response received"}`.trim());
+    }
+
     // 随后检查是否需要登录
-    if (checkLogin && !this.loggedCheck(req!)) {
+    if (checkLogin && !this.loggedCheck(req)) {
       throw new NeedLoginError();
     }
 
     // 如果非需要登录的情况，但还是返回了 4xx 或者 5xx ，则抛出错误
     if (req.status >= 400) {
-      throw Error(`Network Error: ${req.status} ${req.statusText || ""}`.trim());
+      // 用 ServerError 标记「服务端返回错误状态码」来源（429/5xx 等可重试场景）
+      throw new ServerError(`Network Error: ${req.status} ${req.statusText || ""}`.trim());
     }
 
     return req;
+  }
+
+  /**
+   * 生成一个用于「有上限并发」请求的节流器：
+   * 保证并发发起的请求，起始时间至少间隔 delay 毫秒，从而在并发的同时不放大站点的请求频率。
+   * delay <= 0 时不做任何等待。
+   *
+   * P2-3：实现已收敛为 p-queue 的薄封装（并发 1 + 每个 interval 只放行 1 个任务），
+   * 与 backupServer/utils.ts、social/recommendations.ts 使用同一套并发原语；
+   * 函数签名、默认并发常量与调用点均保持不变。
+   */
+  protected createRequestThrottle(delay: number | undefined): () => Promise<void> {
+    const interval = delay && delay > 0 ? delay : 0;
+
+    if (interval <= 0) {
+      return async () => {};
+    }
+
+    const throttleQueue = new PQueue({ concurrency: 1, interval, intervalCap: 1 });
+
+    return async () => {
+      await throttleQueue.add(async () => {});
+    };
   }
 
   /**
@@ -297,20 +426,23 @@ export default class BittorrentSite {
       result.data = await this.transformSearchPage(req.data, { keywords, searchEntry, requestConfig });
       result.status = EResultParseStatus.success;
     } catch (e) {
-      if (import.meta.env.DEV) {
-        console.error(e);
-      }
-      result.status = EResultParseStatus.parseError;
+      // P1-3：区分「网络/超时/服务端错误（可重试）」与「真正的解析失败（重试无用）」，
+      // 并把 e.message 透传到 statusMsg；P1-2：生产环境同样记录日志，而不是只写在 DEV 守卫里。
+      const { status, statusMsg, retryable } = classifySiteError(e);
+      result.status = status;
+      result.statusMsg = statusMsg;
 
-      if (e instanceof CFBlockedError) {
-        result.status = EResultParseStatus.CFBlocked;
-      } else if (e instanceof NeedLoginError) {
-        result.status = EResultParseStatus.needLogin;
-      } else if (e instanceof NoUserInputError) {
-        result.status = EResultParseStatus.noUserInput;
-      } else if (e instanceof NoTorrentsError) {
-        result.status = EResultParseStatus.noResults;
-      }
+      logMessage(
+        `[Site] ${this.name} getSearchResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        {
+          site: this.metadata.id,
+          keywords,
+          status,
+          retryable,
+          error: siteErrorLogData(e),
+        },
+        retryable ? "warn" : "error",
+      );
     }
     return result;
   }
@@ -335,6 +467,20 @@ export default class BittorrentSite {
         const requestUrl = axios.getUri(requestConfig);
         url = new URL(uri, requestUrl).toString();
       }
+
+      // S-2：协议白名单。上面的解析会保留 uri 里的任意绝对 scheme
+      // （javascript: / data: / blob: / file: / vbscript: / about: 等），
+      // 这些值最终会流向扩展特权请求 / chrome.downloads / window.open，
+      // 因此既不静默放行、也不静默丢弃：记一条 warn 日志后返回空串，由调用方明确失败。
+      if (!hasAllowedLinkProtocol(url)) {
+        logMessage(
+          `[Site] ${this.name} fixLink rejected unsafe protocol`,
+          // 只记录截断后的原文：站点数据来自页面，日志不应被超长的伪造 URL 撑爆
+          { site: this.metadata.id, uri: url.length > 120 ? `${url.slice(0, 120)}…` : url },
+          "warn",
+        );
+        return "";
+      }
     }
 
     return url;
@@ -357,16 +503,72 @@ export default class BittorrentSite {
       fields = Object.keys(selectors as Record<string, any>) as (keyof S)[];
     }
 
-    // @ts-ignore
-    for (const [key, selector] of Object.entries(pick(selectors, fields))) {
-      // @ts-ignore
-      ret[key] = this.getFieldData(element, selector as IElementQuery);
+    // 说明（P2-4）：selectors 的泛型约束允许 undefined（部分 schema 的 selectors 为可选），
+    // 而 ret 是映射类型、没有字符串索引签名，因此这里做一次显式收窄而不是用类型抑制注释掩盖。
+    const pickedSelectors = pick((selectors ?? {}) as Record<string, IElementQuery>, fields as string[]) as Record<
+      string,
+      IElementQuery
+    >;
+    const retRecord = ret as Record<string, any>;
+
+    for (const [key, selector] of Object.entries(pickedSelectors)) {
+      // 传入 key 以启用 getFieldData 的「按字段名推导返回类型」重载（见 P2-4）
+      retRecord[key] = this.getFieldData(element, selector, key as keyof Omit<ITorrent, "site">);
     }
 
     return ret;
   }
 
-  protected getFieldData(element: Element | object, elementQuery: IElementQuery): any {
+  /**
+   * 重建行级选择器缓存（每次 transformSearchPage 开始时调用，把缓存生命周期限制在一次页面解析内）
+   */
+  protected resetRowElementQueryCache(): void {
+    this._rowElementQueryCache = new WeakMap();
+  }
+
+  /**
+   * 在指定元素内查询选择器，并按 (element, selector) 做行级缓存，避免同一行内相同选择器被重复求值。
+   * 仅缓存 Element 上下文（行元素），Document 等上下文不缓存，以免跨调用读到过期结果。
+   */
+  private queryRowElement(selector: string, element: Element | Document): Element | undefined {
+    if (!(element instanceof Element)) {
+      return selectElements(selector, element)[0] as Element | undefined;
+    }
+
+    let selectorCache = this._rowElementQueryCache.get(element);
+    if (!selectorCache) {
+      selectorCache = new Map<string, Element | null>();
+      this._rowElementQueryCache.set(element, selectorCache);
+    }
+
+    if (selectorCache.has(selector)) {
+      return selectorCache.get(selector) ?? undefined;
+    }
+
+    const found = (selectElements(selector, element)[0] as Element | undefined) ?? null;
+    selectorCache.set(selector, found);
+    return found ?? undefined;
+  }
+
+  /**
+   * 按「种子字段名」读取数据：传入 field 后返回类型由 `ITorrent[field]` 推导（P2-4）。
+   * 这是 `ITorrent` 全字段的类型检查入口，`getFieldsData` / `parseWholeTorrentFromRow` 均走此重载。
+   */
+  protected getFieldData<K extends keyof Omit<ITorrent, "site">>(
+    element: Element | object,
+    elementQuery: IElementQuery,
+    field: K,
+  ): Omit<ITorrent, "site">[K];
+  /**
+   * 通用读取（不传 field）：保持 any 返回值，兼容历史调用点与站点定义中的覆写实现。
+   * 该重载必须放在最后，否则 definitions/ 中大量两参数调用会失去兼容性。
+   */
+  protected getFieldData(element: Element | object, elementQuery: IElementQuery): any;
+  protected getFieldData(
+    element: Element | object,
+    elementQuery: IElementQuery,
+    _field?: keyof Omit<ITorrent, "site">,
+  ): any {
     let query: any = undefined;
 
     if (elementQuery.selector) {
@@ -380,14 +582,14 @@ export default class BittorrentSite {
         if (element instanceof Node) {
           // 这里我们预定义一个特殊的 Css Selector，即不进行子元素选择
           const another = (
-            usedSelector === ":self" ? element : Sizzle(usedSelector, element as Element | Document)[0]
+            usedSelector === ":self" ? element : this.queryRowElement(usedSelector, element as Element | Document)
           ) as HTMLElement;
           if (another) {
             if (elementQuery.elementProcess) {
               query = this.runQueryFilters<string>(another, elementQuery.elementProcess);
             } else if (elementQuery.case) {
               for (const [match, value] of Object.entries(elementQuery.case)) {
-                if (Sizzle.matchesSelector(another, match)) {
+                if (matchesSelector(another, match)) {
                   query = value ?? query;
                   break;
                 }
@@ -488,7 +690,7 @@ export default class BittorrentSite {
         }
       } else {
         // Document 处理
-        foundElements = Sizzle(selector as string, context);
+        foundElements = selectElements(selector as string, context);
       }
 
       if (foundElements && foundElements.length > 0) {
@@ -503,6 +705,9 @@ export default class BittorrentSite {
    * 如何解析 JSON 或者 Document，获得种子详情列表
    */
   public async transformSearchPage(doc: Document | object | any, searchConfig: ISearchInput): Promise<ITorrent[]> {
+    // 每次页面解析开始时重建行级选择器缓存
+    this.resetRowElementQueryCache();
+
     const { searchEntry, requestConfig } = searchConfig;
     if (!searchEntry!.selectors?.rows) {
       throw Error("列表选择器未定义");
@@ -510,6 +715,7 @@ export default class BittorrentSite {
 
     const rowsSelector = searchEntry!.selectors.rows;
     const torrents: ITorrent[] = [];
+    let failedRows = 0; // B-1：解析失败的行数，用于区分「部分坏数据」与「整体解析失败」
 
     // 使用抽象方法处理数组选择器
     let trs = this.findElementsBySelectors(rowsSelector.selector, doc, { isJson: !(doc instanceof Document) });
@@ -552,12 +758,58 @@ export default class BittorrentSite {
       try {
         torrents.push((await this.parseWholeTorrentFromRow({}, tr, searchConfig!)) as ITorrent);
       } catch (e) {
-        console.error(`[PTD] site '${this.name}' parseWholeTorrentFromRow Error:`, e, tr);
-        throw e;
+        failedRows++;
+        // B-1：单行解析失败（典型场景是时间单元格为空 / "昨天" / "01.03.2024 10:00" 这类
+        // parseTimeWithZone 无法处理的原始文本）不应让整站搜索结果全部作废，
+        // 这里与 Gazelle 的逐行处理保持一致：记日志 + 跳过该行，其余 N-1 条照常返回。
+        console.debug(`[PTD] site '${this.name}' parseWholeTorrentFromRow Error:`, e, tr);
       }
     }
 
+    // B-1：但「每一行都失败」不是部分坏数据，而是该站点整体解析失败（例如整列时间格式变化），
+    // 必须让上层看到明确的错误（classifySiteError 会归为 parseError），
+    // 而不是伪装成「搜索成功但 0 结果」让用户以为站点没有该关键词的资源。
+    if (torrents.length === 0 && failedRows > 0) {
+      throw new Error(`site '${this.name}': all ${failedRows} rows failed to parse`);
+    }
+
     return torrents;
+  }
+
+  /**
+   * 生成（并缓存）当前 searchEntry.selectors 对应的逐字段解析计划：
+   * 键列表（union + 过滤 rows）、parseTorrentRowForX 分派表都在这里按 searchEntry.selectors 计算一次，
+   * 避免每一行都重复 Object.keys/union/pascalCase 与 `in this` 反射。
+   */
+  protected getTorrentRowParsePlan(searchEntry: ISearchEntryRequestConfig): TorrentRowParsePlanItem[] {
+    const selectors = searchEntry!.selectors! as Record<string, any>;
+    const cacheKey = selectors as object;
+
+    let parsePlan = this._torrentRowParsePlanCache.get(cacheKey);
+    if (!parsePlan) {
+      const definedTorrentSelectorKey = Object.keys(selectors).filter((key) => key !== "rows");
+
+      parsePlan = (union(definedTorrentSelectorKey, defaultTorrentSelectorKey) as (keyof Omit<ITorrent, "site">)[]).map(
+        (key) => {
+          const planItem: TorrentRowParsePlanItem = { key };
+
+          const dynamicParseFuncKey = `parseTorrentRowFor${pascalCase(key as string)}` as keyof this;
+          if (dynamicParseFuncKey in this && typeof this[dynamicParseFuncKey] === "function") {
+            planItem.fnKey = dynamicParseFuncKey as string;
+          }
+
+          if (selectors[key]) {
+            planItem.selector = selectors[key] as IElementQuery;
+          }
+
+          return planItem;
+        },
+      );
+
+      this._torrentRowParsePlanCache.set(cacheKey, parsePlan);
+    }
+
+    return parsePlan;
   }
 
   protected async parseWholeTorrentFromRow(
@@ -567,25 +819,25 @@ export default class BittorrentSite {
   ): Promise<Partial<ITorrent>> {
     const { searchEntry, requestConfig } = searchConfig;
 
-    // FIXME 对于每个 searchEntry，其需要获取的 torrentKey 应该都是一样的，但是目前会导致在每个loop中都重复生成相同的 key，不过没太大关系
-    const definedTorrentSelectorKey = Object.keys(searchEntry!.selectors!).filter((key) => key !== "rows");
-
     /**
      * 对种子文件的任意非rows属性进行处理，例如 "id" 属性：
      * - 如果对应的实例中有 parseTorrentRowForId 方法，则调用该方法，注意该方法会需要返回更新后的 torrent 对象
      * - 不然则使用 selectors.id 的定义来获取，此时只更新 torrent 的id属性
      */
-    for (const key of union(definedTorrentSelectorKey, defaultTorrentSelectorKey) as (keyof Omit<ITorrent, "site">)[]) {
+    for (const { key, fnKey, selector } of this.getTorrentRowParsePlan(searchEntry!)) {
       // 如果已经有值，则跳过
       if (Object.hasOwn(torrent, key)) {
         continue;
       }
 
-      const dynamicParseFuncKey = `parseTorrentRowFor${pascalCase(key as string)}` as keyof this;
-      if (dynamicParseFuncKey in this && typeof this[dynamicParseFuncKey] === "function") {
-        torrent = await this[dynamicParseFuncKey](torrent, row, searchConfig);
-      } else if (searchEntry!.selectors![key]) {
-        torrent[key] = this.getFieldData(row, searchEntry!.selectors![key] as IElementQuery);
+      const dynamicParseFunc = fnKey ? (this as any)[fnKey] : undefined;
+      if (typeof dynamicParseFunc === "function") {
+        torrent = await dynamicParseFunc.call(this, torrent, row, searchConfig);
+      } else if (selector) {
+        // 传入 key 让返回值类型按字段推导（见 P2-4）。
+        // 注意：key 在此处是字段名联合类型，TS 对「联合键赋值」会求各属性类型的交集，
+        // 因此写入侧显式收窄为 Record<string, any>，读取侧仍走泛型重载。
+        (torrent as Record<string, any>)[key] = this.getFieldData(row, selector, key);
       }
     }
 
@@ -622,17 +874,38 @@ export default class BittorrentSite {
   ): Partial<ITorrent> {
     if (searchConfig?.searchEntry?.selectors?.tags) {
       const tags: ITorrentTag[] = [];
-      searchConfig.searchEntry.selectors.tags.forEach(({ name, color, selector }) => {
-        if (row instanceof Element) {
-          if (Sizzle(selector, row).length > 0) {
-            tags.push({ name, color });
-          }
+      const tagConfigs = searchConfig.searchEntry.selectors.tags;
+
+      if (row instanceof Element) {
+        const tagSelectors = tagConfigs.map(({ selector }) => selector).filter(Boolean) as string[];
+
+        // 合并为一次候选查询，再用 matchesSelector 判定归属，避免为每个 tag 都做一次整行 DOM 查询
+        const canUseMergedQuery =
+          tagSelectors.length > 0 && !tagSelectors.some((selector) => positionalSelectorPattern.test(selector));
+
+        if (canUseMergedQuery) {
+          const candidates = selectElements(tagSelectors.join(", "), row) as Element[];
+          tagConfigs.forEach(({ name, color, selector }) => {
+            if (candidates.some((candidate) => matchesSelector(candidate, selector))) {
+              tags.push({ name, color });
+            }
+          });
         } else {
+          // 存在位置伪类时无法用候选集等价判定，回落为逐个选择器的原实现
+          tagConfigs.forEach(({ name, color, selector }) => {
+            if (selectElements(selector, row).length > 0) {
+              tags.push({ name, color });
+            }
+          });
+        }
+      } else {
+        tagConfigs.forEach(({ name, color, selector }) => {
           if (get(row, selector)) {
             tags.push({ name, color });
           }
-        }
-      });
+        });
+      }
+
       torrent.tags = tags;
     }
 
@@ -656,7 +929,12 @@ export default class BittorrentSite {
 
     const parsedListPageUrl = doc.URL || location.href; // 获取当前页面的 URL
 
-    const searchEntry: { selectors: TSchemaMetadataListSelectors } = { selectors: {}, ...(this.metadata.search ?? {}) };
+    // 注意：selectors 需要浅拷贝一份局部副本，后续的删除/改写（如 delete keywords）不应污染共享的 metadata.search.selectors
+    const metadataSearch = this.metadata.search ?? {};
+    const searchEntry: { selectors: TSchemaMetadataListSelectors } = {
+      ...metadataSearch,
+      selectors: { ...(metadataSearch.selectors ?? {}) },
+    };
 
     // 使用 list 中定义的 selectors 覆盖掉 search 中的 selectors
     for (const list of this.metadata.list ?? []) {
@@ -680,7 +958,9 @@ export default class BittorrentSite {
       retData.keywords = this.getFieldData(doc, {
         selector: [
           keywordField === "params" ? `input[name="${keywordParams}"]` : false,
-          keywordField === "data" ? `form[method="post" i] input[name="${keywordField}"]` : false,
+          // E-1：这里要取的是关键词参数名（keywordParams，如 searchstr），
+          // 而不是 keywordField（字面量 "data"），否则会生成 input[name="data"] 永远匹配不到。
+          keywordField === "data" ? `form[method="post" i] input[name="${keywordParams}"]` : false,
         ].filter(Boolean) as string[],
         elementProcess: (el: HTMLInputElement) => el.value,
         text: "",
@@ -772,12 +1052,22 @@ export default class BittorrentSite {
       torrent.link = this.getFieldData(data, this.metadata.detail.selectors.link) as string;
     }
 
+    // E-9：链接缺失（或 fixLink 因协议不在白名单内返回空串）时必须明确失败，
+    // 否则会先拼出 "undefined<后缀>" 这类脏 URL，下游只能拿到费解的 404。
+    if (!torrent.link) {
+      // 报错信息里的 url 只保留 path：详情页 URL 可能带 passkey 等凭据，不应进入 UI/日志
+      const safeUrl = torrent.url ? torrent.url.split("?")[0] : "";
+      throw new Error(
+        `[PTD] site '${this.name}' cannot parse torrent download link (torrentId=${torrent.id ?? ""}, url=${safeUrl})`,
+      );
+    }
+
     if (this.userConfig.downloadLinkAppendix) {
       // 如果用户配置了下载链接后缀，则在链接后追加
       torrent.link = `${torrent.link}${this.userConfig.downloadLinkAppendix}`;
     }
 
-    return torrent.link!;
+    return torrent.link;
   }
 
   /**

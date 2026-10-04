@@ -10,7 +10,6 @@ export const siteMetadata: ISiteMetadata = {
   id: "shareisland",
   name: "ShareIsland",
   tags: ["影视", "综合"],
-  timezoneOffset: "+0000",
   collaborator: ["haowenwu"],
 
   type: "private",

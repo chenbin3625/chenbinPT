@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "LuckPT",
   description: "汇聚多元精彩，启程旋律之旅。",
   tags: ["影视", "综合", "音乐"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

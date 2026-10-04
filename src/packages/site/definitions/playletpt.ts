@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "PlayLet",
   description: "微而精，短而美",
   tags: ["短剧"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

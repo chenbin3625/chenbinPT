@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { nextTick, watch } from "vue";
+import dayjs from "dayjs";
 import { useI18n } from "vue-i18n";
 import { addDays, startOfDay } from "date-fns";
 
@@ -13,6 +15,9 @@ import { setDateRangeByDatePicker, getThisDateUnitRange } from "@/options/direct
 const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
+
+/** Vuetify ticks -> antd marks（只用刻度点，不显示刻度文案） */
+const tickMarks = (ticks: number[] | undefined) => Object.fromEntries((ticks ?? []).map((tick) => [tick, ""]));
 
 const {
   advanceItemPropsRef,
@@ -31,168 +36,165 @@ function updateTableFilter() {
 function enterDialog() {
   reBuildAdvanceFilter();
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(enterDialog);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" width="800" @after-enter="enterDialog">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("common.AdvanceFilterGenerateDialog.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text class="overflow-y-auto">
-        <v-container class="pa-0">
-          <v-row gap="0"
-            ><v-label>{{ t("common.AdvanceFilterGenerateDialog.keywords") }}</v-label>
-          </v-row>
-          <v-row class="mt-0">
-            <v-col>
-              <v-combobox
-                v-model="advanceFilterDictRef.text.required"
-                chips
-                hide-details
-                :label="t('common.AdvanceFilterGenerateDialog.required')"
-                multiple
-              ></v-combobox>
-            </v-col>
-            <v-col>
-              <v-combobox
-                v-model="advanceFilterDictRef.text.exclude"
-                chips
-                hide-details
-                :label="t('common.AdvanceFilterGenerateDialog.exclude')"
-                multiple
-              ></v-combobox>
-            </v-col>
-          </v-row>
-          <v-row gap="0"
-            ><v-label>{{ t("common.AdvanceFilterGenerateDialog.site") }}</v-label></v-row
+  <a-modal v-model:open="showDialog" :title="t('common.AdvanceFilterGenerateDialog.title')" :width="800">
+    <div style="padding: 0">
+      <a-row :gutter="0"
+        ><a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.keywords") }}</a-typography-text>
+      </a-row>
+      <a-row :gutter="8" style="margin-top: 0">
+        <a-col flex="1 1 0">
+          <a-select
+            v-model:value="advanceFilterDictRef.text.required"
+            mode="tags"
+            allow-clear
+            :placeholder="t('common.AdvanceFilterGenerateDialog.required')"
+            style="width: 100%"
+          />
+        </a-col>
+        <a-col flex="1 1 0">
+          <a-select
+            v-model:value="advanceFilterDictRef.text.exclude"
+            mode="tags"
+            allow-clear
+            :placeholder="t('common.AdvanceFilterGenerateDialog.exclude')"
+            style="width: 100%"
+          />
+        </a-col>
+      </a-row>
+      <a-row :gutter="0"
+        ><a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.site") }}</a-typography-text></a-row
+      >
+      <!-- V-21：`:indeterminate` 必须是计算值。硬编码的 `true` 会让每个复选框永远显示半选横杠，
+           用户无法判断哪些筛选已生效。这里的真实三态：checked = required（只保留）、
+           indeterminate = exclude（排除）、未勾选 = 不参与筛选。 -->
+      <a-row :gutter="0">
+        <a-col v-for="site in advanceItemPropsRef.siteId" :key="`${reBuildFilterCountRef}_${site}`" :span="12" :sm="6">
+          <a-checkbox
+            :checked="advanceFilterDictRef.siteId.required.includes(site)"
+            :indeterminate="advanceFilterDictRef.siteId.exclude.includes(site)"
+            @click.stop="() => toggleKeywordStateFn('siteId', site)"
+            @update:checked="
+              (checked: boolean) => {
+                const current = advanceFilterDictRef.siteId.required;
+                advanceFilterDictRef.siteId.required = checked
+                  ? Array.from(new Set([...current, site]))
+                  : current.filter((x: any) => x !== site);
+              }
+            "
           >
-          <v-row gap="0">
-            <v-col
-              v-for="site in advanceItemPropsRef.siteId"
-              :key="`${reBuildFilterCountRef}_${site}`"
-              class="pa-0"
-              sm="3"
-              :cols="6"
-            >
-              <v-checkbox
-                v-model="advanceFilterDictRef.siteId.required"
-                :label="site"
-                :value="site"
-                density="compact"
-                hide-details
-                indeterminate
-                @click.stop="() => toggleKeywordStateFn('siteId', site)"
-              >
-                <template #label>
-                  <SiteFavicon :site-id="site" :size="16" class="mr-2" />
-                  <SiteName :class="['text-decoration-none']" :site-id="site" tag="span" />
-                </template>
-              </v-checkbox>
-            </v-col>
-          </v-row>
-          <v-row gap="0"
-            ><v-label>{{ t("DownloadHistory.AdvanceFilterGenerateDialog.downloader") }}</v-label></v-row
+            <SiteFavicon :site-id="site" :size="16" style="margin-right: 8px" />
+            <SiteName :site-id="site" tag="span" style="text-decoration: none" />
+          </a-checkbox>
+        </a-col>
+      </a-row>
+      <a-row :gutter="0"
+        ><a-typography-text>{{ t("DownloadHistory.AdvanceFilterGenerateDialog.downloader") }}</a-typography-text></a-row
+      >
+      <a-row :gutter="0">
+        <a-col
+          v-for="downloader in advanceItemPropsRef.downloaderId"
+          :key="`${reBuildFilterCountRef}_${downloader}`"
+          :span="24"
+          :sm="12"
+        >
+          <a-checkbox
+            :checked="advanceFilterDictRef.downloaderId.required.includes(downloader)"
+            :indeterminate="advanceFilterDictRef.downloaderId.exclude.includes(downloader)"
+            @click.stop="() => toggleKeywordStateFn('downloaderId', downloader)"
+            @update:checked="
+              (checked: boolean) => {
+                const current = advanceFilterDictRef.downloaderId.required;
+                advanceFilterDictRef.downloaderId.required = checked
+                  ? Array.from(new Set([...current, downloader]))
+                  : current.filter((x: any) => x !== downloader);
+              }
+            "
           >
-          <v-row gap="0">
-            <v-col
-              v-for="downloader in advanceItemPropsRef.downloaderId"
-              :key="`${reBuildFilterCountRef}_${downloader}`"
-              sm="6"
-              :cols="12"
-              class="pa-0"
+            <DownloaderLabel :downloader="downloader" />
+          </a-checkbox>
+        </a-col>
+      </a-row>
+      <!-- TODO 下载状态 -->
+      <a-row :gutter="0">
+        <a-col :span="24">
+          <a-row :gutter="0" style="padding-right: 16px">
+            <a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.date") }}</a-typography-text>
+            <div style="flex: 1 1 auto"></div>
+            <a-tag
+              v-for="dateUnit in ['day', 'week', 'month', 'quarter', 'year'] as const"
+              :key="dateUnit"
+              style="margin-right: 4px"
+              @click="
+                () =>
+                  (advanceFilterDictRef.downloadAt = getThisDateUnitRange(
+                    dateUnit,
+                    advanceItemPropsRef.downloadAt.range,
+                  ))
+              "
             >
-              <v-checkbox
-                v-model="advanceFilterDictRef.downloaderId.required"
-                :value="downloader"
-                density="compact"
-                hide-details
-                indeterminate
-                @click.stop="() => toggleKeywordStateFn('downloaderId', downloader)"
-              >
-                <template #label>
-                  <DownloaderLabel :downloader="downloader" />
-                </template>
-              </v-checkbox>
-            </v-col>
-          </v-row>
-          <!-- TODO 下载状态 -->
-          <v-row gap="0">
-            <v-col cols="12">
-              <v-row gap="0" class="pr-4">
-                <v-label>{{ t("common.AdvanceFilterGenerateDialog.date") }}</v-label>
-                <v-spacer />
-                <v-chip
-                  v-for="dateUnit in ['day', 'week', 'month', 'quarter', 'year'] as const"
-                  :key="dateUnit"
-                  size="x-small"
-                  class="mr-1"
-                  @click="
-                    () =>
-                      (advanceFilterDictRef.downloadAt = getThisDateUnitRange(
-                        dateUnit,
-                        advanceItemPropsRef.downloadAt.range,
-                      ))
+              {{ t(`common.AdvanceFilterGenerateDialog.dateUnit.${dateUnit}`) }}
+            </a-tag>
+            <a-popover placement="top" trigger="click">
+              <template #content>
+                <a-range-picker
+                  :value="[
+                    dayjs(advanceItemPropsRef.downloadAt.range[0]),
+                    dayjs(advanceItemPropsRef.downloadAt.range[1]),
+                  ]"
+                  :disabled-date="
+                    (date: any) =>
+                      date.isBefore(dayjs(startOfDay(new Date(advanceItemPropsRef.downloadAt.range[0]))), 'day') ||
+                      date.isAfter(dayjs(addDays(new Date(advanceItemPropsRef.downloadAt.range[1]), 1)), 'day')
                   "
-                >
-                  {{ t(`common.AdvanceFilterGenerateDialog.dateUnit.${dateUnit}`) }}
-                </v-chip>
-                <v-chip size="x-small">
-                  {{ t("common.AdvanceFilterGenerateDialog.dateUnit.custom") }}
-                  <v-menu activator="parent" location="top" :close-on-content-click="false">
-                    <v-date-picker
-                      :max="addDays(new Date(advanceItemPropsRef.downloadAt.range[1]), 1)"
-                      :min="startOfDay(new Date(advanceItemPropsRef.downloadAt.range[0]))"
-                      hide-header
-                      multiple="range"
-                      show-adjacent-months
-                      @update:model-value="(v) => (advanceFilterDictRef.downloadAt = setDateRangeByDatePicker(v))"
-                    ></v-date-picker>
-                  </v-menu>
-                </v-chip>
-              </v-row>
-              <v-row gap="0">
-                <v-range-slider
-                  v-model="advanceFilterDictRef.downloadAt"
-                  :max="advanceItemPropsRef.downloadAt.range[1]"
-                  :min="advanceItemPropsRef.downloadAt.range[0]"
-                  :step="60 * 1000"
-                  :thumb-label="true"
-                  :ticks="advanceItemPropsRef.downloadAt.ticks"
-                  class="px-6"
-                  hide-details
-                  show-ticks="always"
-                  tick-size="4"
-                >
-                  <template #tick-label></template>
-                  <template #thumb-label="{ modelValue }">
-                    <span class="text-no-wrap">{{ formatDate(modelValue ?? 0, "yyyy-MM-dd HH:mm") }}</span>
-                  </template>
-                </v-range-slider>
-              </v-row>
-            </v-col>
-          </v-row>
-        </v-container>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-btn variant="text" @click="() => reBuildAdvanceFilter(true)">{{
-          t("common.AdvanceFilterGenerateDialog.reset")
-        }}</v-btn>
-        <v-spacer />
-        <v-btn color="error" variant="text" @click="showDialog = false">{{ t("common.dialog.cancel") }}</v-btn>
-        <v-btn color="primary" variant="text" @click="updateTableFilter">{{
-          t("common.AdvanceFilterGenerateDialog.generate")
-        }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-</template>
+                  @change="
+                    (values: any) => {
+                      // 清空日期时 antd 会传 null，不判空会抛 TypeError
+                      if (!values) return;
+                      advanceFilterDictRef.downloadAt = setDateRangeByDatePicker(values.map((v: any) => v.toDate()));
+                    }
+                  "
+                />
+              </template>
+              <a-tag>{{ t("common.AdvanceFilterGenerateDialog.dateUnit.custom") }}</a-tag>
+            </a-popover>
+          </a-row>
+          <a-row :gutter="0">
+            <a-slider
+              v-model:value="advanceFilterDictRef.downloadAt"
+              :marks="tickMarks(advanceItemPropsRef.downloadAt.ticks)"
+              :max="advanceItemPropsRef.downloadAt.range[1]"
+              :min="advanceItemPropsRef.downloadAt.range[0]"
+              :step="60 * 1000"
+              :tip-formatter="(value: number) => formatDate(value ?? 0, 'yyyy-MM-dd HH:mm')"
+              style="padding: 0 24px"
+            />
+          </a-row>
+        </a-col>
+      </a-row>
+    </div>
 
-<style scoped lang="scss"></style>
+    <template #footer>
+      <a-flex align="center" justify="space-between">
+        <a-flex align="center" :gap="8">
+          <a-button type="text" @click="() => reBuildAdvanceFilter(true)">
+            {{ t("common.AdvanceFilterGenerateDialog.reset") }}
+          </a-button>
+        </a-flex>
+        <a-flex align="center" :gap="8">
+          <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+          <a-button type="primary" @click="updateTableFilter">
+            {{ t("common.AdvanceFilterGenerateDialog.generate") }}
+          </a-button>
+        </a-flex>
+      </a-flex>
+    </template>
+  </a-modal>
+</template>

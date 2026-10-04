@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CheckCircleOutlined } from "@ant-design/icons-vue";
 import { computed, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -14,19 +15,33 @@ const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 
 const setBaseTabs = setBaseChildren.map((x) => ({
-  key: x.alias ?? x.path,
-  route: x.name,
-  icon: x.meta!.icon,
+  key: String(x.alias ?? x.path),
+  route: String(x.name),
 }));
 
-const setTabRef = useTemplateRef<{ beforeSave?: () => Promise<void>; afterSave?: () => Promise<void> }>("setTabRef");
+interface ISetBaseTabSaveHooks {
+  beforeSave?: () => Promise<void>;
+  afterSave?: () => Promise<void>;
+}
+
+// 注意：这里的模板 ref 位于 `<a-tab-pane v-for>` 内部，Vue 编译时会带上 ref_for，
+// 于是 setTabRef.value 实际是「组件实例数组」而不是单个实例——直接调用 .beforeSave 会静默为 undefined，
+// 导致各 tab 的保存前后钩子（如 UiWindow 的 allowContentScript 补全、UserInfoWindow 的下次刷新时间）永不执行。
+const setTabRef = useTemplateRef<ISetBaseTabSaveHooks | ISetBaseTabSaveHooks[]>("setTabRef");
+
+function currentTabInstance(): ISetBaseTabSaveHooks | undefined {
+  const value = setTabRef.value as ISetBaseTabSaveHooks | ISetBaseTabSaveHooks[] | null | undefined;
+  return Array.isArray(value) ? value[0] : (value ?? undefined);
+}
 
 const activeTab = computed({
   get() {
-    return route.name;
+    return String(route.name ?? setBaseTabs[0]?.route ?? "");
   },
   set(newRouteName) {
-    router.push({ name: newRouteName });
+    if (newRouteName && newRouteName !== route.name) {
+      router.push({ name: newRouteName });
+    }
   },
 });
 
@@ -35,39 +50,45 @@ const showSaveButton = computed(() => {
 });
 
 async function save() {
-  await setTabRef.value?.beforeSave?.(); // 如果对应的 tab 有 afterSave 方法，则调用
+  const tab = currentTabInstance();
+  await tab?.beforeSave?.(); // 如果对应的 tab 有 beforeSave 方法，则调用
   await configStore.$save();
   runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
-  await setTabRef.value?.afterSave?.(); // 如果对应的 tab 有 afterSave 方法，则调用
+  await tab?.afterSave?.(); // 如果对应的 tab 有 afterSave 方法，则调用
 }
 </script>
 
 <template>
-  <v-card>
-    <v-tabs v-model="activeTab" align-tabs="center" bg-color="primary" show-arrows stacked>
-      <v-tab v-for="tab in setBaseTabs" :key="tab.key as string" :value="tab.route">
-        <v-icon :icon="tab.icon as string" />
-        {{ t(`SetBase.tab.${tab.key}`) }}
-      </v-tab>
-    </v-tabs>
-    <v-window v-model="activeTab">
-      <v-card>
-        <v-card-text>
+  <a-card class="ptd-settings-card ptd-set-base-card">
+    <a-tabs v-model:active-key="activeTab" class="set-base-tabs" tab-position="top" destroy-inactive-tab-pane>
+      <a-tab-pane v-for="tab in setBaseTabs" :key="tab.route" :tab="t(`SetBase.tab.${tab.key}`)">
+        <div class="ptd-settings-form ptd-set-base-form">
           <router-view v-slot="{ Component }">
             <component :is="Component" ref="setTabRef" />
           </router-view>
-        </v-card-text>
-        <v-divider v-if="showSaveButton" />
-        <v-card-actions v-if="showSaveButton">
-          <v-row class="ml-2 my-1">
-            <v-btn color="green" prepend-icon="mdi-check-circle-outline" variant="elevated" @click="save">
-              {{ t("common.save") }}
-            </v-btn>
-          </v-row>
-        </v-card-actions>
-      </v-card>
-    </v-window>
-  </v-card>
+        </div>
+      </a-tab-pane>
+
+      <!-- 保存按钮与页签同一行、贴行尾：与对话框页脚保持一致的原生 antd 按钮层级（主操作 = 实心 primary） -->
+      <template v-if="showSaveButton" #rightExtra>
+        <a-button class="set-base-save" type="primary" @click="save">
+          <template #icon>
+            <CheckCircleOutlined />
+          </template>
+          {{ t("common.save") }}
+        </a-button>
+      </template>
+    </a-tabs>
+  </a-card>
 </template>
 
-<style scoped lang="scss"></style>
+<style scoped>
+.set-base-tabs {
+  margin-bottom: 0;
+}
+
+/* 保存按钮给一个稳定的最小宽度，避免只随文案宽度变化 */
+.set-base-save {
+  min-width: 96px;
+}
+</style>

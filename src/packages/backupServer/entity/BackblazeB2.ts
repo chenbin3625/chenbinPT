@@ -11,7 +11,7 @@
 import axios from "axios";
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { localSort } from "../utils";
+import { getBackupRequestTimeout, localSort } from "../utils";
 import type { IBackupConfig, IBackupMetadata, IBackupFileListOption, IBackupFileInfo, IBackupData } from "../type";
 
 interface BackblazeB2Config extends IBackupConfig {
@@ -32,7 +32,7 @@ export const serverMetaData: IBackupMetadata<BackblazeB2Config> = {
   description: "Backblaze B2 是一个高性价比的云对象存储服务，提供安全可靠的云存储方案，适合用于备份各类数据。",
   requiredField: [
     { key: "applicationKeyId", name: "Application Key ID", type: "string" },
-    { key: "applicationKey", name: "Application Key", type: "string" },
+    { key: "applicationKey", name: "Application Key", type: "string", secret: true },
     { key: "bucketName", name: "Bucket 名称", type: "string" },
   ],
 };
@@ -125,6 +125,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
           username: this.userConfig.applicationKeyId,
           password: this.userConfig.applicationKey,
         },
+        timeout: getBackupRequestTimeout(this.userConfig),
       },
     );
 
@@ -155,7 +156,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
     const { data } = await axios.post<B2ListBucketsResponse>(
       `${this.apiUrl}/b2api/v2/b2_list_buckets`,
       { accountId: this.accountId },
-      { headers: { Authorization: this.authToken } },
+      { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
     );
 
     const bucket = data.buckets.find((b) => b.bucketName === targetBucketName);
@@ -201,7 +202,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
           maxFileCount: 1000,
           ...(startFileName ? { startFileName } : {}),
         },
-        { headers: { Authorization: this.authToken } },
+        { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
       );
 
       for (const entry of data.files) {
@@ -230,11 +231,13 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
     const { data: uploadData } = await axios.post<B2GetUploadUrlResponse>(
       `${this.apiUrl}/b2api/v2/b2_get_upload_url`,
       { bucketId },
-      { headers: { Authorization: this.authToken } },
+      { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
     );
 
     // Step 2: 构建 zip blob
     const fileBlob = await this.backupDataToJSZipBlob(file);
+    // B2 的 X-Bz-Content-Sha1 需要整包 SHA1，必须完整读一次 Blob；这里只读一次，
+    // 且上传时直接复用同一个 ArrayBuffer，不做第二次整包复制。
     const fileBuffer = await fileBlob.arrayBuffer();
     const sha1 = await sha1Hex(fileBuffer);
 
@@ -247,6 +250,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
           "Content-Type": "application/zip",
           "X-Bz-Content-Sha1": sha1,
         },
+        timeout: getBackupRequestTimeout(this.userConfig),
       });
       return status === 200;
     } catch {
@@ -262,6 +266,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
       {
         headers: { Authorization: this.authToken },
         responseType: "blob",
+        timeout: getBackupRequestTimeout(this.userConfig),
       },
     );
 
@@ -280,7 +285,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
           prefix: path,
           maxFileCount: 1,
         },
-        { headers: { Authorization: this.authToken } },
+        { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
       );
 
       const file = listData.files.find((f) => f.fileName === path);
@@ -289,7 +294,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
       const { data: deleteData } = await axios.post<B2DeleteFileResponse>(
         `${this.apiUrl}/b2api/v2/b2_delete_file_version`,
         { fileName: path, fileId: file.fileId },
-        { headers: { Authorization: this.authToken } },
+        { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
       );
 
       return !!deleteData.fileId;

@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "慕雪阁",
   description: "慕雪阁 - 有一峰名清静峰，峰内有一阁，名为慕雪阁，阁主慕雪，阁内有大量高阶功法！",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["liuyaowen"],
 

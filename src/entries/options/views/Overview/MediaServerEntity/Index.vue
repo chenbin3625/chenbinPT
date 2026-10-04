@@ -1,7 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import {
+  ArrowsAltOutlined,
+  CheckOutlined,
+  CloudServerOutlined,
+  HeartFilled,
+  HeartOutlined,
+  InfoCircleOutlined,
+  MinusCircleOutlined,
+  SelectOutlined,
+  VideoCameraOutlined,
+} from "@ant-design/icons-vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
+import { useIntersectionObserver } from "@vueuse/core";
 import { isEmpty } from "es-toolkit/compat";
 import { getMediaServerIcon, type IMediaServerItem } from "@ptd/mediaServer";
 
@@ -10,6 +22,8 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { formatSize } from "@/options/utils.ts";
 
+import PageSkeleton from "@/options/components/PageSkeleton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import ItemInformationDialog from "./ItemInformationDialog.vue";
 
 import { doSearch, searchMediaServerIds } from "./utils.ts";
@@ -22,8 +36,46 @@ const metadataStore = useMetadataStore();
 
 const search = ref<string>((route.query.search as string) || "");
 
+// V-21：全选复选框的真实状态（`checked` / `indeterminate` 都必须由选择情况推导）
+const enabledMediaServerIds = computed(() => metadataStore.getEnabledMediaServers.map((mediaServer) => mediaServer.id));
+const isAllMediaServerChecked = computed(
+  () =>
+    enabledMediaServerIds.value.length > 0 &&
+    enabledMediaServerIds.value.every((id) => searchMediaServerIds.value.includes(id)),
+);
+const isMediaServerSelectionIndeterminate = computed(
+  () =>
+    !isAllMediaServerChecked.value && enabledMediaServerIds.value.some((id) => searchMediaServerIds.value.includes(id)),
+);
+
 const showItem = ref<IMediaServerItem | null>(null);
 const showItemInformationDialog = ref<boolean>(false);
+
+// P2-5：瀑布流原来把 searchResult 全量 v-for 渲染（DOM 无上限，反复「加载更多」会一直累加卡片）。
+// 这里保留「只渲染前 N 条 + 触底自动追加」的窗口化策略：DOM 数量由用户滚动进度决定，
+// 而不是由累计搜索结果总数决定；服务端的「加载更多」按钮行为保持不变。
+const mediaServerVisiblePageSize = 40;
+const visibleResultCount = ref(mediaServerVisiblePageSize);
+const gridSentinel = ref<HTMLElement | null>(null);
+
+const visibleSearchResults = computed(() =>
+  runtimeStore.mediaServerSearch.searchResult.slice(0, visibleResultCount.value),
+);
+
+const hasHiddenResults = computed(() => visibleResultCount.value < runtimeStore.mediaServerSearch.searchResult.length);
+
+useIntersectionObserver(gridSentinel, ([entry]) => {
+  if (!entry?.isIntersecting || !hasHiddenResults.value) return;
+  visibleResultCount.value += mediaServerVisiblePageSize;
+});
+
+// 新的搜索（searchKey 变化，doSearch 会重置结果）时回到第一页
+watch(
+  () => runtimeStore.mediaServerSearch.searchKey,
+  () => {
+    visibleResultCount.value = mediaServerVisiblePageSize;
+  },
+);
 
 const hasMore = computed<boolean>(() =>
   isEmpty(runtimeStore.mediaServerSearch.searchStatus)
@@ -36,11 +88,16 @@ function showItemInformation(item: IMediaServerItem) {
   showItemInformationDialog.value = true;
 }
 
-function onScroll() {
-  // 当滚动到页面底部时加载更多
+function onScroll(event: Event) {
+  const target = event.currentTarget;
+  const isElementScroll = target instanceof HTMLElement;
+  const atBottom = isElementScroll
+    ? target.scrollTop + target.clientHeight >= target.scrollHeight - 50
+    : window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
+
   if (
     configStore.mediaServerEntity.autoSearchMoreWhenScroll &&
-    window.innerHeight + window.scrollY >= document.body.offsetHeight - 50 &&
+    atBottom &&
     !runtimeStore.mediaServerSearch.isSearching &&
     hasMore.value
   ) {
@@ -57,243 +114,166 @@ onMounted(async () => {
 </script>
 
 <template>
-  <v-alert :title="t('route.Overview.MediaServerEntity')" type="info" />
-  <v-card v-scroll="onScroll">
-    <v-card-title>
-      <v-row class="ma-0">
-        <v-spacer />
-        <v-text-field
-          v-model="search"
-          :loading="runtimeStore.mediaServerSearch.isSearching"
-          append-icon="mdi-magnify"
-          clearable
-          density="compact"
-          hide-details
-          max-width="500"
+  <a-card v-scroll="onScroll">
+    <a-typography-text strong>
+      <a-flex class="page-toolbar" align="center" :gap="8">
+        <div style="flex: 1 1 auto"></div>
+        <a-input
+          v-model:value="search"
           :placeholder="t('MediaServerEntity.searchPlaceholder')"
+          allow-clear
           @keyup.enter="() => doSearch({ searchKey: search })"
-          @click:append="() => doSearch({ searchKey: search })"
         >
-          <template #prepend-inner>
-            <v-menu :close-on-content-clicks="false">
-              <template v-slot:activator="{ props }">
-                <v-icon v-bind="props" icon="mdi-server" variant="plain" />
-              </template>
-              <v-list class="pa-0">
-                <v-list-item>
-                  <v-checkbox
-                    hide-details
-                    indeterminate
-                    :label="t('common.checkbox.all')"
-                    @click.stop
-                    @update:model-value="
-                      (v: unknown) => {
-                        if (v) {
-                          searchMediaServerIds = metadataStore.getEnabledMediaServers.map(
-                            (mediaServer) => mediaServer.id,
-                          );
-                        } else {
-                          searchMediaServerIds = [];
+          <template #prefix>
+            <a-popover placement="bottom" trigger="click">
+              <CloudServerOutlined />
+              <template #content>
+                <a-list size="small" style="padding: 0">
+                  <a-list-item>
+                    <!-- V-21：`:indeterminate="true"` 硬编码会让这个复选框无论选择情况如何都画半选横杠，
+                         用户无法判断「是否全选」。改为计算值（对照 SetSearchSolution/SiteCategoryPanel.vue 的写法）。 -->
+                    <a-checkbox
+                      :checked="isAllMediaServerChecked"
+                      :indeterminate="isMediaServerSelectionIndeterminate"
+                      @click.stop
+                      @update:checked="
+                        (v: unknown) => {
+                          searchMediaServerIds = v ? [...enabledMediaServerIds] : [];
                         }
-                      }
-                    "
-                  />
-                </v-list-item>
-                <v-divider />
-                <v-list-item v-for="item in metadataStore.getMediaServers" :key="item.id">
-                  <v-checkbox
-                    v-model="searchMediaServerIds"
-                    :disabled="item.enabled === false"
-                    :indeterminate="item.enabled === false"
-                    :label="item.name"
-                    :value="item.id"
-                    hide-details
-                    indeterminate-icon="mdi-close"
-                    multiple
-                    @click.stop
-                  >
-                    <template #append>
-                      <v-avatar :alt="item.type" :image="getMediaServerIcon(item.type)" size="x-small" />
-                    </template>
-                  </v-checkbox>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+                      "
+                      >{{ t("common.checkbox.all") }}</a-checkbox
+                    >
+                  </a-list-item>
+                  <a-divider style="margin: 4px 0" />
+                  <a-list-item v-for="item in metadataStore.getMediaServers" :key="item.id">
+                    <!-- 单个复选框没有「部分选中」语义：禁用项已由 utils.ts 的 watcher 从选择中剪掉，
+                         原先的 `:indeterminate="item.enabled === false"` 会让禁用项显示为半选，容易误读。 -->
+                    <a-checkbox
+                      :checked="searchMediaServerIds.includes(item.id)"
+                      :disabled="item.enabled === false"
+                      @click.stop
+                      @update:checked="
+                        (checked: boolean) => {
+                          searchMediaServerIds = checked
+                            ? Array.from(new Set([...searchMediaServerIds, item.id]))
+                            : searchMediaServerIds.filter((x) => x !== item.id);
+                        }
+                      "
+                    >
+                      {{ item.name }}
+                      <a-avatar
+                        :alt="item.type"
+                        :src="getMediaServerIcon(item.type)"
+                        :size="20"
+                        style="margin-left: 8px"
+                      ></a-avatar>
+                    </a-checkbox>
+                  </a-list-item>
+                </a-list>
+              </template>
+            </a-popover>
           </template>
-        </v-text-field>
-      </v-row>
-    </v-card-title>
+        </a-input>
+      </a-flex>
+    </a-typography-text>
 
-    <!--  瀑布流形式展示媒体服务器搜索结果 -->
+    <!--  瀑布流形式展示媒体服务器搜索结果（只渲染前 visibleResultCount 条，触底自动追加） -->
     <div v-if="runtimeStore.mediaServerSearch.searchResult.length > 0" class="masonry-grid">
-      <div v-for="item in runtimeStore.mediaServerSearch.searchResult" :key="item.url" class="masonry-item">
-        <v-card>
-          <div class="position-relative mb-1">
-            <v-menu
-              :close-on-content-clicks="false"
-              contained
-              content-class="masonry-img-overlay"
-              location="start center"
-              open-on-hover
-              origin="start center"
-              scrim
-            >
-              <template v-slot:activator="{ props, isActive }">
+      <div v-for="item in visibleSearchResults" :key="item.url" class="masonry-item">
+        <a-card>
+          <div style="position: relative; margin-bottom: 4px">
+            <a-popover placement="leftTop" trigger="hover" overlay-class-name="masonry-img-overlay">
+              <template #content>
+                <a-button block @click="() => showItemInformation(item)">
+                  {{ t("MediaServerEntity.detail") }}
+                  <InfoCircleOutlined />
+                </a-button>
+                <a-button :href="item.url" block rel="noopener noreferrer nofollow" target="_blank">
+                  {{ t("common.visit") }}
+                  <SelectOutlined />
+                </a-button>
+              </template>
+              <div>
                 <div class="masonry-right-label">
                   <!-- 用户状态（观看、喜欢） -->
-                  <v-chip
-                    v-if="item.user"
-                    :variant="isActive ? 'tonal' : 'elevated'"
-                    base-color="grey-lighten-2"
-                    label
-                    size="x-small"
-                  >
-                    <v-icon :icon="item.user?.IsPlayed ? 'mdi-check-bold' : 'mdi-radiobox-blank'" color="green" />
-                    <v-icon :icon="item.user?.IsFavorite ? 'mdi-heart' : 'mdi-heart-outline'" color="red" />
-                  </v-chip>
+                  <a-tag v-if="item.user" color="#e0e0e0">
+                    <component
+                      :is="item.user?.IsPlayed ? CheckOutlined : MinusCircleOutlined"
+                      style="color: var(--ptd-success)"
+                    />
+                    <component
+                      :is="item.user?.IsFavorite ? HeartFilled : HeartOutlined"
+                      style="color: var(--ptd-danger)"
+                    />
+                  </a-tag>
                 </div>
                 <div class="masonry-left-label">
                   <!-- 封装格式 -->
-                  <v-chip
-                    v-if="item.format"
-                    :variant="isActive ? 'tonal' : 'elevated'"
-                    base-color="light-blue"
-                    label
-                    prepend-icon="mdi-aspect-ratio"
-                    size="x-small"
-                  >
+                  <a-tag v-if="item.format" color="#03a9f4"
+                    ><ArrowsAltOutlined style="margin-right: 4px" />
                     {{ item.format?.toUpperCase() }}
                     <template v-if="item.streams && item.streams.filter((s) => s.type === 'Video')!.length > 0">
                       / {{ item.streams.filter((s) => s.type === "Video")[0].title }}
                     </template>
-                  </v-chip>
+                  </a-tag>
                   <br />
                   <!-- 大小 -->
-                  <v-chip
-                    v-if="item.size"
-                    :variant="isActive ? 'tonal' : 'elevated'"
-                    label
-                    prepend-icon="mdi-movie"
-                    size="x-small"
-                  >
+                  <a-tag v-if="item.size"
+                    ><VideoCameraOutlined style="margin-right: 4px" />
                     {{ formatSize(item.size ?? 0) }}
-                  </v-chip>
+                  </a-tag>
                 </div>
-                <v-img v-bind="props" :src="item.poster" :title="item.name" />
-              </template>
-
-              <v-btn append-icon="mdi-information-outline" block @click="() => showItemInformation(item)">
-                {{ t("MediaServerEntity.detail") }}
-              </v-btn>
-              <v-btn
-                :href="item.url"
-                append-icon="mdi-arrow-top-right-bold-box-outline"
-                block
-                rel="noopener noreferrer nofollow"
-                target="_blank"
-              >
-                {{ t("common.visit") }}
-              </v-btn>
-            </v-menu>
+                <a-image :src="item.poster" :title="item.name" :preview="false"></a-image>
+              </div>
+            </a-popover>
           </div>
 
-          <v-card-subtitle class="text-center my-1" style="white-space: normal">
-            <a :href="item.url" :title="item.name" class="font-weight-bold my-2" target="_blank">
+          <a-typography-text style="white-space: normal; margin: 4px 0; text-align: center" type="secondary">
+            <a-typography-link :href="item.url" :title="item.name" strong style="margin: 8px 0" target="_blank">
               {{ item.name }}
-            </a>
+            </a-typography-link>
 
-            <div v-if="metadataStore.mediaServers[item.server]" class="d-flex justify-center align-center mt-1">
-              <v-avatar
+            <a-flex
+              v-if="metadataStore.mediaServers[item.server]"
+              align="center"
+              justify="center"
+              style="margin-top: 4px"
+            >
+              <a-avatar
                 :alt="metadataStore.mediaServers[item.server].name"
-                :image="getMediaServerIcon(metadataStore.mediaServers[item.server].type)"
-                size="x-small"
-              />
+                :src="getMediaServerIcon(metadataStore.mediaServers[item.server].type)"
+                :size="20"
+              ></a-avatar>
               &nbsp; {{ metadataStore.mediaServers[item.server].name }}
-            </div>
-          </v-card-subtitle>
-        </v-card>
+            </a-flex>
+          </a-typography-text>
+        </a-card>
       </div>
     </div>
-    <v-row v-else>
-      <v-col class="d-flex justify-center text-body-large">{{ t("MediaServerEntity.noItems") }}</v-col>
-    </v-row>
+    <!-- 首次搜索中（尚无任何结果）：用卡片骨架占位，避免整块内容区空白 -->
+    <PageSkeleton v-else-if="runtimeStore.mediaServerSearch.isSearching" :count="8" :rows="3" variant="masonry" />
+
+    <!-- 其余情况（还没搜过 / 搜索完成但无结果）都要有明确占位，不能留空白 -->
+    <NoDataPlaceholder v-else :description="t('MediaServerEntity.noItems')" />
+
+    <!-- 仍有未渲染结果时的触底哨兵：进入视口后追加下一页（DOM 上限由滚动进度决定） -->
+    <div v-if="hasHiddenResults" ref="gridSentinel" style="height: 1px; width: 100%"></div>
 
     <!-- TODO 点击加载更多 -->
-    <v-container>
-      <v-row>
-        <v-col class="d-flex justify-center">
-          <v-btn
+    <div v-if="!isEmpty(runtimeStore.mediaServerSearch.searchStatus)">
+      <a-row :gutter="8">
+        <a-col flex="1 1 0" style="display: flex; justify-content: center">
+          <a-button
             :disabled="!hasMore"
             :loading="runtimeStore.mediaServerSearch.isSearching"
             @click="() => doSearch({ searchKey: search, loadMore: true })"
           >
             {{ t("MediaServerEntity.loadMore") }}
-          </v-btn>
-        </v-col>
-      </v-row>
-    </v-container>
-  </v-card>
+          </a-button>
+        </a-col>
+      </a-row>
+    </div>
+  </a-card>
 
   <ItemInformationDialog v-model="showItemInformationDialog" :item="showItem as IMediaServerItem" />
 </template>
-
-<style scoped lang="scss">
-.masonry-grid {
-  padding: 10px 1% 10px 1%;
-  width: 100%;
-  height: 100%;
-
-  column-gap: 1rem;
-
-  @media (max-width: 599.98px) {
-    column-count: 2;
-  }
-
-  @media (min-width: 600px) and (max-width: 959.98px) {
-    column-count: 4;
-  }
-
-  @media (min-width: 960px) and (max-width: 1279.98px) {
-    column-count: 5;
-  }
-
-  @media (min-width: 1280px) {
-    column-count: 7;
-  }
-}
-
-.masonry-item {
-  break-inside: avoid;
-  margin-bottom: 1rem;
-
-  .masonry-left-label {
-    z-index: 998;
-    position: absolute;
-    max-width: calc(100% - 50px);
-    padding-left: 4px;
-    padding-top: 4px;
-
-    :deep(.v-chip__content) {
-      white-space: nowrap !important;
-      overflow: hidden !important;
-      text-overflow: ellipsis !important;
-    }
-  }
-
-  .masonry-right-label {
-    z-index: 999;
-    position: absolute;
-    padding-right: 4px;
-    padding-top: 4px;
-    right: 0;
-  }
-}
-
-:deep(.masonry-img-overlay) {
-  width: 80%;
-
-  .v-btn + .v-btn {
-    margin-top: 8px;
-  }
-}
-</style>

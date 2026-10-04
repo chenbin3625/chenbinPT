@@ -1,7 +1,7 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/carpt.yml
  * @JackettIssue https://github.com/Jackett/Jackett/issues/13388
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/carpt.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/carpt.net/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/carpt.json
  */
 import { type ISiteMetadata } from "../types";
@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "CarPT",
   aka: ["车PT", "车站"],
   description: "=链接@分享=",
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 

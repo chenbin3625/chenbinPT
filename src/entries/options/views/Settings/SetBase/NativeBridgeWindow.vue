@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { ApiOutlined, CheckCircleFilled, CloseCircleOutlined } from "@ant-design/icons-vue";
 import { computed, onMounted, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
 import type { BridgeState, BridgeStatus } from "@/shared/types.ts";
 
@@ -35,6 +37,9 @@ const status = shallowRef<BridgeStatus>({
 const loading = ref(false);
 const testLoading = ref(false);
 const permissionLoading = ref(false);
+// 首屏状态是异步读回来的，读到之前 status 还是默认值（未授权 / no-permission），
+// 直接渲染会让用户先看到一个错误的状态，因此用它驱动两张卡片的骨架
+const initialLoading = ref(true);
 
 async function refreshStatus() {
   try {
@@ -118,121 +123,123 @@ const stateColor: Record<BridgeState, string> = {
   error: "red",
 };
 
-onMounted(() => {
-  refreshStatus();
+onMounted(async () => {
+  try {
+    await refreshStatus();
+  } finally {
+    initialLoading.value = false;
+  }
 });
 </script>
 
 <template>
-  <v-row>
-    <v-col md="10" lg="8">
+  <div class="ptd-settings-grid">
+    <section class="ptd-settings-section">
       <!-- Permission Section -->
-      <v-label class="my-2">{{ t("SetNativeBridge.permission.title") }}</v-label>
-      <v-card variant="tonal" class="mb-4 pa-4">
-        <div class="d-flex align-center ga-3">
-          <v-chip
-            :color="status.permissionGranted ? 'green' : 'grey'"
-            :prepend-icon="status.permissionGranted ? 'mdi-check-circle' : 'mdi-close-circle'"
-            variant="elevated"
-            size="small"
-          >
+      <a-typography-text strong style="display: block; margin: 8px 0">
+        {{ t("SetNativeBridge.permission.title") }}
+      </a-typography-text>
+      <a-card :bordered="false" :loading="initialLoading" style="margin-bottom: 16px; padding: 16px">
+        <div class="ptd-settings-row">
+          <a-tag :color="status.permissionGranted ? resolveColor('green') : resolveColor('grey')">
+            <CheckCircleFilled v-if="status.permissionGranted" style="margin-right: 4px" />
+            <CloseCircleOutlined v-else style="margin-right: 4px" />
             {{
               status.permissionGranted
                 ? t("SetNativeBridge.permission.granted")
                 : t("SetNativeBridge.permission.notGranted")
             }}
-          </v-chip>
+          </a-tag>
 
-          <v-btn
+          <a-button
             v-if="!status.permissionGranted"
-            color="primary"
-            variant="elevated"
-            size="small"
             :loading="permissionLoading"
+            size="small"
+            type="primary"
             @click="grantPermission"
           >
             {{ t("SetNativeBridge.permission.grant") }}
-          </v-btn>
-          <v-btn
-            v-else
-            color="warning"
-            variant="text"
-            size="small"
-            :loading="permissionLoading"
-            @click="revokePermission"
-          >
+          </a-button>
+          <a-button v-else :loading="permissionLoading" size="small" type="text" @click="revokePermission">
             {{ t("SetNativeBridge.permission.revoke") }}
-          </v-btn>
+          </a-button>
         </div>
-      </v-card>
+      </a-card>
 
       <!-- Bridge Control Section -->
-      <v-label class="my-2">{{ t("SetNativeBridge.bridge.title") }}</v-label>
-      <v-card variant="tonal" class="mb-4 pa-4" :disabled="!status.permissionGranted">
-        <v-switch
-          :model-value="status.enabled"
-          :label="t('SetNativeBridge.bridge.enabled')"
-          :loading="loading"
-          :disabled="!status.permissionGranted"
-          color="primary"
-          hide-details
-          class="mb-3"
-          @update:model-value="toggleEnabled($event as boolean)"
-        />
+    </section>
 
-        <div class="d-flex align-center ga-3">
-          <v-chip :color="stateColor[status.state]" variant="elevated" size="small">
-            {{ t(`SetNativeBridge.bridge.status.${status.state}`) }}
-          </v-chip>
-
-          <v-btn
-            color="primary"
-            variant="text"
-            size="small"
-            prepend-icon="mdi-connection"
-            :loading="testLoading"
-            :disabled="!status.permissionGranted || !status.enabled"
-            @click="testConnection"
-          >
-            {{ t("SetNativeBridge.bridge.testConnection") }}
-          </v-btn>
+    <section class="ptd-settings-section">
+      <a-typography-text strong style="display: block; margin: 8px 0">
+        {{ t("SetNativeBridge.bridge.title") }}
+      </a-typography-text>
+      <a-card :bordered="false" :loading="initialLoading" style="margin-bottom: 16px; padding: 16px">
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetNativeBridge.bridge.enabled") }}</a-typography-text>
+          <a-switch
+            :checked="status.enabled"
+            :disabled="!status.permissionGranted"
+            :loading="loading"
+            @update:checked="toggleEnabled"
+          />
         </div>
 
-        <v-alert v-if="status.lastError" type="error" variant="tonal" density="compact" class="mt-3">
-          {{ status.lastError }}
-        </v-alert>
+        <div class="ptd-settings-row">
+          <a-tag :color="resolveColor(stateColor[status.state])">
+            {{ t(`SetNativeBridge.bridge.status.${status.state}`) }}
+          </a-tag>
 
-        <v-alert
+          <a-button
+            :disabled="!status.permissionGranted || !status.enabled"
+            :loading="testLoading"
+            size="small"
+            type="link"
+            @click="testConnection"
+          >
+            <template #icon>
+              <ApiOutlined />
+            </template>
+            {{ t("SetNativeBridge.bridge.testConnection") }}
+          </a-button>
+        </div>
+
+        <a-alert v-if="status.lastError" :message="status.lastError" show-icon style="margin-top: 12px" type="error" />
+
+        <a-alert
           v-if="
             status.permissionGranted && status.enabled && status.state !== 'connected' && status.state !== 'connecting'
           "
+          show-icon
+          style="margin-top: 16px"
           type="warning"
-          variant="tonal"
-          density="compact"
-          class="mt-3"
         >
-          {{ t("SetNativeBridge.info.setupCommand") }}
-          <code class="d-block my-2 pa-2 bg-surface rounded">{{ setupCommand }}</code>
-          {{ t("SetNativeBridge.info.setupHint") }}
-        </v-alert>
-      </v-card>
+          <template #message>
+            {{ t("SetNativeBridge.info.setupCommand") }}
+            <code
+              style="display: block; margin: 8px 0; padding: 8px; background: var(--ptd-hover); border-radius: 4px"
+              >{{ setupCommand }}</code
+            >
+            {{ t("SetNativeBridge.info.setupHint") }}
+          </template>
+        </a-alert>
+      </a-card>
+    </section>
 
+    <section class="ptd-settings-section">
       <!-- Info Section -->
-      <v-label class="my-2">{{ t("SetNativeBridge.info.title") }}</v-label>
-      <v-alert type="info" variant="tonal">
+      <a-typography-text strong style="display: block; margin: 8px 0">
+        {{ t("SetNativeBridge.info.title") }}
+      </a-typography-text>
+      <a-typography-paragraph class="ptd-section-description">
         {{ t("SetNativeBridge.info.description") }}
         <br /><br />
-        <i18n-t keypath="SetNativeBridge.info.cliRequired" tag="span" class="font-weight-bold">
-          <a href="https://github.com/pt-plugins/ptd-cli" target="_blank" rel="noopener">
+        <i18n-t keypath="SetNativeBridge.info.cliRequired" tag="strong">
+          <a-typography-link href="https://github.com/chenbin3625/ptd-cli" rel="noopener" target="_blank">
             {{ t("SetNativeBridge.info.cliLink") }}
-          </a>
+          </a-typography-link>
         </i18n-t>
-      </v-alert>
-      <v-alert type="warning" variant="tonal" class="mt-2">
-        {{ t("SetNativeBridge.info.privacy") }}
-      </v-alert>
-    </v-col>
-  </v-row>
+      </a-typography-paragraph>
+      <a-alert :message="t('SetNativeBridge.info.privacy')" show-icon style="margin-top: 16px" type="warning" />
+    </section>
+  </div>
 </template>
-
-<style scoped lang="scss"></style>

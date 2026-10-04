@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["太乙"],
   description: "心不空则丹不结",
   tags: ["电视剧", "韩剧"],
-  timezoneOffset: "+0800",
 
   collaborator: ["doubly-yi"],
 

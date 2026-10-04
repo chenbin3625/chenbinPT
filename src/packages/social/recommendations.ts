@@ -120,12 +120,14 @@ const recommendationSources: ISocialRecommendationSource[] = [
   },
 ];
 
-let recommendationCache:
-  | {
-      createAt: number;
-      items: ISocialRecommendationItem[];
-    }
-  | undefined;
+/**
+ * 按来源（`source.url`）缓存已成功抓到的条目。
+ *
+ * 只缓存"非空成功"结果：失败来源、以及成功但为空的来源都不写缓存，
+ * 因此"部分失败"不会生成一份被长 TTL 钉住的残缺结果，下一次普通刷新一定会补抓这些来源。
+ * 成功来源仍按 RECOMMENDATION_CACHE_TTL 复用，避免每次都全量重抓。
+ */
+const recommendationSourceCache = new Map<string, { createAt: number; items: ISocialRecommendationItem[] }>();
 
 function normalizeParsedItems(
   parsed: ISocialSitePageInformation | ISocialSitePageInformation[],
@@ -226,10 +228,14 @@ export function mergeRecommendationSourceItems(
   return mergedItems;
 }
 
+/**
+ * 单个来源的抓取结果是否可写入缓存。
+ *
+ * 只缓存非空结果：空结果无法区分"来源本身就没有内容"与"抓取被降级/拦截"，
+ * 一旦缓存就会被 TTL 钉住、无法补抓，所以保持"非空才缓存"的语义。
+ */
 export function canCacheRecommendationItems(items: readonly Pick<ISocialRecommendationItem, "category">[]) {
-  // 只要四个分类都有结果即可缓存；单个冗余源失败（hasFailedSources）不应阻止缓存，
-  // 否则任一源持续失败都会导致每次都全量重抓所有源。
-  return recommendationCategories.every((category) => items.some((item) => item.category === category));
+  return items.length > 0;
 }
 
 async function settleRecommendationItemsWithConcurrency<T, R>(
@@ -396,48 +402,58 @@ async function fetchRecommendationSource(source: ISocialRecommendationSource): P
 export async function getSocialRecommendations(
   options: IGetSocialRecommendationsOptions = {},
 ): Promise<ISocialRecommendationsResult> {
-  if (
-    !options.flush &&
-    recommendationCache &&
-    recommendationCache.createAt > Date.now() - RECOMMENDATION_CACHE_TTL &&
-    canCacheRecommendationItems(recommendationCache.items)
-  ) {
-    return { items: recommendationCache.items, hasFailedSources: false };
-  }
+  const now = Date.now();
+  const sourceItemGroups: ISocialRecommendationItem[][] = recommendationSources.map(() => []);
+  const pendingSources: Array<{ source: ISocialRecommendationSource; index: number }> = [];
 
-  const settledResults = await settleRecommendationItemsWithConcurrency(
-    recommendationSources,
-    RECOMMENDATION_SOURCE_CONCURRENCY,
-    fetchRecommendationSource,
-  );
-  let hasRejectedSource = false;
-  const sourceItemGroups = settledResults.flatMap((result) => {
-    if (result.status === "fulfilled" && result.value.length > 0) {
-      return [result.value];
+  recommendationSources.forEach((source, index) => {
+    const cached = options.flush ? undefined : recommendationSourceCache.get(source.url);
+    if (cached && cached.createAt > now - RECOMMENDATION_CACHE_TTL) {
+      sourceItemGroups[index] = cached.items;
+      return;
     }
 
-    hasRejectedSource = true;
+    // 未命中的来源（含上次失败/为空的来源）本次都会重新抓取，从而补上残缺的部分
+    pendingSources.push({ source, index });
+  });
+
+  const settledResults = await settleRecommendationItemsWithConcurrency(
+    pendingSources,
+    RECOMMENDATION_SOURCE_CONCURRENCY,
+    ({ source }) => fetchRecommendationSource(source),
+  );
+  const failedCategories = new Set<TSocialRecommendationCategory>();
+
+  settledResults.forEach((result, pendingIndex) => {
+    const { source, index } = pendingSources[pendingIndex];
+
+    if (result.status === "fulfilled" && canCacheRecommendationItems(result.value)) {
+      sourceItemGroups[index] = result.value;
+      recommendationSourceCache.set(source.url, { createAt: Date.now(), items: result.value });
+      return;
+    }
+
+    failedCategories.add(source.category);
+    // 失败/为空的来源不保留旧的成功缓存（例如 flush 重新抓取时失败），
+    // 保证下一次普通刷新一定会重新补抓，而不是回落到上一轮的陈旧列表
+    recommendationSourceCache.delete(source.url);
     console.warn(
       "Failed to fetch social recommendations",
       result.status === "rejected" ? result.reason : "empty result",
     );
-    return [];
   });
+
+  // 缓存只按"来源"粒度生效：hasFailedSources 仍如实反映本次（含缓存命中）是否有来源缺失
+  const hasFailedSources = failedCategories.size > 0;
   const items = recommendationCategories.flatMap((category) =>
     mergeRecommendationSourceItems(
       sourceItemGroups
-        .map((items) => items.filter((item) => item.category === category))
-        .filter((items) => items.length > 0),
+        .filter((sourceItems) => sourceItems.length > 0)
+        .map((sourceItems) => sourceItems.filter((item) => item.category === category))
+        .filter((sourceItems) => sourceItems.length > 0),
       RECOMMENDATION_CATEGORY_LIMIT,
     ),
   );
 
-  if (canCacheRecommendationItems(items)) {
-    recommendationCache = {
-      createAt: Date.now(),
-      items,
-    };
-  }
-
-  return { items, hasFailedSources: hasRejectedSource };
+  return { items, hasFailedSources };
 }

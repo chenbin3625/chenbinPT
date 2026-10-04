@@ -1,7 +1,7 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/52pt.yml
  * @JackettIssue https://github.com/Jackett/Jackett/issues/6763
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/52pt.site/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/52pt.site/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/52pt.json
  */
 import type { ISiteMetadata, IUserInfo } from "../types";
@@ -18,7 +18,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["我爱PT"],
   description: "低调地在这个PT校园快乐成长 快乐分享",
   tags: ["高清", "电影", "电视剧"],
-  timezoneOffset: "+0800",
   favicon: "./52pt.ico",
 
   collaborator: ["StarGazerQQD", "zhuweitung"],

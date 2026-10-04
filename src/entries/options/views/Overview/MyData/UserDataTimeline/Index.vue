@@ -1,8 +1,27 @@
 <!--suppress HtmlUnknownTag -->
 <script setup lang="ts">
+import {
+  ArrowLeftOutlined,
+  DisconnectOutlined,
+  ExportOutlined,
+  HistoryOutlined,
+  SaveOutlined,
+  VerticalAlignBottomOutlined,
+} from "@ant-design/icons-vue";
 import { saveAs } from "file-saver";
-import { computed, onMounted, reactive, ref, shallowRef, useTemplateRef } from "vue";
+import { computed, onBeforeUpdate, onMounted, ref, shallowRef, useTemplateRef } from "vue";
 import Konva from "konva";
+// P2-2：vue-konva 组件改为在此局部注册（原来在 options/main.ts 里 app.use(VueKonva, { prefix: "Vk" })，
+// 会把 konva 打进 options 入口 chunk）。别名保持 Vk* 以匹配模板里现有的 <vk-xxx> 标签。
+import {
+  Group as VkGroup,
+  Image as VkImage,
+  Layer as VkLayer,
+  Line as VkLine,
+  Rect as VkRect,
+  Stage as VkStage,
+  Text as VkText,
+} from "vue-konva";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { useElementSize } from "@vueuse/core";
@@ -16,6 +35,7 @@ import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import SiteName from "@/options/components/SiteName.vue";
 import NavButton from "@/options/components/NavButton.vue";
 import CheckSwitchButton from "@/options/components/CheckSwitchButton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 import {
   canThisSiteShow,
@@ -45,7 +65,6 @@ const control = configStore.userDataTimelineControl;
 
 const isLoading = ref<boolean>(false);
 const { ref: timelineData, reset: resetTimelineData } = timelineDataRef;
-const allowEdit = reactive({ name: false, title: false }); // 是否允许编辑用户名、时间轴标题
 
 function resetTimelineDataWithControl() {
   // 开始生成 timeline 的数据
@@ -90,6 +109,16 @@ const stageConfig = computed(() => {
     scaleX: scale.value,
     scaleY: scale.value,
   };
+});
+
+// 展示面板的内边距：画布容器宽度 = 面板宽度 - 2 * (previewPadding + 1px 边框)，据此反推面板宽度
+const previewPadding = 16;
+const previewPanelWidth = canvasWidth + (previewPadding + 1) * 2;
+
+// 画布在展示面板中的实际显示尺寸（用于给容器预留高度、显示尺寸提示）
+const displaySize = computed(() => {
+  const s = scale.value;
+  return { width: Math.round(canvasWidth * s), height: Math.round(canvasHeight.value * s) };
 });
 
 // 绘制相关辅助函数
@@ -157,20 +186,47 @@ const realShowField = computed(() => {
   return showField;
 });
 
-const formatSiteDate = (siteDate: number) =>
-  computed(() => {
-    if (control.dateFormat === "time_added") {
-      return formatDate(siteDate, "yyyy-MM-dd");
-    } else {
-      return formatTimeAgo(siteDate);
-    }
-  });
+// P1-19：原来是「每次调用都返回一个新 computed」的工厂，模板每次渲染都会新建 computed
+// 并立即读取 .value，旧的 computed 会永久留在依赖集合中。这里改成纯函数 + 结果缓存。
+const siteDateTextCache = new Map<string, string>();
+const formatSiteDate = (siteDate: number): string => {
+  const key = `${control.dateFormat}:${siteDate}`;
+  const cached = siteDateTextCache.get(key);
+  if (cached !== undefined) return cached;
 
-const faviconRefs = ref<KonvaNode[]>([]);
+  const text =
+    control.dateFormat === "time_added"
+      ? (formatDate(siteDate, "yyyy-MM-dd") as string)
+      : (formatTimeAgo(siteDate) as string);
+
+  // 简单限容，避免长时间运行后无限增长
+  if (siteDateTextCache.size > 2000) siteDateTextCache.clear();
+  siteDateTextCache.set(key, text);
+  return text;
+};
+
+// P1-18：favicon 节点引用改为按 key 覆盖写入的 Map。
+// 之前用内联函数 ref 往数组里 push，Vue 对「每次渲染都变身份的 ref 函数」不会回调 null，
+// 数组会随渲染次数 × 图标数量无限增长（内存泄漏），拖动模糊滑块时遍历成本越来越高。
+// Map 保证同一节点只保留一份；每次更新开始前清空，由本轮 patch 的 ref 回调重新填充。
+const faviconRefs = new Map<string, KonvaNode>();
+
+function setFaviconRef(key: string, el: any) {
+  if (el) {
+    faviconRefs.set(key, el);
+  } else {
+    faviconRefs.delete(key);
+  }
+}
+
+onBeforeUpdate(() => {
+  faviconRefs.clear();
+});
 
 function updateBlue() {
   Konva.autoDrawEnabled = false;
-  for (const faviconRef of faviconRefs.value) {
+  // Map 已按 key 去重，同一 Konva 节点只会 cache / batchDraw 一次
+  for (const faviconRef of faviconRefs.values()) {
     faviconRef.getNode()?.cache();
   }
   canvasLayer.value?.getNode()?.batchDraw();
@@ -180,30 +236,40 @@ function updateBlue() {
 onMounted(async () => {
   isLoading.value = true;
 
-  // 加载所有站点的元数据
-  await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));
+  try {
+    // metadata store 从 chrome.storage 的恢复是异步的，而 loadFullData 会按「已添加站点」过滤：
+    // 水合完成前读取会得到空数据，时间轴会错误地显示空状态。这里先等水合完成。
+    await metadataStore.$onReady();
 
-  // 加载 fixedLastUserInfo
-  fixedLastUserInfo.value = await loadFullData();
+    // 加载所有站点的元数据
+    await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));
 
-  realAllSite.value = Object.keys(fixedLastUserInfo.value).filter((x) => canThisSiteShow(x));
+    // 加载 fixedLastUserInfo
+    fixedLastUserInfo.value = await loadFullData();
 
-  const { sites = [] } = route.query ?? {};
+    realAllSite.value = Object.keys(fixedLastUserInfo.value).filter((x) => canThisSiteShow(x));
 
-  // 勾选站点，优先使用 route 参数，其次是上次保存的配置，最后是全部站点
-  if ((sites as string[]).length > 0) {
-    selectedSites.value = sites as string[];
-  } else if ((configStore.userDataTimelineControl.selectedSites ?? []).length > 0) {
-    selectedSites.value = configStore.userDataTimelineControl.selectedSites;
-  } else {
-    selectedSites.value = realAllSite.value;
+    const { sites = [] } = route.query ?? {};
+
+    // 路由 query 在只有 1 个站点时会被反序列化成字符串（Vue Router 的已知行为），这里统一归一化为数组
+    const routeSites = Array.isArray(sites) ? (sites as string[]) : typeof sites === "string" && sites ? [sites] : [];
+
+    // 勾选站点，优先使用 route 参数，其次是上次保存的配置，最后是全部站点
+    if (routeSites.length > 0) {
+      selectedSites.value = routeSites;
+    } else if ((configStore.userDataTimelineControl.selectedSites ?? []).length > 0) {
+      selectedSites.value = configStore.userDataTimelineControl.selectedSites;
+    } else {
+      selectedSites.value = realAllSite.value;
+    }
+
+    // 开始生成 timeline 的数据
+    resetTimelineDataWithControl();
+  } finally {
+    // 无论成功失败都要收起骨架屏，失败时由空状态占位兜底
+    isLoading.value = false;
+    console.debug(fixedLastUserInfo);
   }
-
-  // 开始生成 timeline 的数据
-  resetTimelineDataWithControl();
-
-  isLoading.value = false;
-  console.debug(fixedLastUserInfo);
 });
 
 function exportTimelineImg() {
@@ -231,509 +297,546 @@ function saveControl() {
 </script>
 
 <template>
-  <v-card>
-    <v-row class="justify-start pa-2">
-      <v-col
-        ref="canvasContainer"
-        :style="{
-          'max-width': `${canvasWidth}px`,
-          height: `${stageConfig.height * scale}px`,
-        }"
-        class="mb-3 pa-0 mr-3"
-        cols="12"
-      >
-        <v-skeleton-loader v-if="isLoading" :min-height="canvasHeight" type="image@20"> </v-skeleton-loader>
+  <a-card>
+    <!-- 顶部工具条：整页级操作 -->
+    <div class="ptd-timeline-toolbar">
+      <NavButton color="grey" :icon="ArrowLeftOutlined" :text="t('common.back')" @click="() => router.back()" />
+      <div style="flex: 1 1 auto"></div>
+      <NavButton
+        color="info"
+        :disabled="realAllSite.length === 0"
+        :icon="ExportOutlined"
+        :text="t('common.exportImage')"
+        @click="exportTimelineImg"
+      />
+      <NavButton color="green" :icon="SaveOutlined" :text="t('common.saveSettings')" @click="saveControl" />
+    </div>
 
-        <!-- 使用 konva 来绘制 UserDataTimeLine -->
-        <vk-stage ref="canvasStage" :config="stageConfig">
-          <vk-layer ref="canvasLayer">
-            <!-- 1. 添加背景颜色，并填满整个画布 -->
-            <vk-rect
-              :config="{
-                fill: control.backgroundColor,
-                x: 0,
-                y: 0,
-                width: stageConfig.width,
-                height: stageConfig.height,
-              }"
-            />
+    <div class="ptd-timeline-layout">
+      <!-- 左侧：展示面板（内容与导出的图片一致） -->
+      <section class="ptd-timeline-panel ptd-timeline-preview" :style="{ width: `${previewPanelWidth}px` }">
+        <div class="ptd-timeline-panel__head">
+          <span>{{ t("UserDataTimeline.controls.previewPanel") }}</span>
+          <span class="ptd-timeline-panel__meta ptd-meta-text"
+            >{{ displaySize.width }} × {{ displaySize.height }} px</span
+          >
+        </div>
 
-            <!-- 2. 绘制顶端概况 -->
-            <vk-group :config="{ x: 0, y: 0 }">
-              <!-- 2.1 用户图标 -->
-              <vk-text :config="icon({ x: 20, y: 20, text: '󰀉' /* account-circle */ })" />
-              <!-- 2.2 用户名 -->
-              <vk-text :config="text({ x: 65, y: 26, text: configStore.userName, fontSize: 26 })" />
-              <!-- 2.3 创建时间 -->
-              <vk-text
-                :config="
-                  text({
-                    y: 20,
-                    text: formatDate(timelineData.createAt),
-                    fontSize: 12,
-                    fill: '#9E9E9E',
-                    width: stageConfig.width - 20,
-                    align: 'right',
-                  })
-                "
+        <div
+          ref="canvasContainer"
+          class="ptd-timeline-preview__body"
+          :style="{ height: `${displaySize.height + previewPadding * 2}px` }"
+        >
+          <a-skeleton v-if="isLoading" active> </a-skeleton>
+
+          <!-- 没有任何可用于生成时间轴的站点数据 -->
+          <NoDataPlaceholder v-else-if="realAllSite.length === 0" :description="t('MyData.table.noData')" />
+
+          <!-- 使用 konva 来绘制 UserDataTimeLine -->
+          <vk-stage v-else ref="canvasStage" :config="stageConfig">
+            <vk-layer ref="canvasLayer">
+              <!-- 1. 添加背景颜色，并填满整个画布 -->
+              <vk-rect
+                :config="{
+                  fill: control.backgroundColor,
+                  x: 0,
+                  y: 0,
+                  width: stageConfig.width,
+                  height: stageConfig.height,
+                }"
               />
-            </vk-group>
 
-            <!-- 3. 绘制基础信息 -->
-            <vk-group :config="{ x: 20, y: nameInfoHeight }">
-              <!-- 3.1 左侧 totalInfo -->
+              <!-- 2. 绘制顶端概况 -->
               <vk-group :config="{ x: 0, y: 0 }">
+                <!-- 2.1 用户图标 -->
+                <vk-text :config="icon({ x: 20, y: 20, text: '󰀉' /* account-circle */ })" />
+                <!-- 2.2 用户名 -->
+                <vk-text :config="text({ x: 65, y: 26, text: configStore.userName, fontSize: 26 })" />
+                <!-- 2.3 创建时间 -->
                 <vk-text
                   :config="
                     text({
-                      y: 0,
-                      text: `${t('UserDataTimeline.total')}${t('UserDataTimeline.field.site')}: ${timelineData.totalInfo.sites}`,
-                    })
-                  "
-                />
-                <vk-text
-                  v-if="timelineData.totalInfo.deadSites > 0"
-                  :config="
-                    text({
-                      x: 160,
-                      y: 0,
-                      text: `󰖛: ${timelineData.totalInfo.deadSites}`,
-                      fontFamily: 'Material Design Icons For PTD',
+                      y: 20,
+                      text: formatDate(timelineData.createAt),
+                      fontSize: 12,
                       fill: '#9E9E9E',
+                      width: stageConfig.width - 20,
+                      align: 'right',
                     })
                   "
                 />
               </vk-group>
-              <vk-text
-                v-for="(key, index) in realShowField"
-                :key="key.name"
-                :config="
-                  text({
-                    y: 30 * (index + 1),
-                    text: `${t('UserDataTimeline.total')}${t('UserDataTimeline.field.' + key.name)}: ${key.format(timelineData.totalInfo[key.name])}`,
-                  })
-                "
-              />
-              <vk-text
-                :config="
-                  text({
-                    y: 30 * (realShowField.length + 1),
-                    text: t('UserDataTimeline.ptAge', { years: timelineData.joinTimeInfo.years }),
-                  })
-                "
-              />
 
-              <!-- 3.2 中间分隔线、右侧冠军及亚军站点 -->
-              <vk-group v-if="control.showTop" :config="{ x: 280, y: 0 }">
-                <!-- 3.2.1 中间分隔线 -->
-                <vk-line :config="divider({ points: [0, 5, 0, topAndTotalInfoHeight - 15] })" />
-                <!-- 3.2.2 右侧冠军及亚军站点 -->
-                <template v-for="(type, index) in topSiteRenderAttr" :key="type.iconFill">
-                  <vk-group :config="{ x: 20 + index * 170, y: 0 }">
-                    <vk-text :config="icon({ y: 0, fill: type.iconFill, fontSize: 24, text: `󰔸` /* trophy */ })" />
-                    <template v-for="(key, index) in realShowField" :key="key.name">
-                      <vk-group
-                        v-if="timelineData.topInfo[key.name][type.valueKey] > 0"
-                        :config="{ x: 0, y: 30 * (index + 1) }"
-                      >
+              <!-- 3. 绘制基础信息 -->
+              <vk-group :config="{ x: 20, y: nameInfoHeight }">
+                <!-- 3.1 左侧 totalInfo -->
+                <vk-group :config="{ x: 0, y: 0 }">
+                  <vk-text
+                    :config="
+                      text({
+                        y: 0,
+                        text: `${t('UserDataTimeline.total')}${t('UserDataTimeline.field.site')}: ${timelineData.totalInfo.sites}`,
+                      })
+                    "
+                  />
+                  <vk-text
+                    v-if="timelineData.totalInfo.deadSites > 0"
+                    :config="
+                      text({
+                        x: 160,
+                        y: 0,
+                        text: `󰖛: ${timelineData.totalInfo.deadSites}`,
+                        fontFamily: 'Material Design Icons For PTD',
+                        fill: '#9E9E9E',
+                      })
+                    "
+                  />
+                </vk-group>
+                <vk-text
+                  v-for="(key, index) in realShowField"
+                  :key="key.name"
+                  :config="
+                    text({
+                      y: 30 * (index + 1),
+                      text: `${t('UserDataTimeline.total')}${t('UserDataTimeline.field.' + key.name)}: ${key.format(timelineData.totalInfo[key.name])}`,
+                    })
+                  "
+                />
+                <vk-text
+                  :config="
+                    text({
+                      y: 30 * (realShowField.length + 1),
+                      text: t('UserDataTimeline.ptAge', { years: timelineData.joinTimeInfo.years }),
+                    })
+                  "
+                />
+
+                <!-- 3.2 中间分隔线、右侧冠军及亚军站点 -->
+                <vk-group v-if="control.showTop" :config="{ x: 280, y: 0 }">
+                  <!-- 3.2.1 中间分隔线 -->
+                  <vk-line :config="divider({ points: [0, 5, 0, topAndTotalInfoHeight - 15] })" />
+                  <!-- 3.2.2 右侧冠军及亚军站点 -->
+                  <template v-for="(type, index) in topSiteRenderAttr" :key="type.iconFill">
+                    <vk-group :config="{ x: 20 + index * 170, y: 0 }">
+                      <vk-text :config="icon({ y: 0, fill: type.iconFill, fontSize: 24, text: `󰔸` /* trophy */ })" />
+                      <template v-for="(key, index) in realShowField" :key="key.name">
+                        <vk-group
+                          v-if="timelineData.topInfo[key.name][type.valueKey] > 0"
+                          :config="{ x: 0, y: 30 * (index + 1) }"
+                        >
+                          <vk-image
+                            :ref="
+                              (el: any) => {
+                                setFaviconRef(`top-${type.valueKey}-${key.name}`, el);
+                                el?.getNode().cache();
+                              }
+                            "
+                            :config="
+                              favicon({
+                                site: timelineData.topInfo[key.name][type.siteKey].site,
+                                size: 20,
+                                canvas: { fillStyle: control.backgroundColor },
+                              })
+                            "
+                          />
+                          <vk-text
+                            v-if="timelineData.topInfo[key.name][type.valueKey] > 0"
+                            :config="text({ x: 30, text: key.format(timelineData.topInfo[key.name][type.valueKey]) })"
+                          />
+                        </vk-group>
+                      </template>
+                    </vk-group>
+                  </template>
+                </vk-group>
+              </vk-group>
+
+              <!-- 4. 绘制站点信息 -->
+              <vk-group v-if="control.showTimeline" :config="{ x: 0, y: nameInfoHeight + topAndTotalInfoHeight }">
+                <!-- 4.1 分割线 -->
+                <vk-line :config="divider({ points: [20, 0, 630, 0] })" />
+                <!-- 4.2 提示词 -->
+                <vk-text
+                  :config="
+                    text({
+                      y: 15,
+                      text: `... ${timelineData.title} ...`,
+                      align: 'center',
+                      fontStyle: 'bold',
+                      width: stageConfig.width,
+                    })
+                  "
+                />
+
+                <!-- 4.3 站点信息 -->
+                <vk-group :config="{ x: 0, y: 40 }">
+                  <!-- 4.3.1 分割线 -->
+                  <vk-line
+                    :config="
+                      divider({
+                        x: stageConfig.width / 2,
+                        y: 0,
+                        points: [0, 10, 0, selectedSites.length * perSiteHeight + 10],
+                      })
+                    "
+                  />
+                  <!-- 4.3.2 不同站点的信息 -->
+                  <template v-for="(userInfo, index) in siteInfo" :key="userInfo.site">
+                    <vk-group :config="{ x: 0, y: index * perSiteHeight }">
+                      <!-- 首先画出 favicon 并 clip -->
+                      <vk-group :config="{ y: perSiteHeight / 2, clipFunc: siteFaviconClipFunc(24) }">
                         <vk-image
                           :ref="
                             (el: any) => {
-                              faviconRefs.push(el);
+                              setFaviconRef(`site-${userInfo.site}`, el);
                               el?.getNode().cache();
                             }
                           "
                           :config="
                             favicon({
-                              site: timelineData.topInfo[key.name][type.siteKey].site,
-                              size: 20,
-                              canvas: { fillStyle: control.backgroundColor },
+                              site: userInfo.site,
+                              size: 38,
+                              x: stageConfig.width / 2 - 24,
+                              y: 0 - 24,
+                              canvas: { width: 48, height: 48 },
                             })
                           "
                         />
-                        <vk-text
-                          v-if="timelineData.topInfo[key.name][type.valueKey] > 0"
-                          :config="text({ x: 30, text: key.format(timelineData.topInfo[key.name][type.valueKey]) })"
-                        />
                       </vk-group>
-                    </template>
-                  </vk-group>
-                </template>
-              </vk-group>
-            </vk-group>
 
-            <!-- 4. 绘制站点信息 -->
-            <vk-group v-if="control.showTimeline" :config="{ x: 0, y: nameInfoHeight + topAndTotalInfoHeight }">
-              <!-- 4.1 分割线 -->
-              <vk-line :config="divider({ points: [20, 0, 630, 0] })" />
-              <!-- 4.2 提示词 -->
-              <vk-text
-                :config="
-                  text({
-                    y: 15,
-                    text: `... ${timelineData.title} ...`,
-                    align: 'center',
-                    fontStyle: 'bold',
-                    width: stageConfig.width,
-                  })
-                "
-              />
-
-              <!-- 4.3 站点信息 -->
-              <vk-group :config="{ x: 0, y: 40 }">
-                <!-- 4.3.1 分割线 -->
-                <vk-line
-                  :config="
-                    divider({
-                      x: stageConfig.width / 2,
-                      y: 0,
-                      points: [0, 10, 0, selectedSites.length * perSiteHeight + 10],
-                    })
-                  "
-                />
-                <!-- 4.3.2 不同站点的信息 -->
-                <template v-for="(userInfo, index) in siteInfo" :key="userInfo.site">
-                  <vk-group :config="{ x: 0, y: index * perSiteHeight }">
-                    <!-- 首先画出 favicon 并 clip -->
-                    <vk-group :config="{ y: perSiteHeight / 2, clipFunc: siteFaviconClipFunc(24) }">
-                      <vk-image
-                        :ref="
-                          (el: any) => {
-                            faviconRefs.push(el);
-                            el?.getNode().cache();
-                          }
-                        "
-                        :config="
-                          favicon({
-                            site: userInfo.site,
-                            size: 38,
-                            x: stageConfig.width / 2 - 24,
-                            y: 0 - 24,
-                            canvas: { width: 48, height: 48 },
-                          })
-                        "
-                      />
-                    </vk-group>
-
-                    <!-- 站点数据（上传下载等） -->
-                    <vk-group
-                      :config="{
-                        x: index % 2 == 0 ? 30 : stageConfig.width / 2 + 60,
-                        y: perSiteHeight / 2 - 10 - realShowField.length * 10,
-                      }"
-                    >
-                      <vk-text
-                        v-if="control.showPerSiteField.siteName"
-                        :config="
-                          text({
-                            y: 0,
-                            text: `${allAddedSiteMetadata[userInfo.site]?.isDead ? '󰖛' : ''}${allAddedSiteMetadata[userInfo.site].siteName}`,
-                            fill: allAddedSiteMetadata[userInfo.site]?.isDead ? '#9E9E9E' : '#fff',
-                            fontFamily: allAddedSiteMetadata[userInfo.site]?.isDead
-                              ? 'Material Design Icons For PTD'
-                              : undefined,
-                            fontStyle: 'bold',
-                          })
-                        "
-                      />
+                      <!-- 站点数据（上传下载等） -->
                       <vk-group
                         :config="{
-                          x: 0,
-                          y: control.showPerSiteField.siteName ? 10 : 0,
+                          x: index % 2 == 0 ? 30 : stageConfig.width / 2 + 60,
+                          y: perSiteHeight / 2 - 10 - realShowField.length * 10,
                         }"
                       >
                         <vk-text
-                          v-for="(key, index) in realShowField"
-                          :key="key.name"
+                          v-if="control.showPerSiteField.siteName"
                           :config="
                             text({
-                              y: 20 * (index + 1),
-                              text: `${t('UserDataTimeline.field.' + key.name)}: ${key.format(userInfo[key.name] ?? 0)}`,
+                              y: 0,
+                              text: `${allAddedSiteMetadata[userInfo.site]?.isDead ? '󰖛' : ''}${allAddedSiteMetadata[userInfo.site].siteName}`,
+                              fill: allAddedSiteMetadata[userInfo.site]?.isDead ? '#9E9E9E' : '#fff',
+                              fontFamily: allAddedSiteMetadata[userInfo.site]?.isDead
+                                ? 'Material Design Icons For PTD'
+                                : undefined,
+                              fontStyle: 'bold',
+                            })
+                          "
+                        />
+                        <vk-group
+                          :config="{
+                            x: 0,
+                            y: control.showPerSiteField.siteName ? 10 : 0,
+                          }"
+                        >
+                          <vk-text
+                            v-for="(key, index) in realShowField"
+                            :key="key.name"
+                            :config="
+                              text({
+                                y: 20 * (index + 1),
+                                text: `${t('UserDataTimeline.field.' + key.name)}: ${key.format(userInfo[key.name] ?? 0)}`,
+                                fontSize: 16,
+                              })
+                            "
+                          />
+                          <vk-line
+                            v-if="
+                              index != siteInfo.length - 1 &&
+                              (control.showPerSiteField.siteName || realShowField.length > 0)
+                            "
+                            :config="
+                              divider({
+                                points: [
+                                  0,
+                                  (realShowField.length + 1.5) * 20,
+                                  stageConfig.width / 2 - 80,
+                                  (realShowField.length + 1.5) * 20,
+                                ],
+                              })
+                            "
+                          />
+                        </vk-group>
+                      </vk-group>
+
+                      <!-- 站点数据（用户名、用户等级、用户UID等） -->
+                      <vk-group
+                        :config="{ x: index % 2 == 0 ? stageConfig.width / 2 + 60 : 30, y: perSiteHeight / 2 - 20 }"
+                      >
+                        <vk-text
+                          :config="text({ y: 0, text: formatSiteDate(userInfo.joinTime!), fontStyle: 'bold' })"
+                        />
+                        <vk-text
+                          :config="
+                            text({
+                              y: 28,
+                              width: stageConfig.width / 2 - 80,
+                              wrap: 'char',
+                              lineHeight: 1.25,
+                              text: [
+                                control.showPerSiteField.name ? userInfo.name! : '',
+                                control.showPerSiteField.level ? `<${userInfo.levelName!}>` : '',
+                                control.showPerSiteField.uid && userInfo.id && userInfo.id !== '0' && userInfo.id !== 0
+                                  ? `<${userInfo.id}>`
+                                  : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' '),
                               fontSize: 16,
                             })
                           "
-                        />
-                        <vk-line
-                          v-if="
-                            index != siteInfo.length - 1 &&
-                            (control.showPerSiteField.siteName || realShowField.length > 0)
-                          "
-                          :config="
-                            divider({
-                              points: [
-                                0,
-                                (realShowField.length + 1.5) * 20,
-                                stageConfig.width / 2 - 80,
-                                (realShowField.length + 1.5) * 20,
-                              ],
-                            })
-                          "
-                        />
+                        ></vk-text>
                       </vk-group>
                     </vk-group>
-
-                    <!-- 站点数据（用户名、用户等级、用户UID等） -->
-                    <vk-group
-                      :config="{ x: index % 2 == 0 ? stageConfig.width / 2 + 60 : 30, y: perSiteHeight / 2 - 20 }"
-                    >
-                      <vk-text
-                        :config="text({ y: 0, text: `${formatSiteDate(userInfo.joinTime!).value}`, fontStyle: 'bold' })"
-                      />
-                      <vk-text
-                        :config="
-                          text({
-                            y: 28,
-                            width: stageConfig.width / 2 - 80,
-                            wrap: 'char',
-                            lineHeight: 1.25,
-                            text: [
-                              control.showPerSiteField.name ? userInfo.name! : '',
-                              control.showPerSiteField.level ? `<${userInfo.levelName!}>` : '',
-                              control.showPerSiteField.uid && userInfo.id && userInfo.id !== '0' && userInfo.id !== 0
-                                ? `<${userInfo.id}>`
-                                : '',
-                            ]
-                              .filter(Boolean)
-                              .join(' '),
-                            fontSize: 16,
-                          })
-                        "
-                      ></vk-text>
-                    </vk-group>
-                  </vk-group>
-                </template>
+                  </template>
+                </vk-group>
               </vk-group>
-            </vk-group>
 
-            <!-- 5. 构建信息 -->
-            <vk-group :config="{ x: 0, y: nameInfoHeight + topAndTotalInfoHeight + siteTimeHeight }">
-              <vk-line :config="divider({ points: [20, -10, 630, -10] })" />
-              <vk-text
-                :config="
-                  text({
-                    width: stageConfig.width - 20,
-                    align: 'right',
-                    text: 'Created By PT-Depiler (' + ext_version + ') at ' + formatDate(timelineData.createAt),
-                    fontSize: 12,
-                    fill: '#b5b5b5',
-                  })
-                "
+              <!-- 5. 构建信息 -->
+              <vk-group :config="{ x: 0, y: nameInfoHeight + topAndTotalInfoHeight + siteTimeHeight }">
+                <vk-line :config="divider({ points: [20, -10, 630, -10] })" />
+                <vk-text
+                  :config="
+                    text({
+                      width: stageConfig.width - 20,
+                      align: 'right',
+                      text: 'Created By chenbinPT (' + ext_version + ') at ' + formatDate(timelineData.createAt),
+                      fontSize: 12,
+                      fill: '#b5b5b5',
+                    })
+                  "
+                />
+              </vk-group>
+            </vk-layer>
+          </vk-stage>
+        </div>
+      </section>
+
+      <!-- 右侧：控制台 -->
+      <section class="ptd-timeline-panel ptd-timeline-console">
+        <div class="ptd-timeline-panel__head">
+          <span>{{ t("UserDataTimeline.controls.consolePanel") }}</span>
+        </div>
+
+        <div class="ptd-timeline-console__body">
+          <div class="ptd-section-heading" style="margin-top: 0">
+            {{ t("UserDataTimeline.controls.styleSettings") }}
+          </div>
+
+          <a-typography-text style="margin: 8px 0">{{
+            t("UserDataTimeline.controls.usernameAndTitle")
+          }}</a-typography-text>
+
+          <a-row :gutter="8">
+            <a-col :span="24">
+              <a-flex align="center" :gap="4">
+                <a-auto-complete
+                  v-model:value="configStore.userName"
+                  :options="Object.keys(configStore.getUserNames.names).map((name) => ({ value: name, label: name }))"
+                  :placeholder="t('common.username')"
+                  style="flex: 1 1 0"
+                />
+                <HistoryOutlined
+                  style="cursor: pointer"
+                  @click="() => (configStore.userName = configStore.getUserNames.perfName)"
+                />
+              </a-flex>
+            </a-col>
+            <a-col :span="24">
+              <a-form-item :label="t('UserDataTimeline.controls.timelineTitle')"
+                ><a-input v-model:value="timelineData.title" @update:value="(v: string) => (control.title = v)">
+                  <template #suffix>
+                    <HistoryOutlined
+                      style="cursor: pointer"
+                      @click="
+                        () => {
+                          control.title = '';
+                          resetTimelineDataWithControl();
+                        }
+                      "
+                    />
+                  </template> </a-input
+              ></a-form-item>
+            </a-col>
+          </a-row>
+
+          <a-typography-text style="margin: 8px 0">{{ t("UserDataTimeline.controls.components") }}</a-typography-text>
+
+          <!-- antd 的 a-switch 只渲染 checkedChildren/unCheckedChildren 插槽，默认插槽会被丢弃，
+               因此文案必须放在同级节点上 -->
+          <a-switch v-model:checked="control.showTop" />
+          <span style="margin-left: 8px">{{ t("UserDataTimeline.controls.showTopSites") }}</span>
+          <a-switch v-model:checked="control.showTimeline" />
+          <span style="margin-left: 8px">{{ t("UserDataTimeline.controls.showTimeline") }}</span>
+
+          <a-form-item :label="t('UserDataTimeline.controls.customBgColor')">
+            <a-flex align="center" :gap="4">
+              <input v-model="control.backgroundColor" type="color" style="height: 32px; width: 64px" />
+              <HistoryOutlined
+                style="cursor: pointer"
+                @click="control.backgroundColor = defaultTimelineBackgroundColor"
               />
-            </vk-group>
-          </vk-layer>
-        </vk-stage>
-      </v-col>
-      <v-col cols="12" sm>
-        <v-row class="flex-nowrap mb-1">
-          <v-col class="d-flex">
-            <NavButton color="grey" icon="mdi-arrow-left" :text="t('common.back')" @click="() => router.back()" />
-            <v-spacer />
-            <NavButton
-              color="info"
-              icon="mdi-file-export-outline"
-              :text="t('common.exportImage')"
-              @click="exportTimelineImg"
-            />
-            <NavButton color="green" icon="mdi-content-save" :text="t('common.saveSettings')" @click="saveControl" />
-          </v-col>
-        </v-row>
+            </a-flex>
+          </a-form-item>
 
-        <v-alert :title="t('UserDataTimeline.controls.styleSettings')" type="info" class="mb-2"> </v-alert>
+          <a-typography-text style="margin: 8px 0">{{ t("UserDataTimeline.controls.siteDisplay") }}</a-typography-text>
 
-        <v-label class="my-2">{{ t("UserDataTimeline.controls.usernameAndTitle") }}</v-label>
+          <a-row :gutter="8">
+            <a-col :span="20">
+              <a-slider
+                v-model:value="control.faviconBlue"
+                :max="8"
+                :min="0"
+                :step="1"
+                style="padding-right: 20px"
+                :tooltip-open="true"
+                @update:value="updateBlue"
+              ></a-slider>
+            </a-col>
+          </a-row>
 
-        <v-row>
-          <v-col cols="12" sm>
-            <v-combobox
-              v-model="configStore.userName"
-              :readonly="!allowEdit.name"
-              append-inner-icon="mdi-history"
-              :items="Object.keys(configStore.getUserNames.names)"
-              hide-details
-              :label="t('common.username')"
-              @click:append-inner="() => (configStore.userName = configStore.getUserNames.perfName)"
-            >
-              <template #prepend>
-                <v-icon
-                  :color="allowEdit.name ? 'success' : ''"
-                  :icon="!allowEdit.name ? 'mdi-lock' : 'mdi-lock-open'"
-                  @click="allowEdit.name = !allowEdit.name"
-                ></v-icon>
-              </template>
-            </v-combobox>
-          </v-col>
-          <v-col cols="12" sm>
-            <v-text-field
-              v-model="timelineData.title"
-              :disabled="!control.showTimeline"
-              :readonly="!allowEdit.title"
-              append-inner-icon="mdi-history"
-              hide-details
-              :label="t('UserDataTimeline.controls.timelineTitle')"
-              @update:model-value="(v: string) => (control.title = v)"
-              @click:append-inner="
-                () => {
-                  control.title = '';
-                  resetTimelineDataWithControl();
-                }
-              "
-            >
-              <template #prepend>
-                <v-icon
-                  :color="allowEdit.title ? 'success' : ''"
-                  :icon="!allowEdit.title ? 'mdi-lock' : 'mdi-lock-open'"
-                  @click="allowEdit.title = !allowEdit.title"
-                ></v-icon>
-              </template>
-            </v-text-field>
-          </v-col>
-        </v-row>
+          <a-row :gutter="8">
+            <a-col flex="1 1 0" style="align-self: center; margin-left: 8px">
+              <a-typography-text>{{ t("UserDataTimeline.controls.displayContent") }}</a-typography-text>
+            </a-col>
+            <a-col :span="24" :sm="20">
+              <a-typography-text style="margin: 8px 0">{{
+                t("UserDataTimeline.controls.statsSection")
+              }}</a-typography-text>
+              <a-row :gutter="0" style="padding-left: 20px">
+                <a-col v-for="(v, key) in control.showField" :key="key" :span="12" :sm="8" style="padding: 0">
+                  <a-checkbox v-model:checked="control.showField[key]">
+                    {{ t("UserDataTimeline.field." + key) }}
+                  </a-checkbox>
+                </a-col>
+              </a-row>
+              <a-typography-text style="margin: 8px 0">{{
+                t("UserDataTimeline.controls.timelineSection")
+              }}</a-typography-text>
+              <a-row :gutter="0" style="padding-left: 20px">
+                <a-col v-for="(v, key) in control.showPerSiteField" :key="key" :span="12" :sm="8" style="padding: 0px">
+                  <a-checkbox :key="key" v-model:checked="control.showPerSiteField[key]">
+                    {{ t("UserDataTimeline.field." + key) }}
+                  </a-checkbox>
+                </a-col>
+              </a-row>
+            </a-col>
+          </a-row>
 
-        <v-label class="my-2">{{ t("UserDataTimeline.controls.components") }}</v-label>
+          <a-row :gutter="8">
+            <a-col flex="1 1 0" style="align-self: center; margin-left: 8px">
+              <a-typography-text>{{ t("UserDataTimeline.controls.timeDisplay") }}</a-typography-text>
+            </a-col>
+            <a-col :span="24" :sm="20">
+              <a-radio-group v-model:value="control.dateFormat">
+                <a-radio value="time_added">{{ t("UserDataTimeline.controls.timeAdded") }}</a-radio>
+                <a-radio value="time_alive">{{ t("UserDataTimeline.controls.timeAlive") }}</a-radio>
+              </a-radio-group>
+            </a-col>
+          </a-row>
 
-        <v-switch
-          v-model="control.showTop"
-          color="success"
-          hide-details
-          :label="t('UserDataTimeline.controls.showTopSites')"
-        />
-        <v-switch
-          v-model="control.showTimeline"
-          color="success"
-          hide-details
-          :label="t('UserDataTimeline.controls.showTimeline')"
-        />
-
-        <v-color-input
-          v-model="control.backgroundColor"
-          mode="hex"
-          color-pip
-          hide-actions
-          hide-details
-          :label="t('UserDataTimeline.controls.customBgColor')"
-        >
-          <template #append-inner>
-            <v-icon
-              icon="mdi-backup-restore"
-              @click="control.backgroundColor = defaultTimelineBackgroundColor"
-            ></v-icon>
-          </template>
-        </v-color-input>
-
-        <v-label class="my-2">{{ t("UserDataTimeline.controls.siteDisplay") }}</v-label>
-
-        <v-row>
-          <v-col cols="10">
-            <v-slider
-              v-model="control.faviconBlue"
-              :max="8"
-              :min="0"
-              :step="1"
-              :thumb-color="control.faviconBlue > 4 ? 'red' : ''"
-              class="pr-5"
-              hide-details
-              :label="t('UserDataTimeline.controls.faviconBlur')"
-              thumb-label
-              @update:model-value="updateBlue"
-            />
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <v-col class="align-self-center ml-2">
-            <v-label>{{ t("UserDataTimeline.controls.displayContent") }}</v-label>
-          </v-col>
-          <v-col cols="12" sm="10">
-            <v-label class="my-2">{{ t("UserDataTimeline.controls.statsSection") }}</v-label>
-            <v-row gap="0" class="pl-5">
-              <v-col v-for="(v, key) in control.showField" class="pa-0" cols="6" sm="4" :key="key">
-                <v-switch
-                  v-model="control.showField[key]"
-                  :label="t('UserDataTimeline.field.' + key)"
-                  color="success"
-                  hide-details
-                  density="compact"
-                />
-              </v-col>
-            </v-row>
-            <v-label class="my-2">{{ t("UserDataTimeline.controls.timelineSection") }}</v-label>
-            <v-row gap="0" class="pl-5">
-              <v-col v-for="(v, key) in control.showPerSiteField" :key="key" class="pa-0" cols="6" sm="4">
-                <v-switch
-                  :key="key"
-                  v-model="control.showPerSiteField[key]"
-                  :label="t('UserDataTimeline.field.' + key)"
-                  color="success"
-                  density="compact"
-                  hide-details
-                />
-              </v-col>
-            </v-row>
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <v-col class="align-self-center ml-2">
-            <v-label>{{ t("UserDataTimeline.controls.timeDisplay") }}</v-label>
-          </v-col>
-          <v-col cols="12" sm="10">
-            <v-radio-group inline hide-details v-model="control.dateFormat">
-              <v-radio :label="t('UserDataTimeline.controls.timeAdded')" value="time_added"></v-radio>
-              <v-radio :label="t('UserDataTimeline.controls.timeAlive')" value="time_alive"></v-radio>
-            </v-radio-group>
-          </v-col>
-        </v-row>
-
-        <v-alert class="mt-4 mb-2" :title="t('UserDataTimeline.controls.displaySiteSettings')" type="info">
-          <template #append>
+          <div class="ptd-section-heading" style="margin-top: 16px">
+            <span>{{ t("UserDataTimeline.controls.displaySiteSettings") }}</span>
             <CheckSwitchButton
               v-model="selectedSites"
               :all="realAllSite"
               color="grey"
               @update:model-value="resetTimelineDataWithControl"
             />
-          </template>
-        </v-alert>
+          </div>
 
-        <v-row gap="0" class="my-2">
-          <v-col v-for="(site, siteId) in fixedLastUserInfo" :key="siteId" class="py-0" cols="6" sm="3">
-            <v-checkbox
-              v-model="selectedSites"
-              :disabled="!canThisSiteShow(siteId)"
-              :indeterminate="!canThisSiteShow(siteId)"
-              :value="siteId"
-              density="compact"
-              hide-details
-              indeterminate-icon="mdi-close"
-              multiple
-              @update:model-value="resetTimelineDataWithControl"
-            >
-              <template #label>
+          <a-row :gutter="0" style="margin: 8px 0">
+            <a-col v-for="(site, siteId) in fixedLastUserInfo" :key="siteId" :span="12" :sm="8" style="padding: 0">
+              <a-checkbox
+                :checked="selectedSites.includes(siteId)"
+                :disabled="!canThisSiteShow(siteId)"
+                :indeterminate="!canThisSiteShow(siteId)"
+                @update:checked="
+                  (checked: boolean) => {
+                    selectedSites = checked
+                      ? Array.from(new Set([...selectedSites, siteId]))
+                      : selectedSites.filter((x) => x !== siteId);
+                    resetTimelineDataWithControl();
+                  }
+                "
+              >
                 <SiteFavicon :site-id="siteId" :size="16" />
-                <span class="ml-1">
-                  <SiteName :site-id="siteId" class="" tag="span" />
-                  <v-icon
+                <span style="margin-left: 4px">
+                  <SiteName :site-id="siteId" tag="span" />
+                  <VerticalAlignBottomOutlined
                     v-if="allAddedSiteMetadata[siteId]?.isDead"
-                    class="ml-1"
-                    color="blue-grey-darken-1"
-                    icon="mdi-weather-sunset-down"
-                    size="small"
-                  ></v-icon>
-                  <v-icon
+                    style="margin-left: 4px; color: var(--ptd-text-secondary)"
+                  />
+                  <DisconnectOutlined
                     v-if="allAddedSiteMetadata[siteId]?.isOffline && !allAddedSiteMetadata[siteId]?.isDead"
-                    class="ml-1"
-                    color="blue-grey-darken-1"
-                    icon="mdi-signal-off"
-                    size="small"
-                  ></v-icon>
+                    style="margin-left: 4px; color: var(--ptd-text-secondary)"
+                  />
                 </span>
-              </template>
-            </v-checkbox>
-          </v-col>
-        </v-row>
-      </v-col>
-    </v-row>
-  </v-card>
+              </a-checkbox>
+            </a-col>
+          </a-row>
+        </div>
+      </section>
+    </div>
+  </a-card>
 </template>
 
-<style scoped lang="scss"></style>
+<style scoped>
+/* 时间轴页：左侧展示面板（画布）+ 右侧控制台，两栏在空间不足时自动改为上下排列 */
+.ptd-timeline-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ptd-timeline-layout {
+  display: flex;
+  flex-wrap: wrap;
+  /* 顶部对齐：控制台不会被展示面板拉高 */
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.ptd-timeline-panel {
+  min-width: 0;
+  background: var(--ptd-surface, #fff);
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  border-radius: 8px;
+}
+
+.ptd-timeline-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  font-weight: 600;
+}
+
+.ptd-timeline-panel__meta {
+  font-weight: 400;
+}
+
+.ptd-timeline-preview {
+  /* 宽度由内联样式给出（画布宽度 + 内边距），窄屏时收缩到容器宽度，画布随之等比缩放 */
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.ptd-timeline-preview__body {
+  padding: 16px;
+}
+
+.ptd-timeline-console {
+  /* 占满剩余宽度；剩余宽度不足时（flex-wrap）整块换行到展示面板下方 */
+  flex: 1 1 420px;
+}
+
+.ptd-timeline-console__body {
+  padding: 16px;
+}
+</style>

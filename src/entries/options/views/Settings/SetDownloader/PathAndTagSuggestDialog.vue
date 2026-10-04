@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { CloseCircleOutlined, ImportOutlined } from "@ant-design/icons-vue";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { getDownloader, getDownloaderMetaData, type TorrentClientMetaData } from "@ptd/downloader";
 
+import { resolveColor } from "@/shared/colors.ts";
+import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import type { IDownloaderMetadata } from "@/shared/types.ts";
@@ -20,6 +23,10 @@ const clientConfig = ref<IDownloaderMetadata>();
 const clientMetadata = ref<TorrentClientMetaData>();
 const expansionPanelOpen = ref<string>("note");
 
+function onCollapseChange(key: string | number | (string | number)[]) {
+  expansionPanelOpen.value = String(Array.isArray(key) ? (key[0] ?? "") : (key ?? ""));
+}
+
 // [key (for i18n), value, example]
 const pathReplaceMap: [string, string, string][] = [
   // 在 torrent 相关字段中，因为对应的 title subTitle 为对应 torrent 的字段，所以这里用 . 来分隔
@@ -35,6 +42,24 @@ const pathReplaceMap: [string, string, string][] = [
   ["dateDay", "$date:DD$", "/volume1/$date:DD$/music -> /volume1/01/music"],
   ["custom", "<...>", "/volume1/<...>/music -> prompt for input 'test' -> /volume1/test/music"],
 ];
+
+const noteColumns = computed(() => [
+  withEllipsisCell(
+    { title: t("SetDownloader.PathAndTag.note.table.keywords"), dataIndex: "keyword", key: "keyword" },
+    "10rem",
+  ),
+  withEllipsisCell({ title: t("SetDownloader.PathAndTag.note.table.note"), dataIndex: "note", key: "note" }, "20rem"),
+  { title: t("SetDownloader.PathAndTag.note.table.example"), dataIndex: "example", key: "example" },
+]);
+
+const noteDataSource = computed(() =>
+  pathReplaceMap.map(([key, value, example]) => ({
+    key: value,
+    keyword: value,
+    note: t(`SetDownloader.PathAndTag.note.replaceNote.${key}`),
+    example,
+  })),
+);
 
 watch(
   () => clientId,
@@ -109,158 +134,130 @@ function saveClientConfig() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" scrollable width="1000">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar
-          :title="t('SetDownloader.PathAndTag.title', [clientConfig?.name ?? clientId])"
-          color="blue-grey-darken-2"
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('SetDownloader.PathAndTag.title', [clientConfig?.name ?? clientId])"
+    :width="1000"
+    @ok="saveClientConfig"
+  >
+    <a-collapse accordion :active-key="expansionPanelOpen" @change="onCollapseChange">
+      <a-collapse-panel key="path" :disabled="clientMetadata?.feature?.CustomPath?.allowed === false">
+        <template #header>
+          <a-flex align="center" :gap="8">
+            {{ t("SetDownloader.PathAndTag.downloadPath.title") }}
+            <span style="flex: 1 1 auto; min-width: 8px" />
+            <a-tag :color="clientConfig!.suggestFolders!.length > 0 ? resolveColor('info') : undefined">
+              +{{ clientConfig!.suggestFolders!.length }}
+            </a-tag>
+          </a-flex>
+        </template>
+
+        <a-typography-paragraph v-if="clientMetadata?.feature?.CustomPath?.description" class="ptd-section-description">
+          {{ clientMetadata?.feature?.CustomPath?.description }}
+        </a-typography-paragraph>
+
+        <a-typography-text style="display: block; margin-top: 8px">
+          {{ t("SetDownloader.PathAndTag.downloadPath.addInputLabel") }}
+        </a-typography-text>
+        <a-flex align="flex-start" :gap="8">
+          <a-textarea v-model:value="suggestFolderInput" :rows="4" style="flex: 1 1 auto" />
+          <a-flex :gap="4" vertical>
+            <a-tooltip :title="t('SetDownloader.PathAndTag.downloadPath.autoImport')">
+              <a-button :loading="isLoadingClientFolders" type="link" @click="loadClientFolders">
+                <template #icon>
+                  <ImportOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+            <a-tooltip :title="t('SetDownloader.PathAndTag.downloadPath.clear')">
+              <a-button danger type="text" @click="suggestFolderInput = ''">
+                <template #icon>
+                  <CloseCircleOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+          </a-flex>
+        </a-flex>
+        <a-flex :gap="6" style="margin-top: 8px" wrap="wrap">
+          <a-tag
+            v-for="pathReplace in pathReplaceMap"
+            :key="pathReplace[1]"
+            :title="pathReplace[2]"
+            style="cursor: pointer; margin-inline-end: 0"
+            @click="suggestFolderInput += '/' + pathReplace[1]"
+          >
+            {{ pathReplace[1] }}
+          </a-tag>
+        </a-flex>
+      </a-collapse-panel>
+      <a-collapse-panel key="tag">
+        <template #header>
+          <a-flex align="center" :gap="8">
+            {{ t("SetDownloader.PathAndTag.tags.title") }}
+            <span style="flex: 1 1 auto; min-width: 8px" />
+            <a-tag :color="clientConfig!.suggestTags!.length > 0 ? resolveColor('info') : undefined">
+              +{{ clientConfig!.suggestTags!.length }}
+            </a-tag>
+          </a-flex>
+        </template>
+        <a-typography-text style="display: block; margin-bottom: 4px">
+          {{ t("SetDownloader.PathAndTag.tags.addInputLabel") }}
+        </a-typography-text>
+        <a-flex align="flex-start" :gap="8">
+          <a-textarea v-model:value="suggestTagInput" :rows="4" style="flex: 1 1 auto" />
+          <a-flex :gap="4" vertical>
+            <a-tooltip :title="t('SetDownloader.PathAndTag.tags.autoImport')">
+              <a-button :loading="isLoadingClientLabels" type="link" @click="loadClientLabels">
+                <template #icon>
+                  <ImportOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+            <a-tooltip :title="t('SetDownloader.PathAndTag.tags.clear')">
+              <a-button danger type="text" @click="suggestTagInput = ''">
+                <template #icon>
+                  <CloseCircleOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+          </a-flex>
+        </a-flex>
+        <a-flex :gap="6" style="margin-top: 8px" wrap="wrap">
+          <a-tag
+            v-for="pathReplace in pathReplaceMap"
+            :key="pathReplace[1]"
+            :title="pathReplace[2]"
+            style="cursor: pointer; margin-inline-end: 0"
+            @click="suggestTagInput += pathReplace[1]"
+          >
+            {{ pathReplace[1] }}
+          </a-tag>
+        </a-flex>
+      </a-collapse-panel>
+      <a-collapse-panel key="note" :header="t('SetDownloader.PathAndTag.note.title')">
+        <a-typography-paragraph class="ptd-section-description">
+          {{ t("SetDownloader.PathAndTag.note.index") }}
+        </a-typography-paragraph>
+        <a-table
+          :columns="noteColumns"
+          :data-source="noteDataSource"
+          :pagination="false"
+          size="small"
+          style="margin-top: 8px"
         >
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'example'">
+              <pre
+                class="ptd-cell-ellipsis"
+                style="margin: 0; max-width: 24rem"
+                :title="String(record.example ?? '')"
+                >{{ record.example }}</pre>
+            </template>
           </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-expansion-panels v-model="expansionPanelOpen">
-          <v-expansion-panel :disabled="clientMetadata?.feature?.CustomPath?.allowed === false" value="path">
-            <v-expansion-panel-title>
-              {{ t("SetDownloader.PathAndTag.downloadPath.title") }}
-              <v-spacer />
-              <v-chip :color="clientConfig!.suggestFolders!.length > 0 ? 'info' : ''" size="small">
-                +{{ clientConfig!.suggestFolders!.length }}
-              </v-chip>
-            </v-expansion-panel-title>
-
-            <v-expansion-panel-text>
-              <v-alert v-if="clientMetadata?.feature?.CustomPath.description" closable type="info" variant="outlined">
-                {{ clientMetadata?.feature?.CustomPath.description }}
-              </v-alert>
-
-              <v-textarea
-                v-model="suggestFolderInput"
-                :label="t('SetDownloader.PathAndTag.downloadPath.addInputLabel')"
-                class="mt-2"
-              >
-                <template #append>
-                  <div class="d-flex flex-column">
-                    <v-btn
-                      :loading="isLoadingClientFolders"
-                      :title="t('SetDownloader.PathAndTag.downloadPath.autoImport')"
-                      color="primary"
-                      icon="mdi-import"
-                      variant="text"
-                      @click="loadClientFolders"
-                    />
-                    <v-btn
-                      :title="t('SetDownloader.PathAndTag.downloadPath.clear')"
-                      color="red"
-                      icon="$clear"
-                      variant="text"
-                      @click="suggestFolderInput = ''"
-                    />
-                  </div>
-                </template>
-                <template #details>
-                  <v-chip-group>
-                    <v-chip
-                      v-for="pathReplace in pathReplaceMap"
-                      :key="pathReplace[1]"
-                      :title="pathReplace[2]"
-                      class="mr-1"
-                      size="small"
-                      @click="() => (suggestFolderInput += '/' + pathReplace[1])"
-                    >
-                      {{ pathReplace[1] }}
-                    </v-chip>
-                  </v-chip-group>
-                </template>
-              </v-textarea>
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-          <v-expansion-panel value="tag">
-            <v-expansion-panel-title>
-              {{ t("SetDownloader.PathAndTag.tags.title") }}
-              <v-spacer />
-              <v-chip :color="clientConfig!.suggestTags!.length > 0 ? 'info' : ''" size="small">
-                +{{ clientConfig!.suggestTags!.length }}
-              </v-chip>
-            </v-expansion-panel-title>
-            <v-expansion-panel-text>
-              <v-textarea v-model="suggestTagInput" :label="t('SetDownloader.PathAndTag.tags.addInputLabel')">
-                <template #append>
-                  <div class="d-flex flex-column">
-                    <v-btn
-                      :loading="isLoadingClientLabels"
-                      :title="t('SetDownloader.PathAndTag.tags.autoImport')"
-                      color="primary"
-                      icon="mdi-import"
-                      variant="text"
-                      @click="loadClientLabels"
-                    />
-                    <v-btn
-                      :title="t('SetDownloader.PathAndTag.tags.clear')"
-                      color="red"
-                      icon="$clear"
-                      variant="text"
-                      @click="suggestTagInput = ''"
-                    />
-                  </div>
-                </template>
-                <template #details>
-                  <v-chip-group>
-                    <v-chip
-                      v-for="pathReplace in pathReplaceMap"
-                      :key="pathReplace[1]"
-                      :title="pathReplace[2]"
-                      class="mr-1"
-                      size="small"
-                      @click="() => (suggestTagInput += pathReplace[1])"
-                    >
-                      {{ pathReplace[1] }}
-                    </v-chip>
-                  </v-chip-group>
-                </template>
-              </v-textarea>
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-          <v-expansion-panel :title="t('SetDownloader.PathAndTag.note.title')" value="note">
-            <v-expansion-panel-text>
-              <v-alert class="mt-2" color="info" variant="outlined">
-                <span>{{ t("SetDownloader.PathAndTag.note.index") }}</span>
-                <v-table density="compact">
-                  <thead>
-                    <tr>
-                      <th>{{ t("SetDownloader.PathAndTag.note.table.keywords") }}</th>
-                      <th>{{ t("SetDownloader.PathAndTag.note.table.note") }}</th>
-                      <th>{{ t("SetDownloader.PathAndTag.note.table.example") }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="pathReplace in pathReplaceMap" :key="pathReplace[1]">
-                      <td>{{ pathReplace[1] }}</td>
-                      <td>{{ t(`SetDownloader.PathAndTag.note.replaceNote.${pathReplace[0]}`) }}</td>
-                      <td>
-                        <pre>{{ pathReplace[2] }}</pre>
-                      </td>
-                    </tr>
-                  </tbody>
-                </v-table>
-              </v-alert>
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-        </v-expansion-panels>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="success" prepend-icon="mdi-check-circle-outline" variant="text" @click="saveClientConfig">
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        </a-table>
+      </a-collapse-panel>
+    </a-collapse>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

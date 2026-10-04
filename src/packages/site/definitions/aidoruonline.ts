@@ -11,7 +11,7 @@ import {
   NeedLoginError,
 } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite";
-import { buildCategoryOptionsFromList, parseSizeString } from "../utils";
+import { buildCategoryOptionsFromList, createDocument, parseSizeString } from "../utils";
 import { parseValidTimeString } from "../utils/datetime.ts";
 
 export const siteMetadata: ISiteMetadata = {
@@ -275,7 +275,7 @@ export const siteMetadata: ISiteMetadata = {
       id: 2,
       name: "Sharer ",
       uploads: 50,
-      averageSeedingTime: "P20H",
+      averageSeedingTime: "PT20H",
       interval: "P6M",
       privilege:
         "Can download, upload torrents；Ratio has no effect on availability of new torrents；Notification and highlighting of new comments",
@@ -400,13 +400,16 @@ export default class AidoruOnline extends PrivateSite {
         // 请求获取的是tr片段，添加表头再解析
         const wrappedHTML = `<table><tbody>${userDetailText}</tbody></table>`;
 
-        const parser = new DOMParser();
-        const userDetailDocument = parser.parseFromString(wrappedHTML, "text/html");
+        // A-17：改用共享的 createDocument（唯一一处裸 new DOMParser()）——
+        // 它是「解析环境」的唯一决定点，将来站点包若在 background 而非 offscreen 执行时不会单独失效。
+        const userDetailDocument = createDocument(wrappedHTML);
 
-        flushUserInfo.seedingSize += this.getFieldData(
-          userDetailDocument,
-          this.metadata.userInfo?.selectors?.seedingSize!,
+        // A-15：getFieldData 未命中时返回字符串 ""，而 `0 + "" === "0"` 会让后续每次 += 变成字符串拼接，
+        // 于是 seedingSize 静默变成 "0"+"1234" 这类脏值。这里逐页强制转成数字再累加。
+        const pageSeedingSize = Number(
+          this.getFieldData(userDetailDocument, this.metadata.userInfo?.selectors?.seedingSize!),
         );
+        flushUserInfo.seedingSize += Number.isFinite(pageSeedingSize) ? pageSeedingSize : 0;
       }
     }
 

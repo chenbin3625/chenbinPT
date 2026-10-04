@@ -38,7 +38,7 @@ export const siteMetadata: ISiteMetadata = {
       id: 2,
       name: "Member",
       interval: "P1W",
-      uploaded: "10B", // 例如 "20GB"
+      uploaded: "10GB",
       ratio: 0.6, // 例如 0.55
       privilege: "Invites",
     },
@@ -47,7 +47,7 @@ export const siteMetadata: ISiteMetadata = {
       name: "Power User",
       interval: "P2W",
       uploads: 5, // 例如 10
-      uploaded: "25GB", // 例如 "100GB"
+      uploaded: "25GB",
       ratio: 0.65, // 例如 0.60
       privilege: "",
     },
@@ -56,7 +56,7 @@ export const siteMetadata: ISiteMetadata = {
       name: "Elite",
       interval: "P4W",
       uploads: 50, // 例如 10
-      uploaded: "100GB", // 例如 "100GB"
+      uploaded: "100GB",
       ratio: 0.65, // 例如 0.60
       privilege: "",
     },
@@ -65,7 +65,7 @@ export const siteMetadata: ISiteMetadata = {
       name: "Torrent Master",
       interval: "P8W",
       uploads: 500, // 例如 10
-      uploaded: "500GB", // 例如 "100GB"
+      uploaded: "500GB",
       ratio: 0.65, // 例如 0.60
       privilege: "",
     },
@@ -74,7 +74,7 @@ export const siteMetadata: ISiteMetadata = {
       name: "Power TM",
       interval: "P8W",
       uploads: 500, // 例如 10
-      uploaded: "500GB", // 例如 "100GB"
+      uploaded: "500GB",
       ratio: 0.65, // 例如 0.60
       privilege: "",
     },
@@ -83,7 +83,7 @@ export const siteMetadata: ISiteMetadata = {
       name: "Elite TM",
       interval: "P8W",
       uploads: 500, // 例如 10
-      uploaded: "500GB", // 例如 "100GB"
+      uploaded: "500GB",
       ratio: 0.65, // 例如 0.60
       privilege: "",
     },

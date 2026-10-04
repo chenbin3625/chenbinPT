@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/aither-api.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/aither.cc/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/aither.cc/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/aither.json
  */
 import { type ISiteMetadata } from "../types";
@@ -25,7 +25,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "Aither",
   aka: ["ATH"],
   tags: ["影视"],
-  timezoneOffset: "+0000",
   collaborator: ["akina"],
 
   type: "private",

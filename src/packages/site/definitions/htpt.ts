@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/htpt.cc/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/htpt.cc/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/htpt.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/htpt.json
  */
@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["海棠曲艺园", "海棠"],
   description: "主打曲艺、戏曲、相声、评书、小品、广播剧、有声小说等中国传统有声资源",
   tags: ["曲艺", "小品", "有声小说"],
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 

@@ -18,7 +18,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["爱萝莉"],
   description: "主打动漫，追番和萝莉资源，兼顾热门国漫和爆款剧集的连载，设有影视对比区和专业级画质对比bbcode的站点。",
   tags: ["萝莉", "动漫", "成人", "综合", "影视"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

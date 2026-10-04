@@ -37,7 +37,8 @@ export async function getBackupServerDefaultConfig(configType: string): Promise<
 export async function getBackupServer(config: IBackupConfig): Promise<AbstractBackupServer<IBackupConfig>> {
   const ServerClass = (await getServerModule(config.type)).default;
 
-  // @ts-ignore
+  // @ts-expect-error
+  // 原因：ServerClass 来自动态 import 的实体模块，其构造签名在联合类型下无法被静态收窄
   return new ServerClass(config);
 }
 

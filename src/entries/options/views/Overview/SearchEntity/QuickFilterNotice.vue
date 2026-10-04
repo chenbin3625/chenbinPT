@@ -1,20 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { GlobalOutlined } from "@ant-design/icons-vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { useDisplay } from "vuetify/framework";
+import { useDisplay } from "@/options/composables/useDisplay.ts";
 
 import { useConfigStore } from "@/options/stores/config.ts";
-import { formatSize } from "@/options/utils.ts";
-import type { ISearchResultTorrent } from "@/shared/types/storages/runtime.ts";
 
 import { tableCustomFilter } from "./utils/filter.ts";
+import { applyQuickSiteFilter, getQuickSiteFilterSelection, type IQuickSiteFilter } from "./utils/quickSiteFilter.ts";
 
 import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
-
-const { selectedTorrents } = defineProps<{
-  selectedTorrents: ISearchResultTorrent[];
-}>();
 
 const { t } = useI18n();
 const configStore = useConfigStore();
@@ -22,118 +18,53 @@ const display = useDisplay();
 
 const { advanceFilterDictRef, advanceItemPropsRef, updateTableFilterValueFn } = tableCustomFilter;
 
-const selectedSite = ref<string>("");
+const emptySiteFilter: IQuickSiteFilter = { required: [], exclude: [] };
 
-// 优化后的选中种子信息计算：直接基于选中对象计算
-const selectedTorrentsInfo = computed(() => {
-  const selectedObjects = selectedTorrents;
-  const count = selectedObjects.length;
-
-  // 如果没有选中任何项，直接返回
-  if (count === 0) {
-    return { count: 0, totalSize: 0 };
-  }
-
-  // 直接计算选中对象的总大小，避免遍历查找
-  const totalSize = selectedObjects.reduce((sum, torrent) => sum + (torrent.size || 0), 0);
-
-  return {
-    count,
-    totalSize,
-  };
-});
-
-function clearSiteFilter() {
-  selectedSite.value = ""; // 清除站点过滤器
-  advanceFilterDictRef.value.site.required = [];
-  advanceFilterDictRef.value.site.exclude = [];
-  updateTableFilterValueFn();
+function getSiteFilter(): IQuickSiteFilter {
+  return advanceFilterDictRef.value.site ?? emptySiteFilter;
 }
 
-function updateQuickSiteFilter() {
-  advanceFilterDictRef.value.site.required = [selectedSite.value];
-  advanceFilterDictRef.value.site.exclude = [];
+function getWritableSiteFilter(): IQuickSiteFilter {
+  advanceFilterDictRef.value.site ??= { required: [], exclude: [] };
+  return advanceFilterDictRef.value.site;
+}
+
+const quickSiteSelection = computed(() => getQuickSiteFilterSelection(getSiteFilter()));
+const isAllSelected = computed(() => quickSiteSelection.value.isAllSelected);
+const selectedSite = computed(() => quickSiteSelection.value.selectedSite);
+
+function selectQuickSite(siteId: string | null) {
+  applyQuickSiteFilter(getWritableSiteFilter(), siteId);
   updateTableFilterValueFn();
 }
 </script>
 
 <template>
-  <v-alert class="px-2 py-1 mb-0" color="info" density="compact" variant="tonal">
-    <div class="d-flex align-center">
-      <!-- 站点筛选器 -->
-      <template v-if="configStore.searchEntity.quickSiteFilter">
-        <!-- "全部"选项 -->
-        <v-chip
-          class="chip_limit_width"
-          :class="{ chip_content_hidden_fix: display.smAndDown.value }"
-          size="small"
-          @click.stop="clearSiteFilter"
-          variant="outlined"
-          prepend-icon="mdi-web"
-        >
-          {{ display.smAndDown.value ? "" : t("SearchEntity.siteFilter.all") }}
-        </v-chip>
+  <!-- 快速站点筛选：只是筛选器，不再使用 alert 承载；已选种子的信息与批量操作见页面底部的 SelectionBar -->
+  <div v-if="configStore.searchEntity.quickSiteFilter" class="quick-site-filter">
+    <button
+      type="button"
+      class="quick-site-filter__option"
+      :class="{
+        'quick-site-filter__option--active': isAllSelected,
+        'quick-site-filter__option--icon-only': display.smAndDown.value,
+      }"
+      @click.stop="selectQuickSite(null)"
+    >
+      <GlobalOutlined class="quick-site-filter__icon" />
+      {{ display.smAndDown.value ? "" : t("SearchEntity.siteFilter.all") }}
+    </button>
 
-        <!-- 分站点选项 -->
-        <v-chip-group
-          id="site-filter-chips"
-          v-model="selectedSite"
-          :mobile="false"
-          color="primary"
-          filter
-          mandatory
-          scroll-to-active
-          show-arrows="always"
-          variant="outlined"
-          @update:model-value="updateQuickSiteFilter"
-        >
-          <!-- 各站点选项 -->
-          <v-chip
-            v-for="siteId in advanceItemPropsRef.site"
-            :key="siteId"
-            :value="siteId"
-            size="small"
-            class="mr-1 mb-1"
-          >
-            <SiteFavicon :site-id="siteId" :size="14" class="mr-1" />
-            <SiteName :site-id="siteId" tag="span" />
-          </v-chip>
-        </v-chip-group>
-      </template>
-
-      <v-spacer />
-
-      <!-- 选中种子信息条 -->
-      <v-divider vertical inset class="mx-2" />
-      <v-chip class="my-2 chip_limit_width" color="primary" size="small" variant="outlined">
-        <v-icon icon="mdi-checkbox-marked-circle" start />
-        {{
-          display.smAndDown.value
-            ? selectedTorrentsInfo.count
-            : t("SearchEntity.index.selectedTorrents", [selectedTorrentsInfo.count])
-        }}
-        <v-divider class="mx-2" vertical />
-        <v-icon icon="mdi-harddisk" start />
-        {{ formatSize(selectedTorrentsInfo.totalSize) }}
-      </v-chip>
-    </div>
-  </v-alert>
+    <button
+      v-for="siteId in advanceItemPropsRef.site"
+      :key="siteId"
+      type="button"
+      class="quick-site-filter__option"
+      :class="{ 'quick-site-filter__option--active': selectedSite === siteId }"
+      @click="selectQuickSite(siteId)"
+    >
+      <SiteFavicon :site-id="siteId" :size="14" class="quick-site-filter__favicon" />
+      <SiteName :site-id="siteId" tag="span" class="quick-site-filter__name" />
+    </button>
+  </div>
 </template>
-
-<style lang="scss" scoped>
-.chip_limit_width {
-  min-width: fit-content;
-}
-
-/**
- * 在smAndDown环境下，全部站点的 chip 中 文字内容被隐藏，但是由于使用了 prepend-icon 来设置图标，所以此处通过 hack css 的方法
- * 将 chip 整体变为圆形，并移除 icon 两侧的margin来居中
- */
-.chip_content_hidden_fix {
-  padding: 0 5px !important; // 0 10px -> 0 5px
-
-  :deep(i.v-icon) {
-    margin: 0; // 0 4px -> 0
-  }
-}
-</style>

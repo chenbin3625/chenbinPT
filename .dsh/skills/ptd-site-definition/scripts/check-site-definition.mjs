@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * PT-depiler 站点定义静态检查（无第三方依赖）
+ * chenbinPT 站点定义静态检查（无第三方依赖）
  *
  * 用法：
  *   node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs                       # 检查全部
  *   node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs src/packages/site/definitions/hdsky.ts
  *
- * 只做结构层面的静态检查，不发起网络请求，也不能替代 `pnpm check` 与真机验证。
+ * 只做结构层面的静态检查，不发起网络请求，也不能替代 `npm run check` 与真机验证。
  * 规则来源：src/packages/site/index.ts、types/site.ts、types/base.ts。
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";

@@ -156,6 +156,9 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   private static sessionCache = new Map<string, IFnOSSession>();
   private static posterUrlCache = new Map<string, string>();
 
+  /** /Users/{id}/Views 的结果缓存（按实例，避免每次搜索重复请求） */
+  private viewIdsPromise?: Promise<string[]>;
+
   /**
    * 修正为 FNOS 服务根路径。FNOS 的 JSON API 使用 /emby，/v 和 /jellyfin 都是 Web 前端路径。
    */
@@ -181,12 +184,12 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   }
 
   private get deviceId() {
-    return `pt-depiler-${this.config.id ?? this.cacheKey}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
+    return `chenbinPT-${this.config.id ?? this.cacheKey}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
   }
 
   private getAuthorizationHeader(userId?: string) {
     const userIdPart = userId ? `UserId="${userId}", ` : "";
-    return `Emby ${userIdPart}Client="PT-depiler", Device="Chrome", DeviceId="${this.deviceId}", Version="${__EXT_VERSION__}"`;
+    return `Emby ${userIdPart}Client="chenbinPT", Device="Chrome", DeviceId="${this.deviceId}", Version="${__EXT_VERSION__}"`;
   }
 
   private get session(): IFnOSSession | undefined {
@@ -292,14 +295,25 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       return [parentId];
     }
 
-    const session = await this.login();
-    const response = await this.request<IFnOSQueryResult<IFnOSViewItem>>(`/Users/${session.userId}/Views`, {
-      params: {
-        IncludeExternalContent: false,
-      },
-    });
+    // 视图列表在一次搜索会话内不会变化，按实例缓存 Promise，避免每次搜索都重新请求
+    this.viewIdsPromise ??= (async () => {
+      const session = await this.login();
+      const response = await this.request<IFnOSQueryResult<IFnOSViewItem>>(`/Users/${session.userId}/Views`, {
+        params: {
+          IncludeExternalContent: false,
+        },
+      });
 
-    return response.data.Items?.map((item) => item.Id).filter(Boolean) ?? [];
+      return response.data.Items?.map((item) => item.Id).filter(Boolean) ?? [];
+    })();
+
+    try {
+      return await this.viewIdsPromise;
+    } catch (e) {
+      // 失败不缓存，下一次搜索重新拉取
+      this.viewIdsPromise = undefined;
+      throw e;
+    }
   }
 
   private async queryItems(
@@ -343,11 +357,14 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     }
 
     try {
-      const response = await this.request<Blob>(`/Items/${item.Id}/Images/Primary`, {
-        params: { tag: primaryTag },
-        responseType: "blob",
-      });
-      const posterUrl = URL.createObjectURL(response.data);
+      const session = await this.login();
+
+      // 与 emby / jellyfin / plex 的实现保持一致：直接给出图片 URL，由 <img> 自行加载，
+      // 不再为每一条搜索结果下载整张海报 blob（一页 50 条会产生 50 个并发图片请求 + 常驻 blob URL）。
+      // FNOS 沿用 Emby 兼容 API 的 api_key 查询参数鉴权（同时带上 X-Emby-Token 以兼容不同实现）。
+      const query = `tag=${encodeURIComponent(primaryTag)}&api_key=${encodeURIComponent(session.apikey)}&X-Emby-Token=${encodeURIComponent(session.apikey)}`;
+      const posterUrl = urlJoin(this.apiBaseUrl, `/Items/${item.Id}/Images/Primary?${query}`);
+
       this.setPosterCache(cacheKey, posterUrl);
       return posterUrl;
     } catch (e) {
@@ -361,13 +378,12 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       return;
     }
 
-    const firstCached = FnOS.posterUrlCache.entries().next().value as [string, string] | undefined;
-    if (!firstCached) {
+    const firstCachedKey = FnOS.posterUrlCache.keys().next().value as string | undefined;
+    if (!firstCachedKey) {
       return;
     }
 
-    FnOS.posterUrlCache.delete(firstCached[0]);
-    URL.revokeObjectURL(firstCached[1]);
+    FnOS.posterUrlCache.delete(firstCachedKey);
   }
 
   private async buildMediaItem(item: IFnOSQueryItem): Promise<IMediaServerItem<IFnOSQueryItem>> {

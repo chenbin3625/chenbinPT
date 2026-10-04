@@ -14,6 +14,6 @@ export const siteMetadata: ISiteMetadata = {
 
   favicon: "./_default_unit3d.ico",
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/ff7e7266e4f6d1d3f6a8b883e6b15691cfedae91
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/ff7e7266e4f6d1d3f6a8b883e6b15691cfedae91
   isDead: true,
 };

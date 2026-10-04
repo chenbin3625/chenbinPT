@@ -1,0 +1,1056 @@
+{
+  "setup": [
+    {
+      "step": "键入 Nyaa 后的候选",
+      "optCount": 1,
+      "filtered": ["Nyaa"]
+    },
+    {
+      "step": "编辑步骤的按钮",
+      "editorButtons": [
+        {
+          "t": "00:30",
+          "d": false
+        },
+        {
+          "t": "00:00",
+          "d": false
+        },
+        {
+          "t": "0 MiB/s",
+          "d": false
+        },
+        {
+          "t": "取消",
+          "d": false
+        },
+        {
+          "t": "上一步",
+          "d": false
+        },
+        {
+          "t": "完成",
+          "d": false
+        }
+      ]
+    },
+    {
+      "step": "点击完成",
+      "okClicked": {
+        "found": true,
+        "disabled": false
+      },
+      "after": {
+        "modalOpen": false,
+        "rows": 1
+      }
+    },
+    {
+      "step": "storage.sites",
+      "sites": ["nyaa"]
+    }
+  ],
+  "routes": [
+    {
+      "name": "Overview",
+      "hash": "#/",
+      "clicks": [
+        {
+          "text": "刷新数据",
+          "disabled": false,
+          "covered": null,
+          "rect": [193, 73, 88, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|180|254",
+          "s1": "0|0|0|2|180|256"
+        },
+        {
+          "text": "批量打开",
+          "disabled": true,
+          "covered": null,
+          "rect": [289, 73, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "时间轴",
+          "disabled": false,
+          "covered": null,
+          "rect": [410, 73, 76, 28],
+          "act": "changed",
+          "s0": "0|0|0|2|180|256",
+          "s1": "0|0|0|2|237|251"
+        },
+        {
+          "text": "数据图表",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "导出数据",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "设置",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "自定义列",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        }
+      ]
+    },
+    {
+      "name": "MyData",
+      "hash": "#/my-data",
+      "clicks": [
+        {
+          "text": "刷新数据",
+          "disabled": false,
+          "covered": null,
+          "rect": [193, 73, 88, 28],
+          "act": "changed",
+          "s0": "0|0|0|2|180|254",
+          "s1": "0|0|0|2|180|256"
+        },
+        {
+          "text": "批量打开",
+          "disabled": true,
+          "covered": null,
+          "rect": [289, 73, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "时间轴",
+          "disabled": false,
+          "covered": null,
+          "rect": [410, 73, 76, 28],
+          "act": "changed",
+          "s0": "0|0|0|2|180|256",
+          "s1": "0|0|0|2|237|251"
+        },
+        {
+          "text": "数据图表",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "导出数据",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "设置",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "自定义列",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        }
+      ]
+    },
+    {
+      "name": "SearchEntity",
+      "hash": "#/search-entity",
+      "clicks": [
+        {
+          "text": "搜索情况",
+          "disabled": false,
+          "covered": null,
+          "rect": [225, 97, 16, 21],
+          "act": "changed",
+          "s0": "0|0|0|2|192|249",
+          "s1": "1|0|0|0|192|251"
+        },
+        {
+          "text": "暂停",
+          "disabled": false,
+          "covered": null,
+          "rect": [193, 153, 64, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|192|251",
+          "s1": "0|0|0|0|192|253"
+        },
+        {
+          "text": "重试",
+          "disabled": true,
+          "covered": null,
+          "rect": [261, 153, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "重试失败",
+          "disabled": true,
+          "covered": null,
+          "rect": [329, 153, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "搜索快照",
+          "disabled": true,
+          "covered": null,
+          "rect": [450, 153, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "展示偏好",
+          "disabled": false,
+          "covered": null,
+          "rect": [571, 153, 88, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|192|253",
+          "s1": "0|0|0|0|192|255"
+        },
+        {
+          "text": "自定义列",
+          "disabled": false,
+          "covered": null,
+          "rect": [1388, 219, 21, 21],
+          "act": "no-effect",
+          "s0": "0|0|0|0|192|255",
+          "s1": "0|0|0|0|192|255"
+        }
+      ]
+    },
+    {
+      "name": "SearchResultSnapshot",
+      "hash": "#/search-result-snapshot",
+      "clicks": [
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": null,
+          "rect": [193, 73, 64, 28],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "MediaServerEntity",
+      "hash": "#/media-server-entity",
+      "clicks": []
+    },
+    {
+      "name": "MyClient",
+      "hash": "#/my-client",
+      "clicks": [
+        {
+          "text": "推送到下载器",
+          "disabled": false,
+          "covered": null,
+          "rect": [193, 73, 112, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|170|255",
+          "s1": "1|0|0|0|170|255"
+        },
+        {
+          "text": "开始",
+          "disabled": true,
+          "covered": null,
+          "rect": [330, 73, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "暂停",
+          "disabled": true,
+          "covered": null,
+          "rect": [398, 73, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": null,
+          "rect": [466, 73, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "重新校验",
+          "disabled": true,
+          "covered": null,
+          "rect": [534, 73, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "批量限速",
+          "disabled": true,
+          "covered": null,
+          "rect": [626, 73, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "批量设置标签",
+          "disabled": true,
+          "covered": null,
+          "rect": [718, 73, 112, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "刷新",
+          "disabled": false,
+          "covered": null,
+          "rect": [855, 73, 64, 28],
+          "act": "no-effect",
+          "s0": "0|0|0|0|170|255",
+          "s1": "0|0|0|0|170|255"
+        },
+        {
+          "text": "自动刷新",
+          "disabled": false,
+          "covered": null,
+          "rect": [927, 73, 88, 28],
+          "act": "no-effect",
+          "s0": "0|0|0|0|170|255",
+          "s1": "0|0|0|0|170|255"
+        },
+        {
+          "text": "0 0.00 B/s 0.00 B/s",
+          "disabled": false,
+          "covered": null,
+          "rect": [193, 105, 215, 21],
+          "act": "changed",
+          "s0": "0|0|0|0|170|255",
+          "s1": "1|0|0|0|170|257"
+        },
+        {
+          "text": "自定义列",
+          "disabled": false,
+          "covered": null,
+          "rect": [1388, 132, 21, 21],
+          "act": "no-effect",
+          "s0": "0|0|0|0|170|257",
+          "s1": "0|0|0|0|170|257"
+        }
+      ]
+    },
+    {
+      "name": "DownloadHistory",
+      "hash": "#/download-history",
+      "clicks": [
+        {
+          "text": "刷新下载记录列表",
+          "disabled": false,
+          "covered": null,
+          "rect": [193, 73, 136, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|87|148",
+          "s1": "0|0|0|0|87|150"
+        },
+        {
+          "text": "重新下载",
+          "disabled": true,
+          "covered": null,
+          "rect": [362, 73, 88, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": null,
+          "rect": [458, 73, 64, 28],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "KeepUploadTask",
+      "hash": "#/keep-upload-task",
+      "clicks": [
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": null,
+          "rect": [193, 73, 72, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "清空全部",
+          "disabled": true,
+          "covered": null,
+          "rect": [273, 73, 96, 28],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "hash": "#/settings",
+      "clicks": [
+        {
+          "text": "界面UI",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [193, 25, 36, 36],
+          "act": "covered"
+        },
+        {
+          "text": "搜索",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [261, 25, 24, 36],
+          "act": "covered"
+        },
+        {
+          "text": "下载",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [317, 25, 24, 36],
+          "act": "covered"
+        },
+        {
+          "text": "用户信息",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [373, 25, 48, 36],
+          "act": "covered"
+        },
+        {
+          "text": "原生通信桥",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [453, 25, 60, 36],
+          "act": "covered"
+        },
+        {
+          "text": "备份恢复",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [545, 25, 48, 36],
+          "act": "covered"
+        },
+        {
+          "text": "媒体评分",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [625, 25, 48, 36],
+          "act": "covered"
+        },
+        {
+          "text": "插件重置",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [705, 25, 48, 36],
+          "act": "covered"
+        },
+        {
+          "text": "保存",
+          "disabled": false,
+          "covered": "HEADER.ant-layout-header",
+          "rect": [1304, 29, 96, 28],
+          "act": "covered"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1129, 164, 40, 20],
+          "act": "changed",
+          "s0": "0|0|0|0|417|223",
+          "s1": "0|0|0|0|417|225"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1129, 198, 40, 20],
+          "act": "changed",
+          "s0": "0|0|0|0|417|225",
+          "s1": "0|0|0|0|417|227"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1129, 232, 40, 20],
+          "act": "changed",
+          "s0": "0|0|0|0|417|227",
+          "s1": "0|0|0|0|417|229"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1129, 291, 40, 20],
+          "act": "changed",
+          "s0": "0|0|0|0|417|229",
+          "s1": "0|0|0|0|207|145"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1129, 398, 40, 20],
+          "act": "changed",
+          "s0": "0|0|0|0|207|145",
+          "s1": "0|0|0|0|162|126"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "zero"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": null,
+          "rect": [0, 0, 0, 0],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "SetSite",
+      "hash": "#/set-site",
+      "clicks": [
+        {
+          "text": "增加",
+          "disabled": false,
+          "covered": null,
+          "rect": [197, 66, 64, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|118|197",
+          "s1": "1|0|0|0|118|199"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": null,
+          "rect": [269, 66, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "一键导入站点",
+          "disabled": false,
+          "covered": null,
+          "rect": [366, 66, 112, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|118|199",
+          "s1": "1|0|0|0|118|201"
+        },
+        {
+          "text": "刷新站点图标",
+          "disabled": true,
+          "covered": null,
+          "rect": [511, 66, 112, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "重建站点映射",
+          "disabled": false,
+          "covered": null,
+          "rect": [631, 66, 112, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|118|201",
+          "s1": "1|0|0|0|118|203"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [768, 146, 40, 20],
+          "act": "changed",
+          "s0": "0|0|0|0|118|203",
+          "s1": "0|0|0|0|118|205"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": null,
+          "rect": [901, 146, 40, 20],
+          "act": "disabled"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": null,
+          "rect": [1067, 146, 40, 20],
+          "act": "disabled"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1240, 146, 21, 21],
+          "act": "changed",
+          "s0": "0|0|0|0|118|205",
+          "s1": "1|0|0|0|118|207"
+        },
+        {
+          "text": "搜索入口",
+          "disabled": false,
+          "covered": null,
+          "rect": [1269, 146, 28, 21],
+          "act": "changed",
+          "s0": "0|0|0|0|118|205",
+          "s1": "0|0|0|0|118|207"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1305, 146, 21, 21],
+          "act": "changed",
+          "s0": "0|0|0|0|118|205",
+          "s1": "0|0|0|1|118|207"
+        },
+        {
+          "text": "",
+          "disabled": false,
+          "covered": null,
+          "rect": [1334, 146, 21, 21],
+          "act": "changed",
+          "s0": "0|0|0|1|118|207",
+          "s1": "1|0|0|1|118|205"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": "LI.ant-list-item",
+          "rect": [1238, 184, 28, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "1",
+          "disabled": false,
+          "covered": "LI.ant-list-item",
+          "rect": [1270, 184, 28, 28],
+          "act": "covered"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": "LI.ant-list-item",
+          "rect": [1302, 184, 28, 28],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "SetSearchSolution",
+      "hash": "#/set-search-solution",
+      "clicks": [
+        {
+          "text": "增加",
+          "disabled": false,
+          "covered": null,
+          "rect": [197, 66, 64, 28],
+          "act": "changed",
+          "s0": "0|0|0|1|74|166",
+          "s1": "1|0|0|0|74|168"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": null,
+          "rect": [269, 66, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "导入",
+          "disabled": false,
+          "covered": null,
+          "rect": [366, 66, 64, 28],
+          "act": "changed",
+          "s0": "0|0|0|0|74|168",
+          "s1": "0|0|0|0|74|170"
+        },
+        {
+          "text": "导出",
+          "disabled": true,
+          "covered": null,
+          "rect": [438, 66, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "如何使用？",
+          "disabled": true,
+          "covered": null,
+          "rect": [535, 66, 100, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": null,
+          "rect": [997, 141, 40, 20],
+          "act": "disabled"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": null,
+          "rect": [1123, 141, 40, 20],
+          "act": "disabled"
+        },
+        {
+          "text": "创建副本",
+          "disabled": false,
+          "covered": null,
+          "rect": [1212, 140, 21, 21],
+          "act": "changed",
+          "s0": "0|0|0|0|74|170",
+          "s1": "1|0|0|0|74|172"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [1272, 173, 21, 21],
+          "act": "disabled"
+        },
+        {
+          "text": "1",
+          "disabled": false,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [1293, 173, 21, 21],
+          "act": "covered"
+        },
+        {
+          "text": "",
+          "disabled": true,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [1314, 173, 21, 21],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "SetDownloader",
+      "hash": "#/set-downloader",
+      "clicks": [
+        {
+          "text": "增加",
+          "disabled": false,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [197, 66, 64, 28],
+          "act": "covered"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [269, 66, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "默认下载服务器设置",
+          "disabled": true,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [366, 66, 148, 28],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "SetMediaServer",
+      "hash": "#/set-media-server",
+      "clicks": [
+        {
+          "text": "增加",
+          "disabled": false,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [197, 66, 64, 28],
+          "act": "covered"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [269, 66, 64, 28],
+          "act": "disabled"
+        }
+      ]
+    },
+    {
+      "name": "SetBackup",
+      "hash": "#/set-backup",
+      "clicks": [
+        {
+          "text": "增加",
+          "disabled": false,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [197, 66, 64, 28],
+          "act": "covered"
+        },
+        {
+          "text": "删除",
+          "disabled": true,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [269, 66, 64, 28],
+          "act": "disabled"
+        },
+        {
+          "text": "本地导出",
+          "disabled": false,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [366, 66, 88, 28],
+          "act": "covered"
+        },
+        {
+          "text": "本地导入",
+          "disabled": false,
+          "covered": "DIV.ant-modal-wrap",
+          "rect": [462, 66, 88, 28],
+          "act": "covered"
+        }
+      ]
+    }
+  ],
+  "exceptions": [],
+  "consoleErrors": [],
+  "dead": [
+    {
+      "route": "SearchEntity",
+      "text": "自定义列",
+      "disabled": false,
+      "covered": null,
+      "rect": [1388, 219, 21, 21],
+      "act": "no-effect",
+      "s0": "0|0|0|0|192|255",
+      "s1": "0|0|0|0|192|255"
+    },
+    {
+      "route": "MyClient",
+      "text": "刷新",
+      "disabled": false,
+      "covered": null,
+      "rect": [855, 73, 64, 28],
+      "act": "no-effect",
+      "s0": "0|0|0|0|170|255",
+      "s1": "0|0|0|0|170|255"
+    },
+    {
+      "route": "MyClient",
+      "text": "自动刷新",
+      "disabled": false,
+      "covered": null,
+      "rect": [927, 73, 88, 28],
+      "act": "no-effect",
+      "s0": "0|0|0|0|170|255",
+      "s1": "0|0|0|0|170|255"
+    },
+    {
+      "route": "MyClient",
+      "text": "自定义列",
+      "disabled": false,
+      "covered": null,
+      "rect": [1388, 132, 21, 21],
+      "act": "no-effect",
+      "s0": "0|0|0|0|170|257",
+      "s1": "0|0|0|0|170|257"
+    },
+    {
+      "route": "Settings",
+      "text": "界面UI",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [193, 25, 36, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "搜索",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [261, 25, 24, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "下载",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [317, 25, 24, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "用户信息",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [373, 25, 48, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "原生通信桥",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [453, 25, 60, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "备份恢复",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [545, 25, 48, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "媒体评分",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [625, 25, 48, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "插件重置",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [705, 25, 48, 36],
+      "act": "covered"
+    },
+    {
+      "route": "Settings",
+      "text": "保存",
+      "disabled": false,
+      "covered": "HEADER.ant-layout-header",
+      "rect": [1304, 29, 96, 28],
+      "act": "covered"
+    },
+    {
+      "route": "SetSite",
+      "text": "1",
+      "disabled": false,
+      "covered": "LI.ant-list-item",
+      "rect": [1270, 184, 28, 28],
+      "act": "covered"
+    },
+    {
+      "route": "SetSearchSolution",
+      "text": "1",
+      "disabled": false,
+      "covered": "DIV.ant-modal-wrap",
+      "rect": [1293, 173, 21, 21],
+      "act": "covered"
+    },
+    {
+      "route": "SetDownloader",
+      "text": "增加",
+      "disabled": false,
+      "covered": "DIV.ant-modal-wrap",
+      "rect": [197, 66, 64, 28],
+      "act": "covered"
+    },
+    {
+      "route": "SetMediaServer",
+      "text": "增加",
+      "disabled": false,
+      "covered": "DIV.ant-modal-wrap",
+      "rect": [197, 66, 64, 28],
+      "act": "covered"
+    },
+    {
+      "route": "SetBackup",
+      "text": "增加",
+      "disabled": false,
+      "covered": "DIV.ant-modal-wrap",
+      "rect": [197, 66, 64, 28],
+      "act": "covered"
+    },
+    {
+      "route": "SetBackup",
+      "text": "本地导出",
+      "disabled": false,
+      "covered": "DIV.ant-modal-wrap",
+      "rect": [366, 66, 88, 28],
+      "act": "covered"
+    },
+    {
+      "route": "SetBackup",
+      "text": "本地导入",
+      "disabled": false,
+      "covered": "DIV.ant-modal-wrap",
+      "rect": [462, 66, 88, 28],
+      "act": "covered"
+    }
+  ]
+}

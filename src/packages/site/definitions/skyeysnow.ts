@@ -1,4 +1,4 @@
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { toMerged } from "es-toolkit";
 import type { AxiosRequestConfig } from "axios";
 
@@ -109,7 +109,7 @@ export const siteMetadata: ISiteMetadata = {
       status: {
         selector: ":self",
         elementProcess: (tr: HTMLElement) => {
-          const statusAnothers = Sizzle("> td:eq(4), > td:eq(5), > td:eq(6)", tr);
+          const statusAnothers = selectElements("> td:eq(4), > td:eq(5), > td:eq(6)", tr);
           const statusStyle: (string | null)[] = statusAnothers.map((e) => e.getAttribute("style"));
           if (statusStyle[0]) {
             return ETorrentStatus.seeding;

@@ -269,7 +269,7 @@ export default class Fsm extends PrivateSite {
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      APITOKEN: this.userConfig.inputSetting!.token ?? "",
+      APITOKEN: this.userConfig.inputSetting?.token ?? "",
     };
     return super.request<T>(axiosConfig, checkLogin);
   }
@@ -337,7 +337,7 @@ export default class Fsm extends PrivateSite {
 
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     // 生成下载链接
-    return `${this.apiBaseUrl}Torrents/download?tid=${torrent.id}&passkey=${this.userConfig.inputSetting!.passkey}&source=direct`;
+    return `${this.apiBaseUrl}Torrents/download?tid=${torrent.id}&passkey=${this.userConfig.inputSetting?.passkey ?? ""}&source=direct`;
   }
 }
 */

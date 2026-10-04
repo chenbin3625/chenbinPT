@@ -1,0 +1,64 @@
+{
+  "steps": [
+    {
+      "n": "站点已添加",
+      "v": {
+        "sites": ["nyaa"],
+        "allowSearch": [true],
+        "solutions": []
+      }
+    },
+    {
+      "n": "打开搜索方案菜单",
+      "v": {
+        "found": true
+      }
+    },
+    {
+      "n": "菜单项",
+      "v": ["默认 <全部站点>", ""]
+    },
+    {
+      "n": "顶栏输入关键词",
+      "v": {
+        "found": true,
+        "v": "linux"
+      }
+    },
+    {
+      "n": "点击搜索按钮",
+      "v": {
+        "clicked": true,
+        "title": "搜索",
+        "disabled": false
+      }
+    },
+    {
+      "n": "跳转结果",
+      "v": {
+        "hash": "#/search-entity?search=linux&plan=default&flush=1",
+        "main": "搜索方案 [全站]， 关键词 [linux]， 共 37 条结果， 耗时： 0.4 秒。\n1\n暂停\n重试\n重试失败\n搜索快照\n展示偏好\n 全部站点\nNyaa\n\t\n站点\n\t\n标题\n\t\n分类\n\t\n大小\n\t\n上传\n\t\n下载\n\t\n完成\n\t\n评论\n\t\n发布于(≈)\n\t操作\n\n \n\t\n \n\t\n \n\t\n \n\t\n "
+      }
+    },
+    {
+      "n": "搜索中状态",
+      "v": {
+        "rows": 38,
+        "text": "搜索方案 [全站]， 关键词 [linux]， 共 37 条结果， 耗时： 0.4 秒。\n1\n暂停\n重试\n重试失败\n搜索快照\n展示偏好\n 全部站点\nNyaa\n\t\n站点\n\t\n标题\n\t\n分类\n\t\n大小\n\t\n上传\n\t\n下载\n\t\n完成\n\t\n评论\n\t\n发布于(≈)\n\t操作\n\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\n\n\t\nNyaa\n\t\nCalendário Janeiro 2021 Promo-Gimp-Linux\"[1920x1280]\"\nPictures - Photos\n\tPictures\t\n73.10 MiB\n\t0\t0\t114\t\t2020-12-08 "
+      }
+    },
+    {
+      "n": "搜索结果",
+      "v": {
+        "rows": 38,
+        "text": "搜索方案 [全站]， 关键词 [linux]， 共 37 条结果， 耗时： 0.4 秒。\n1\n暂停\n重试\n重试失败\n搜索快照\n展示偏好\n 全部站点\nNyaa\n\t\n站点\n\t\n标题\n\t\n分类\n\t\n大小\n\t\n上传\n\t\n下载\n\t\n完成\n\t\n评论\n\t\n发布于(≈)\n\t操作\n\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\t\n \n\n\n\t\nNyaa\n\t\nCalendário Janeiro 2021 Promo-Gimp-Linux\"[1920x1280]\"\nPictures - Photos\n\tPictures\t\n73.10 MiB\n\t0\t0\t114\t\t2020-12-08 "
+      }
+    },
+    {
+      "n": "runtime.search 状态",
+      "v": "{\"nativeBridgeState\":{\"enabled\":true,\"reconnectAttempt\":0,\"state\":\"no-permission\"}}"
+    }
+  ],
+  "consoleErrors": [],
+  "exceptions": []
+}

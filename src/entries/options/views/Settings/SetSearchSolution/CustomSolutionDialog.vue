@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch, computed } from "vue";
 import { nanoid } from "nanoid";
 import { useI18n } from "vue-i18n";
 import { isJSON } from "es-toolkit";
@@ -28,9 +28,27 @@ const { siteId, selectCategory, saveGeneratedSolution } = defineProps<{
 
 const { t } = useI18n();
 
-const formValid = ref<boolean>(false);
 const searchSolution = ref<ISearchSolution>({} as ISearchSolution);
 const searchSolutionEntryRequestConfig = ref<string>("");
+
+const nameRules = [formValidateRules.require()];
+const requestConfigRules = [
+  formValidateRules.require(),
+  (v: any) => isJSON(v) || t("SetSearchSolution.CustomSolutionDialog.requestConfigJsonError"),
+];
+
+function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
+  for (const rule of rules) {
+    const result = rule(value);
+    if (result !== true) return typeof result === "string" ? result : String(result);
+  }
+  return undefined;
+}
+
+const nameError = computed(() => firstError(nameRules, searchSolution.value.name));
+const requestConfigError = computed(() => firstError(requestConfigRules, searchSolutionEntryRequestConfig.value));
+// 与迁移前 PtdForm 广播的「表单是否合法」语义一致：任一字段的 rules 未通过即为不合法
+const formValid = computed(() => !nameError.value && !requestConfigError.value);
 
 async function onEnter() {
   // 首先按照默认值生成一次基本情况
@@ -84,60 +102,44 @@ function doSubmit() {
   // 关闭对话框
   showDialog.value = false;
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(onEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" @after-enter="onEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="primary">
-          <v-toolbar-title>
-            {{ t("SetSearchSolution.CustomSolutionDialog.title") }}
-            [ <SiteName :site-id="siteId" tag="span" class="" /> ]
-          </v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-card-text>
-        <v-form v-model="formValid" fast-fail validate-on="eager input">
-          <v-text-field
-            v-model="searchSolution.name"
-            :rules="[formValidateRules.require()]"
-            :label="t('SetSearchSolution.CustomSolutionDialog.solutionName')"
-          />
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-button-props="{ disabled: !formValid }"
+    :ok-text="t('common.dialog.ok')"
+    :width="800"
+    @ok="doSubmit"
+  >
+    <template #title>
+      {{ t("SetSearchSolution.CustomSolutionDialog.title") }}
+      [ <SiteName :site-id="siteId" tag="span" class="" /> ]
+    </template>
 
-          <v-textarea
-            :label="t('SetSearchSolution.CustomSolutionDialog.requestConfig')"
-            v-model="searchSolutionEntryRequestConfig"
-            :hint="t('SetSearchSolution.CustomSolutionDialog.requestConfigHint')"
-            :rules="[
-              formValidateRules.require(),
-              (v) => isJSON(v) || t('SetSearchSolution.CustomSolutionDialog.requestConfigJsonError'),
-            ]"
-            persistent-hint
-            auto-grow
-          />
-        </v-form>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn
-          :disabled="!formValid"
-          color="success"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
-          @click="doSubmit"
-        >
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <a-form layout="vertical">
+      <a-form-item :help="nameError" :label="t('SetSearchSolution.CustomSolutionDialog.solutionName')" required>
+        <a-input v-model:value="searchSolution.name" :status="nameError ? 'error' : undefined" />
+      </a-form-item>
+
+      <a-form-item
+        :extra="t('SetSearchSolution.CustomSolutionDialog.requestConfigHint')"
+        :help="requestConfigError"
+        :label="t('SetSearchSolution.CustomSolutionDialog.requestConfig')"
+        required
+      >
+        <a-textarea
+          v-model:value="searchSolutionEntryRequestConfig"
+          :auto-size="{ minRows: 4, maxRows: 16 }"
+          :status="requestConfigError ? 'error' : undefined"
+        />
+      </a-form-item>
+    </a-form>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

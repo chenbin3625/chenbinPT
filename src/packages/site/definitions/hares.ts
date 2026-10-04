@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/club.hares.top/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/club.hares.top/config.json
  */
 import type { ISiteMetadata } from "../types";
 
@@ -17,7 +17,7 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://club.hares.top/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/4371f6ebecf2743acb3817303fdcc36cf5b0118e
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/4371f6ebecf2743acb3817303fdcc36cf5b0118e
   isDead: true,
 
   officialGroupPattern: [/Hares?WEB|HaresTV|DIY@Hares|-hares/i],

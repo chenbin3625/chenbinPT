@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/GazelleGamesAPI.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/gazellegames.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/gazellegames.net/config.json
  */
 import type {
   ISiteMetadata,
@@ -248,7 +248,7 @@ export default class GazelleGames extends GazelleJSONAPI {
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      "X-API-Key": this.userConfig.inputSetting!.token ?? "",
+      "X-API-Key": this.userConfig.inputSetting?.token ?? "",
     };
 
     return super.request<T>(axiosConfig, checkLogin);

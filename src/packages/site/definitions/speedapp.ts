@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/SpeedApp.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/speedapp.io/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/speedapp.io/config.json
  */
 import type {
   ISiteMetadata,
@@ -449,7 +449,9 @@ export const siteMetadata: ISiteMetadata = {
           },
           averageSeedingTime: {
             selector: averageSeedingTimeTrans.map((x) => `a[href='/snatch/seeding'][title='${x}']`),
-            filters: [{ name: "replace", args: ["个", ""] }, { name: "parseDuration" }],
+            // 注：这里原有一个 replace("个","") 的补丁，用来绕开 parseTimeToLiveToSeconds 缺少简体
+            // 两字单位（个月/小时）的问题。单位表已补齐（见审查报告 B-21），故该补丁已冗余并移除。
+            filters: [{ name: "parseDuration" }],
           },
           hnrUnsatisfied: {
             selector: "a[href='/snatch/need-seed']",

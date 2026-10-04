@@ -16,20 +16,18 @@ interface UiTableBehaviorItem<T = string> {
 }
 
 export interface IConfigPiniaStorageSchema {
-  version: string; // 插件版本，格式为 v0.0.5.1147+23f758f7 ，如果为空则表示第一次安装
   lang: TLangCode;
   theme: supportThemeType;
   isNavBarOpen: boolean;
   // 窗口大小变化（display 断点变化）时，是否自动展开/收起 Navigation 侧边栏
   autoToggleNavBarOnDisplayChange: boolean;
 
-  ignoreWrongPixelRatio: boolean;
-  showReleaseNoteOnVersionChange: boolean; // 是否在版本更新时展示更新日志
+  ignoreWrongPixelRatio: boolean; // 是否忽略页面缩放（devicePixelRatio）异常提示
 
   saveTableBehavior: boolean;
   enableTableMultiSort: boolean; // 是否启用表格多列排序
 
-  // 用于存储 v-data-table 表格的展示
+  // 用于存储数据表格的展示
   tableBehavior: Record<UiTableBehaviorKey, UiTableBehaviorItem>;
 
   // 用 timeline 和 statistic 等展示的用户名，如果为 "" 则由使用最多的站点决定（使用 configStore.getUserNames.perfName 获取）
@@ -60,7 +58,7 @@ export interface IConfigPiniaStorageSchema {
     socialSiteSearchBy: "id" | "title" | "imdb" | "chosen"; // 社交站点搜索方式，id: 使用 id 进行搜索，title: 使用主标题进行搜索，IMDb: 使用 IMDb 编号进行搜索，chosen: 使用用户选择的方式进行搜索
   };
 
-  // 对 MyData 页面 v-data-table 展示的额外控制项
+  // 对 MyData 页面数据表格展示的额外控制项
   myDataTableControl: {
     // 是否展示站点名称
     showSiteName: boolean;

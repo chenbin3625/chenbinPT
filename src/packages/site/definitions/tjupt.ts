@@ -1,10 +1,10 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/tjupt.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/tjupt.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/tjupt.org/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/tjupt.json
  */
 import { set } from "es-toolkit/compat";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 import { ETorrentStatus, type IElementQuery, type ISiteMetadata, type IUserInfo } from "../types";
 import NexusPHP, { CategoryInclbookmarked, CategoryIncldead, SchemaMetadata } from "../schemas/NexusPHP";
@@ -355,7 +355,7 @@ export default class TJUPT extends NexusPHP {
     });
 
     if (classesResponse) {
-      const uploadSpan = Sizzle("tr#9 li span:contains('≥1'):first", classesResponse as Document);
+      const uploadSpan = selectElements("tr#9 li span:contains('≥1'):first", classesResponse as Document);
       if (uploadSpan.length > 0) {
         const text = uploadSpan[0].textContent?.trim();
         if (text) {
@@ -367,7 +367,7 @@ export default class TJUPT extends NexusPHP {
         }
       }
 
-      const snatchesSpan = Sizzle("tr#9 li span:contains('>200MiB'):first", classesResponse as Document);
+      const snatchesSpan = selectElements("tr#9 li span:contains('>200MiB'):first", classesResponse as Document);
       if (snatchesSpan.length > 0) {
         const text = snatchesSpan[0].textContent?.trim();
         if (text) {
@@ -378,7 +378,7 @@ export default class TJUPT extends NexusPHP {
         }
       }
 
-      const seedingTimeSpan = Sizzle("tr#9 li span:contains('/300000'):first", classesResponse as Document);
+      const seedingTimeSpan = selectElements("tr#9 li span:contains('/300000'):first", classesResponse as Document);
       if (seedingTimeSpan.length > 0) {
         const text = seedingTimeSpan[0].textContent?.trim();
         if (text) {

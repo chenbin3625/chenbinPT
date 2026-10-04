@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hitpt.com/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hitpt.com/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hitpt.json
  */
 import { type ISiteMetadata } from "../types";
@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["百川PT"],
   description: "校内10兆高速下载，优质高清资源共享！",
   tags: ["教育网", "影视", "综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["tongyifan", "zhuweitung"],
 

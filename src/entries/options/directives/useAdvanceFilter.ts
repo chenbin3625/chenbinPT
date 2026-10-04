@@ -36,6 +36,17 @@ export const dateFilterFormat = [
   "yyyy",
 ];
 
+/**
+ * B-15：boolean 必须显式判断，不能靠真值。
+ * 早期实现是 `(value) => (value ? "1" : "0")`，而字符串 "0" 在 JS 里是真值 ——
+ * 实测 parse("0") === "1"、build("0") === "1"，于是用户输入的 `userConfig.isOffline:0`
+ * 经 buildFilterDictFn 归一化后被改写成 `:1`，筛选语义完全反转
+ * （`SetSite/Index.vue` 里写死 "1" 的绕行只是掩盖症状）。
+ * 保留对数字 1 的容忍（`parse(1)` 在修复前也是 "1"），其余一律归一化为 "0"。
+ */
+const toBooleanFilterValue = (value: unknown): string =>
+  value === true || value === 1 || value === "1" || value === "true" ? "1" : "0";
+
 const advanceFilterFormat: Record<TAdvanceFilterFormat, IValueFormat> = {
   date: {
     parse: (value: string | number) => {
@@ -56,41 +67,50 @@ const advanceFilterFormat: Record<TAdvanceFilterFormat, IValueFormat> = {
     parse: (value: string | number) => value.toString(),
     build: (value: string | number) => value.toString(),
   },
+  // B-15：显式判断（见 toBooleanFilterValue 的说明）
   boolean: {
-    parse: (value: string) => (value ? "1" : "0"),
-    build: (value: boolean) => (value ? "1" : "0"),
+    parse: toBooleanFilterValue,
+    build: toBooleanFilterValue,
   },
 } as const;
 
 type TFormat = Record<string, TAdvanceFilterFormat | IValueFormat>;
 
-const queryEscapeMap: Record<string, string> = {
-  "\\": "\\u005c",
-  " ": "\\u0020",
-  ",": "\\u002c",
-  ":": "\\u003a",
-};
-const queryUnEscapeMap = Object.fromEntries(
-  Object.entries(queryEscapeMap).map(([key, value]) => [value.toLowerCase(), key]),
-);
-const escapedQueryTokens = Object.values(queryEscapeMap).map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-const escapedQueryValueRegex = new RegExp(`(?:${escapedQueryTokens.join("|")})`, "gi");
-const queryReservedCharsRegex = /[\\ ,:]/g;
-// /pattern/[gimsuy]
-const regexLiteralPattern = /^\/((?:\\.|[^\\/])*)\/([gimsuy]*)$/;
-const regexCache = new Map<string, RegExp | null>();
-
+/**
+ * B-14：转义方案必须与 search-query-parser（1.6.0）的解析行为对齐，且必须可逆。
+ *
+ * 早期实现用「反斜杠 + `\u00XX`」转义保留字符，但库在 parse 时会剥掉反斜杠
+ * （`val.replace(/\\(.?)/g, ...)`），`My\u0020Sites` 被解析成 `Myu0020Sites`；
+ * 而 unEscapeQueryValue 用来匹配的 token 是带反斜杠的 `\u0020` —— 永远匹配不上。
+ * 实测（同版本库）：`My Sites → Myu0020Sites`、`a,b → au002cb`、`hello world → hellou0020world`，
+ * 即「设置 → 站点」里分组名为 `My Sites` 时表格零行命中而复选框仍勾选。
+ *
+ * 现在改用百分号编码，编码结果里不含反斜杠/引号/逗号/空白，因此不会被 parse 改写：
+ * - `,`：库会把 keyword 的值按 `,` 拆成多个值（`value.split(",")`），必须编码；
+ * - 空白：库的 stringify 只给「含空格的单个值」加引号，而多值场景下 `site:"My Sites",foo`
+ *   实测会被解析成 `site:["My Sites"]` + text `",foo"`（值被拆错），故空白也要编码；
+ * - `:`：避免值被重新解析成 `${keyword}:${value}`（例如纯文本筛选 `site:x`）；
+ * - `\`、`"`、`'`：库会剥掉反斜杠 / 去掉首尾引号，必须编码；
+ * - `%`：先编码自身，保证「值里本来就有 %xx」时也能无损往返。
+ * 编解码都必须只做一次：decodeURIComponent 不是幂等的（`a%252Cb` 解两次会变成 `a,b`）。
+ */
 function escapeQueryValue(value: unknown): unknown {
   if (typeof value !== "string") return value;
-  return value.replace(queryReservedCharsRegex, (char) => queryEscapeMap[char]);
+  // encodeURIComponent 不处理 !'()*~，这里一并编码，避免引号参与库的引号解析
+  return encodeURIComponent(value).replace(
+    /[!'()*~]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
+  );
 }
 
 function unEscapeQueryValue(value: unknown): unknown {
   if (typeof value !== "string") return value;
-  return value.replace(
-    escapedQueryValueRegex,
-    (escapedToken) => queryUnEscapeMap[escapedToken.toLowerCase()] ?? escapedToken,
-  );
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    // 用户手写的非法百分号序列（例如 `100%`）：原样返回，不做任何猜测
+    return value;
+  }
 }
 
 function normalizeFilterValue(value: unknown): string | undefined {
@@ -98,9 +118,15 @@ function normalizeFilterValue(value: unknown): string | undefined {
   return unEscapeQueryValue(value) as string;
 }
 
-/** 仅解析 /pattern/[gimsuy] 结构，失败时返回 null */
-function toRegexIfValid(value: unknown): RegExp | null {
-  const normalizedValue = normalizeFilterValue(value);
+// /pattern/[gimsuy]
+const regexLiteralPattern = /^\/((?:\\.|[^\\/])*)\/([gimsuy]*)$/;
+const regexCache = new Map<string, RegExp | null>();
+
+/**
+ * 仅解析 /pattern/[gimsuy] 结构，失败时返回 null。
+ * 入参必须是**已解码**的值（调用方都先走 normalizeFilterValue）——解码不可重入，这里不再解一次。
+ */
+function toRegexIfValid(normalizedValue: unknown): RegExp | null {
   if (typeof normalizedValue !== "string") return null;
 
   if (regexCache.has(normalizedValue)) {
@@ -115,7 +141,10 @@ function toRegexIfValid(value: unknown): RegExp | null {
 
   const [, pattern, flags] = matched;
   try {
-    const regex = new RegExp(pattern, flags);
+    // B-16：必须剔除 g/y。regexCache 对每个 pattern 只保留一个实例并被 `regex.test()` 反复复用，
+    // 带 g/y 时 lastIndex 会跨值残留，出现「隔一个值命中一次」——实测 `/1080p/g` 复用于
+    // ["a1080pb","c1080pd","e1080pf","g1080ph"] 得到 true,false,true,false（期望全 true）。
+    const regex = new RegExp(pattern, flags.replace(/[gy]/g, ""));
     regexCache.set(normalizedValue, regex);
     return regex;
   } catch {
@@ -215,6 +244,34 @@ export function checkKeywordValue(
   }
 }
 
+/**
+ * P1-16: from/to 的 parse 结果只与「过滤器对象 + keyword + format」有关，
+ * 与具体 item 无关。这里按过滤器对象做 WeakMap 缓存，避免每个 item 都重复 parse
+ * （parseSizeString / parseValidTimeString 在范围过滤时会被调用 2n 次）。
+ * format 变了（引用不同）则重新解析，语义与原实现一致。
+ */
+const rangeBoundCache = new WeakMap<object, Map<string, { format: TFormat; from: number; to: number }>>();
+
+function getParsedRangeBounds(filter: TFilter, keyword: string, format: TFormat) {
+  let keywordCache = rangeBoundCache.get(filter as unknown as object);
+  if (!keywordCache) {
+    keywordCache = new Map();
+    rangeBoundCache.set(filter as unknown as object, keywordCache);
+  }
+
+  const cached = keywordCache.get(keyword);
+  if (cached && cached.format === format) return cached;
+
+  const valueFormat = getValueFormat(keyword, format);
+  const bounds = {
+    format,
+    from: valueFormat.parse((filter[keyword] as any).from || -Infinity) as number,
+    to: valueFormat.parse((filter[keyword] as any).to || Infinity) as number,
+  };
+  keywordCache.set(keyword, bounds);
+  return bounds;
+}
+
 export function checkRangeValue(
   filter: TFilter,
   rawItem: TRawItem,
@@ -226,8 +283,7 @@ export function checkRangeValue(
   if (filter[keyword] && typeof itemValue !== "undefined") {
     const valueFormat = getValueFormat(keyword, format);
     const value = valueFormat.parse(itemValue) as number;
-    const from = valueFormat.parse((filter[keyword] as any).from || -Infinity) as number;
-    const to = valueFormat.parse((filter[keyword] as any).to || Infinity) as number;
+    const { from, to } = getParsedRangeBounds(filter, keyword, format);
 
     return Boolean(from && value >= from && to && value <= to);
   }
@@ -267,19 +323,19 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
   parseOptions.alwaysArray = true;
 
   /**
-   * 用作 VInput 的 v-model ，接收用户的直接输入
+   * 用作输入组件的 v-model，接收用户的直接输入
    */
   const tableWaitFilterRef = ref(initialSearchValue);
 
   /**
-   * 用作 VDataTable 的 props.search，
-   * 由于 VDataTable 过滤操作较重，而 用户直接输入的更新操作触发频繁
+   * 用作数据表格的搜索词，
+   * 由于表格过滤操作较重，而用户直接输入的更新操作触发频繁
    * 通过延迟实际使用的搜索过滤词生成来避免不必要的卡顿
    */
   const tableFilterRef = refDebounced(tableWaitFilterRef, debouncedMs); // 延迟搜索过滤词的生成
 
   /**
-   * 用作 VDataTable 内部比较方法 tableFilterFn
+   * 用作数据表格内部比较方法 tableFilterFn
    * 通过 computed 来缓存 实际使用的判断字典
    */
   const tableParsedFilterRef = computed<TFilter>(
@@ -427,15 +483,27 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
     }
   }
 
+  // P1-16：titleFields 拼串（flattenDeep + get + join + toLowerCase）对同一个 item 是稳定的，
+  // 而每次改动过滤词都会对所有 item 重新执行。这里按 item 做 WeakMap 缓存，只计算一次。
+  const itemTitleCache = new WeakMap<ItemType, string>();
+  function getItemTitle(rawItem: ItemType): string {
+    let cached = itemTitleCache.get(rawItem);
+    if (cached === undefined) {
+      cached = flattenDeep(titleFields.map((key) => get(rawItem, key)))
+        .filter(Boolean)
+        .join("|$|")
+        .toString();
+      itemTitleCache.set(rawItem, cached);
+    }
+    return cached;
+  }
+
   function tableFilterFn(value: any, query: string, item: any): boolean {
     const rawItem = item.raw as ItemType;
 
     const { text, exclude } = tableParsedFilterRef.value;
 
-    const itemTitle = flattenDeep(titleFields.map((key) => get(rawItem, key)))
-      .filter(Boolean)
-      .join("|$|")
-      .toString();
+    const itemTitle = getItemTitle(rawItem);
     const itemTitleLowerCase = itemTitle.toLowerCase();
 
     if (text) {

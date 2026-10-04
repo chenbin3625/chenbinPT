@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, type Component } from "vue";
 import { useI18n } from "vue-i18n";
+import { CheckCircleOutlined, DisconnectOutlined, WifiOutlined } from "@ant-design/icons-vue";
+
+import { resolveColor } from "@/shared/colors.ts";
 
 const { checkFn, resetTimeout } = defineProps<{
   checkFn: () => Promise<boolean>;
@@ -18,10 +21,10 @@ enum connectStatus {
   error = "error",
 }
 
-const connectBtnMap: Record<connectStatus, { icon: string; color: string }> = {
-  [connectStatus.default]: { icon: "mdi-access-point", color: "info" },
-  [connectStatus.success]: { icon: "mdi-access-point-check", color: "success" },
-  [connectStatus.error]: { icon: "mdi-access-point-remove", color: "error" },
+const connectBtnMap: Record<connectStatus, { icon: Component; color: string | undefined }> = {
+  [connectStatus.default]: { icon: WifiOutlined, color: resolveColor("info") },
+  [connectStatus.success]: { icon: CheckCircleOutlined, color: resolveColor("success") },
+  [connectStatus.error]: { icon: DisconnectOutlined, color: resolveColor("error") },
 };
 
 const isTestingConnectRef = ref<boolean>(false);
@@ -44,17 +47,17 @@ async function checkConnect() {
 </script>
 
 <template>
-  <v-btn
-    :color="connectBtnMap[connectStatusRef]['color']"
+  <a-button
     :disabled="isTestingConnectRef"
     :loading="isTestingConnectRef"
+    :style="{ color: connectBtnMap[connectStatusRef].color }"
     block
-    variant="text"
+    type="text"
     @click="checkConnect"
   >
-    <v-icon :icon="connectBtnMap[connectStatusRef]['icon']" />
+    <template #icon>
+      <component :is="connectBtnMap[connectStatusRef].icon" />
+    </template>
     {{ t("connectCheck." + connectStatusRef) }}
-  </v-btn>
+  </a-button>
 </template>
-
-<style scoped lang="scss"></style>

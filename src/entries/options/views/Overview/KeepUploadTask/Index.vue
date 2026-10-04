@@ -1,35 +1,46 @@
 <script setup lang="ts">
+import { ArrowUpOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, NumberOutlined } from "@ant-design/icons-vue";
 import { ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import type { CAddTorrentOptions } from "@ptd/downloader";
 
 import type { IKeepUploadTask, TKeepUploadTaskKey } from "@/shared/types.ts";
 import { sendMessage } from "@/messages.ts";
-import { formatSize, formatDate } from "@/options/utils.ts";
+import { formatDate, formatDateTimeForTable, formatSize } from "@/options/utils.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
+import { confirmModal } from "../utils/antdConfirm.ts";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 
 const tasks = ref<IKeepUploadTask[]>([]);
-// v-data-table 设置了 item-value="id"，因此 v-model 中保存的是任务ID（TKeepUploadTaskKey）而非任务对象
+// 数据表格设置了 row-key="id"，因此 selectedTasks 中保存的是任务ID（TKeepUploadTaskKey）而非任务对象
 const selectedTasks = ref<TKeepUploadTaskKey[]>([]);
 const expanded = ref<string[]>([]);
 const loading = ref(false);
 const tableKey = ref(0); // 用于强制刷新表格
 
-const headers = [
-  { title: t("KeepUploadTask.table.site"), key: "site", align: "center" as const, sortable: false },
-  { title: t("KeepUploadTask.table.title"), key: "title", align: "start" as const },
-  { title: t("KeepUploadTask.table.size"), key: "size", align: "end" as const },
-  { title: t("KeepUploadTask.table.count"), key: "count", align: "center" as const },
-  { title: t("KeepUploadTask.table.time"), key: "time", align: "center" as const },
-  { title: t("common.action"), key: "action", align: "center" as const, sortable: false },
+const columns = [
+  { title: t("KeepUploadTask.table.site"), dataIndex: "site", key: "site", align: "center" as const },
+  { title: t("KeepUploadTask.table.title"), dataIndex: "title", key: "title", align: "left" as const },
+  { title: t("KeepUploadTask.table.size"), dataIndex: "size", key: "size", align: "right" as const },
+  { title: t("KeepUploadTask.table.count"), dataIndex: "count", key: "count", align: "center" as const },
+  { title: t("KeepUploadTask.table.time"), dataIndex: "time", key: "time", align: "center" as const },
+  { title: t("common.action"), key: "action", align: "center" as const },
 ];
+
+function onSelectionChange(keys: TKeepUploadTaskKey[]) {
+  selectedTasks.value = keys;
+}
+
+function onExpandedChange(keys: string[]) {
+  expanded.value = keys;
+}
 
 async function loadTasks() {
   loading.value = true;
@@ -48,7 +59,7 @@ onMounted(() => {
 });
 
 async function deleteTask(task: IKeepUploadTask) {
-  if (!confirm(t("KeepUploadTask.deleteConfirm"))) return;
+  if (!(await confirmModal(t("KeepUploadTask.deleteConfirm")))) return;
 
   try {
     await sendMessage("deleteKeepUploadTask", task.id);
@@ -61,7 +72,7 @@ async function deleteTask(task: IKeepUploadTask) {
 
 async function deleteSelectedTasks() {
   if (selectedTasks.value.length === 0) return;
-  if (!confirm(t("KeepUploadTask.deleteSelectedConfirm", { count: selectedTasks.value.length }))) return;
+  if (!(await confirmModal(t("KeepUploadTask.deleteSelectedConfirm", { count: selectedTasks.value.length })))) return;
 
   try {
     for (const taskId of selectedTasks.value) {
@@ -76,7 +87,7 @@ async function deleteSelectedTasks() {
 }
 
 async function clearAllTasks() {
-  if (!confirm(t("KeepUploadTask.clearConfirm"))) return;
+  if (!(await confirmModal(t("KeepUploadTask.clearConfirm")))) return;
 
   try {
     await sendMessage("clearKeepUploadTasks", undefined);
@@ -178,16 +189,16 @@ function sendBaseTorrent(task: IKeepUploadTask) {
 }
 
 // 发送其他种子到下载器
-function sendOtherTorrents(task: IKeepUploadTask) {
+async function sendOtherTorrents(task: IKeepUploadTask) {
   if (task.items.length <= 1) return;
-  if (!confirm(t("KeepUploadTask.sendConfirm", { count: task.items.length - 1 }))) return;
+  if (!(await confirmModal(t("KeepUploadTask.sendConfirm", { count: task.items.length - 1 })))) return;
   const items = task.items.slice(1);
   sendTorrentsToDownloader(task, items);
 }
 
 // 发送所有种子到下载器
-function sendAllTorrents(task: IKeepUploadTask) {
-  if (!confirm(t("KeepUploadTask.sendConfirm", { count: task.items.length }))) return;
+async function sendAllTorrents(task: IKeepUploadTask) {
+  if (!(await confirmModal(t("KeepUploadTask.sendConfirm", { count: task.items.length })))) return;
   const items = task.items.slice(0);
   sendTorrentsToDownloader(task, items);
 }
@@ -205,177 +216,148 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
 </script>
 
 <template>
-  <v-alert type="info">
-    {{ t("KeepUploadTask.title") }}
-  </v-alert>
-
-  <v-card>
-    <v-card-title>
-      <v-btn color="error" :disabled="selectedTasks.length === 0" class="mr-2" @click="deleteSelectedTasks">
-        <v-icon class="mr-2">mdi-delete</v-icon>
+  <a-card>
+    <a-typography-text strong>
+      <a-button :disabled="selectedTasks.length === 0" style="margin-right: 8px" danger @click="deleteSelectedTasks">
+        <DeleteOutlined style="margin-right: 8px" />
         {{ t("common.remove") }}
-      </v-btn>
+      </a-button>
 
-      <v-btn color="error" :disabled="tasks.length === 0" @click="clearAllTasks">
-        <v-icon class="mr-2">mdi-delete-sweep</v-icon>
+      <a-button :disabled="tasks.length === 0" danger @click="clearAllTasks">
+        <DeleteOutlined style="margin-right: 8px" />
         {{ t("KeepUploadTask.clearAll") }}
-      </v-btn>
+      </a-button>
+    </a-typography-text>
 
-      <v-btn
-        color="info"
-        href="https://github.com/pt-plugins/PT-Plugin-Plus/wiki/keep-upload-task"
-        target="_blank"
-        rel="noopener noreferrer nofollow"
-        class="ml-2"
-      >
-        <v-icon class="mr-2">mdi-help</v-icon>
-        {{ t("common.howToUse") }}
-      </v-btn>
-    </v-card-title>
-
-    <v-data-table
+    <a-table
       :key="tableKey"
-      v-model="selectedTasks"
-      v-model:expanded="expanded"
-      :headers="headers"
-      :items="tasks"
+      :columns="columns"
+      :data-source="tasks"
       :loading="loading"
-      item-value="id"
-      show-select
-      show-expand
-      class="elevation-1"
+      :pagination="{ pageSize: 25, showSizeChanger: true }"
+      :row-key="'id'"
+      :row-selection="{ selectedRowKeys: selectedTasks, onChange: onSelectionChange }"
+      :expanded-row-keys="expanded"
+      :scroll="{ x: 'max-content' }"
+      @expanded-rows-change="onExpandedChange"
     >
-      <template #item.site="{ item }">
-        <div class="d-flex flex-column align-center">
-          <SiteFavicon :site-id="item.items[0]?.site" :size="18" />
-        </div>
-      </template>
-
-      <template #item.title="{ item }">
-        <div>
-          <a
-            :href="item.items[0]?.link"
-            target="_blank"
-            class="text-decoration-none text-high-emphasis text-body-large text-truncate"
-            rel="noopener noreferrer nofollow"
-          >
-            {{ item.title }}
-          </a>
-          <div class="text-body-small text-grey">
-            {{ t("KeepUploadTask.savePath") }}{{ item.downloadOptions?.clientName }} ->
-            {{ item.downloadOptions?.savePath || t("KeepUploadTask.defaultPath") }}
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'site'">
+          <div style="display: flex; flex-direction: column; align-items: center">
+            <SiteFavicon :site-id="record.items[0]?.site" :size="18" />
           </div>
-          <div class="text-body-small">{{ t("KeepUploadTask.torrentCount") }}{{ item.items.length }}</div>
-        </div>
+        </template>
+
+        <template v-else-if="column.key === 'title'">
+          <div>
+            <a-typography-link
+              class="ptd-cell-ellipsis"
+              :href="record.items[0]?.link"
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              style="font-size: 16px; max-width: 28rem"
+              :title="String(record.title ?? '')"
+            >
+              {{ record.title }}
+            </a-typography-link>
+            <div
+              class="ptd-cell-ellipsis"
+              style="color: var(--ptd-text-tertiary); font-size: 12px; max-width: 28rem"
+              :title="`${t('KeepUploadTask.savePath')}${record.downloadOptions?.clientName} -> ${
+                record.downloadOptions?.savePath || t('KeepUploadTask.defaultPath')
+              }`"
+            >
+              {{ t("KeepUploadTask.savePath") }}{{ record.downloadOptions?.clientName }} ->
+              {{ record.downloadOptions?.savePath || t("KeepUploadTask.defaultPath") }}
+            </div>
+            <div style="font-size: 12px">{{ t("KeepUploadTask.torrentCount") }}{{ record.items.length }}</div>
+          </div>
+        </template>
+
+        <template v-else-if="column.key === 'size'">
+          {{ formatSize(record.size) }}
+        </template>
+
+        <template v-else-if="column.key === 'count'">
+          {{ record.items.length }}
+        </template>
+
+        <template v-else-if="column.key === 'time'">
+          <span class="ptd-date-time">{{ formatDateTimeForTable(record.time) }}</span>
+        </template>
+
+        <template v-else-if="column.key === 'action'">
+          <a-button :title="t('KeepUploadTask.sendBaseTorrent')" type="link" @click="sendBaseTorrent(record)">
+            <NumberOutlined />
+          </a-button>
+          <a-button :title="t('KeepUploadTask.sendOtherTorrents')" type="text" @click="sendOtherTorrents(record)">
+            <NumberOutlined />
+          </a-button>
+          <a-button :title="t('KeepUploadTask.sendAllTorrents')" type="link" @click="sendAllTorrents(record)">
+            <DownloadOutlined />
+          </a-button>
+          <a-button :title="t('KeepUploadTask.copyLinks')" type="text" @click="copyLinksToClipboard(record)">
+            <CopyOutlined />
+          </a-button>
+          <a-button :title="t('common.remove')" type="text" danger @click="deleteTask(record)">
+            <DeleteOutlined />
+          </a-button>
+        </template>
       </template>
 
-      <template #item.size="{ item }">
-        {{ formatSize(item.size) }}
+      <!-- 注意：antd Table 的 expandedRowRender 外层已自带展开行容器，
+           这里只能返回纯内容，禁止再包一层表格行（非法嵌套 + colspan 少算列，见 OV-13） -->
+      <template #expandedRowRender="{ record }">
+        <a-list size="small" :split="false">
+          <!-- index 仍被下方 setAsBaseTorrent(record, index) 作为业务下标使用，故保留 -->
+          <a-list-item v-for="(subItem, index) in record.items" :key="`${subItem.site}-${subItem.link}`">
+            <a-list-item-meta>
+              <template #avatar><SiteFavicon :site-id="subItem.site" :size="16" /></template>
+              <template #title>
+                <a-typography-link
+                  class="ptd-cell-ellipsis"
+                  :href="subItem.link"
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  style="max-width: 48rem"
+                  :title="String(subItem.title ?? '')"
+                >
+                  {{ subItem.title }}
+                </a-typography-link>
+              </template>
+              <template #description>
+                {{ formatSize(subItem.size) }}, {{ t("KeepUploadTask.seeders") }}{{ subItem.seeders ?? "-" }},
+                {{ t("KeepUploadTask.leechers") }}{{ subItem.leechers ?? "-" }}
+              </template>
+            </a-list-item-meta>
+            <a-button
+              :title="t('KeepUploadTask.setAsBaseTorrent')"
+              type="link"
+              size="small"
+              @click="setAsBaseTorrent(record, index)"
+            >
+              <ArrowUpOutlined />
+            </a-button>
+          </a-list-item>
+        </a-list>
       </template>
 
-      <template #item.count="{ item }">
-        {{ item.items.length }}
+      <template #emptyText>
+        <NoDataPlaceholder compact :description="t('KeepUploadTask.emptyNotice')" />
       </template>
+    </a-table>
+  </a-card>
 
-      <template #item.time="{ item }">
-        {{ formatDate(item.time) }}
-      </template>
-
-      <template #item.action="{ item }">
-        <v-btn
-          icon
-          variant="text"
-          color="primary"
-          :title="t('KeepUploadTask.sendBaseTorrent')"
-          @click="sendBaseTorrent(item)"
-        >
-          <v-icon>mdi-numeric-1-circle</v-icon>
-        </v-btn>
-        <v-btn
-          icon
-          variant="text"
-          color="info"
-          :title="t('KeepUploadTask.sendOtherTorrents')"
-          @click="sendOtherTorrents(item)"
-        >
-          <v-icon>mdi-numeric-2-circle</v-icon>
-        </v-btn>
-        <v-btn
-          icon
-          variant="text"
-          color="success"
-          :title="t('KeepUploadTask.sendAllTorrents')"
-          @click="sendAllTorrents(item)"
-        >
-          <v-icon>mdi-download</v-icon>
-        </v-btn>
-        <v-btn
-          icon
-          variant="text"
-          color="info"
-          :title="t('KeepUploadTask.copyLinks')"
-          @click="copyLinksToClipboard(item)"
-        >
-          <v-icon>mdi-content-copy</v-icon>
-        </v-btn>
-        <v-btn icon variant="text" color="error" :title="t('common.remove')" @click="deleteTask(item)">
-          <v-icon>mdi-delete</v-icon>
-        </v-btn>
-      </template>
-
-      <template #expanded-row="{ item }">
-        <tr>
-          <td :colspan="headers.length + 1" class="pa-0">
-            <v-list density="compact" class="ml-10">
-              <v-list-item v-for="(subItem, index) in item.items" :key="index">
-                <template #prepend>
-                  <SiteFavicon :site-id="subItem.site" :size="16" />
-                </template>
-                <v-list-item-title>
-                  <a :href="subItem.link" target="_blank" rel="noopener noreferrer nofollow">
-                    {{ subItem.title }}
-                  </a>
-                </v-list-item-title>
-                <v-list-item-subtitle>
-                  {{ formatSize(subItem.size) }}, {{ t("KeepUploadTask.seeders") }}{{ subItem.seeders ?? "-" }},
-                  {{ t("KeepUploadTask.leechers") }}{{ subItem.leechers ?? "-" }}
-                </v-list-item-subtitle>
-                <template #append>
-                  <v-btn
-                    icon
-                    variant="text"
-                    color="primary"
-                    size="small"
-                    :title="t('KeepUploadTask.setAsBaseTorrent')"
-                    @click="setAsBaseTorrent(item, index)"
-                  >
-                    <v-icon>mdi-arrow-up-bold</v-icon>
-                  </v-btn>
-                </template>
-              </v-list-item>
-            </v-list>
-          </td>
-        </tr>
-      </template>
-
-      <template #no-data>
-        <v-alert type="info" variant="tonal">
-          {{ t("KeepUploadTask.emptyNotice") }}
-        </v-alert>
-      </template>
-    </v-data-table>
-  </v-card>
-
-  <v-alert type="warning" class="mt-4">
-    <div>
-      {{ t("KeepUploadTask.warning.title") }}
-      <ul>
-        <li>{{ t("KeepUploadTask.warning.item1") }}</li>
-        <li>{{ t("KeepUploadTask.warning.item2") }}</li>
-        <li>{{ t("KeepUploadTask.warning.item3") }}</li>
-      </ul>
-    </div>
-  </v-alert>
+  <a-alert type="warning" show-icon style="margin-top: 16px">
+    <template #description>
+      <div>
+        {{ t("KeepUploadTask.warning.title") }}
+        <a-list size="small" :split="false">
+          <a-list-item>{{ t("KeepUploadTask.warning.item1") }}</a-list-item>
+          <a-list-item>{{ t("KeepUploadTask.warning.item2") }}</a-list-item>
+          <a-list-item>{{ t("KeepUploadTask.warning.item3") }}</a-list-item>
+        </a-list>
+      </div>
+    </template>
+  </a-alert>
 </template>
-
-<style scoped lang="scss"></style>

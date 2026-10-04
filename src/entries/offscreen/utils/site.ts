@@ -18,8 +18,13 @@ import { logger } from "./logger.ts";
 import { ptdIndexDb } from "../adapter/indexdb.ts";
 
 export async function getSiteUserConfig(siteId: TSiteID, flush = false) {
-  const metadataStore = (await sendMessage("getExtStorage", "metadata")) as IMetadataPiniaStorageSchema;
-  const storedSiteUserConfig = metadataStore?.sites?.[siteId] ?? {};
+  // 只取当前站点的用户配置，避免整份 metadata 跨上下文往返（见 docs/performance-audit.md P0-2）
+  const storedSiteUserConfig =
+    ((await sendMessage("getExtStoragePath", {
+      key: "metadata",
+      path: ["sites", siteId],
+      defaultValue: {},
+    })) as ISiteUserConfig) ?? {};
 
   const siteMetaData = await getDefinedSiteMetadata(siteId);
 
@@ -47,16 +52,26 @@ export async function getSiteUserConfig(siteId: TSiteID, flush = false) {
     storedSiteUserConfig.merge ??= {};
   }
 
-  logger({ msg: `getSiteUserConfig for ${siteId}`, data: storedSiteUserConfig });
+  logger({ msg: `getSiteUserConfig for ${siteId}` });
   return storedSiteUserConfig;
 }
 
 onMessage("getSiteUserConfig", async ({ data: { siteId, flush } }) => await getSiteUserConfig(siteId, flush));
 
 onMessage("getSiteList", async () => {
-  const metadata = (await sendMessage("getExtStorage", "metadata")) as IMetadataPiniaStorageSchema;
-  const sites = metadata?.sites ?? {};
-  const nameMap = metadata?.siteNameMap ?? {};
+  // 只取需要的两个子表，避免整份 metadata（含 lastUserInfo）跨上下文往返
+  const sites =
+    ((await sendMessage("getExtStoragePath", {
+      key: "metadata",
+      path: ["sites"],
+      defaultValue: {},
+    })) as IMetadataPiniaStorageSchema["sites"]) ?? {};
+  const nameMap =
+    ((await sendMessage("getExtStoragePath", {
+      key: "metadata",
+      path: ["siteNameMap"],
+      defaultValue: {},
+    })) as IMetadataPiniaStorageSchema["siteNameMap"]) ?? {};
   return Promise.all(
     Object.entries(sites).map(async ([id, config]) => {
       const siteMetaData = await getDefinedSiteMetadata(id as TSiteID);
@@ -81,7 +96,7 @@ export async function getSiteInstance<TYPE extends "private" | "public">(
     storedSiteUserConfig = await getSiteUserConfig(siteId);
   }
 
-  logger({ msg: `getSiteInstance for ${siteId}`, data: storedSiteUserConfig });
+  logger({ msg: `getSiteInstance for ${siteId}`, data: { url: storedSiteUserConfig.url } });
   return await createSiteInstance<TYPE>(siteId, storedSiteUserConfig);
 }
 

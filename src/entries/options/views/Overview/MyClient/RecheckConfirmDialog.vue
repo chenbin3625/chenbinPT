@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 const showDialog = defineModel<boolean>();
@@ -25,32 +25,27 @@ async function confirmRecheck() {
 function dialogEnter() {
   isRechecking.value = false;
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" :persistent="isRechecking" width="420" @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="bg-cyan-lighten-2">
-        {{ t("MyClient.recheckDialog.title") }}
-      </v-card-title>
-
-      <v-card-text class="text-body-large">
-        {{ t("MyClient.recheckDialog.text", { count: torrentCount }) }}
-      </v-card-text>
-
-      <v-divider />
-
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="info" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          <span class="ml-1">{{ t("common.dialog.cancel") }}</span>
-        </v-btn>
-        <v-btn :loading="isRechecking" color="cyan" prepend-icon="mdi-refresh" variant="text" @click="confirmRecheck">
-          <span class="ml-1">{{ t("common.dialog.ok") }}</span>
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :confirm-loading="isRechecking"
+    :keyboard="!isRechecking"
+    :mask-closable="!isRechecking"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('MyClient.recheckDialog.title')"
+    :width="420"
+    @ok="confirmRecheck"
+  >
+    <div style="font-size: 16px">
+      {{ t("MyClient.recheckDialog.text", { count: torrentCount }) }}
+    </div>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

@@ -1,10 +1,20 @@
 <script setup lang="ts">
+import {
+  DeleteOutlined,
+  DownloadOutlined,
+  FilterOutlined,
+  MinusOutlined,
+  SyncOutlined,
+  WarningOutlined,
+} from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
 import { onMounted, onUnmounted, ref, shallowRef, computed } from "vue";
-import { useDisplay, type DataTableHeader } from "vuetify";
+import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import { useDisplay } from "@/options/composables/useDisplay.ts";
+import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
-import { formatDate } from "@/options/utils.ts";
+import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import type { ITorrentDownloadMetadata, TTorrentDownloadKey } from "@/shared/types.ts";
 
@@ -14,6 +24,7 @@ import TorrentTitleTd from "@/options/components/TorrentTitleTd.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import DownloaderLabel from "@/options/components/DownloaderLabel.vue";
 import NavButton from "@/options/components/NavButton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import ReDownloadSelectDialog from "./ReDownloadSelectDialog.vue";
 import AdvanceFilterGenerateDialog from "./AdvanceFilterGenerateDialog.vue";
 
@@ -24,6 +35,7 @@ import {
   tableCustomFilter,
   clearWatchingMap,
   throttleLoadDownloadHistory,
+  isLoadingDownloadHistory,
 } from "./utils.ts"; // <-- 主要方法
 
 const { t } = useI18n();
@@ -32,23 +44,69 @@ const display = useDisplay();
 
 const { tableFilterRef, tableWaitFilterRef, tableFilterFn } = tableCustomFilter;
 
+const titleColumnMaxWidth = computed(() =>
+  configStore.searchEntifyControl.limitTorrentTitleTdWidth || display.smAndDown.value
+    ? display.smAndDown.value
+      ? "32vw"
+      : "24vw"
+    : undefined,
+);
+
+// 列宽跟随容器收缩（见 style.css「数据表统一排版」），但下载历史表只有「种子」列声明了
+// 最小宽度，站点 / 下载服务器 / 下载时间 / 下载状态会被压得过窄：时间被拆成多行、
+// 下载器地址与状态标签被裁切。这里为各列补上兜底的最小宽度（minWidth 会落到单元格的
+// min-width 上，只限制下限，不锁定列宽，容器够宽时依旧按内容自动分配）。
 const tableHeader = computed(
   () =>
     [
-      { title: t("common.site"), key: "siteId", align: "center" },
+      { title: t("common.site"), key: "siteId", align: "center", minWidth: "6rem" },
       {
         title: t("DownloadHistory.table.title"),
         key: "title",
         align: "start",
-        minWidth: "30rem",
-        ...(display.smAndDown.value ? { maxWidth: "32vw" } : {}),
+        minWidth: "14rem",
+        ...(titleColumnMaxWidth.value ? { maxWidth: titleColumnMaxWidth.value } : {}),
       },
-      { title: t("DownloadHistory.table.downloader"), key: "downloaderId", width: "11%", align: "start" },
-      { title: t("DownloadHistory.table.downloadAt"), key: "downloadAt", align: "center" },
-      { title: t("DownloadHistory.table.status"), key: "downloadStatus" },
-      { title: t("common.action"), key: "action", align: "center", sortable: false },
+      {
+        title: t("DownloadHistory.table.downloader"),
+        key: "downloaderId",
+        width: "11%",
+        // 下载器标签是「40px 头像 + 名称 + 地址」，地址允许折行，但至少留出名称可读的宽度
+        minWidth: "10rem",
+        align: "start",
+      },
+      {
+        title: t("DownloadHistory.table.downloadAt"),
+        key: "downloadAt",
+        align: "center",
+        // "yyyy-MM-dd HH:mm:ss" 单行约需 9rem，留出余量避免时间被拆行
+        minWidth: "10rem",
+      },
+      { title: t("DownloadHistory.table.status"), key: "downloadStatus", minWidth: "6rem" },
+      { title: t("common.action"), key: "action", align: "center", sortable: false, width: "90" },
     ] as DataTableHeader[],
 );
+const tableColumns = computed(() =>
+  toAntdColumns(tableHeader.value, {
+    sortBy: configStore.tableBehavior.DownloadHistory.sortBy,
+    multiSort: configStore.enableTableMultiSort,
+  }),
+);
+const filteredTableData = computed(() =>
+  downloadHistoryList.value.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
+);
+const tablePagination = computed(() =>
+  toPagination(configStore.tableBehavior.DownloadHistory.itemsPerPage, (v) =>
+    configStore.updateTableBehavior("DownloadHistory", "itemsPerPage", v),
+  ),
+);
+function onSelectionChange(keys: (string | number)[]) {
+  tableSelected.value = keys as TTorrentDownloadKey[];
+}
+function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
+  configStore.updateTableBehavior("DownloadHistory", "sortBy", toSortBy(sorter as never));
+}
+
 const tableSelected = ref<TTorrentDownloadKey[]>([]);
 
 const showAdvanceFilterDialog = ref<boolean>(false);
@@ -88,6 +146,10 @@ function viewDownloadDetail(history: ITorrentDownloadMetadata) {
   showDownloadDetailDialog.value = true;
 }
 
+function downloadStatusMeta(status: ITorrentDownloadMetadata["downloadStatus"]) {
+  return downloadStatusMap[status];
+}
+
 onMounted(() => {
   throttleLoadDownloadHistory();
 });
@@ -98,24 +160,23 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <v-alert :title="t('route.Overview.DownloadHistory')" type="info" />
-  <v-card>
-    <v-card-title>
-      <v-row gap="0" class="ma-0">
+  <a-card>
+    <a-typography-text strong>
+      <a-flex class="page-toolbar" align="center" :gap="8">
         <!-- 按钮组 -->
         <NavButton
           color="green"
-          icon="mdi-cached"
+          :icon="SyncOutlined"
           :text="t('DownloadHistory.refresh')"
           @click="() => throttleLoadDownloadHistory()"
         />
 
-        <v-divider vertical class="mx-2" />
+        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
         <NavButton
           :disabled="tableSelected.length === 0"
           color="primary"
-          icon="mdi-tray-arrow-down"
+          :icon="DownloadOutlined"
           :text="t('DownloadHistory.reDownload')"
           @click="() => reDownloadTorrent(tableSelected)"
         />
@@ -124,96 +185,80 @@ onUnmounted(() => {
           :disabled="tableSelected.length === 0"
           :text="t('common.remove')"
           color="error"
-          icon="mdi-minus"
+          :icon="MinusOutlined"
           @click="deleteDownloadHistory(tableSelected)"
         />
 
-        <v-spacer />
+        <div style="flex: 1 1 auto"></div>
 
         <!-- 筛选框 -->
-        <v-text-field
-          v-model="tableWaitFilterRef"
-          append-icon="mdi-magnify"
-          clearable
-          density="compact"
-          hide-details
-          :label="t('DownloadHistory.filterPlaceholder')"
-          max-width="500"
-          prepend-inner-icon="mdi-filter"
-          single-line
-          @click:prepend-inner="showAdvanceFilterDialog = true"
-        />
-      </v-row>
-    </v-card-title>
-    <v-card-text>
-      <v-data-table
-        v-model="tableSelected"
-        :custom-filter="tableFilterFn"
-        :filter-keys="['id'] /* 对每个item值只检索一次 */"
-        :headers="tableHeader"
-        :items="downloadHistoryList"
-        :items-per-page="configStore.tableBehavior.DownloadHistory.itemsPerPage"
-        :multi-sort="configStore.enableTableMultiSort"
-        :search="tableFilterRef"
-        :sort-by="configStore.tableBehavior.DownloadHistory.sortBy"
-        class="table-stripe table-header-no-wrap"
-        hover
-        item-value="id"
-        show-select
-        @update:itemsPerPage="(v) => configStore.updateTableBehavior('DownloadHistory', 'itemsPerPage', v)"
-        @update:sortBy="(v) => configStore.updateTableBehavior('DownloadHistory', 'sortBy', v)"
-      >
-        <template #item.siteId="{ item }">
-          <div class="d-flex flex-column align-center">
-            <SiteFavicon :site-id="item.siteId" :size="18" />
-            <SiteName :site-id="item.siteId" />
+        <a-input v-model:value="tableWaitFilterRef" allow-clear :placeholder="t('DownloadHistory.filterPlaceholder')">
+          <template #prefix>
+            <FilterOutlined style="cursor: pointer" @click="showAdvanceFilterDialog = true" />
+          </template>
+        </a-input>
+      </a-flex>
+    </a-typography-text>
+    <a-table
+      :columns="tableColumns"
+      :data-source="filteredTableData"
+      :loading="isLoadingDownloadHistory"
+      :pagination="tablePagination"
+      :row-key="'id'"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
+      :scroll="{ x: 'max-content' }"
+      class="table-stripe"
+      @change="onTableChange"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'siteId'">
+          <div style="display: flex; flex-direction: column; align-items: center">
+            <SiteFavicon :site-id="record.siteId" :size="18" />
+            <SiteName class="ptd-cell-ellipsis" style="max-width: 10rem" :site-id="record.siteId" />
           </div>
         </template>
 
-        <template #item.title="{ item }">
-          <TorrentTitleTd v-if="item.torrent" :item="item.torrent" />
+        <template v-else-if="column.key === 'title'">
+          <TorrentTitleTd v-if="record.torrent" :item="record.torrent" :max-width="titleColumnMaxWidth" />
         </template>
 
-        <template #item.downloaderId="{ item }">
-          <DownloaderLabel :downloader="item.downloaderId" />
+        <template v-else-if="column.key === 'downloaderId'">
+          <DownloaderLabel :downloader="record.downloaderId" />
         </template>
 
-        <template #item.downloadAt="{ item }">
-          <span class="t_downloadAt text-no-wrap">{{ formatDate(item.downloadAt ?? 0) }}</span>
+        <template v-else-if="column.key === 'downloadAt'">
+          <span class="ptd-date-time">{{ formatDateTimeForTable(record.downloadAt ?? 0) }}</span>
         </template>
 
-        <template #item.downloadStatus="{ item }">
-          <v-chip
-            :prepend-icon="downloadStatusMap[item.downloadStatus].icon"
-            :color="downloadStatusMap[item.downloadStatus].color"
-            @click="() => viewDownloadDetail(item)"
-          >
-            {{ downloadStatusMap[item.downloadStatus].title }}
-          </v-chip>
+        <template v-else-if="column.key === 'downloadStatus'">
+          <a-tag @click="() => viewDownloadDetail(record)"
+            ><component :is="downloadStatusMeta(record.downloadStatus).icon" style="margin-right: 4px" />
+            {{ downloadStatusMeta(record.downloadStatus).title }}
+          </a-tag>
         </template>
 
-        <template #item.action="{ item }">
-          <v-btn-group class="table-action" density="compact" variant="plain">
-            <v-btn
+        <template v-else-if="column.key === 'action'">
+          <a-button-group class="table-action">
+            <a-button
               :title="t('DownloadHistory.reDownload')"
-              color="primary"
-              icon="mdi-tray-arrow-down"
+              @click="() => reDownloadTorrent([record.id!])"
+              type="primary"
               size="small"
-              @click="() => reDownloadTorrent([item.id!])"
-            />
+              ><template #icon><DownloadOutlined /></template
+            ></a-button>
 
-            <v-btn
-              :title="t('common.remove')"
-              color="error"
-              icon="mdi-delete"
-              size="small"
-              @click="() => deleteDownloadHistory([item.id!])"
-            />
-          </v-btn-group>
+            <a-button :title="t('common.remove')" @click="() => deleteDownloadHistory([record.id!])" danger size="small"
+              ><template #icon><DeleteOutlined /></template
+            ></a-button>
+          </a-button-group>
         </template>
-      </v-data-table>
-    </v-card-text>
-  </v-card>
+      </template>
+
+      <template #emptyText>
+        <NoDataPlaceholder compact />
+      </template>
+    </a-table>
+  </a-card>
 
   <ReDownloadSelectDialog
     v-model="showReDownloadSelectDialog"
@@ -230,19 +275,16 @@ onUnmounted(() => {
     @all-delete="() => throttleLoadDownloadHistory()"
   />
 
-  <v-dialog v-model="showDownloadDetailDialog" width="800">
-    <v-card>
-      <v-card-text>
-        <v-alert v-if="downloadDetail.errorMessage" class="mb-3" color="error" icon="mdi-alert" variant="tonal">
-          <div class="text-label-large font-weight-bold mb-1">
-            {{ t("DownloadHistory.detail.errorMessage") }}
-          </div>
-          <code class="text-body-medium">{{ downloadDetail.errorMessage }}</code>
-        </v-alert>
-        <pre> {{ JSON.stringify(downloadDetail, null, 2) }}</pre>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
+  <a-modal v-model:open="showDownloadDetailDialog" :footer="null" :width="800">
+    <a-alert v-if="downloadDetail.errorMessage" type="error" show-icon style="margin-bottom: 12px"
+      ><template #icon><WarningOutlined /></template
+      ><template #description>
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px">
+          {{ t("DownloadHistory.detail.errorMessage") }}
+        </div>
+        <code style="font-size: 14px">{{ downloadDetail.errorMessage }}</code>
+      </template></a-alert
+    >
+    <pre> {{ JSON.stringify(downloadDetail, null, 2) }}</pre>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

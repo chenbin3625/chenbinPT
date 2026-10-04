@@ -1,12 +1,12 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/uhdbits.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/uhdbits.org/config.json
  */
-// import Sizzle from "sizzle";
 import type {
   ISiteMetadata,
   // ISearchInput,
   // ITorrent,
 } from "../types";
+import { extractTextExcluding } from "../utils/html.ts";
 // import BittorrentSite from "../schemas/AbstractBittorrentSite";
 // import GazelleJSONAPI, { SchemaMetadata } from "../schemas/GazelleJSONAPI";
 
@@ -72,9 +72,11 @@ export const siteMetadata: ISiteMetadata = {
       title: {
         selector: "div.group_info:has(> a[href*='torrents.php?id='])",
         elementProcess: (element: HTMLElement) => {
-          const cloneElement = element.cloneNode(true) as HTMLElement;
-          Sizzle(">span, div.torrent_info", cloneElement).forEach((e) => e.remove());
-          return cloneElement.innerText.trim();
+          // 等价于「cloneNode(true) → 删除直接子 span 与后代 div.torrent_info → innerText」，
+          // 但不再深克隆整行（见 docs/performance-audit.md P2-14）。
+          // 顺带修掉一个运行时缺陷：原实现依赖 Sizzle，但本文件的 Sizzle import 早已被注释掉，
+          // 会导致每一行的标题解析都抛 ReferenceError。
+          return extractTextExcluding(element, ">span, div.torrent_info").trim();
         },
       },
       subTitle: { selector: "div.group_info > div.torrent_info:first" },

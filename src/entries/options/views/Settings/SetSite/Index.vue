@@ -1,14 +1,29 @@
 <script setup lang="ts">
+import {
+  AimOutlined,
+  CloseCircleFilled,
+  DeleteOutlined,
+  EditOutlined,
+  ExportOutlined,
+  FilterOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  ScanOutlined,
+  SearchOutlined,
+  ToolOutlined,
+} from "@ant-design/icons-vue";
+import { get } from "es-toolkit/compat";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import type { TSiteID } from "@ptd/site";
-import type { DataTableHeader } from "vuetify";
+import { NO_IMAGE, type TSiteID } from "@ptd/site";
+import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
+import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 
 import AddDialog from "./AddDialog.vue";
 import EditDialog from "./EditDialog.vue";
@@ -18,9 +33,10 @@ import RebuildMapDialog from "./RebuildMapDialog.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 // 数据来源
-import { allAddedSiteInfo, type ISiteTableItem } from "./utils.ts";
+import { allAddedSiteInfo, isLoadingAddedSiteInfo, type ISiteTableItem } from "./utils.ts";
 
 const { t } = useI18n();
 
@@ -28,11 +44,19 @@ const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 
+// metadata store 从 chrome.storage 的异步水合期间不能把「空」当最终结果渲染
+const isStoreHydrating = useStoreHydrating(metadataStore);
+
 const showAddDialog = ref<boolean>(false);
 const showEditDialog = ref<boolean>(false);
 const showDeleteDialog = ref<boolean>(false);
 const showOneClickImportDialog = ref<boolean>(false);
 const showRebuildMapDialog = ref<boolean>(false);
+
+/** 站点展示名：用户自定义名称优先于站点定义名称（名称列被截断时 tooltip 也用它） */
+function siteDisplayName(record: ISiteTableItem) {
+  return record.userConfig?.merge?.name ?? record.metadata?.name ?? record.id;
+}
 
 const tableHeader = computed(() => {
   const baseHeaders = [
@@ -88,6 +112,105 @@ const {
 
 const tableSelected = ref<TSiteID[]>([]);
 
+const columns = computed(() => {
+  const multiSort = configStore.enableTableMultiSort;
+  const sortBy = configStore.tableBehavior.SetSite.sortBy ?? [];
+  return tableHeader.value.map((header) => {
+    const key = String(header.key);
+    const sortItem = sortBy.find((item) => item.key === key);
+    const compare = (a: Record<string, any>, b: Record<string, any>) => {
+      const left = get(a, key);
+      const right = get(b, key);
+      if (typeof left === "number" && typeof right === "number") return left - right;
+      return String(left ?? "").localeCompare(String(right ?? ""));
+    };
+    const order = String(sortItem?.order ?? "");
+    return {
+      align:
+        header.align === "end" || header.align === "right"
+          ? ("right" as const)
+          : header.align === "start" || header.align === "left"
+            ? ("left" as const)
+            : ("center" as const),
+      dataIndex: key,
+      key,
+      sorter: header.sortable === false ? false : multiSort ? { compare, multiple: 1 } : compare,
+      sortOrder: sortItem ? (order === "desc" || order === "descend" ? "descend" : "ascend") : undefined,
+      title: header.title,
+    };
+  });
+});
+
+const dataSource = computed(() =>
+  (allAddedSiteInfo.value ?? []).filter((item) => tableFilterFn(undefined, tableFilterRef.value ?? "", { raw: item })),
+);
+
+const rowSelection = computed(() => ({
+  selectedRowKeys: tableSelected.value,
+  onChange: (keys: (string | number)[]) => {
+    tableSelected.value = keys as TSiteID[];
+  },
+}));
+
+/**
+ * P2-16：`configStore.tableBehavior.SetSite.itemsPerPage` 默认是 -1（即「全部」），
+ * 会让首屏一次性渲染全部已添加站点（当前 300+ 行 × 每行若干开关/菜单）。
+ * stores 不在本线修改范围内，这里在视图侧做本地兜底：非正数（-1/-2/非法值）时按 25 行分页。
+ * 用户在前端选择具体页大小（5/10/25/50/100）时仍然写回 store 并生效。
+ */
+const DEFAULT_SET_SITE_ITEMS_PER_PAGE = 25;
+const siteTableItemsPerPage = computed(() => {
+  const configured = Number(configStore.tableBehavior.SetSite.itemsPerPage);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_SET_SITE_ITEMS_PER_PAGE;
+});
+
+const pagination = computed(() => ({
+  pageSize: siteTableItemsPerPage.value,
+  pageSizeOptions: ["5", "10", "25", "50", "100"],
+  showSizeChanger: true,
+}));
+
+function onTableChange(tablePagination: { pageSize?: number }, _filters: unknown, sorter: any) {
+  const sorters = (Array.isArray(sorter) ? sorter : [sorter])
+    .filter((item) => item?.order)
+    .map((item) => ({ key: item.columnKey || item.field, order: item.order === "ascend" ? "asc" : "desc" }));
+  configStore.updateTableBehavior("SetSite", "sortBy", sorters);
+
+  const nextSize = Number(tablePagination?.pageSize);
+  if (Number.isFinite(nextSize) && nextSize !== Number(configStore.tableBehavior.SetSite.itemsPerPage)) {
+    configStore.updateTableBehavior("SetSite", "itemsPerPage", nextSize);
+  }
+}
+
+// 工具栏筛选菜单：点击菜单内容（非复选框）时关闭，与迁移前 PtdMenu 的 close-on-content-click 一致
+const filterMenuOpen = ref(false);
+
+function closeFilterMenu() {
+  filterMenuOpen.value = false;
+}
+
+/** 对齐迁移前 PtdCheckbox（数组模型）的语义：把 value 加入/移出 required 数组 */
+function toggleRequiredValue(filterKey: string, value: unknown) {
+  const state = advanceFilterDictRef.value[filterKey];
+  const required: unknown[] = Array.isArray(state?.required) ? state.required : [];
+  state.required = required.includes(value) ? required.filter((item) => item !== value) : [...required, value];
+}
+
+function onBoolFilterCheck(keyword: string) {
+  const filterKey = `userConfig.${keyword}`;
+  toggleKeywordStateFn(filterKey, "1");
+  // 必须写入字符串 "1"：format 里的 boolean.build 是 (v) => (v ? "1" : "0")，
+  // 写入 undefined 会被格式化成 "0"，查询变成「该字段为 false」，筛选结果与勾选状态相反。
+  toggleRequiredValue(filterKey, "1");
+  updateTableFilterValueFn();
+}
+
+function onGroupFilterCheck(groupName: string) {
+  toggleKeywordStateFn("userConfig.groups", groupName);
+  toggleRequiredValue("userConfig.groups", groupName);
+  updateTableFilterValueFn();
+}
+
 const toEditId = ref<TSiteID | null>("");
 function editSite(siteId: TSiteID) {
   toEditId.value = siteId;
@@ -107,247 +230,286 @@ async function confirmDeleteSite(siteId: TSiteID) {
 const isFaviconFlushing = ref(false);
 async function flushSiteFavicon(siteId: TSiteID | TSiteID[]) {
   const siteIds = Array.isArray(siteId) ? siteId : [siteId];
-  for (const id of siteIds) {
-    await sendMessage("getSiteFavicon", { site: id, flush: true });
+  if (siteIds.length === 0 || isFaviconFlushing.value) return;
+
+  isFaviconFlushing.value = true;
+  let successCount = 0;
+  let failedCount = 0;
+  try {
+    // 逐个串行刷新，避免一次选中数百个站点时对站点服务器造成瞬时压力
+    for (const id of siteIds) {
+      try {
+        // offscreen 侧取不到图标时会返回默认占位图（NO_IMAGE），据此判定单个站点是否刷新成功
+        const favicon = await sendMessage("getSiteFavicon", { site: id, flush: true });
+        if (favicon && favicon !== NO_IMAGE) {
+          successCount++;
+        } else {
+          failedCount++;
+        }
+      } catch {
+        failedCount++;
+      }
+    }
+  } finally {
+    isFaviconFlushing.value = false;
   }
-  runtimeStore.showSnakebar(t("SetSite.index.flushFaviconFinish"), { color: "success" });
+
+  // V-20：按实际成功数提示（原实现无论是否失败都报成功，且按钮因 loading 从未置位而可反复点击）
+  if (failedCount === 0) {
+    runtimeStore.showSnakebar(t("SetSite.index.flushFaviconFinish"), { color: "success" });
+  } else {
+    runtimeStore.showSnakebar(t("SetSite.index.flushFaviconPartial", { success: successCount, failed: failedCount }), {
+      color: successCount > 0 ? "warning" : "error",
+    });
+  }
+}
+
+/** V-21：该关键字当前是否以「排除」形式参与筛选（勾选之外还需要展示的第三种状态） */
+function isKeywordExcluded(filterKey: string, value: unknown): boolean {
+  const exclude: unknown[] = advanceFilterDictRef.value[filterKey]?.exclude ?? [];
+  return exclude.includes(value);
 }
 </script>
 
 <template>
-  <v-alert :title="t('route.Settings.SetSite')" type="info" />
-  <v-card class="set-site">
-    <v-card-title>
-      <v-row gap="0" class="ma-0">
-        <NavButton :text="t('common.btn.add')" color="success" icon="mdi-plus" @click="showAddDialog = true" />
+  <a-card class="ptd-settings-card">
+    <template #title>
+      <a-flex class="page-toolbar" align="center" :gap="8">
+        <NavButton :text="t('common.btn.add')" color="success" :icon="PlusOutlined" @click="showAddDialog = true" />
 
         <NavButton
           :disabled="tableSelected.length === 0"
           :text="t('common.remove')"
           color="error"
-          icon="mdi-minus"
+          :icon="MinusOutlined"
           @click="deleteSite(tableSelected)"
         />
 
-        <v-divider class="mx-2" inset vertical />
+        <a-divider style="margin-inline: 8px" type="vertical" />
 
         <NavButton
           color="info"
-          icon="mdi-crosshairs-gps"
+          :icon="AimOutlined"
           :text="t('SetSite.index.oneClickImport')"
           @click="() => (showOneClickImportDialog = true)"
         />
 
-        <v-divider class="mx-2" inset vertical />
+        <a-divider style="margin-inline: 8px" type="vertical" />
 
         <NavButton
           :disabled="tableSelected.length === 0"
           :loading="isFaviconFlushing"
           :text="t('SetSite.index.table.flushFavicon')"
           color="indigo"
-          icon="mdi-face-recognition"
+          :icon="ScanOutlined"
           @click="() => flushSiteFavicon(tableSelected)"
         />
 
         <NavButton
           :text="t('SetSite.index.reBuildMap')"
           color="indigo"
-          icon="mdi-wrench"
+          :icon="ToolOutlined"
           @click="showRebuildMapDialog = true"
         />
 
-        <v-spacer />
-        <v-text-field
-          v-model="tableWaitFilterRef"
-          append-icon="mdi-magnify"
-          clearable
-          density="compact"
-          hide-details
-          label="Search"
-          max-width="500"
-          single-line
-          @click:clear="buildFilterDictFn('')"
-        >
-          <template #prepend-inner>
-            <v-menu min-width="100">
-              <template v-slot:activator="{ props }">
-                <v-icon icon="mdi-filter" v-bind="props" variant="plain" @click="buildFilterDictFn('')" />
+        <div style="flex: 1 1 auto; min-width: 8px" />
+        <a-input v-model:value="tableWaitFilterRef" allow-clear placeholder="Search" style="max-width: 500px">
+          <template #prefix>
+            <a-popover v-model:open="filterMenuOpen" :trigger="['click']" placement="bottomLeft">
+              <template #content>
+                <div style="min-width: 180px" @click="closeFilterMenu">
+                  <a-checkbox
+                    v-for="keyword in booleanUserConfigKeywords"
+                    :key="keyword"
+                    :checked="advanceFilterDictRef[`userConfig.${keyword}`]?.required?.includes('1')"
+                    :indeterminate="isKeywordExcluded(`userConfig.${keyword}`, '1')"
+                    style="display: block"
+                    @change="() => onBoolFilterCheck(keyword)"
+                    @click.stop
+                  >
+                    {{ t(`SetSite.common.${keyword}`) }}
+                  </a-checkbox>
+
+                  <a-divider style="margin: 8px 0" />
+
+                  <div style="margin: 8px">{{ t("SetSite.common.groups") }}</div>
+                  <a-checkbox
+                    v-for="(item, index) in metadataStore.getSitesGroupData"
+                    :key="index"
+                    :checked="advanceFilterDictRef['userConfig.groups']?.required?.includes(index)"
+                    :indeterminate="isKeywordExcluded('userConfig.groups', index)"
+                    style="display: block; padding-right: 24px"
+                    @change="() => onGroupFilterCheck(String(index))"
+                    @click.stop
+                  >
+                    {{ index }} ({{ item.length }})
+                  </a-checkbox>
+                </div>
               </template>
-              <v-list class="pa-0">
-                <v-list-item v-for="keyword in booleanUserConfigKeywords" :key="keyword">
-                  <v-checkbox
-                    v-model="advanceFilterDictRef[`userConfig.${keyword}`].required"
-                    :label="t(`SetSite.common.${keyword}`)"
-                    density="compact"
-                    hide-details
-                    indeterminate
-                    true-value="1"
-                    @click.stop="(v: any) => toggleKeywordStateFn(`userConfig.${keyword}`, '1')"
-                    @update:model-value="() => updateTableFilterValueFn()"
-                  ></v-checkbox>
-                </v-list-item>
-
-                <v-divider />
-
-                <v-list-item-subtitle class="ma-2">{{ t("SetSite.common.groups") }}</v-list-item-subtitle>
-                <v-list-item
-                  v-for="(item, index) in metadataStore.getSitesGroupData"
-                  :key="index"
-                  :value="index"
-                  class="pr-6"
-                >
-                  <v-checkbox
-                    v-model="advanceFilterDictRef[`userConfig.groups`].required"
-                    :label="`${index} (${item.length})`"
-                    :value="index"
-                    density="compact"
-                    hide-details
-                    indeterminate
-                    @click.stop="(v: any) => toggleKeywordStateFn(`userConfig.groups`, index)"
-                    @update:model-value="() => updateTableFilterValueFn()"
-                  ></v-checkbox>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+              <FilterOutlined style="cursor: pointer" @click="buildFilterDictFn('')" />
+            </a-popover>
           </template>
-        </v-text-field>
-      </v-row>
-    </v-card-title>
+          <template #suffix>
+            <SearchOutlined style="opacity: 0.45" />
+          </template>
+          <template #clearIcon>
+            <CloseCircleFilled @click="buildFilterDictFn('')" />
+          </template>
+        </a-input>
+      </a-flex>
+    </template>
 
-    <v-data-table
-      v-model="tableSelected"
-      :headers="tableHeader"
-      :items="allAddedSiteInfo"
-      :items-per-page="configStore.tableBehavior.SetSite.itemsPerPage"
-      :custom-filter="tableFilterFn"
-      :filter-keys="['id'] /* 对每个item值只检索一次 */"
-      :search="tableFilterRef"
-      :sort-by="configStore.tableBehavior.SetSite.sortBy"
+    <a-table
       class="table-stripe table-header-no-wrap"
-      item-value="id"
-      :multi-sort="configStore.enableTableMultiSort"
-      hover
-      show-select
-      @update:itemsPerPage="(v) => configStore.updateTableBehavior('SetSite', 'itemsPerPage', v)"
-      @update:sortBy="(v) => configStore.updateTableBehavior('SetSite', 'sortBy', v)"
+      :columns="columns"
+      :data-source="dataSource"
+      :loading="isStoreHydrating || isLoadingAddedSiteInfo"
+      :pagination="pagination"
+      :row-key="(record: ISiteTableItem) => record.id"
+      :row-selection="rowSelection"
+      @change="onTableChange"
     >
-      <template #item.userConfig.sortIndex="{ item }">
-        <div class="d-flex">
-          <SiteFavicon :site-id="item.id" />
-        </div>
-      </template>
-      <template #item.name="{ item }">
-        <span>
-          {{ item.userConfig?.merge?.name ?? item.metadata?.name }}
-          <v-tooltip max-width="400" v-if="item.metadata.description" activator="parent">
-            <span v-if="typeof item.metadata.description === 'string'">{{ item.metadata.description }}</span>
-            <ul v-else>
-              <li v-for="(text, index) in item.metadata.description" :key="index">{{ text }}</li>
-            </ul>
-          </v-tooltip>
-        </span>
-      </template>
-      <template #item.groups="{ item }">
-        {{ (item.userConfig.groups ?? []).join(", ") }}
-      </template>
-      <template #item.url="{ item }">
-        <a
-          :href="item.userConfig?.url ?? item.metadata?.urls?.[0]"
-          class="text-primary font-weight-medium text-decoration-underline"
-          rel="noopener noreferrer nofollow"
-          target="_blank"
-        >
-          {{ item.userConfig?.url ?? item.metadata?.urls?.[0] }}
-          <v-icon icon="mdi-open-in-new" size="x-small"></v-icon>
-        </a>
-      </template>
-      <template #item.userConfig.isOffline="{ item }">
-        <v-switch
-          v-model="item.userConfig.isOffline"
-          :disabled="item.metadata.isDead"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="(v) => metadataStore.simplePatch('sites', item.id, 'isOffline', v as boolean)"
-        />
-      </template>
-      <template #item.userConfig.allowSearch="{ item }">
-        <v-switch
-          v-model="item.userConfig.allowSearch"
-          :disabled="item.metadata.isDead || item.userConfig.isOffline || !Object.hasOwn(item.metadata, 'search')"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="(v) => metadataStore.simplePatch('sites', item.id, 'allowSearch', v as boolean)"
-        />
-      </template>
-      <template #item.userConfig.allowQueryUserInfo="{ item }">
-        <v-switch
-          v-model="item.userConfig.allowQueryUserInfo"
-          :disabled="item.metadata.isDead || item.userConfig.isOffline || !Object.hasOwn(item.metadata, 'userInfo')"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="(v) => metadataStore.simplePatch('sites', item.id, 'allowQueryUserInfo', v as boolean)"
-        />
-      </template>
-      <template #item.userConfig.allowContentScript="{ item }">
-        <v-switch
-          v-model="item.userConfig.allowContentScript"
-          :disabled="item.metadata.isDead || item.userConfig.isOffline"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="(v) => metadataStore.simplePatch('sites', item.id, 'allowContentScript', v as boolean)"
-        />
-      </template>
-      <template #item.action="{ item }">
-        <v-btn-group class="table-action" density="compact" variant="plain">
-          <!-- 站点信息编辑 -->
-          <v-btn
-            :disabled="item.metadata.isDead"
-            :title="t('common.edit')"
-            color="info"
-            icon="mdi-pencil"
-            size="small"
-            @click="() => editSite(item.id)"
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'userConfig.sortIndex'">
+          <div style="display: flex">
+            <SiteFavicon :site-id="record.id" />
+          </div>
+        </template>
+
+        <template v-else-if="column.key === 'name'">
+          <a-tooltip v-if="record.metadata.description" :overlay-style="{ maxWidth: '400px' }">
+            <template #title>
+              <div>{{ siteDisplayName(record) }}</div>
+              <span v-if="typeof record.metadata.description === 'string'">{{ record.metadata.description }}</span>
+              <div v-else>
+                <div v-for="text in record.metadata.description" :key="text">{{ text }}</div>
+              </div>
+            </template>
+            <span class="ptd-cell-ellipsis" style="max-width: 12rem">{{ siteDisplayName(record) }}</span>
+          </a-tooltip>
+          <span v-else class="ptd-cell-ellipsis" style="max-width: 12rem" :title="siteDisplayName(record)">{{
+            siteDisplayName(record)
+          }}</span>
+        </template>
+
+        <template v-else-if="column.key === 'groups'">
+          <span class="ptd-cell-ellipsis" style="max-width: 12rem" :title="(record.userConfig.groups ?? []).join(', ')">
+            {{ (record.userConfig.groups ?? []).join(", ") }}
+          </span>
+        </template>
+
+        <template v-else-if="column.key === 'url'">
+          <span
+            class="ptd-cell-ellipsis"
+            style="max-width: 16rem"
+            :title="record.userConfig?.url ?? record.metadata?.urls?.[0]"
+          >
+            <a-typography-link
+              :href="record.userConfig?.url ?? record.metadata?.urls?.[0]"
+              rel="noopener noreferrer nofollow"
+              target="_blank"
+            >
+              {{ record.userConfig?.url ?? record.metadata?.urls?.[0] }}
+              <ExportOutlined class="ptd-icon-sm" />
+            </a-typography-link>
+          </span>
+        </template>
+
+        <template v-else-if="column.key === 'userConfig.isOffline'">
+          <a-switch
+            v-model:checked="record.userConfig.isOffline"
+            class="table-switch-btn"
+            :disabled="record.metadata.isDead"
+            @change="(v: boolean) => metadataStore.simplePatch('sites', record.id, 'isOffline', v)"
           />
+        </template>
 
-          <!-- 默认站点搜索入口编辑（只有配置了 siteMetadata.searchEntry 的站点才支持该设置） -->
-          <v-btn
-            :title="t('SetSite.index.table.searchEntries')"
-            :disabled="item.metadata.isDead || !item.metadata.searchEntry"
-            class="v-btn--icon"
-            size="small"
-          >
-            <v-icon icon="mdi-magnify"></v-icon>
-            <v-menu :close-on-content-click="false" activator="parent">
-              <EditSearchEntryList :item="item" />
-            </v-menu>
-          </v-btn>
+        <template v-else-if="column.key === 'userConfig.allowSearch'">
+          <a-switch
+            v-model:checked="record.userConfig.allowSearch"
+            class="table-switch-btn"
+            :disabled="
+              record.metadata.isDead || record.userConfig.isOffline || !Object.hasOwn(record.metadata, 'search')
+            "
+            @change="(v: boolean) => metadataStore.simplePatch('sites', record.id, 'allowSearch', v)"
+          />
+        </template>
 
-          <v-btn
-            :disabled="item.metadata.isDead"
-            :loading="isFaviconFlushing"
-            :title="t('SetSite.index.table.flushFavicon')"
-            color="indigo"
-            icon="mdi-face-recognition"
-            size="small"
-            @click="() => flushSiteFavicon(item.id)"
-          ></v-btn>
+        <template v-else-if="column.key === 'userConfig.allowQueryUserInfo'">
+          <a-switch
+            v-model:checked="record.userConfig.allowQueryUserInfo"
+            class="table-switch-btn"
+            :disabled="
+              record.metadata.isDead || record.userConfig.isOffline || !Object.hasOwn(record.metadata, 'userInfo')
+            "
+            @change="(v: boolean) => metadataStore.simplePatch('sites', record.id, 'allowQueryUserInfo', v)"
+          />
+        </template>
 
-          <v-btn
-            :title="t('common.remove')"
-            color="error"
-            icon="mdi-delete"
-            size="small"
-            @click="() => deleteSite([item.id])"
-          >
-          </v-btn>
-        </v-btn-group>
+        <template v-else-if="column.key === 'userConfig.allowContentScript'">
+          <a-switch
+            v-model:checked="record.userConfig.allowContentScript"
+            class="table-switch-btn"
+            :disabled="record.metadata.isDead || record.userConfig.isOffline"
+            @change="(v: boolean) => metadataStore.simplePatch('sites', record.id, 'allowContentScript', v)"
+          />
+        </template>
+
+        <template v-else-if="column.key === 'action'">
+          <a-space class="table-action">
+            <!-- 站点信息编辑 -->
+            <a-tooltip :title="t('common.edit')">
+              <a-button :disabled="record.metadata.isDead" size="small" @click="() => editSite(record.id)">
+                <template #icon>
+                  <EditOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+
+            <!-- 默认站点搜索入口编辑（只有配置了 siteMetadata.searchEntry 的站点才支持该设置） -->
+            <a-popover :trigger="['click']" placement="bottom">
+              <template #content>
+                <EditSearchEntryList :item="record" />
+              </template>
+              <a-button
+                :disabled="record.metadata.isDead || !record.metadata.searchEntry"
+                :title="t('SetSite.index.table.searchEntries')"
+                size="small"
+              >
+                <SearchOutlined />
+              </a-button>
+            </a-popover>
+
+            <a-tooltip :title="t('SetSite.index.table.flushFavicon')">
+              <a-button
+                :disabled="record.metadata.isDead"
+                :loading="isFaviconFlushing"
+                size="small"
+                @click="() => flushSiteFavicon(record.id)"
+              >
+                <template #icon>
+                  <ScanOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+
+            <a-tooltip :title="t('common.remove')">
+              <a-button danger size="small" @click="() => deleteSite([record.id])">
+                <template #icon>
+                  <DeleteOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+          </a-space>
+        </template>
       </template>
-    </v-data-table>
-  </v-card>
+
+      <!-- 无任何已添加站点时的空状态占位 -->
+      <template #emptyText>
+        <NoDataPlaceholder compact />
+      </template>
+    </a-table>
+  </a-card>
 
   <AddDialog v-model="showAddDialog" />
   <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteSite" />
@@ -355,5 +517,3 @@ async function flushSiteFavicon(siteId: TSiteID | TSiteID[]) {
   <OneClickImportDialog v-model="showOneClickImportDialog" />
   <RebuildMapDialog v-model="showRebuildMapDialog" />
 </template>
-
-<style scoped lang="scss"></style>

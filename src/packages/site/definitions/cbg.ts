@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["藏宝阁", "cbg", "CangBaoGe"],
   tags: ["综合", "影视"],
   description: "开启藏宝阁，解锁你的光影世界，分享每一份热爱！",
-  timezoneOffset: "+0800",
 
   collaborator: ["slove"],
 

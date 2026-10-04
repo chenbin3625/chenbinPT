@@ -190,7 +190,7 @@ download: {
 | `protected getFieldData(element, elementQuery)` | 需要一种全新的取值方式（极少用） | 366-444 |
 | `public async request<T>(axiosConfig, checkLogin = true)` | 需要统一注入 header / 处理特殊响应 | 119-167 |
 
-覆写时保留签名并加 `override`（`pnpm check` 会校验）；`protected` 成员在 definition 的子类里同样可覆写，但要从 `protected` 提升为 `public` 时必须显式写 `public`。
+覆写时保留签名并加 `override`（`npm run check` 会校验）；`protected` 成员在 definition 的子类里同样可覆写，但要从 `protected` 提升为 `public` 时必须显式写 `public`。
 
 ## 范例定义
 

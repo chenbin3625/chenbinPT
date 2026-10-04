@@ -2,12 +2,112 @@
  * 在此处的注册的css会被content-script注入到启用的页面中。
  */
 
-/*noinspection CssUnknownTarget*/
-@import "../../shared/common.scss";
-
 #ptd-content-script-app,
-.v-overlay-container {
+.ptd-content-script-app,
+.ptd-content-script-popup-host {
   all: initial;
   box-sizing: border-box;
+  /* 基础文字色与基准排版统一取 `--ptd-*`（由 themeVars.ts 写到 shadow host，见 init.ts）。
+   *
+   * 之前这里写 `color: inherit`：文字色跟随**宿主页面**，于是 overlay 的配色取决于它被注入到
+   * 什么站点——宿主是深色页面、而 contentScript.applyTheme 关闭（overlay 强制浅色）时，
+   * 浅色悬浮窗上会渲染浅色文字。`--ptd-*` 在两种情形下都是正确的：跟随主题时是 uiTheme 的一套，
+   * 未跟随主题时由 syncThemeVarsToHost 显式写入 buildThemeVars(false) 的浅色一套。
+   *
+   * font-family / font-size / line-height 与 options 页面共用同一组变量（style.css 的 #ptd），
+   * 不再手抄字体栈：`all: initial` 会把基准字号重置为浏览器默认的 16px，而 antd 组件内部是
+   * token.fontSize（compactAlgorithm 下为 12px），此前 overlay 的裸文本因此比组件文字大一档。
+   * （`all` 不影响自定义属性，所以下面这几条 var() 能正常取到宿主上的值。） */
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+  font-family: var(
+    --ptd-font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    "Noto Sans",
+    sans-serif
+  );
+  font-size: var(--ptd-font-size, 14px);
+  line-height: var(--ptd-line-height, 1.5714);
   word-break: normal;
+}
+
+/* 悬浮球宿主（contentRoot，见 init.ts 的 attachShadow）的定位与层级。
+ *
+ * A-10：这条规则必须写在 `:host` 上，不能按类名写。
+ * 本文件被注入到 **shadow root 内部**的 <style> 里，而 shadow 内的选择器只能匹配影子树内的元素；
+ * 宿主元素属于外层文档，只有 `:host` 能选中它。原写法 `.ptd-content-script-root{…}` 从不生效，
+ * 真正生效的只是影子树内 `.ptd-content-script-draggable` 的 z-index，页面的 `!important` CSS
+ * 就能把整个覆盖层盖住或隐藏（UI redressing 面）。
+ *
+ * 这里再加 `!important`：`:host` 与文档样式冲突时**文档样式优先**，只有局部声明带 `!important`
+ * 时才反过来（CSS Cascade 的 encapsulation context 准则，见
+ * https://zh.javascript.info/shadow-dom-style 的「级联」一节）。
+ * 影子树内的元素（如 .ptd-content-script-draggable）不受此影响：文档样式根本选不中它们。
+ *
+ * （宿主元素的类名 `ptd-content-script-root` 是页面可见的指纹特征，属已知遗留面，本轮不动。） */
+:host {
+  position: relative !important;
+  z-index: 2147483647 !important;
+}
+
+/* 悬浮球宿主：定位/层级原来写在 App.vue 的内联 style 上，
+ * 而 useDraggable 只输出 left/top，所以 position 必须由 CSS 提供。 */
+.ptd-content-script-draggable {
+  position: fixed;
+  z-index: 9999999;
+}
+
+/* antd 的 .ant-float-btn / .ant-float-btn-group 自带 position: fixed 并吸附视口右下角
+ * （inset-inline-end / inset-block-end），会完全无视宿主的 left/top，拖拽随之失效。
+ * 这里在宿主作用域内把它还原成普通流内元素。
+ * ant-design-vue 4.x 的 hashPriority 是 low，antd 规则都被 :where(.css-xxx) 包住（1 个 class 权重），
+ * 因此下面 2 个 class 的选择器可以稳定覆盖。 */
+.ptd-content-script-draggable .ant-float-btn-group,
+.ptd-content-script-draggable .ant-float-btn {
+  position: static;
+  inset: auto;
+}
+
+/* 悬浮球主按钮上的 PTD logo（原 PtdAvatar image=... color="transparent" rounded="0"）。 */
+.ptd-fab-logo {
+  transition: transform 0.2s ease;
+}
+
+/* 把种子链接拖到悬浮球上时的反馈（原来的反馈类名没有定义，这里补上真实样式）。 */
+.ptd-fab-logo--dragging {
+  transform: scale(1.12);
+}
+
+/* 可点击的解析结果行（a-list-item 默认没有 pointer / hover 反馈）。 */
+.ptd-parse-result-row {
+  cursor: pointer;
+}
+
+.ptd-parse-result-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.ptd-content-script-popup-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.ptd-content-script-popup-host > * {
+  pointer-events: auto;
+}
+
+.ptd-fade-enter {
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+
+.ptd-fade-enter:hover {
+  opacity: 1;
 }

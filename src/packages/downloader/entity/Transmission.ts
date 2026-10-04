@@ -21,6 +21,7 @@ import {
 import urlJoin from "url-join";
 import axios, { type AxiosResponse, isAxiosError } from "axios";
 import { getRemoteTorrentFile } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: TorrentClientConfig = {
   type: "Transmission",
@@ -148,9 +149,28 @@ interface TransmissionStatsResponse extends TransmissionBaseResponse {
   };
 }
 
-interface AddTorrentResponse extends TransmissionBaseResponse {
-  arguments: {
-    "torrent-added": {
+/**
+ * `torrent-add` 的响应。
+ *
+ * 与 session-get / torrent-get / free-space 不同，`torrent-add` 的 `arguments` **可能缺省**：
+ * - 失败时服务端只回 `result`（错误描述）与 `tag`，没有 `arguments`；
+ * - 重复种子在旧服务器（rpc-version < 15）上同样只回 `result: "duplicate torrent"`，
+ *   `torrent-duplicate` 是 Transmission 2.80 才加入的（见 rpc-spec 的 protocol versions 表）。
+ *
+ * 因此这里用 `Omit` 覆写成可选，而不是把基类的 `arguments` 改成可选：
+ * 其余方法（`torrent-get` 取 `torrents`、`free-space` 取 `size-bytes` …）的 `arguments`
+ * 是必需语义，改基类会让那些调用点丢掉类型保护。调用处也照此用可选链读取（见 addTorrent）。
+ */
+interface AddTorrentResponse extends Omit<TransmissionBaseResponse, "arguments"> {
+  arguments?: {
+    /** 新增成功时返回 */
+    "torrent-added"?: {
+      id: number;
+      hashString: string;
+      name: string;
+    };
+    /** 该种子已在库中时返回（与 torrent-added 互斥，同样是成功语义） */
+    "torrent-duplicate"?: {
       id: number;
       hashString: string;
       name: string;
@@ -449,34 +469,60 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     try {
       const { data } = await this.request<AddTorrentResponse>("torrent-add", addTorrentOptions);
 
-      const torrentId = data.arguments["torrent-added"].id;
+      /**
+       * torrent-add 的 arguments 里只会有 torrent-added 或 torrent-duplicate：
+       * 后者表示该种子已在库中，仍是成功语义（rpc-spec: torrent-add 的返回）。
+       * 以前只读 torrent-added，遇到重复种子会抛 TypeError，导致历史记录被标记为失败、
+       * 且后续的标签/限速设置被整段跳过。
+       */
+      const addedTorrent = data.arguments?.["torrent-added"] ?? data.arguments?.["torrent-duplicate"];
+      const torrentId = addedTorrent?.id;
 
       // Transmission 3.0 以上才支持label
-      if (!supportLabelAtAdd && labels) {
+      if (!supportLabelAtAdd && labels && typeof torrentId !== "undefined") {
         try {
           await this.request("torrent-set", {
             ids: torrentId,
             labels: labels,
           });
-        } catch (e) {}
+        } catch (e) {
+          // P1-5：旧版 Transmission 不支持添加时设置 label，这里补设置失败属良性降级（种子已添加），
+          // 但记录原因，避免用户以为标签已生效。
+          logMessage("[Transmission] 补充设置标签失败（种子已添加）", {
+            torrentId,
+            labels,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
 
       // 设置上传速度限制 - 必须在添加后使用 torrent-set
-      if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
+      if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0 && typeof torrentId !== "undefined") {
         try {
           await this.request("torrent-set", {
             ids: torrentId,
             uploadLimit: options.uploadSpeedLimit * 1024, // KB/s
             uploadLimited: true,
           });
-        } catch (e) {}
+        } catch (e) {
+          // P1-5：限速设置失败不应让整个添加动作失败，但必须留下原因
+          logMessage("[Transmission] 设置上传限速失败（种子已添加）", {
+            torrentId,
+            uploadSpeedLimit: options.uploadSpeedLimit,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
 
       addResult.success = data.result === "success";
       if (!addResult.success) {
         addResult.message = data;
       }
-    } catch (e) {}
+    } catch (e) {
+      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败
+      addResult.message = e instanceof Error ? e.message : String(e);
+      logMessage("[Transmission] 添加种子失败", { url, error: addResult.message }, "error");
+    }
 
     return addResult;
   }
@@ -606,23 +652,29 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
 
   // 设置单个种子的速度限制（单位 KiB/s，0 表示不限速；Transmission 使用 KB/s）
   override async setTorrentSpeedLimit(id: any, limits: TorrentSpeedLimit): Promise<boolean> {
+    /**
+     * torrent-set 只认 camelCase 键名（rpc-spec: uploadLimit/uploadLimited/downloadLimit/downloadLimited）；
+     * Transmission 4/5 内部改名为 upload_limit/upload_limited，但兼容层只枚举 camelCase
+     * （transmission/libtransmission/api-compat.cc），kebab-case 既不在规范里也不在兼容表里，
+     * 会被服务端静默忽略且仍返回 success —— 即「限速没生效但 UI 报成功」。
+     */
     const args: TransmissionTorrentArguments & {
-      "upload-limit"?: number;
-      "upload-limited"?: boolean;
-      "download-limit"?: number;
-      "download-limited"?: boolean;
+      uploadLimit?: number;
+      uploadLimited?: boolean;
+      downloadLimit?: number;
+      downloadLimited?: boolean;
     } = {
       ids: id,
     };
 
     if (typeof limits.upload !== "undefined") {
-      args["upload-limit"] = limits.upload;
-      args["upload-limited"] = limits.upload > 0;
+      args.uploadLimit = limits.upload;
+      args.uploadLimited = limits.upload > 0;
     }
 
     if (typeof limits.download !== "undefined") {
-      args["download-limit"] = limits.download;
-      args["download-limited"] = limits.download > 0;
+      args.downloadLimit = limits.download;
+      args.downloadLimited = limits.download > 0;
     }
 
     await this.request("torrent-set", args);

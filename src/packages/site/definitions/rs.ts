@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/resource.xidian.edu.cn/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/resource.xidian.edu.cn/config.json
  */
 import { type ISiteMetadata } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["西电睿思"],
   description: "西电睿思PT",
   tags: ["教育网", "影视", "综合"],
-  timezoneOffset: "+0800",
   collaborator: ["lsy223622"],
   type: "private",
   schema: "NexusPHP",

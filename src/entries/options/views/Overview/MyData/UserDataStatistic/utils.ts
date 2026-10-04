@@ -56,7 +56,8 @@ function calculateDailyIncremental(
 }
 
 export async function loadFullData(): Promise<IUserDataStatistic> {
-  const rawData = (await sendMessage("getExtStorage", "userInfo")) as TUserInfoStorageSchema;
+  // getExtStorage 对不存在的 key 返回 undefined（`extStorage.getItem`），全新安装 / 清空数据后即为该状态。
+  const rawData = ((await sendMessage("getExtStorage", "userInfo")) as TUserInfoStorageSchema) ?? {};
   const metadataStore = useMetadataStore();
   const addedSiteIds = metadataStore.getAddedSiteIds;
 
@@ -156,4 +157,44 @@ export function setSubDate(days: number) {
   const today = new Date();
   const subDay = subDays(today, days - 1);
   return eachDayOfInterval({ start: subDay, end: today }).map((x) => formatDate(x, "yyyy-MM-dd"));
+}
+
+/**
+ * V-12：合计（总计折线）与逐站序列（条形图）必须共用同一个数值归一化函数。
+ *
+ * 旧实现里两者不一致：合计用 `.filter(isNumber)`，而 es-toolkit/compat 的
+ * `isNumber(NaN) === true`、`isNumber("123") === false` —— 于是数字字符串被合计丢弃（却在条形图里计入），
+ * 而一个 `NaN` 能通过 filter 并污染整个日桶的合计。
+ */
+export function toNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === "string") {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+
+/**
+ * V-12：按日期聚合「已勾选站点」某个字段的合计值，供统计页的总计折线使用。
+ * 与逐站序列共用 `toNumber`，保证两者对同一份数据得出同样的数字。
+ */
+export function sumUserInfoFieldByDate(
+  dailyUserInfo: IUserDataStatistic["dailyUserInfo"],
+  dates: string[],
+  selectedSites: string[],
+  field: keyof IStoredUserInfo,
+): number[] {
+  return dates.map((date) => {
+    const dayData = dailyUserInfo[date] ?? {};
+    let total = 0;
+    for (const site of selectedSites) {
+      total += toNumber(dayData[site]?.[field]);
+    }
+    return total;
+  });
 }

@@ -6,7 +6,7 @@ import { set } from "es-toolkit/compat";
 import { type ISiteMetadata } from "../types.ts";
 import { SchemaMetadata, CategorySpstate, CategoryInclbookmarked } from "../schemas/NexusPHP.ts";
 import { parseValidTimeString } from "../utils.ts";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
@@ -119,11 +119,11 @@ export const siteMetadata: ISiteMetadata = {
           const props: string[] = [];
 
           // 收集 props
-          Sizzle("a[href^='/browse/t/'] ~ a", el).forEach((e) => props.push(e.textContent.trim()));
+          selectElements("a[href^='/browse/t/'] ~ a", el).forEach((e) => props.push(e.textContent.trim()));
 
           // 收集 genres
           const genres: string[] = [];
-          Sizzle("div[class]:contains('Genre:') > a[href^='/browse']", el).forEach((e) =>
+          selectElements("div[class]:contains('Genre:') > a[href^='/browse']", el).forEach((e) =>
             genres.push(e.textContent.trim()),
           );
 
@@ -150,7 +150,10 @@ export const siteMetadata: ISiteMetadata = {
             if (time) {
               time = parseValidTimeString(time as string);
             }
-          } catch (e) {}
+          } catch {
+            // 该行没有可解析的时间属性时保持 time 的原值（可能是 0/原始字符串），
+            // 由上层按「未知时间」处理；此处不中断整页解析。
+          }
           return time;
         },
       },

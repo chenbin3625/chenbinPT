@@ -1,7 +1,7 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/AudioBookBay.cs
  */
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
 import { definedFilters } from "../utils";
@@ -169,9 +169,9 @@ export const siteMetadata: ISiteMetadata = {
       link: {
         selector: ":self",
         elementProcess: (doc: Document) => {
-          const title = Sizzle(titleSelector.selector, doc)[0].textContent;
-          const hash = Sizzle("td:contains('Info Hash:') ~ td", doc)[0].textContent;
-          const trackers = Sizzle("td:contains('Tracker:') ~ td", doc).map((td) => td.textContent);
+          const title = selectElements(titleSelector.selector, doc)[0].textContent;
+          const hash = selectElements("td:contains('Info Hash:') ~ td", doc)[0].textContent;
+          const trackers = selectElements("td:contains('Tracker:') ~ td", doc).map((td) => td.textContent);
           return infoHashToPublicMagnet(hash, title, trackers) || "";
         },
       },
@@ -186,7 +186,7 @@ export default class AudioBookBay extends BittorrentSite {
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
     const torrents = await super.transformSearchPage(doc, searchConfig);
-    if (Sizzle("a[href^='/page/2/']:first-of-type", doc).length < 1) {
+    if (selectElements("a[href^='/page/2/']:first-of-type", doc).length < 1) {
       return torrents;
     }
 

@@ -1,12 +1,13 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/teamhd.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/teamhd.org/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/teamhd.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 俄语影视站，自研模板（browse / details / bprate.php）。Jackett 注释说明其登录页带
  * Google reCAPTCHA，故采用 Cookie 方式登录；PTD 沿用浏览器 cookie 会话，无需额外处理。
  */
 import type { ISiteMetadata } from "../types";
+import { extractTextExcluding } from "../utils";
 
 const categoryMap: Record<number, string> = {
   25: "动画片",
@@ -122,9 +123,8 @@ export const siteMetadata: ISiteMetadata = {
       size: {
         selector: "td:nth-child(5)",
         elementProcess: (element: HTMLElement) => {
-          const clone = element.cloneNode(true) as HTMLElement;
-          clone.querySelectorAll("strong").forEach((strong) => strong.remove());
-          return (clone.textContent ?? "").trim() || undefined;
+          // 剔除 strong 后直接读取文本节点，避免每行深克隆
+          return (extractTextExcluding(element, "strong") ?? "").trim() || undefined;
         },
         filters: [{ name: "parseSize" }],
       },

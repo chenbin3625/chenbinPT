@@ -1,11 +1,13 @@
 // noinspection ES6PreferShortImport
 
 import type { AxiosRequestConfig } from "axios";
-import { TSiteID, TSiteHost, TSiteUrl, TSiteFullUrl, TPatterns } from "./base";
+// P1-4：这里全部是类型引用，统一为 import type，并从具体模块（而非 ../utils 桶）引入，
+// 避免 types 层通过桶文件反向依赖整个 utils 运行时图。
+import type { TSiteID, TSiteHost, TSiteUrl, TSiteFullUrl, TPatterns } from "./base";
 import type { ITorrent } from "./torrent";
 import type { ILevelRequirement, IUserInfo } from "./userinfo";
 import type { IElementQuery, ISearchCategories, ISearchConfig, ISearchEntryRequestConfig } from "./search";
-import type { timezoneOffset } from "../utils";
+import type { timezoneOffset } from "../utils/datetime";
 import type PrivateSite from "../schemas/AbstractPrivateSite.ts";
 
 export type SiteSchema =

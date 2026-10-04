@@ -1,7 +1,7 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/lztr.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/lztr.me/config.json
  * @JackettIssue https://github.com/Jackett/Jackett/issues/13742
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * LzTr 是一个以原声带（OST）与古典音乐为主的私有 Gazelle 站点。
  * 注意：Jackett 未收录该站索引器（其请求 #13742 仍为 open），但站点本身仍在运行

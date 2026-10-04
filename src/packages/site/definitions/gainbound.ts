@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/gainbound.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/gainbound.net/config.json
  */
 import { type ISiteMetadata } from "../types";
 
@@ -15,7 +15,7 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://gainbound.net/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/43a47b75a1a24523e9788a7ffca83a5407dfa5d6
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/43a47b75a1a24523e9788a7ffca83a5407dfa5d6
   isDead: true,
 
   levelRequirements: [

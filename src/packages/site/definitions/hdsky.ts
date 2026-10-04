@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/hdsky.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdsky.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdsky.me/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hdsky.json
  */
 import urlJoin from "url-join";
@@ -411,7 +411,10 @@ export default class Hdsky extends NexusPHP {
         judgeLevelRequirements = oldUserLevelRequirements;
 
         // 将旧的用户等级要求存储到 metadataStore.sites.hdsky.merge.levelRequirements 中，以便于展示
-        store(this.metadata.id, "levelRequirements", judgeLevelRequirements, "merge").catch();
+        store(this.metadata.id, "levelRequirements", judgeLevelRequirements, "merge").catch(() => {
+          /* 见 B-20f：这里只是把「供展示用的旧等级要求」落盘，写失败不影响本次判定，
+             故显式忽略；用带注释的箭头函数而不是裸 .catch()——后者不会吞掉 rejection。 */
+        });
       }
     }
 

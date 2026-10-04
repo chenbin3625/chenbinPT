@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "TorrentCCF",
   description: "兼有学习资源和软件资源的影视PT站点",
   tags: ["影视", "综合", "学习"],
-  timezoneOffset: "+0800",
   aka: ["TCCF", "ET8"],
   collaborator: ["Rhilip", "cnsunyour", "hui-shao"],
 

@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["SewerPT"],
   description: "再小众的热爱，也值得被世界看见",
   tags: ["冷门", "低分", "粤语", "影视"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

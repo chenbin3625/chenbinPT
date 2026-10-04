@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["HXPT"],
   description: "好学者如春苗，日有所长；心向学，梦有光！",
   tags: ["学习"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

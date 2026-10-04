@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["FreeFarm", "Farmm"],
   description: "自由农场",
   tags: ["电视剧", "韩剧", "日剧"],
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 

@@ -1,64 +1,57 @@
 <script setup lang="ts">
-import { useAttrs, Transition, computed, type TransitionProps, useTemplateRef } from "vue";
-import { useElementHover } from "@vueuse/core";
-import { type VBtn } from "vuetify/components";
+import { computed, type Component } from "vue";
+import { LoadingOutlined } from "@ant-design/icons-vue";
 
 import { useConfigStore } from "@/options/stores/config.ts";
-import { type Writeable } from "@/shared/types/extends.ts";
+
+const configStore = useConfigStore();
 
 const {
   title,
   icon,
-  color = "white",
-  transition = { name: "fade-transition", appear: true, mode: "out-in" },
+  type = "default",
+  disabled = false,
+  loading = false,
 } = defineProps<{
   title: string;
-  icon: string;
-  color?: string;
-  transition?: TransitionProps;
+  /** 图标组件（如 `HomeOutlined`）；antd 用组件而非 mdi 字符串 */
+  icon: Component;
+  /** antd FloatButton 只有 default / primary，替代 Vuetify 的 color 调色板 */
+  type?: "default" | "primary";
+  disabled?: boolean;
+  loading?: boolean;
 }>();
 
-const configStore = useConfigStore();
-const attrs = useAttrs();
+const emit = defineEmits<{ (e: "click", event: MouseEvent): void }>();
 
-const myHoverableElement = useTemplateRef<HTMLButtonElement>("btn");
-const isHovered = useElementHover(myHoverableElement);
-
-const btnProp = computed(() => {
-  // Use Writeable to allow modification of the VBtn properties
-  const btnProps: Writeable<Partial<VBtn>> = { ...attrs };
-
-  if (configStore.contentScript.stackedButtons) {
-    btnProps.prependIcon = icon;
-    btnProps.stacked = true;
-    btnProps.variant = isHovered.value ? "elevated" : "tonal";
-  } else {
-    btnProps.icon = icon;
-  }
-
-  return btnProps;
-});
-
-const shouldFadeEnter = computed<boolean>(
-  () =>
-    !configStore.contentScript.stackedButtons && // 大图标时的 hover 透明性由 btnProps.variant 属性控制
-    configStore.contentScript.fadeEnterStyle,
+/**
+ * 大图标模式（stackedButtons=false）下，未 hover 时半透明、hover 时实心。
+ * 原来挂在无定义的 Vuetify 过渡 `fade-transition` 上，现在由 app.css 的 .ptd-fade-enter 提供。
+ */
+const shouldFadeEnter = computed(
+  () => !configStore.contentScript.stackedButtons && configStore.contentScript.fadeEnterStyle,
 );
+
+function handleClick(event: MouseEvent) {
+  if (disabled || loading) return;
+  emit("click", event);
+}
 </script>
 
 <template>
-  <Transition v-bind="transition">
-    <v-btn
-      ref="btn"
-      v-bind="btnProp"
-      :class="{
-        'ptd-fade-enter': shouldFadeEnter,
-      }"
-      :color="color"
-      :title="title"
-      :text="btnProp.stacked ? title : undefined"
-    />
-  </Transition>
+  <a-float-button
+    :type="type"
+    :disabled="disabled || loading"
+    :tooltip="title"
+    :class="{ 'ptd-fade-enter': shouldFadeEnter }"
+    @click="handleClick"
+  >
+    <template #icon>
+      <LoadingOutlined v-if="loading" />
+      <component :is="icon" v-else />
+    </template>
+    <template #description>
+      <span v-if="configStore.contentScript.stackedButtons">{{ title }}</span>
+    </template>
+  </a-float-button>
 </template>
-
-<style scoped lang="scss"></style>

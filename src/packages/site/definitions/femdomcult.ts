@@ -1,7 +1,7 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/femdomcult.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/femdomcult.org/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/femdomcult.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 站点使用 Luminance 源码（Gazelle 的分支）。Jackett 注释指出：其 ajax.php API 需要额外的
  * auth=<authkey> 参数，且 API 缺少海报图等信息，因此 Jackett 选择网页抓取而非走 API。

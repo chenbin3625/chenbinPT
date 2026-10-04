@@ -13,6 +13,6 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://hitpt.org/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/d5b58d2dba5286a1e35205f1c8ad37d3e8f22f9f
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/d5b58d2dba5286a1e35205f1c8ad37d3e8f22f9f
   isDead: true,
 };

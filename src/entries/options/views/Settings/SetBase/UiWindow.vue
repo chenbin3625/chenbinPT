@@ -1,16 +1,32 @@
 <script setup lang="ts">
+import { QuestionCircleOutlined } from "@ant-design/icons-vue";
+import { isEmpty } from "es-toolkit/compat";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { resolveColor } from "@/shared/colors.ts";
 import { supportTheme } from "@/shared/types.ts";
 import { definedLangMetaData } from "@/options/plugins/i18n.ts";
 
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
-import { isEmpty } from "es-toolkit/compat";
 
 const { t } = useI18n();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
+
+const infoIconColor = resolveColor("info");
+
+const langOptions = computed(() => definedLangMetaData.map((item) => ({ label: item.title, value: item.value })));
+const themeOptions = computed(() =>
+  supportTheme.map((item) => ({ label: t(`SetBase.ui.displayMode.${item}`), value: item })),
+);
+const socialSiteSearchOptions = computed(() =>
+  (["id", "title", "imdb", "chosen"] as const).map((item) => ({
+    label: t(`SetBase.ui.socialSiteSearchBy.${item}`),
+    value: item,
+  })),
+);
 
 function initContentScriptExceptionSites() {
   Object.keys(metadataStore.sites).forEach((site) => {
@@ -38,222 +54,163 @@ defineExpose({
 </script>
 
 <template>
-  <v-row>
-    <v-col md="10" lg="8">
+  <div class="ptd-settings-grid">
+    <!-- 语言、显示模式等基础外观设置 -->
+    <section class="ptd-settings-section">
       <!-- 插件语言设置 -->
-      <v-select v-model="configStore.lang" :label="t('SetBase.ui.changeLanguage')" :items="definedLangMetaData" />
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.changeLanguage") }}</a-typography-text>
+        <a-select v-model:value="configStore.lang" :options="langOptions" style="width: min(100%, 420px)" />
+      </div>
 
       <!-- 明亮模式设置 -->
-      <v-select v-model="configStore.theme" :label="t('SetBase.ui.displayMode.index')" :items="supportTheme">
-        <template #selection="{ item }">
-          {{ t("SetBase.ui.displayMode." + item) }}
-        </template>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.displayMode.index") }}</a-typography-text>
+        <a-select v-model:value="configStore.theme" :options="themeOptions" style="width: min(100%, 420px)" />
+      </div>
 
-        <template #item="{ item, props }">
-          <v-list-item v-bind="props" :title="t('SetBase.ui.displayMode.' + item)" />
-        </template>
-      </v-select>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.saveTableBehavior") }}</a-typography-text>
+        <a-switch v-model:checked="configStore.saveTableBehavior" />
+      </div>
 
-      <v-switch
-        v-model="configStore.showReleaseNoteOnVersionChange"
-        color="success"
-        hide-details
-        :label="t('SetBase.ui.showReleaseNote')"
-      />
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.enableTableMultiSort") }}</a-typography-text>
+        <a-flex align="center" :gap="8">
+          <a-tooltip placement="bottom" :overlay-style="{ maxWidth: '400px' }">
+            <template #title>{{ t("SetBase.ui.tableMultiSortNote") }}</template>
+            <QuestionCircleOutlined :style="{ color: infoIconColor }" />
+          </a-tooltip>
+          <a-switch v-model:checked="configStore.enableTableMultiSort" />
+        </a-flex>
+      </div>
 
-      <v-switch
-        v-model="configStore.saveTableBehavior"
-        color="success"
-        hide-details
-        :label="t('SetBase.ui.saveTableBehavior')"
-      />
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChange") }}</a-typography-text>
+        <a-flex align="center" :gap="8">
+          <a-tooltip placement="bottom" :overlay-style="{ maxWidth: '400px' }">
+            <template #title>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChangeNote") }}</template>
+            <QuestionCircleOutlined :style="{ color: infoIconColor }" />
+          </a-tooltip>
+          <a-switch v-model:checked="configStore.autoToggleNavBarOnDisplayChange" />
+        </a-flex>
+      </div>
+    </section>
 
-      <v-switch
-        v-model="configStore.enableTableMultiSort"
-        color="success"
-        hide-details
-        :label="t('SetBase.ui.enableTableMultiSort')"
-      >
-        <template #append>
-          <v-tooltip max-width="400" location="bottom">
-            <template v-slot:activator="{ props }">
-              <v-icon color="info" icon="mdi-help-circle" v-bind="props" />
-            </template>
-            {{ t("SetBase.ui.tableMultiSortNote") }}
-          </v-tooltip>
-        </template>
-      </v-switch>
-
-      <v-switch
-        v-model="configStore.autoToggleNavBarOnDisplayChange"
-        color="success"
-        hide-details
-        :label="t('SetBase.ui.autoToggleNavBarOnDisplayChange')"
-      >
-        <template #append>
-          <v-tooltip max-width="400" location="bottom">
-            <template v-slot:activator="{ props }">
-              <v-icon color="info" icon="mdi-help-circle" v-bind="props" />
-            </template>
-            {{ t("SetBase.ui.autoToggleNavBarOnDisplayChangeNote") }}
-          </v-tooltip>
-        </template>
-      </v-switch>
-
-      <v-divider />
-    </v-col>
-  </v-row>
-
-  <v-row>
-    <v-col md="10" lg="8">
-      <div class="d-flex align-center">
-        <v-label>{{ t("SetBase.ui.contentScript") }}</v-label>
-        <v-spacer />
-        <v-switch
-          v-model="configStore.contentScript.enabled"
-          color="success"
-          hide-details
-          :label="t('common.enable')"
-        />
+    <!-- 内容脚本 -->
+    <section class="ptd-settings-section">
+      <div class="ptd-settings-row ptd-settings-row--title">
+        <a-typography-text strong>{{ t("SetBase.ui.contentScript") }}</a-typography-text>
+        <a-flex align="center" :gap="8">
+          <a-typography-text>{{ t("common.enable") }}</a-typography-text>
+          <a-switch v-model:checked="configStore.contentScript.enabled" />
+        </a-flex>
       </div>
 
       <template v-if="configStore.contentScript.enabled">
-        <v-alert type="warning" variant="tonal"> {{ t("SetBase.ui.contentScriptWarning") }} </v-alert>
+        <a-alert type="warning" show-icon :message="t('SetBase.ui.contentScriptWarning')" />
 
-        <v-row density="compact">
-          <v-col cols="12" md="2" class="d-flex align-center justify-center">
-            <v-label>{{ t("SetBase.ui.basicSettings") }}</v-label>
-          </v-col>
-          <v-col>
-            <v-switch
-              v-model="configStore.contentScript.allowExceptionSites"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.allowExceptionSites')"
-            />
+        <div class="ptd-setting-group">
+          <div class="ptd-setting-group__title">{{ t("SetBase.ui.basicSettings") }}</div>
 
-            <v-switch
-              v-model="configStore.contentScript.enabledAtSocialSite"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.enableOnSocialSite')"
-            />
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.allowExceptionSites") }}</a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.allowExceptionSites" />
+          </div>
 
-            <v-divider />
-          </v-col>
-        </v-row>
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.enableOnSocialSite") }}</a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.enabledAtSocialSite" />
+          </div>
+        </div>
 
-        <v-row density="compact">
-          <v-col cols="12" md="2" class="d-flex align-center justify-center">
-            <v-label>{{ t("SetBase.ui.sidebarStyle") }}</v-label>
-          </v-col>
-          <v-col>
-            <v-switch
-              v-model="configStore.contentScript.applyTheme"
-              color="success"
-              hide-details
-              :label="`${t('SetBase.ui.respondDisplayMode')}` + t('SetBase.ui.displayMode.index')"
-            />
+        <div class="ptd-setting-group">
+          <div class="ptd-setting-group__title">{{ t("SetBase.ui.sidebarStyle") }}</div>
 
-            <v-switch
-              v-model="configStore.contentScript.defaultOpenSpeedDial"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.expandByDefault')"
-            />
-            <v-switch
-              v-model="configStore.contentScript.stackedButtons"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.useLargeIcon')"
-            />
-            <v-switch
-              v-model="configStore.contentScript.fadeEnterStyle"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.enableFadeEffect')"
-            />
-            <v-divider />
-          </v-col>
-        </v-row>
+          <div class="ptd-settings-row">
+            <a-typography-text>
+              {{ `${t("SetBase.ui.respondDisplayMode")}` + t("SetBase.ui.displayMode.index") }}
+            </a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.applyTheme" />
+          </div>
 
-        <v-row density="compact">
-          <v-col cols="12" md="2" class="d-flex align-center justify-center">
-            <v-label>{{ t("SetBase.ui.sidebarFunctions") }}</v-label>
-          </v-col>
-          <v-col>
-            <v-switch
-              v-model="configStore.contentScript.doubleConfirmAction"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.confirmTwoStep')"
-            />
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.expandByDefault") }}</a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.defaultOpenSpeedDial" />
+          </div>
 
-            <v-switch
-              v-model="configStore.contentScript.dragLinkOnSpeedDial"
-              color="success"
-              hide-details
-              :label="t('SetBase.ui.allowDragLink')"
-            >
-              <template #append>
-                <v-tooltip max-width="400" location="bottom">
-                  <template v-slot:activator="{ props }">
-                    <v-icon color="info" icon="mdi-help-circle" v-bind="props" />
-                  </template>
-                  {{ t("SetBase.ui.dragNote") }}
-                </v-tooltip>
-              </template>
-            </v-switch>
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.useLargeIcon") }}</a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.stackedButtons" />
+          </div>
 
-            <v-select
-              v-model="configStore.contentScript.socialSiteSearchBy"
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.enableFadeEffect") }}</a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.fadeEnterStyle" />
+          </div>
+        </div>
+
+        <div class="ptd-setting-group">
+          <div class="ptd-setting-group__title">{{ t("SetBase.ui.sidebarFunctions") }}</div>
+
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.confirmTwoStep") }}</a-typography-text>
+            <a-switch v-model:checked="configStore.contentScript.doubleConfirmAction" />
+          </div>
+
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.allowDragLink") }}</a-typography-text>
+            <a-flex align="center" :gap="8">
+              <a-tooltip placement="bottom" :overlay-style="{ maxWidth: '400px' }">
+                <template #title>{{ t("SetBase.ui.dragNote") }}</template>
+                <QuestionCircleOutlined :style="{ color: infoIconColor }" />
+              </a-tooltip>
+              <a-switch v-model:checked="configStore.contentScript.dragLinkOnSpeedDial" />
+            </a-flex>
+          </div>
+
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.socialSiteSearchLabel") }}</a-typography-text>
+            <a-select
+              v-model:value="configStore.contentScript.socialSiteSearchBy"
               :disabled="!configStore.contentScript.enabledAtSocialSite"
-              :items="['id', 'title', 'imdb', 'chosen']"
-              :item-title="(item) => t('SetBase.ui.socialSiteSearchBy.' + item)"
-              :item-value="(item) => item"
-              :label="t('SetBase.ui.socialSiteSearchLabel')"
+              :options="socialSiteSearchOptions"
+              style="width: min(100%, 420px)"
             />
-          </v-col>
-        </v-row>
+          </div>
+        </div>
       </template>
+    </section>
 
-      <v-divider />
-    </v-col>
-  </v-row>
-
-  <v-row>
-    <v-col md="10" lg="8">
-      <div class="d-flex align-center">
-        <v-label>{{ t("SetBase.ui.contextMenu") }}</v-label>
-        <v-spacer />
-        <v-switch v-model="configStore.contextMenus.enabled" color="success" hide-details :label="t('common.enable')" />
+    <!-- 右键菜单 -->
+    <section class="ptd-settings-section">
+      <div class="ptd-settings-row ptd-settings-row--title">
+        <a-typography-text strong>{{ t("SetBase.ui.contextMenu") }}</a-typography-text>
+        <a-flex align="center" :gap="8">
+          <a-typography-text>{{ t("common.enable") }}</a-typography-text>
+          <a-switch v-model:checked="configStore.contextMenus.enabled" />
+        </a-flex>
       </div>
 
       <template v-if="configStore.contextMenus.enabled">
-        <v-switch
-          v-model="configStore.contextMenus.allowSelectionTextSearch"
-          color="success"
-          hide-details
-          :label="t('SetBase.ui.contextMenuTextSearch')"
-        />
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.ui.contextMenuTextSearch") }}</a-typography-text>
+          <a-switch v-model:checked="configStore.contextMenus.allowSelectionTextSearch" />
+        </div>
 
-        <v-switch
-          v-model="configStore.contextMenus.allowSocialLinkSearch"
-          color="success"
-          hide-details
-          :label="t('SetBase.ui.contextMenuSocialSearch')"
-        />
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.ui.contextMenuSocialSearch") }}</a-typography-text>
+          <a-switch v-model:checked="configStore.contextMenus.allowSocialLinkSearch" />
+        </div>
 
-        <v-switch
-          v-model="configStore.contextMenus.allowLinkDownloadPush"
-          :disabled="metadataStore.getEnabledDownloaders.length === 0"
-          color="success"
-          hide-details
-          :label="t('SetBase.ui.contextMenuLinkPush')"
-        />
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.ui.contextMenuLinkPush") }}</a-typography-text>
+          <a-switch
+            v-model:checked="configStore.contextMenus.allowLinkDownloadPush"
+            :disabled="metadataStore.getEnabledDownloaders.length === 0"
+          />
+        </div>
       </template>
-    </v-col>
-  </v-row>
+    </section>
+  </div>
 </template>
-
-<style scoped lang="scss"></style>

@@ -39,7 +39,7 @@ export const serverMetaData: IBackupMetadata<S3Config> = {
     { name: "Endpoint", key: "endpoint", type: "string" },
     { name: "Region", key: "region", type: "string" },
     { name: "Access Key ID", key: "accessKeyId", type: "string" },
-    { name: "Secret Access Key", key: "secretAccessKey", type: "string" },
+    { name: "Secret Access Key", key: "secretAccessKey", type: "string", secret: true },
     { name: "Bucket", key: "bucket", type: "string" },
     { name: "Path Prefix", key: "pathPrefix", type: "string", description: "可选" },
     { name: "Force Path Style", key: "forcePathStyle", type: "boolean", description: "MinIO 等需开启" },
@@ -168,6 +168,8 @@ export default class S3 extends AbstractBackupServer<S3Config> {
       : "";
     let payloadHash: string;
     if (options.data instanceof Blob) {
+      // AWS SigV4 需要对请求体做 SHA-256，因此必须完整读一次 Blob 才能签名（无法用流式哈希）。
+      // 这里只做这一次读取：算完哈希后立即释放 buffer，传给 axios 的仍是原始 Blob，不做第二次复制。
       const buffer = await options.data.arrayBuffer();
       payloadHash = S3.bufferToHex(await crypto.subtle.digest("SHA-256", buffer));
     } else if (options.data && typeof options.data === "string") {

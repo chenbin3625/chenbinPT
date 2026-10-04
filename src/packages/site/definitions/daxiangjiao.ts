@@ -20,7 +20,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["大象蕉", "大香蕉"],
   description: "DaXiangJiao 私有资源分享站",
   tags: ["影视", "综合", "成人"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

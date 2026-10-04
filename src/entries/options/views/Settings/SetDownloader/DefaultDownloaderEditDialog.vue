@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -23,6 +24,9 @@ const { ref: suggests, reset: resetSuggestions } = useResetableRef<{ folder: str
   () => ({ folder: [], tags: [] }),
   { shallow: true },
 );
+
+const folderOptions = computed(() => suggests.value.folder.map((value) => ({ value })));
+const tagOptions = computed(() => suggests.value.tags.map((value) => ({ value })));
 
 function updateDefaultDownloaderInput(downloaderId: TDownloaderKey, clean: boolean = true) {
   // 如果切换了下载器，则清空路径和标签
@@ -55,69 +59,52 @@ function enterDialog() {
     updateDefaultDownloaderInput(defaultDownloaderConfig.value.id!, false);
   }
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(enterDialog);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="600" scrollable @after-enter="enterDialog">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar :title="t('SetDownloader.index.editDefaultDownloaderBtn')" color="blue-grey-darken-2">
-          <template #append>
-            <v-btn icon="mdi-close" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-form>
-          <v-label class="ml-1 mb-1">{{ t("SetDownloader.index.editDefaultDownloaderBtn") }}</v-label>
-          <v-autocomplete
-            v-model="defaultDownloaderConfig.id"
-            :items="metadataStore.getEnabledDownloaders"
-            :multiple="false"
-            item-value="id"
-            @update:model-value="(e) => updateDefaultDownloaderInput(e)"
-          >
-            <template #selection="{ item: downloader }">
-              <v-list-item
-                :prepend-avatar="getDownloaderIcon(downloader.type)"
-                :subtitle="downloader.address"
-                :title="downloader.name"
-              />
-            </template>
-            <template #item="{ props, item: downloader }">
-              <v-list-item
-                v-bind="props"
-                :prepend-avatar="getDownloaderIcon(downloader.type)"
-                :subtitle="downloader.address"
-                :title="downloader.name"
-              >
-              </v-list-item>
-            </template>
-          </v-autocomplete>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('SetDownloader.index.editDefaultDownloaderBtn')"
+    :width="600"
+    @ok="saveDefaultDownloader"
+  >
+    <a-form layout="vertical">
+      <a-typography-text strong style="display: block; margin-left: 4px; margin-bottom: 4px">
+        {{ t("SetDownloader.index.editDefaultDownloaderBtn") }}
+      </a-typography-text>
+      <a-select
+        v-model:value="defaultDownloaderConfig.id"
+        option-label-prop="children"
+        style="width: 100%"
+        @update:value="(e: any) => updateDefaultDownloaderInput(e)"
+      >
+        <a-select-option
+          v-for="downloader in metadataStore.getEnabledDownloaders"
+          :key="downloader.id"
+          :value="downloader.id"
+        >
+          <a-avatar :size="20" :src="getDownloaderIcon(downloader.type)" />
+          <span>{{ downloader.name }}</span>
+          <a-typography-text type="secondary" style="margin-left: 8px">{{ downloader.address }}</a-typography-text>
+        </a-select-option>
+      </a-select>
 
-          <!-- 如果用户已经在对应下载器的预设了下载路径和标签，则加载对应的列表 -->
-          <v-combobox
-            v-model="defaultDownloaderConfig.folder"
-            :items="suggests.folder"
-            :label="t('SetDownloader.PathAndTag.downloadPath.title')"
-          />
-          <v-combobox
-            v-model="defaultDownloaderConfig.tags"
-            :items="suggests.tags"
-            :label="t('SetDownloader.PathAndTag.tags.title')"
-          />
-        </v-form>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="success" prepend-icon="mdi-check-circle-outline" variant="text" @click="saveDefaultDownloader">
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      <!-- 如果用户已经在对应下载器的预设了下载路径和标签，则加载对应的列表 -->
+      <a-flex align="center" justify="space-between" :gap="24" style="margin-top: 16px">
+        <a-typography-text>{{ t("SetDownloader.PathAndTag.downloadPath.title") }}</a-typography-text>
+        <a-auto-complete v-model:value="defaultDownloaderConfig.folder" :options="folderOptions" style="width: 320px" />
+      </a-flex>
+      <a-flex align="center" justify="space-between" :gap="24" style="margin-top: 8px">
+        <a-typography-text>{{ t("SetDownloader.PathAndTag.tags.title") }}</a-typography-text>
+        <a-auto-complete v-model:value="defaultDownloaderConfig.tags" :options="tagOptions" style="width: 320px" />
+      </a-flex>
+    </a-form>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

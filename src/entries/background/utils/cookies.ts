@@ -1,7 +1,9 @@
 import { add, differenceInDays } from "date-fns";
 
 import { extStorage } from "@/storage.ts";
-import { onMessage, sendMessage } from "@/messages.ts";
+import { onMessage } from "@/messages.ts";
+
+import { logBackgroundError } from "./base.ts";
 
 /**
  * 计算cookie的剩余有效期（以天为单位）
@@ -61,7 +63,7 @@ export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolea
       // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/cookies/SameSiteStatus
       new_cookie["sameSite"] = "no_restriction";
     } else {
-      // @ts-ignore
+      // @ts-expect-error 这里按同一 key 逐字段拷贝，标量/联合类型在索引写入时无法收窄
       new_cookie[key] = cookie[key];
     }
   });
@@ -90,10 +92,7 @@ export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolea
     try {
       await chrome.cookies.set(new_cookie);
     } catch (error) {
-      sendMessage("logger", {
-        msg: `Failed to set cookie ${cookie.name} for url ${new_cookie.url}`,
-        level: "error",
-      }).catch();
+      logBackgroundError(`Failed to set cookie ${cookie.name} for url ${new_cookie.url}`, error);
     }
   }
 }
@@ -168,13 +167,13 @@ export async function checkAndExtendCookies(url: string) {
           await setCookie(cookieDetails, true);
         }
       } catch (error) {
-        // 静默处理单个cookie的错误，继续处理其他cookies
-        sendMessage("logger", { msg: `Failed to extend cookie ${cookie.name} for url ${url}`, level: "debug" }).catch();
+        // 单个 cookie 失败不中断其余 cookie 的处理，但保留可诊断日志
+        logBackgroundError(`Failed to extend cookie ${cookie.name} for url ${url}`, error);
       }
     }
   } catch (error) {
-    // 静默处理整体错误，不影响调用方
-    sendMessage("logger", { msg: `Failed to check and extend cookies for url ${url}`, level: "debug" }).catch();
+    // 整体失败不影响调用方，但不再静默
+    logBackgroundError(`Failed to check and extend cookies for url ${url}`, error);
   }
 }
 

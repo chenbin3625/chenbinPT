@@ -1,13 +1,22 @@
 import { intersection, isEqual, toMerged } from "es-toolkit";
 import { formatDate } from "date-fns";
-import { getBackupServer, IBackupData, IBackupFileInfo } from "@ptd/backupServer";
-import { backupDataToJSZipBlob, hasBackupRetentionToApply, pruneBackupFiles } from "@ptd/backupServer/utils.ts";
+import { entityList, getBackupServer, IBackupData, IBackupFileInfo } from "@ptd/backupServer";
+import {
+  backupDataToJSZipBlob,
+  getBackupFilename,
+  hasBackupRetentionToApply,
+  isBackupFilename,
+  pruneBackupFiles,
+  replaceDownloadHistory,
+} from "@ptd/backupServer/utils.ts";
 import AbstractBackupServer from "@ptd/backupServer/AbstractBackupServer.ts";
 
 import { onMessage, sendMessage } from "@/messages.ts";
 import type { IExtensionStorageSchema, TExtensionStorageKey } from "@/storage.ts";
+import { BackupFields } from "@/shared/types.ts";
 import type {
   IRestoreOptions,
+  IRestoreReport,
   IMetadataPiniaStorageSchema,
   TBackupFields,
   TBackupServerKey,
@@ -16,6 +25,7 @@ import type {
 } from "@/shared/types.ts";
 
 import { logger } from "./logger.ts";
+import { releaseBlobUrlWhenDownloadSettled } from "./download.ts";
 import { ptdIndexDb } from "../adapter/indexdb.ts";
 
 export const storageKey = [
@@ -27,19 +37,36 @@ export const storageKey = [
 ] as TExtensionStorageKey[];
 
 export async function createBackupData(backupFields: TBackupFields[] = []): Promise<IBackupData> {
-  const metadataStore = (await sendMessage("getExtStorage", "metadata")) as IMetadataPiniaStorageSchema;
-
   const backupData: IBackupData = {};
 
   // 备份已添加站点的Cookie
   if (backupFields.includes("cookies")) {
     const cookies = {} as Required<IBackupData>["cookies"];
-    for (const siteHost in metadataStore.siteHostMap) {
-      const siteHostCookies = await sendMessage("getAllCookies", { domain: siteHost });
-      if (siteHostCookies.length > 0) {
-        cookies[siteHost] = siteHostCookies;
+    const siteHostMap =
+      ((await sendMessage("getExtStoragePath", {
+        key: "metadata",
+        path: "siteHostMap",
+        defaultValue: {},
+      })) as Record<string, string>) ?? {};
+
+    // 每个 host 一条消息，串行会明显拖慢备份；这里做有界并发（见 docs/performance-audit.md P2-8）
+    const siteHosts = Object.keys(siteHostMap);
+    const COOKIE_CONCURRENCY = 5;
+    for (let i = 0; i < siteHosts.length; i += COOKIE_CONCURRENCY) {
+      const batch = siteHosts.slice(i, i + COOKIE_CONCURRENCY);
+      const results = await Promise.all(
+        batch.map(async (siteHost) => ({
+          siteHost,
+          cookies: await sendMessage("getAllCookies", { domain: siteHost }),
+        })),
+      );
+      for (const { siteHost, cookies: siteHostCookies } of results) {
+        if (siteHostCookies.length > 0) {
+          cookies[siteHost] = siteHostCookies;
+        }
       }
     }
+
     backupData.cookies = cookies;
   }
 
@@ -57,7 +84,7 @@ export async function createBackupData(backupFields: TBackupFields[] = []): Prom
 
   backupData.manifest = {
     time: new Date().getTime(),
-    version: `PT-Depiler (${__EXT_VERSION__})`,
+    version: `chenbinPT (${__EXT_VERSION__})`,
   };
 
   logger({
@@ -79,7 +106,7 @@ export async function getBackupServerInstance(backupServerId: TBackupServerKey):
  *
  * - `keepFilename`：本次刚刚上传的备份文件名，永远不会被清理（避免因服务器端 `list()` 结果滞后或时钟偏差而删除刚创建的备份）
  * - 注意：`list()` 返回的备份列表可能包含非本插件创建的文件，因此我们仅处理文件名符合
- *   `PTD_backup_yyyyMMddTHHmm.zip` 规则的文件，避免误删用户的其他数据。
+ *   `PTD_backup_yyyyMMddTHHmm.zip`（由 `getBackupFilename()` 生成）规则的文件，避免误删用户的其他数据。
  */
 export async function applyBackupRetention(
   backupServerId: TBackupServerKey,
@@ -95,9 +122,7 @@ export async function applyBackupRetention(
   const backupServerInstance = await getBackupServerInstance(backupServerId);
   const list = (await backupServerInstance.list()) ?? [];
 
-  const backupFiles = list
-    .filter((item) => /^PTD_backup_\d{16}\.zip$/.test(item.filename))
-    .sort((a, b) => b.time - a.time); // 按备份时间从新到旧排序
+  const backupFiles = list.filter((item) => isBackupFilename(item.filename)).sort((a, b) => b.time - a.time); // 按备份时间从新到旧排序
   const [deletedFiles] = pruneBackupFiles(
     backupFiles.filter((item) => item.filename !== keepFilename),
     retention,
@@ -135,7 +160,7 @@ export async function exportBackupData(
   backupFields: TBackupFields[] = [],
 ): Promise<boolean> {
   const backupData = await createBackupData(backupFields);
-  const backupFilename = `PTD_backup_${formatDate(new Date(), "yyyyMMdd'T'HHmm")}.zip`;
+  const backupFilename = getBackupFilename();
 
   const configStore = (await sendMessage("getExtStorage", "config")) as IConfigPiniaStorageSchema;
   const encryptionKey = configStore?.backup?.encryptionKey ?? "";
@@ -143,8 +168,21 @@ export async function exportBackupData(
   logger({ msg: `Exporting backup data to ${backupServerId}`, data: { backupFields, backupFilename } });
   if (backupServerId === "local") {
     const jsZipBlob = await backupDataToJSZipBlob(backupData, encryptionKey);
+    // blob: URL 必须释放（见 L-5）：早期实现在这里**从不** revoke，每导出一次本地备份就泄漏一份 zip 的内存。
+    // 下载被接受后交给释放器，等下载读完（或超时兜底）再 revoke。
     const blobUrl = URL.createObjectURL(jsZipBlob);
-    await sendMessage("downloadFile", { url: blobUrl, filename: backupFilename, conflictAction: "uniquify" });
+    try {
+      const chromeDownloadId = await sendMessage("downloadFile", {
+        url: blobUrl,
+        filename: backupFilename,
+        conflictAction: "uniquify",
+      });
+      releaseBlobUrlWhenDownloadSettled(blobUrl, chromeDownloadId);
+    } catch (e) {
+      // 下载未被接受：没有别的地方会再引用这个 blob，立即释放
+      URL.revokeObjectURL(blobUrl);
+      throw e;
+    }
     return true;
   } else {
     const backupServerInstance = await getBackupServerInstance(backupServerId);
@@ -153,9 +191,14 @@ export async function exportBackupData(
 
     // 更新最后一次备份时间
     if (backupStatus) {
-      const metadataStore = (await sendMessage("getExtStorage", "metadata")) as IMetadataPiniaStorageSchema;
-      metadataStore.backupServers[backupServerId].lastBackupAt = new Date().getTime();
-      await sendMessage("setExtStorage", { key: "metadata", value: metadataStore });
+      // 只写 lastBackupAt 这一条路径，由 service worker 内部串行完成「读 → 改 → 写」。
+      // 原先的 getExtStorage + 改整份对象 + setExtStorage 是跨上下文读改写：与 options 侧保存站点/下载器、
+      // 用户信息刷新等并发时会用旧快照覆盖掉对方刚写入的数据。
+      await sendMessage("patchExtStoragePath", {
+        key: "metadata",
+        path: ["backupServers", backupServerId, "lastBackupAt"],
+        value: new Date().getTime(),
+      });
 
       // 备份成功后，按照保留策略清理历史备份
       await applyBackupRetention(backupServerId, backupFilename).catch((e) => {
@@ -173,91 +216,381 @@ onMessage("exportBackupData", async ({ data: { backupServerId, backupFields } })
   return await exportBackupData(backupServerId, backupFields);
 });
 
-export async function restoreBackupData(
-  restoreData: IBackupData, // 已经解密了的数据
-  restoreOptions: IRestoreOptions = {},
-): Promise<boolean> {
-  const { fields = [], expandCookieMinutes = -1, keepExistUserInfo = true } = restoreOptions;
+/**
+ * 「恢复进来的备份服务器」允许**自动上传**的字段白名单（安全子集，见 S-1）。
+ *
+ * 被排除的字段都会携带凭据或密钥：
+ * - `cookies`：站点会话
+ * - `config`：含备份加密密钥（泄露它等于泄露服务器上所有历史备份）
+ * - `metadata`：含下载器密码、站点 userConfig 里的 passkey/token、媒体服务器凭据
+ * - `userInfo`：站点个人数据
+ * - `downloadHistory`：含下载请求配置（headers 里的 Cookie、带 passkey 的下载链接）
+ * 这些字段不允许由备份文件单方面决定自动上传；用户若确实需要，应在恢复后到「设置 → 备份」里手工重新勾选
+ * —— 那一刻的意图来自用户，而不是备份文件。
+ */
+const AUTO_BACKUP_SAFE_FIELDS: readonly TBackupFields[] = ["searchResultSnapshot", "keepUploadTask"];
 
-  const restoreDataExistFields = Object.keys(restoreData.manifest?.files ?? {});
-  const restoreFields = intersection(fields, restoreDataExistFields);
+/**
+ * 恢复结果报告（见 S-1 / L-10）：哪些字段写入成功、哪些被跳过/被安全化。
+ *
+ * 类型定义在 `@/shared/types.ts` —— 报告要跨上下文回传给 UI（`restoreBackupData` 消息的返回类型
+ * 就是它），因此不能只留在 offscreen 侧；这里只做转发，保持既有导入方不受影响。
+ */
+export type { IRestoreReport };
 
-  // 恢复下载历史
-  if (restoreFields.includes("downloadHistory")) {
-    const db = await ptdIndexDb;
-    await db.clear("download_history");
-    for (const downloadHistoryElement of restoreData.downloadHistory) {
-      await db.put("download_history", downloadHistoryElement);
+/** 只认「非 null、非数组的对象」，用于校验来自备份文件（不可信）的结构 */
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** 协议里定义过的备份字段名（`BackupFields` 的运行时集合，用于把不可信字符串收窄成 `TBackupFields`） */
+const BACKUP_FIELD_SET = new Set<string>(BackupFields);
+
+function isBackupField(field: string): field is TBackupFields {
+  return BACKUP_FIELD_SET.has(field);
+}
+
+/**
+ * metadata 的最小形状校验（见 S-1）。
+ *
+ * 只校验会导致后续代码崩溃或越权的关键结构：备份可以来自任何地方（他人分享的 zip），
+ * 而恢复是直接整份写库，没有 schema 校验就等于把库交给备份文件。
+ *
+ * @returns 不合法时返回原因（调用方跳过整个字段），合法时返回 null
+ */
+function validateMetadataShape(metadata: unknown): string | null {
+  if (!isPlainObject(metadata)) {
+    return `expected a plain object, got ${Array.isArray(metadata) ? "array" : typeof metadata}`;
+  }
+
+  for (const key of [
+    "sites",
+    "solutions",
+    "snapshots",
+    "downloaders",
+    "mediaServers",
+    "backupServers",
+    "lastUserInfo",
+    "siteHostMap",
+    "siteNameMap",
+  ]) {
+    const value = metadata[key];
+    if (typeof value !== "undefined" && !isPlainObject(value)) {
+      return `"${key}" must be an object, got ${Array.isArray(value) ? "array" : typeof value}`;
     }
   }
 
-  // 恢复直接从 chrome.storage.local 读取的字段
+  return null;
+}
+
+/**
+ * 安全化恢复进来的 metadata（见 S-1）。
+ *
+ * 三条规则：
+ * 1. `backupServers` 默认不恢复，且**始终保留本机已有条目**——metadata 是整份写入，
+ *    若直接用恢复数据里的 `backupServers`，本机配置会被静默删除（这也是「剥离该 key」不能写成 delete 的原因）。
+ * 2. `type` 未注册的服务器条目直接丢弃（其构造会失败，且无法判断它是否可信）。
+ * 3. 显式允许恢复时，按「type + config」去重复用本机 id（保留 issue #1024 的原有语义），
+ *    并把 `backupFields` 收敛为 `安全子集 ∩ 本次恢复的字段集合`；收敛后为空则停用该服务器的自动备份。
+ *
+ * 说明：这里与任务描述有一处收敛——条目级问题（非法 type）按「安全化」处理而不是跳过整个 metadata 字段。
+ * 理由是条目级问题只影响那一条服务器，不应让用户的站点/搜索方案/下载器整份恢复失败；
+ * 顶层形状不合法（如 `sites` 是字符串）时仍然跳过整个字段，绝不写入半成品。
+ */
+async function sanitizeRestoredMetadata(
+  restoredMetadata: IMetadataPiniaStorageSchema,
+  options: { restoreBackupServers: boolean; restoreFields: TBackupFields[]; report: IRestoreReport },
+): Promise<IMetadataPiniaStorageSchema> {
+  const { restoreBackupServers, restoreFields, report } = options;
+
+  const existingMetadata = ((await sendMessage("getExtStorage", "metadata")) ?? {}) as IMetadataPiniaStorageSchema;
+  const existingServers = existingMetadata.backupServers ?? {};
+  const restoredServers = restoredMetadata.backupServers ?? {};
+
+  const mergedServers: IMetadataPiniaStorageSchema["backupServers"] = { ...existingServers };
+
+  if (!restoreBackupServers) {
+    const restoredCount = Object.keys(restoredServers).length;
+    if (restoredCount > 0) {
+      report.sanitized.push(
+        `backupServers: 默认不恢复（丢弃备份中的 ${restoredCount} 个服务器配置，保留本机的 ${Object.keys(existingServers).length} 个）`,
+      );
+    }
+    return { ...restoredMetadata, backupServers: mergedServers };
+  }
+
+  for (const [restoredId, restoredServer] of Object.entries(restoredServers)) {
+    if (!isPlainObject(restoredServer)) {
+      report.sanitized.push(`backupServers["${restoredId}"]: 已丢弃（条目不是对象）`);
+      continue;
+    }
+
+    const serverType = (restoredServer as { type?: unknown }).type;
+    if (typeof serverType !== "string" || !entityList.includes(serverType)) {
+      report.sanitized.push(
+        `backupServers["${restoredId}"]: 已丢弃（type "${String(serverType)}" 不是已注册的备份服务器类型）`,
+      );
+      continue;
+    }
+
+    // 复用本机相同「type + config」条目的 ID，避免同一台服务器出现重复条目（refs: issue #1024）
+    const duplicatedEntry = Object.entries(existingServers).find(
+      ([existingId, existingServer]) =>
+        existingId !== restoredId && // ID 相同（自定义 ID 或同设备重复恢复）无需处理，直接以本机为准覆盖
+        existingServer.type === serverType &&
+        isEqual(existingServer.config, restoredServer.config),
+    );
+    const targetId = duplicatedEntry?.[0] ?? restoredId;
+
+    // 上传字段不得来自恢复数据（S-1）：先按协议字段名把不可信输入收窄，再取安全子集 ∩ 本次恢复字段集合
+    const requestedFields = (Array.isArray(restoredServer.backupFields) ? restoredServer.backupFields : []).filter(
+      isBackupField,
+    );
+    const safeBackupFields = requestedFields.filter(
+      (field) => AUTO_BACKUP_SAFE_FIELDS.includes(field) && restoreFields.includes(field),
+    );
+    if (safeBackupFields.length !== requestedFields.length) {
+      report.sanitized.push(
+        `backupServers["${targetId}"].backupFields: ${JSON.stringify(requestedFields)} → ${JSON.stringify(safeBackupFields)}（含凭据/密钥的字段不允许由备份文件决定自动上传）`,
+      );
+    }
+
+    const sanitizedServer = { ...restoredServer, id: targetId, backupFields: safeBackupFields };
+    if (safeBackupFields.length === 0) {
+      sanitizedServer.enabled = false;
+      delete sanitizedServer.backupInterval;
+      report.sanitized.push(
+        `backupServers["${targetId}"]: 已停用自动备份（没有可安全自动上传的字段），如需启用请到「设置 → 备份」手工确认`,
+      );
+    }
+
+    mergedServers[targetId] = sanitizedServer;
+  }
+
+  return { ...restoredMetadata, backupServers: mergedServers };
+}
+
+/**
+ * 恢复备份数据。
+ *
+ * 安全语义见 `IRestoreOptions.restoreBackupServers`（S-1）：默认 **不**恢复备份里的备份服务器配置，
+ * 且即便显式要求恢复，也不采信备份里的 `backupFields`（上传字段不得由备份文件决定）。
+ */
+export async function restoreBackupData(
+  restoreData: IBackupData, // 已经解密了的数据
+  restoreOptions: IRestoreOptions = {},
+): Promise<IRestoreReport> {
+  const {
+    fields = [],
+    expandCookieMinutes = -1,
+    keepExistUserInfo = true,
+    restoreBackupServers = false,
+  } = restoreOptions;
+
+  const report: IRestoreReport = { success: false, restored: [], skipped: [], sanitized: [], rolledBack: false };
+
+  const restoreDataExistFields = Object.keys(restoreData.manifest?.files ?? {});
+
+  // 备份的 manifest.files 是**不可信输入**（他人分享的 zip）：先把键名收敛成协议定义过的字段，
+  // 未知字段既不参与恢复、也不影响其它字段，只在报告里留痕（S-1）。
+  const unknownBackupFields = restoreDataExistFields.filter((field) => !isBackupField(field));
+  if (unknownBackupFields.length > 0) {
+    report.sanitized.push(`备份 manifest 里的未知字段已被忽略: ${JSON.stringify(unknownBackupFields)}`);
+  }
+
+  const restoreFields: TBackupFields[] = intersection(fields, restoreDataExistFields).filter(isBackupField);
+
+  // 恢复下载历史（独立于 storage key 的写入事务：IndexedDB 侧已有原子替换）
+  if (restoreFields.includes("downloadHistory")) {
+    const db = await ptdIndexDb;
+    // 统一放在一个事务里「先清空再批量写入」，由 replaceDownloadHistory 保证原子性；
+    // 备份数据非法（zip 中缺少 downloadHistory.json 时该 key 会被跳过）时直接放弃，绝不清空本机已有历史。
+    const restored = await replaceDownloadHistory(
+      () => db.transaction("download_history", "readwrite"),
+      restoreData.downloadHistory,
+    );
+    if (restored) {
+      report.restored.push("downloadHistory");
+    } else {
+      report.skipped.push({ field: "downloadHistory", reason: "invalid data in backup, local history kept" });
+      logger({
+        msg: `Skip restoring download history: invalid data in backup (expected an array, got ${typeof restoreData.downloadHistory})`,
+      });
+    }
+  }
+
+  /**
+   * 阶段 1：全部校验/构造到内存，**不写任何 key**（见 L-10）。
+   *
+   * 早期实现边遍历边 `setExtStorage`，任何一个字段中途失败（或校验不通过）都会留下
+   * 「一半备份一半现状」的混合状态，且用户看不出哪些字段没恢复。现在先把待写入的内容全部算出来，
+   * 校验不通过的字段只记报告、不写库。
+   */
+  type TPendingStorageWrite = {
+    key: TExtensionStorageKey;
+    value: IExtensionStorageSchema[TExtensionStorageKey];
+    field: string;
+  };
+
+  const pendingWrites: TPendingStorageWrite[] = [];
+
   for (const field of storageKey.toReversed()) {
-    if (restoreFields.includes(field as TBackupFields)) {
-      let fieldData = restoreData[field] as IExtensionStorageSchema[typeof field];
-      if (fieldData) {
-        if (field === "userInfo" && keepExistUserInfo) {
-          const userInfoStore = ((await sendMessage("getExtStorage", "userInfo")) ?? {}) as TUserInfoStorageSchema;
-          fieldData = toMerged(fieldData, userInfoStore);
-        }
+    if (!restoreFields.includes(field as TBackupFields)) {
+      continue;
+    }
 
-        /**
-         * 备份服务器的ID为添加时随机生成的（nanoid），同一台服务器在新旧设备上会产生不同的ID，
-         * 直接恢复会导致出现重复条目（refs: https://github.com/pt-plugins/PT-depiler/issues/1024）。
-         * 此处按「类型 + 完整配置」识别同一台服务器：命中则复用本机已有条目的ID（保留备份中的其余字段），
-         * 未命中的条目正常合入。
-         */
-        if (field === "metadata") {
-          const restoredMetadata = fieldData as IMetadataPiniaStorageSchema;
-          if (restoredMetadata?.backupServers) {
-            const existingMetadata = ((await sendMessage("getExtStorage", "metadata")) ??
-              {}) as IMetadataPiniaStorageSchema;
-            const existingServers = existingMetadata.backupServers ?? {};
-            const mergedServers: IMetadataPiniaStorageSchema["backupServers"] = { ...restoredMetadata.backupServers };
+    let fieldData = restoreData[field] as IExtensionStorageSchema[typeof field];
+    if (!fieldData) {
+      report.skipped.push({ field, reason: "empty value in backup" });
+      continue;
+    }
 
-            for (const [existingId, existingServer] of Object.entries(existingServers)) {
-              const duplicatedEntry = Object.entries(mergedServers).find(
-                ([restoredId, restoredServer]) =>
-                  restoredId !== existingId && // ID相同（如自定义ID或同设备重复恢复）无需处理，直接以本机为准覆盖
-                  restoredServer.type === existingServer.type &&
-                  isEqual(restoredServer.config, existingServer.config),
-              );
-              if (duplicatedEntry) {
-                const [restoredId, restoredServer] = duplicatedEntry;
-                mergedServers[existingId] = { ...restoredServer, id: existingId };
-                delete mergedServers[restoredId];
-              }
-            }
+    if (field === "userInfo" && keepExistUserInfo) {
+      const userInfoStore = ((await sendMessage("getExtStorage", "userInfo")) ?? {}) as TUserInfoStorageSchema;
+      fieldData = toMerged(fieldData, userInfoStore);
+    }
 
-            fieldData = { ...restoredMetadata, backupServers: mergedServers };
-          }
-        }
+    if (field === "metadata") {
+      const validationError = validateMetadataShape(fieldData);
+      if (validationError) {
+        report.skipped.push({ field, reason: validationError });
+        logger({ msg: `Skip restoring metadata: ${validationError}`, level: "warn" });
+        continue;
+      }
+      fieldData = (await sanitizeRestoredMetadata(fieldData as IMetadataPiniaStorageSchema, {
+        restoreBackupServers,
+        restoreFields,
+        report,
+      })) as IExtensionStorageSchema[typeof field];
+    }
 
-        await sendMessage("setExtStorage", { key: field, value: fieldData });
+    pendingWrites.push({ key: field, value: fieldData, field });
+
+    /**
+     * 恢复 metadata 后必须同步重建 siteIndex（见 docs/performance-audit.md P2-17 的独立索引 key）。
+     *
+     * content script / 右键菜单只有在 siteIndex 缺失时才会回落到 metadata（见 content-script/index.ts），
+     * 而 background/utils/siteIndex.ts 只在启动时「按需生成缺失的索引」、不会覆盖已存在的 key；
+     * 若不重建，恢复后站点 host/name 索引仍是恢复前那份，会挂错站点或不挂载。
+     * 这里按**安全化之后**的 metadata 派生（与 siteIndex.ts 的派生规则一致），不修改 siteIndex.ts 本身。
+     */
+    if (field === "metadata") {
+      const restoredMetadata = fieldData as IMetadataPiniaStorageSchema;
+      pendingWrites.push({
+        key: "siteIndex",
+        value: {
+          siteHostMap: restoredMetadata.siteHostMap ?? {},
+          siteNameMap: restoredMetadata.siteNameMap ?? {},
+        },
+        field: "siteIndex",
+      });
+    }
+  }
+
+  /**
+   * 阶段 2：写入前快照旧值。
+   *
+   * 拿不到快照的 key 一律不写：没有快照就无法回滚，宁可不恢复该字段（记进报告）。
+   */
+  const snapshots = new Map<TExtensionStorageKey, IExtensionStorageSchema[TExtensionStorageKey]>();
+  for (const { key, field } of pendingWrites) {
+    if (snapshots.has(key)) {
+      continue;
+    }
+    try {
+      snapshots.set(key, await sendMessage("getExtStorage", key));
+    } catch (e) {
+      report.skipped.push({
+        field,
+        reason: `failed to snapshot current value: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      logger({ msg: `Skip restoring ${field}: failed to snapshot current value`, level: "warn" });
+    }
+  }
+
+  /**
+   * 阶段 3：顺序写入；任一步失败则按相反顺序回滚已写入的 key（见 L-10）。
+   */
+  const written: Array<{
+    key: TExtensionStorageKey;
+    snapshot: IExtensionStorageSchema[TExtensionStorageKey];
+    field: string;
+  }> = [];
+  try {
+    for (const { key, value, field } of pendingWrites) {
+      if (!snapshots.has(key)) {
+        continue; // 阶段 2 已记录跳过原因
+      }
+
+      await sendMessage("setExtStorage", { key, value });
+      written.push({ key, snapshot: snapshots.get(key)!, field });
+      report.restored.push(field);
+    }
+    report.success = true;
+  } catch (e) {
+    logger({
+      msg: `Failed to restore storage fields, rolling back ${written.length} written key(s)`,
+      level: "error",
+      data: e instanceof Error ? e.message : String(e),
+    });
+
+    let rollbackOk = true;
+    for (const { key, snapshot, field } of written.toReversed()) {
+      try {
+        await sendMessage("setExtStorage", { key, value: snapshot });
+      } catch (rollbackError) {
+        rollbackOk = false;
+        logger({
+          msg: `Failed to roll back ${field} after a failed restore`,
+          level: "error",
+          data: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
       }
     }
+    report.rolledBack = rollbackOk;
+    report.success = false;
+  }
+
+  // 报告「跳过/安全化」的细节，便于定位「恢复后为什么少了一些东西」
+  if (report.skipped.length > 0 || report.sanitized.length > 0) {
+    logger({
+      msg: `Restore finished with sanitization: ${report.restored.length} field(s) restored, ${report.skipped.length} skipped, ${report.sanitized.length} sanitized`,
+      data: { restored: report.restored, skipped: report.skipped, sanitized: report.sanitized },
+    });
+  }
+
+  if (!report.success) {
+    return report; // 写入失败（已回滚）：不再恢复 Cookie，避免在一个失败的恢复上继续叠加改动
   }
 
   // 恢复已添加站点的Cookie
   if (restoreFields.includes("cookies")) {
     const now = new Date().getTime() / 1000;
 
-    for (const cookieData of Object.values(restoreData.cookies!)) {
-      for (const cookie of cookieData) {
-        // 延长 cookie 过期时间
-        if (expandCookieMinutes > 0) {
-          cookie.expirationDate = Math.max(cookie.expirationDate ?? 0, now) + expandCookieMinutes * 60;
-        }
+    const allCookies = Object.values(restoreData.cookies!).flatMap((cookieData) => cookieData);
+    const COOKIE_RESTORE_CONCURRENCY = 8;
+    for (let i = 0; i < allCookies.length; i += COOKIE_RESTORE_CONCURRENCY) {
+      await Promise.all(
+        allCookies.slice(i, i + COOKIE_RESTORE_CONCURRENCY).map(async (cookie) => {
+          // 延长 cookie 过期时间
+          if (expandCookieMinutes > 0) {
+            cookie.expirationDate = Math.max(cookie.expirationDate ?? 0, now) + expandCookieMinutes * 60;
+          }
 
-        await sendMessage("setCookie", cookie as unknown as chrome.cookies.SetDetails);
-      }
+          await sendMessage("setCookie", cookie as unknown as chrome.cookies.SetDetails);
+        }),
+      );
     }
+    report.restored.push("cookies");
   }
 
-  return true;
+  return report;
 }
 
 onMessage("restoreBackupData", async ({ data: { restoreData, restoreOptions = {} } }) => {
+  // 直接把结构化报告回传给 UI：S-1 的安全提示（哪些字段被跳过、哪些被安全化）必须让用户看到，
+  // 只回传 success 的话这条提示等于不存在（options 侧日志查看器已移除、offscreen 日志无人读取）。
+  // 另注：本消息是**写类消息**，按 B-9 的裁决不在自动重试白名单里（重复执行会覆盖用户配置）。
   return await restoreBackupData(restoreData, restoreOptions);
 });
 

@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "GGPT",
   description: "gamegamept.com",
   tags: ["游戏"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

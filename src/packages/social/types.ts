@@ -49,6 +49,8 @@ export interface IFetchSocialSiteInformationConfig {
   timeout?: number;
   // 缓存时间（天）
   cacheDay?: number;
+  // 强制绕过 getSocialSiteInformation 的进程内缓存重新抓取，并覆盖旧条目
+  force?: boolean;
 
   socialSite?: Record<TSupportSocialSite, Record<"apikey" | string, any>>;
 }

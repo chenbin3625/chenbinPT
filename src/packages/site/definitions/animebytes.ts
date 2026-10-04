@@ -1,7 +1,7 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/AnimeBytes.cs
  * @JackettIssue https://github.com/Jackett/Jackett/issues/16062
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/animebytes.tv/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/animebytes.tv/config.json
  */
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
@@ -529,40 +529,54 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class AnimeBytes extends Gazelle {
-  private _baseUserInfo?: { username: string; passkey: string };
+  // 用户凭据通过 runtimeSettings 持久化（带过期时间），避免每次搜索重建实例后都重新请求首页
+  private static readonly baseUserInfoCacheKey = "baseUserInfo";
+  private static readonly baseUserInfoCacheTtl = 12 * 60 * 60; // 12 小时
 
   private async getBaseUserInfo(): Promise<{ username: string; passkey: string }> {
-    let userName = this._baseUserInfo?.username;
-    let passKey = this._baseUserInfo?.passkey;
+    const currentTime = Math.floor(Date.now() / 1000);
 
-    if (!userName || !passKey) {
-      const { data: statResp } = await this.request<Document>({
-        url: "/",
-        responseType: "document",
-      });
-      const docElement = statResp.documentElement;
+    const cachedBaseUserInfo = await this.retrieveRuntimeSettings<{
+      username?: string;
+      passkey?: string;
+      expiry?: number;
+    }>(AnimeBytes.baseUserInfoCacheKey);
 
-      if (!userName) {
-        userName = this.getFieldData(docElement, {
-          selector: "a.username:first",
-        });
-      }
-
-      if (!passKey) {
-        passKey = this.getFieldData(docElement, {
-          selector: "link[href^='/feed/rss_torrents_all/']",
-          attr: "href",
-          filters: [{ name: "split", args: ["/", 3] }],
-        });
-      }
-
-      this._baseUserInfo = {
-        username: userName!,
-        passkey: passKey!,
-      };
+    if (
+      typeof cachedBaseUserInfo?.username === "string" &&
+      cachedBaseUserInfo.username.trim().length > 0 &&
+      typeof cachedBaseUserInfo?.passkey === "string" &&
+      cachedBaseUserInfo.passkey.trim().length > 0 &&
+      typeof cachedBaseUserInfo?.expiry === "number" &&
+      Number.isFinite(cachedBaseUserInfo.expiry) &&
+      cachedBaseUserInfo.expiry > currentTime
+    ) {
+      return { username: cachedBaseUserInfo.username, passkey: cachedBaseUserInfo.passkey };
     }
 
-    return { username: userName!, passkey: passKey! };
+    const { data: statResp } = await this.request<Document>({
+      url: "/",
+      responseType: "document",
+    });
+    const docElement = statResp.documentElement;
+
+    const userName = this.getFieldData(docElement, {
+      selector: "a.username:first",
+    });
+
+    const passKey = this.getFieldData(docElement, {
+      selector: "link[href^='/feed/rss_torrents_all/']",
+      attr: "href",
+      filters: [{ name: "split", args: ["/", 3] }],
+    });
+
+    const baseUserInfo = { username: userName!, passkey: passKey! };
+    await this.storeRuntimeSettings(AnimeBytes.baseUserInfoCacheKey, {
+      ...baseUserInfo,
+      expiry: currentTime + AnimeBytes.baseUserInfoCacheTtl,
+    });
+
+    return baseUserInfo;
   }
 
   public override async request<T>(

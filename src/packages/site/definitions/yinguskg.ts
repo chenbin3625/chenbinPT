@@ -21,7 +21,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["YingUSKG", "ying.us.kg", "Ying"],
   description: "YingUSKG PT站点",
   tags: ["综合", "影视"],
-  timezoneOffset: "+0800",
   favicon: "./_default_nexusphp.png", // 使用NP架构默认图标
 
   type: "private",

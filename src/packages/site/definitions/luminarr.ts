@@ -20,7 +20,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["LUME"],
   description: "Luminarr is a Private Torrent Tracker for MOVIES / TV",
   tags: ["影视"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

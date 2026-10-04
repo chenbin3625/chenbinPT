@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["BILIBILI"],
   description: "B站PT",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

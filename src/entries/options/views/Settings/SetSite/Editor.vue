@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { SelectOutlined, InfoCircleOutlined, EyeOutlined, EyeInvisibleOutlined } from "@ant-design/icons-vue";
 import { watch, ref, onMounted, inject, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { set } from "es-toolkit/compat";
 import type { timezoneOffset, ISiteUserConfig, TSiteID, ISiteMetadata, TSiteUrl } from "@ptd/site";
 
+import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { formatDate, formValidateRules } from "@/options/utils.ts";
 import { toMerged } from "es-toolkit";
@@ -27,11 +29,73 @@ const siteTimezoneOffset = computed({
   set: (value) => set(siteUserConfig.value, "merge.timezoneOffset", value),
 });
 const customSiteUrl = ref<string>("");
-const isFormValid = ref<boolean>(true);
 
-function updateFormValid(v: boolean) {
-  isFormValid.value = v;
-  emit("update:formValid", v);
+// B-31：站点凭据（passkey / apikey / token / cookie ...）默认掩码显示，可按字段切换明文
+const revealedInputSettings = ref<Set<string>>(new Set());
+const SECRET_INPUT_SETTING_PATTERN = /passkey|passwd|password|pwd|apikey|api[_-]?key|rsskey|token|cookie|secret/i;
+
+function isSecretInputSetting(name: string): boolean {
+  return SECRET_INPUT_SETTING_PATTERN.test(name);
+}
+
+/** 该字段当前是否以掩码显示 */
+function isInputSettingMasked(name: string): boolean {
+  // revealedInputSettings 是 ref：在 <script setup> 的普通函数体里不会自动解包（模板里才会）
+  return isSecretInputSetting(name) && !revealedInputSettings.value.has(name);
+}
+
+function toggleInputSettingReveal(name: string) {
+  const next = new Set(revealedInputSettings.value);
+  if (next.has(name)) {
+    next.delete(name);
+  } else {
+    next.add(name);
+  }
+  revealedInputSettings.value = next;
+}
+
+const siteNameOptions = computed(() =>
+  [siteMetaData.value.name, ...(siteMetaData.value.aka ?? [])].filter(Boolean).map((value) => ({ value })),
+);
+const groupOptions = computed(() => (siteMetaData.value.tags ?? []).map((value) => ({ value })));
+const timeZoneOptions = computed(() => timeZone.map((item) => ({ label: item.title, value: item.value })));
+
+function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
+  for (const rule of rules) {
+    const result = rule(value);
+    if (result !== true) return typeof result === "string" ? result : String(result);
+  }
+  return undefined;
+}
+
+const nameError = computed(() => firstError([formValidateRules.require()], siteName.value));
+const sortIndexError = computed(() => firstError([formValidateRules.require()], siteUserConfig.value.sortIndex));
+const urlError = computed(() => firstError([formValidateRules.require()], siteUserConfig.value.url));
+const customUrlError = computed(() =>
+  customSiteUrl.value ? firstError([formValidateRules.url()], customSiteUrl.value) : undefined,
+);
+const inputSettingError = computed(() => {
+  if (siteMetaData.value.isDead) return undefined;
+  for (const userInputMeta of siteMetaData.value.userInputSettingMeta ?? []) {
+    if (userInputMeta.required && !siteUserConfig.value.inputSetting?.[userInputMeta.name]) return "Item is required";
+  }
+  return undefined;
+});
+
+// 与迁移前 PtdForm 广播的「表单是否合法」语义一致（站点已标记为失效时视为合法，允许保存其它配置）
+const siteFormValid = computed(() => {
+  if (siteMetaData.value.isDead) return true;
+  return (
+    !nameError.value && !sortIndexError.value && !urlError.value && !customUrlError.value && !inputSettingError.value
+  );
+});
+
+// V-17：表单有效性只由 siteFormValid 驱动。此处若再命令式置位，会在 siteFormValid 未发生
+// 变化时让 isFormValid 与其脱节（例如自定义 URL 本就有效时，「先置 false」将永久禁用 OK 按钮）。
+watch(siteFormValid, (v) => emit("update:formValid", v), { immediate: true });
+
+function updateCustomUrl(val: string) {
+  siteUserConfig.value.url = val as unknown as TSiteUrl;
 }
 
 async function initSiteData(siteId: TSiteID, flush = false) {
@@ -46,8 +110,6 @@ async function initSiteData(siteId: TSiteID, flush = false) {
   if (!siteMetaData.value.urls.includes(siteUserConfig.value.url)) {
     customSiteUrl.value = siteUserConfig.value.url;
   }
-
-  updateFormValid(siteMetaData.value.isDead ? true : isFormValid.value);
 }
 
 onMounted(() => {
@@ -93,193 +155,176 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
 </script>
 
 <template>
-  <v-card class="mb-5 pa-1">
-    <v-form
-      v-model="isFormValid"
-      fast-fail
-      :disabled="siteMetaData.isDead"
-      validate-on="input"
-      @update:model-value="(v) => emit('update:formValid', v as boolean)"
-    >
-      <v-container class="pa-0">
-        <v-label class="my-2">{{ t("common.basicInfo") }}</v-label>
-        <v-row>
-          <v-col cols="12" md="4">
-            <v-combobox
-              v-model="siteName"
-              :items="[siteMetaData.name, ...(siteMetaData.aka ?? [])]"
-              :label="t('SetSite.common.name')"
-              :rules="[formValidateRules.require()]"
-              hide-details
-            ></v-combobox>
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field v-model="siteMetaData.schema" :label="t('common.type')" disabled hide-details />
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="siteUserConfig.sortIndex"
-              :label="t('common.sortIndex')"
-              :placeholder="t('SetSite.editor.sortIndexTip')"
-              :rules="[formValidateRules.require()]"
-              hide-details
-              type="number"
-            />
-          </v-col>
-          <v-col cols="12">
-            <v-combobox
-              v-model="siteUserConfig.groups"
-              :items="siteMetaData.tags"
-              chips
-              :label="t('SetSite.common.groups')"
-              multiple
-              hide-details
-            />
-          </v-col>
-          <v-col cols="12">
-            <v-autocomplete
-              v-model="siteTimezoneOffset"
-              :items="timeZone"
-              :label="t('SetSite.editor.timezone')"
-              hide-details
-            />
-          </v-col>
-        </v-row>
+  <a-card style="margin-bottom: 20px; padding: 4px">
+    <a-form :disabled="siteMetaData.isDead" layout="vertical">
+      <div>
+        <a-typography-text strong style="display: block; margin: 8px 0">
+          {{ t("common.basicInfo") }}
+        </a-typography-text>
+        <a-row :gutter="16">
+          <a-col :md="8" :xs="24">
+            <a-form-item :help="nameError" :label="t('SetSite.common.name')" required>
+              <a-auto-complete v-model:value="siteName" :options="siteNameOptions" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :md="8" :xs="24">
+            <a-form-item :label="t('common.type')">
+              <a-input v-model:value="siteMetaData.schema" disabled />
+            </a-form-item>
+          </a-col>
+          <a-col :md="8" :xs="24">
+            <a-form-item :help="sortIndexError" :label="t('common.sortIndex')" required>
+              <a-input-number
+                v-model:value="siteUserConfig.sortIndex"
+                :placeholder="t('SetSite.editor.sortIndexTip')"
+                :status="sortIndexError ? 'error' : undefined"
+                style="width: 100%"
+              />
+            </a-form-item>
+          </a-col>
+          <a-col :span="24">
+            <a-form-item :label="t('SetSite.common.groups')">
+              <a-select v-model:value="siteUserConfig.groups" mode="tags" :options="groupOptions" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="24">
+            <a-form-item :label="t('SetSite.editor.timezone')">
+              <a-select v-model:value="siteTimezoneOffset" :options="timeZoneOptions" show-search style="width: 100%" />
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <v-row>
-          <v-radio-group
-            v-model="siteUserConfig.url"
-            :label="t('SetSite.common.url')"
-            class="edit-select-url"
-            hide-details
-            :rules="[formValidateRules.require()]"
-          >
-            <v-radio v-for="url in siteMetaData.urls" :key="url" :value="url" @click="updateFormValid(true)">
-              <template #label style="width: 100%">
-                {{ url }}
-                <v-spacer />
-                <v-btn
-                  :title="t('SetSite.common.open')"
-                  :href="url"
-                  color="info"
-                  icon="mdi-arrow-top-right-bold-box-outline"
-                  target="_blank"
-                  variant="text"
-                />
-              </template>
-            </v-radio>
-            <v-radio v-model="customSiteUrl" :value="customSiteUrl" @click="updateFormValid(false)">
-              <template #label>
-                <v-text-field
-                  v-model="customSiteUrl"
-                  :placeholder="t('SetSite.editor.customUrlPlaceholder')"
-                  :rules="[(val) => (val ? formValidateRules.url()(val) : true)]"
-                  @update:modelValue="(val) => (siteUserConfig.url = val as unknown as TSiteUrl)"
-                ></v-text-field>
-              </template>
-            </v-radio>
-          </v-radio-group>
-        </v-row>
+        <a-row>
+          <a-col :span="24">
+            <a-form-item :help="urlError" :label="t('SetSite.common.url')" required>
+              <a-radio-group v-model:value="siteUserConfig.url" style="width: 100%">
+                <a-radio v-for="url in siteMetaData.urls" :key="url" :value="url" style="display: block">
+                  <span style="display: inline-flex; align-items: center; width: 100%">
+                    {{ url }}
+                    <span style="flex: 1 1 auto; min-width: 8px" />
+                    <a-tooltip :title="t('SetSite.common.open')">
+                      <a-button :href="url" shape="circle" target="_blank" type="text">
+                        <template #icon>
+                          <SelectOutlined />
+                        </template>
+                      </a-button>
+                    </a-tooltip>
+                  </span>
+                </a-radio>
+                <a-radio :value="customSiteUrl" style="display: block">
+                  <a-input
+                    v-model:value="customSiteUrl"
+                    :placeholder="t('SetSite.editor.customUrlPlaceholder')"
+                    :status="customUrlError ? 'error' : undefined"
+                    style="width: 100%"
+                    @update:value="updateCustomUrl"
+                  />
+                </a-radio>
+              </a-radio-group>
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <v-divider />
+        <a-divider />
 
         <template v-if="siteMetaData.userInputSettingMeta && siteUserConfig.inputSetting">
-          <v-label class="my-2">{{ t("SetSite.Editor.siteSettings") }}</v-label>
+          <a-typography-text strong style="display: block; margin: 8px 0">
+            {{ t("SetSite.Editor.siteSettings") }}
+          </a-typography-text>
 
-          <v-text-field
+          <a-form-item
             v-for="userInputMeta in siteMetaData.userInputSettingMeta"
             :key="userInputMeta.name"
-            v-model="siteUserConfig.inputSetting![userInputMeta.name]"
-            :hint="userInputMeta.hint"
+            :help="
+              !siteMetaData.isDead && userInputMeta.required && !siteUserConfig.inputSetting![userInputMeta.name]
+                ? 'Item is required'
+                : userInputMeta.hint
+            "
             :label="userInputMeta.label"
-            :rules="[
-              (val) => (!siteMetaData.isDead && userInputMeta.required ? formValidateRules.require()(val) : true),
-            ]"
-            validate-on="input"
+            :required="userInputMeta.required"
           >
-          </v-text-field>
+            <a-input
+              v-model:value="siteUserConfig.inputSetting![userInputMeta.name]"
+              :type="isInputSettingMasked(userInputMeta.name) ? 'password' : 'text'"
+            >
+              <template v-if="isSecretInputSetting(userInputMeta.name)" #suffix>
+                <EyeOutlined
+                  v-if="revealedInputSettings.has(userInputMeta.name)"
+                  style="cursor: pointer"
+                  @click="toggleInputSettingReveal(userInputMeta.name)"
+                />
+                <EyeInvisibleOutlined
+                  v-else
+                  style="cursor: pointer"
+                  @click="toggleInputSettingReveal(userInputMeta.name)"
+                />
+              </template>
+            </a-input>
+          </a-form-item>
 
-          <v-divider />
+          <a-divider />
         </template>
 
-        <v-label class="my-2">{{ t("SetSite.Editor.otherSettings") }}</v-label>
+        <a-typography-text strong style="display: block; margin: 8px 0">
+          {{ t("SetSite.Editor.otherSettings") }}
+        </a-typography-text>
 
-        <v-text-field
-          v-model="siteUserConfig.downloadLinkAppendix"
-          :label="t('SetSite.Editor.downloadLinkSuffix')"
-          :hint="t('SetSite.Editor.downloadLinkSuffixHint')"
-        >
-          <template #append>
-            <v-tooltip max-width="400" location="top">
-              <template #activator="{ props }">
-                <v-icon v-bind="props" class="mr-4" icon="mdi-information" color="info" />
-              </template>
-              {{ t("SetSite.Editor.downloadLinkSuffixExample") }}
-            </v-tooltip>
-          </template>
-        </v-text-field>
+        <a-form-item :help="t('SetSite.Editor.downloadLinkSuffixHint')" :label="t('SetSite.Editor.downloadLinkSuffix')">
+          <a-input v-model:value="siteUserConfig.downloadLinkAppendix">
+            <template #suffix>
+              <a-tooltip :overlay-style="{ maxWidth: '400px' }" placement="top">
+                <template #title>{{ t("SetSite.Editor.downloadLinkSuffixExample") }}</template>
+                <InfoCircleOutlined :style="{ color: resolveColor('info'), marginRight: '16px' }" />
+              </a-tooltip>
+            </template>
+          </a-input>
+        </a-form-item>
 
-        <v-slider
-          v-model="siteUserConfig.timeout"
-          :color="siteUserConfig.timeout! > 8 * 60e3 ? 'red' : siteUserConfig.timeout! > 5 * 60e3 ? 'amber' : 'green'"
-          :max="10 * 60e3"
-          :min="0"
-          :step="1e3"
-          :hint="t('SetSite.Editor.requestTimeoutHint')"
-          :label="t('SetSite.Editor.requestTimeout')"
-          persistent-hint
-        >
-          <template #append>
-            <v-btn variant="flat" @click="siteUserConfig.timeout = 30e3">
+        <a-form-item :help="t('SetSite.Editor.requestTimeoutHint')" :label="t('SetSite.Editor.requestTimeout')">
+          <a-flex align="center" :gap="8">
+            <a-slider
+              v-model:value="siteUserConfig.timeout"
+              :max="10 * 60e3"
+              :min="0"
+              :step="1e3"
+              style="flex: 1 1 auto"
+            />
+            <a-button type="text" @click="siteUserConfig.timeout = 30e3">
               {{ formatDate(siteUserConfig.timeout!, "mm:ss") }}
-            </v-btn>
-          </template>
-        </v-slider>
+            </a-button>
+          </a-flex>
+        </a-form-item>
 
-        <v-slider
-          v-model="siteUserConfig.downloadInterval"
-          :min="0"
-          :max="(siteUserConfig.downloadInterval ?? 0) < 600 ? 600 : 1200"
-          :step="(siteUserConfig.downloadInterval ?? 0) <= 60 ? 1 : 10"
-          :hint="t('SetSite.Editor.downloadIntervalHint')"
-          :label="t('SetSite.Editor.downloadInterval')"
-          persistent-hint
-        >
-          <template #append>
-            <v-btn variant="flat" @click="siteUserConfig.downloadInterval = 0">
+        <a-form-item :help="t('SetSite.Editor.downloadIntervalHint')" :label="t('SetSite.Editor.downloadInterval')">
+          <a-flex align="center" :gap="8">
+            <a-slider
+              v-model:value="siteUserConfig.downloadInterval"
+              :max="(siteUserConfig.downloadInterval ?? 0) < 600 ? 600 : 1200"
+              :min="0"
+              :step="(siteUserConfig.downloadInterval ?? 0) <= 60 ? 1 : 10"
+              style="flex: 1 1 auto"
+            />
+            <a-button type="text" @click="siteUserConfig.downloadInterval = 0">
               {{ formatDate((siteUserConfig.downloadInterval ?? 0) * 1e3, "mm:ss") }}
-            </v-btn>
-          </template>
-        </v-slider>
+            </a-button>
+          </a-flex>
+        </a-form-item>
 
-        <v-slider
-          v-model="siteUserConfig.uploadSpeedLimit"
-          :min="0"
-          :max="1024"
-          :step="1"
-          :hint="t('SetSite.editor.uploadSpeedLimitHint')"
-          :label="t('SetSite.editor.uploadSpeedLimit')"
-          persistent-hint
-        >
-          <template #append>
-            <v-btn variant="flat" @click="siteUserConfig.uploadSpeedLimit = 0">
+        <a-form-item :help="t('SetSite.editor.uploadSpeedLimitHint')" :label="t('SetSite.editor.uploadSpeedLimit')">
+          <a-flex align="center" :gap="8">
+            <a-slider
+              v-model:value="siteUserConfig.uploadSpeedLimit"
+              :max="1024"
+              :min="0"
+              :step="1"
+              style="flex: 1 1 auto"
+            />
+            <a-button type="text" @click="siteUserConfig.uploadSpeedLimit = 0">
               {{ siteUserConfig.uploadSpeedLimit ?? 0 }} MiB/s
-            </v-btn>
-          </template>
-        </v-slider>
-      </v-container>
-    </v-form>
-  </v-card>
+            </a-button>
+          </a-flex>
+        </a-form-item>
+      </div>
+    </a-form>
+  </a-card>
 </template>
-
-<style scoped lang="scss">
-.edit-select-url {
-  :deep(.v-selection-control) {
-    padding-left: 15px;
-    padding-right: 15px;
-  }
-  :deep(.v-selection-control .v-label) {
-    width: 100%;
-  }
-}
-</style>

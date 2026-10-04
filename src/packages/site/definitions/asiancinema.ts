@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/asiancinema.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/asiancinema.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/asiancinema.me/config.json
  */
 import { SchemaMetadata, CategoryFree } from "../schemas/Unit3D.ts";
 import { type ISiteMetadata } from "../types";
@@ -20,7 +20,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["ACM"],
   description: "综合",
   tags: ["综合"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

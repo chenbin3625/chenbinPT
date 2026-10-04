@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { LinkOutlined, UploadOutlined } from "@ant-design/icons-vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { type ITorrent, getHostFromUrl } from "@ptd/site";
@@ -25,6 +26,11 @@ function cleanStatus() {
   urlInput.value = "";
   torrentFiles.value = [];
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(cleanStatus);
+});
 
 async function submit() {
   const torrentItems: ITorrent[] = [];
@@ -71,68 +77,55 @@ async function submit() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="560" scrollable @after-enter="cleanStatus">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("MyClient.pushToDownloader.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-button-props="{ disabled: inputMode === 'url' ? !urlInput.trim() : torrentFiles.length === 0 }"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('MyClient.pushToDownloader.title')"
+    :width="560"
+    @ok="submit"
+  >
+    <a-radio-group v-model:value="inputMode" button-style="solid" style="margin-bottom: 16px">
+      <a-radio-button value="url"><LinkOutlined />{{ t("MyClient.pushToDownloader.modeUrl") }}</a-radio-button>
+      <a-radio-button value="file"><UploadOutlined />{{ t("MyClient.pushToDownloader.modeFile") }}</a-radio-button>
+    </a-radio-group>
 
-      <v-card-text>
-        <v-btn-toggle v-model="inputMode" class="mb-4" mandatory density="compact" variant="outlined">
-          <v-btn value="url" prepend-icon="mdi-link-variant">{{ t("MyClient.pushToDownloader.modeUrl") }}</v-btn>
-          <v-btn value="file" prepend-icon="mdi-file-upload">{{ t("MyClient.pushToDownloader.modeFile") }}</v-btn>
-        </v-btn-toggle>
+    <template v-if="inputMode === 'url'">
+      <a-form-item :label="t('MyClient.pushToDownloader.urlInputLabel')"
+        ><a-textarea v-model:value="urlInput" :auto-size="{ minRows: 3 }" allow-clear></a-textarea
+      ></a-form-item>
+    </template>
 
-        <template v-if="inputMode === 'url'">
-          <v-textarea
-            v-model="urlInput"
-            :label="t('MyClient.pushToDownloader.urlInputLabel')"
-            :hint="t('MyClient.pushToDownloader.urlInputHint')"
-            persistent-hint
-            auto-grow
-            rows="3"
-            clearable
-          />
-        </template>
-
-        <template v-else>
-          <v-file-input
-            v-model="torrentFiles"
-            accept=".torrent"
-            :label="t('MyClient.pushToDownloader.fileInputLabel')"
-            :hint="t('MyClient.pushToDownloader.fileInputHint')"
-            persistent-hint
-            multiple
-            show-size
-            prepend-icon="mdi-file-document"
-          />
-        </template>
-      </v-card-text>
-
-      <v-divider />
-
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="info" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          <span class="ml-1">{{ t("common.dialog.cancel") }}</span>
-        </v-btn>
-        <v-btn
-          :disabled="inputMode === 'url' ? !urlInput.trim() : torrentFiles.length === 0"
-          color="success"
-          prepend-icon="mdi-cloud-upload"
-          variant="text"
-          @click="submit"
+    <template v-else>
+      <a-form-item
+        :label="t('MyClient.pushToDownloader.fileInputLabel')"
+        :help="t('MyClient.pushToDownloader.fileInputHint')"
+      >
+        <a-upload
+          :file-list="
+            (torrentFiles ?? []).map((file: File, index: number) => ({
+              uid: `ptd-file-${index}-${file.name}`,
+              name: file.name,
+              size: file.size,
+              status: 'done',
+            }))
+          "
+          :before-upload="
+            (file: File) => {
+              torrentFiles = Array.from(new Set([...(torrentFiles ?? []), file]));
+              return false;
+            }
+          "
+          accept=".torrent"
+          multiple
+          show-upload-list
         >
-          <span class="ml-1">{{ t("common.dialog.ok") }}</span>
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+          <a-button><UploadOutlined />{{ t("MyClient.pushToDownloader.fileInputLabel") }}</a-button>
+        </a-upload>
+      </a-form-item>
+    </template>
+  </a-modal>
 
   <SentToDownloaderDialog
     v-model="showSentToDownloaderDialog"
@@ -140,5 +133,3 @@ async function submit() {
     @done="() => (showDialog = false)"
   />
 </template>
-
-<style scoped lang="scss"></style>

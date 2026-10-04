@@ -190,14 +190,13 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
       for (const item of items) {
         const mediaItem: IMediaServerItem<IPlexSearchItem | IPlexRecentlyAddedItem> = {
           server: this.config.id!,
-          // @ts-ignore
+          // @ts-expect-error
+          // 原因：SearchItem / RecentlyAddedItem 联合类型下 title 等字段可选，取值为 string | undefined，运行时由类型定义兜底
           name: item.parentTitle ? `${item.parentTitle} (${item.title})` : item.title,
-          url: `${this.webBaseUrl}#!/server/${serverIdentity}/details?key=${item.key.replace(/\/children$/, '')}`,
+          url: `${this.webBaseUrl}#!/server/${serverIdentity}/details?key=${item.key.replace(/\/children$/, "")}`,
           type: item.type === "movie" ? "Movie" : item.type,
           description: item.summary,
-          // @ts-ignore
           format: item.Media?.[0]?.container ?? "",
-          // @ts-ignore
           size: item.Media?.[0]?.Part?.[0].size ?? 0,
           duration: item.duration ?? 0,
           poster: item.thumb ? urlJoin(this.apiBaseUrl, `${item.thumb}?X-Plex-Token=${this.config.auth.apikey}`) : "",

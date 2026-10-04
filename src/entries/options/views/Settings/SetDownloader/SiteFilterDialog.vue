@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons-vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import type { IDownloaderMetadata, TDownloaderKey } from "@/shared/types.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import CheckSwitchButton from "@/options/components/CheckSwitchButton.vue";
+import PageSkeleton from "@/options/components/PageSkeleton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import { useConfigStore } from "@/options/stores/config.ts";
+import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 
 const showDialog = defineModel<boolean>();
 const { clientId } = defineProps<{
@@ -17,6 +22,9 @@ const { clientId } = defineProps<{
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
 const configStore = useConfigStore();
+
+// 站点列表来自 metadata store，异步水合完成前不能把空列表当成「暂无已添加的站点」
+const isStoreHydrating = useStoreHydrating(metadataStore);
 
 const clientConfig = ref<IDownloaderMetadata>();
 const excludedSites = ref<string[]>([]);
@@ -41,86 +49,77 @@ function save() {
   metadataStore.simplePatch("downloaders", clientId, "excludedSites", excludedSites.value);
   showDialog.value = false;
 }
+
+function toggleExcluded(siteId: string, checked: boolean) {
+  excludedSites.value = checked
+    ? Array.from(new Set([...excludedSites.value, siteId]))
+    : excludedSites.value.filter((id) => id !== siteId);
+}
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(onEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" scrollable max-width="1000" @afterEnter="onEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar
-          :title="t('SetDownloader.siteFilter.title', [clientConfig?.name ?? clientId])"
-          color="blue-grey-darken-2"
-        >
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-alert class="mb-3 py-2" color="info" variant="tonal">
-          <template #text>
-            {{ t("SetDownloader.siteFilter.excludedSitesHint") }}
-          </template>
-          <template #append>
-            <CheckSwitchButton v-model="excludedSites" :all="allSiteIds" color="blue-lighten-1" variant="tonal" />
-          </template>
-        </v-alert>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('SetDownloader.siteFilter.title', [clientConfig?.name ?? clientId])"
+    :width="1000"
+    @ok="save"
+  >
+    <div class="ptd-inline-toolbar">
+      <a-typography-text type="secondary">
+        {{ t("SetDownloader.siteFilter.excludedSitesHint") }}
+      </a-typography-text>
+      <!-- A-27：原 color="blue-lighten-1" / variant="tonal" 都不是 antd 语义（前者未被 NavButton 映射、
+           后者在 antd 4.2.6 中不存在），改用低强调的 text 按钮 -->
+      <CheckSwitchButton v-model="excludedSites" :all="allSiteIds" type="text" />
+    </div>
 
-        <v-skeleton-loader v-if="addedSites.length === 0" type="image" />
+    <!-- 原实现的 PtdSkeletonLoader 语义是「无数据」而非「加载中」，这里按真实状态拆开：
+         水合/加载期间用骨架屏，确实没有已添加站点时用空状态占位 -->
+    <PageSkeleton v-if="isStoreHydrating" :count="6" :rows="2" variant="masonry" />
+    <NoDataPlaceholder v-else-if="addedSites.length === 0" :description="t('SetDownloader.siteFilter.noSites')" />
 
-        <v-list v-else class="overflow-x-hidden overflow-y-hidden px-3 pt-3">
-          <!-- Vuetify 4 的 v-row 默认 gap 为 24px，站点卡片间距由 v-col 的 pa-1 控制，需显式 gap="0" -->
-          <v-row gap="0">
-            <v-col v-for="site in addedSites" :key="site.id" cols="12" md="4" sm="6" class="pa-1">
-              <v-list-item border class="bg-grey-lighten-4">
-                <template #prepend>
-                  <SiteFavicon :site-id="site.id" class="mr-2" flush-on-click />
-                </template>
+    <a-list v-else style="overflow: hidden; padding: 12px 12px 0 12px">
+      <!-- 站点卡片间距由列上的 padding 控制，行容器保持零间距 -->
+      <a-row :gutter="0">
+        <a-col v-for="site in addedSites" :key="site.id" :md="8" :sm="12" :xs="24" style="padding: 4px">
+          <a-list-item
+            class="ptd-list-item"
+            style="
+              border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+              background: var(--ptd-hover, #f5f5f5);
+            "
+          >
+            <a-list-item-meta>
+              <template #avatar>
+                <SiteFavicon :site-id="site.id" flush-on-click style="margin-right: 8px" />
+              </template>
 
-                <template #title>
-                  <v-list-item-title>
-                    <b>{{ site.name }}</b>
-                  </v-list-item-title>
-                </template>
+              <template #title>
+                <strong>{{ site.name }}</strong>
+              </template>
 
-                <template #subtitle>
-                  <v-chip label size="x-small" class="mt-1">
-                    {{ site.id }}
-                  </v-chip>
-                </template>
+              <template #description>
+                <a-tag style="margin-top: 4px">{{ site.id }}</a-tag>
+              </template>
+            </a-list-item-meta>
 
-                <template #append>
-                  <v-list-item-action>
-                    <v-checkbox
-                      v-model="excludedSites"
-                      :value="site.id"
-                      :color="excludedSites.includes(site.id) ? 'error' : ''"
-                      hide-details
-                      base-color="green"
-                      multiple
-                      true-icon="mdi-eye-off"
-                      false-icon="mdi-eye"
-                    />
-                  </v-list-item-action>
-                </template>
-              </v-list-item>
-            </v-col>
-          </v-row>
-        </v-list>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn color="success" prepend-icon="mdi-check-circle-outline" variant="text" @click="save">
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+            <a-checkbox
+              :checked="excludedSites.includes(site.id)"
+              @update:checked="(checked: boolean) => toggleExcluded(site.id, checked)"
+            >
+              <EyeInvisibleOutlined v-if="excludedSites.includes(site.id)" :style="{ color: resolveColor('error') }" />
+              <EyeOutlined v-else />
+            </a-checkbox>
+          </a-list-item>
+        </a-col>
+      </a-row>
+    </a-list>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

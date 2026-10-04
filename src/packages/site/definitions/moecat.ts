@@ -13,6 +13,6 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://moecat.best/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/2c9591371523ad237f5c6f34335cb118738ea9ba
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/2c9591371523ad237f5c6f34335cb118738ea9ba
   isDead: true,
 };

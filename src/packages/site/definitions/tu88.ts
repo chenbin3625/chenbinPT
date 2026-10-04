@@ -33,7 +33,6 @@ export const siteMetadata: ISiteMetadata = {
       options: [
         { name: "CG(图集)", value: 417 },
         { name: "绘本", value: 413 },
-        { name: "绘本", value: 413 },
         { name: "Other(其它，确认上边分类无)", value: 414 },
       ],
       cross: { mode: "append", key: "cat" },

@@ -1,7 +1,7 @@
-# PT-depiler AI Coding Agent Instructions
+# chenbinPT AI Coding Agent Instructions
 
 ## Project Overview
-PT-depiler is a browser extension (Manifest v3) for enhancing Private Tracker (PT) site usability. Built with Vue 3 + TypeScript + Vuetify, it provides multi-site search, torrent management, and downloader integration.
+chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT) site usability. Built with Vue 3 + TypeScript + Vuetify, it provides multi-site search, torrent management, and downloader integration.
 
 ## Architecture & Key Components
 
@@ -51,11 +51,20 @@ PT-depiler is a browser extension (Manifest v3) for enhancing Private Tracker (P
 
 ### Key Commands
 ```bash
-pnpm dev                    # Development server with HMR
-pnpm build:dist            # Build Chrome extension
-pnpm build:dist-firefox    # Build Firefox addon
-pnpm check                 # TypeScript type checking
+npm run dev                    # Development server with HMR
+npm run build:dist            # Build Chrome extension
+npm run build:dist-firefox    # Build Firefox addon
+npm run check                 # TypeScript type checking
+npm run pack:crx              # Sign dist-chrome into build/extension.crx (self-verifying)
+npm run pack:crx:build        # Build Chrome extension, then sign it
 ```
+
+Packing notes: `scripts/pack-crx.mjs` implements CRX3 itself (no Chrome binary, no extra deps beyond
+`jszip`) and re-parses the written file to verify structure, embedded public key, `crx_id` and the
+RSA-SHA256 signature before reporting success — a failing check exits non-zero. It reads the private key
+from `--key`, `CRX_PRIVATE_KEY_FILE`/`CRX_PRIVATE_KEY`, or `build/chrome-extension-signing-key.pem`
+(PKCS#8; `openssl genrsa -out build/chrome-extension-signing-key.pem 2048`). The same key must be set as
+the `CHROME_SELF_SIGN_CRX_PRIVATE_KEY` GitHub secret for the release workflow's CRX step.
 
 ### Browser Targets
 - Chrome: Uses service worker background script

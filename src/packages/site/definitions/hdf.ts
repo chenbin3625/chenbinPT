@@ -1,4 +1,3 @@
-import Sizzle from "sizzle";
 import BittorrentSite from "../schemas/AbstractBittorrentSite.ts";
 import Gazelle, { SchemaMetadata } from "../schemas/Gazelle.ts";
 import { type ISearchInput, type ISiteMetadata, type ITorrent } from "../types";

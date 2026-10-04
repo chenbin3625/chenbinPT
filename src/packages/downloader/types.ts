@@ -3,6 +3,13 @@
  */
 import { AxiosRequestConfig } from "axios";
 
+/**
+ * getClientPaths / getClientLabels 共用的列表短 TTL 缓存时长。
+ * 这两个方法服务于"自动导入下载目录/标签"这类建议列表场景，
+ * 短时间内（同一次对话框操作）复用同一份 getAllTorrents() 结果即可，无需两次全量拉取。
+ */
+const CLIENT_SUGGEST_LIST_CACHE_TTL = 30e3;
+
 export type TorrentClientFeature =
   | "CustomPath" // 支持设置自定义目录作为下载目录
   | "DefaultAutoStart" // 支持发送种子时自动开始
@@ -365,14 +372,37 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
 
   // 获取客户端中的已有的下载目录
   async getClientPaths(): Promise<string[]> {
-    const torrents = await this.getAllTorrents();
+    const torrents = await this.getAllTorrentsForSuggest();
     return Array.from(new Set(torrents.map((t) => t.savePath))).filter(Boolean);
   }
 
   // 获取客户端中的已有的标签
   public async getClientLabels(): Promise<string[]> {
-    const torrents = await this.getAllTorrents();
+    const torrents = await this.getAllTorrentsForSuggest();
     return Array.from(new Set(torrents.map((t) => t.label))).filter(Boolean) as string[];
+  }
+
+  /** 供 getClientPaths / getClientLabels 共用的短 TTL 列表缓存（含并发去重） */
+  private clientSuggestTorrentsCache?: { at: number; promise: Promise<CTorrent[]> };
+
+  private async getAllTorrentsForSuggest(): Promise<CTorrent[]> {
+    const now = Date.now();
+    if (this.clientSuggestTorrentsCache && now - this.clientSuggestTorrentsCache.at < CLIENT_SUGGEST_LIST_CACHE_TTL) {
+      return await this.clientSuggestTorrentsCache.promise;
+    }
+
+    const promise = this.getAllTorrents();
+    this.clientSuggestTorrentsCache = { at: now, promise };
+
+    try {
+      return await promise;
+    } catch (e) {
+      // 拉取失败时不缓存，下一次调用重新拉取
+      if (this.clientSuggestTorrentsCache?.promise === promise) {
+        this.clientSuggestTorrentsCache = undefined;
+      }
+      throw e;
+    }
   }
 
   /**

@@ -1,8 +1,6 @@
 /**
  * 此文件用于描述 sessionStorage['__ptd_runtime_store'] 中字段格式
  */
-import type { VNodeProps } from "vue";
-import type { VSnackbar } from "vuetify/components";
 import type { ISearchResult, ITorrent, TSiteID } from "@ptd/site";
 import type { IMediaServerItem, IMediaServerSearchResult } from "@ptd/mediaServer";
 
@@ -44,24 +42,10 @@ export interface ISearchData {
   searchResult: ISearchResultTorrent[];
 }
 
-export type SnackbarMessageOptions = Partial<
-  Omit<
-    VSnackbar["$props"],
-    | "modelValue"
-    | "onUpdate:modelValue"
-    | "activator"
-    | "activatorProps"
-    | "closeDelay"
-    | "openDelay"
-    | "openOnClick"
-    | "openOnFocus"
-    | "openOnHover"
-    | "$children"
-    | "v-slots"
-    | `v-slot:${string}`
-    | keyof VNodeProps
-  >
->;
+export interface SnackbarMessageOptions {
+  color?: "success" | "error" | "warning" | "info" | string;
+  timeout?: number; // 毫秒
+}
 
 export interface IRuntimePiniaStorageSchema {
   search: ISearchData;
@@ -74,5 +58,4 @@ export interface IRuntimePiniaStorageSchema {
     searchStatus: Record<TMediaServerKey, Omit<IMediaServerSearchResult, "items"> & { canLoadMore?: boolean }>; // 搜索状态
     searchResult: IMediaServerItem[];
   };
-  uiGlobalSnakebar: SnackbarMessageOptions[]; // https://vuetifyjs.com/en/components/snackbar-queue/#props-model-value
 }

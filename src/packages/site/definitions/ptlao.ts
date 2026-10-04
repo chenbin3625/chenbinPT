@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "PTLAO",
   aka: ["忘年桥"],
   tags: ["成人", "综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

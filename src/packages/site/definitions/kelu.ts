@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   id: "kelu",
   name: "Kelu",
   tags: ["成人"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

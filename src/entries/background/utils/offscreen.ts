@@ -1,4 +1,6 @@
-let creating: Promise<void> | null; // A global promise to avoid concurrency issues
+import { onMessage } from "@/messages.ts";
+
+let creating: Promise<void> | null = null; // A global promise to avoid concurrency issues
 
 const offscreenPath = "src/entries/offscreen/offscreen.html";
 
@@ -24,15 +26,25 @@ export async function setupOffscreenDocument() {
   if (creating) {
     await creating;
   } else {
-    creating = chrome.offscreen.createDocument({
+    const pending = chrome.offscreen.createDocument({
       url: offscreenPath,
       reasons: [chrome.offscreen.Reason.DOM_PARSER],
       justification: "Allow DOM_PARSER, CLIPBOARD, BLOBS in background.",
     });
-    await creating;
-    creating = null;
+    creating = pending;
+    try {
+      await pending;
+    } finally {
+      if (creating === pending) {
+        creating = null;
+      }
+    }
   }
 }
 
-// noinspection JSIgnoredPromiseFromCall
-setupOffscreenDocument();
+onMessage("ensureOffscreenDocument", async () => {
+  await setupOffscreenDocument();
+});
+
+// 预热失败不能污染 creating；后续业务消息会通过 ensureOffscreenDocument 自动重试。
+void setupOffscreenDocument().catch(() => undefined);

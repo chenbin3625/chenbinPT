@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/xingtan.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/xingtan.one/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/xingtan.one/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/xingtan.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/xingtan.json
  */
@@ -16,7 +16,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["杏林", "XingTan"],
   description: "杏坛 - 积少成多，聚沙成塔。",
   tags: ["医学", "电子书", "学术"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

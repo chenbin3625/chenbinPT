@@ -1,5 +1,5 @@
 import axios from "axios";
-import Sizzle from "sizzle";
+import { selectElements } from "../../site/utils/selector";
 import { uniq } from "es-toolkit";
 
 import { commonParseFactory } from "../utils";
@@ -23,7 +23,7 @@ function pageParser$1(doc: Document): ISocialSitePageInformation {
     site: "anidb",
     id: parse(doc.URL),
     titles: uniq(
-      Sizzle("div.titles span[itemprop], label[itemprop]", doc)
+      selectElements("div.titles span[itemprop], label[itemprop]", doc)
         .map((x) => x.textContent)
         .filter(Boolean),
     ) as string[],
@@ -65,15 +65,15 @@ export async function fetchInformation(
         responseType: "document",
       });
       resDict.title = uniq(
-        Sizzle("titles > title", apiReq.data)
+        selectElements("titles > title", apiReq.data)
           .map((x) => x.textContent)
           .filter(Boolean),
       ).join(" / ");
-      const poster = Sizzle("picture", apiReq.data)[0]?.textContent;
+      const poster = selectElements("picture", apiReq.data)[0]?.textContent;
       if (poster) {
         resDict.poster = "https://cdn.anidb.net/images/main/" + poster;
       }
-      const ratingAnother = Sizzle("ratings permanent, temporary", apiReq.data)?.[0];
+      const ratingAnother = selectElements("ratings permanent, temporary", apiReq.data)?.[0];
       if (ratingAnother) {
         resDict.ratingScore = parseFloat(ratingAnother.textContent ?? "0");
         resDict.ratingCount = parseInt(ratingAnother.getAttribute("count") ?? "0", 10);
@@ -82,10 +82,13 @@ export async function fetchInformation(
       const htmlReq = await axios.get(build(realId), { timeout: config.timeout ?? 10e3, responseType: "document" });
 
       resDict.title = pageParser$1(htmlReq.data).titles.join(" / ");
-      resDict.poster = Sizzle("meta[property='og:image'][content]", htmlReq.data)?.[0]?.getAttribute("content") ?? "";
-      resDict.ratingScore = parseFloat(Sizzle('span[itemprop="ratingValue"]', htmlReq.data)?.[0]?.textContent ?? "0");
+      resDict.poster =
+        selectElements("meta[property='og:image'][content]", htmlReq.data)?.[0]?.getAttribute("content") ?? "";
+      resDict.ratingScore = parseFloat(
+        selectElements('span[itemprop="ratingValue"]', htmlReq.data)?.[0]?.textContent ?? "0",
+      );
       resDict.ratingCount = parseInt(
-        Sizzle('span[itemprop="ratingCount"]', htmlReq.data)?.[0]?.getAttribute("content") ?? "0",
+        selectElements('span[itemprop="ratingCount"]', htmlReq.data)?.[0]?.getAttribute("content") ?? "0",
         10,
       );
     }

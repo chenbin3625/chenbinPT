@@ -88,15 +88,41 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
 };
 
 export default class Rartracker extends PrivateSite {
-  private _passKey?: string;
+  // passkey 通过 runtimeSettings 持久化（带过期时间），避免每次搜索重建实例后都重新请求 /api/v1/status
+  private static readonly passKeyCacheKey = "passKey";
+  private static readonly passKeyCacheTtl = 12 * 60 * 60; // 12 小时
 
   // 从 /api/v1/status 获取 passkey，用于构建种子下载链接
   private async getPassKey(): Promise<string> {
-    if (!this._passKey) {
-      const { data: statResp } = await this.request<{ user: { passkey: string } }>(statusRequestConfig);
-      this._passKey = statResp.user.passkey;
+    const currentTime = Math.floor(Date.now() / 1000);
+
+    const cachedPassKey = await this.retrieveRuntimeSettings<{ passkey?: string; expiry?: number }>(
+      Rartracker.passKeyCacheKey,
+    );
+
+    if (
+      typeof cachedPassKey?.passkey === "string" &&
+      cachedPassKey.passkey.trim().length > 0 &&
+      typeof cachedPassKey?.expiry === "number" &&
+      Number.isFinite(cachedPassKey.expiry) &&
+      cachedPassKey.expiry > currentTime
+    ) {
+      return cachedPassKey.passkey.trim();
     }
-    return this._passKey;
+
+    const { data: statResp } = await this.request<{ user: { passkey: string } }>(statusRequestConfig);
+    const passKey = (statResp.user.passkey ?? "").trim();
+
+    // 空 passkey 不写入持久化缓存：否则后续 12 小时内的下载链接都会复用空凭据；
+    // 读取侧本来就有非空校验，因此跳过写缓存即可。
+    if (passKey.length > 0) {
+      await this.storeRuntimeSettings(Rartracker.passKeyCacheKey, {
+        passkey: passKey,
+        expiry: currentTime + Rartracker.passKeyCacheTtl,
+      });
+    }
+
+    return passKey;
   }
 
   protected async parseTorrentRowForLink(torrent: Partial<ITorrent>): Promise<Partial<ITorrent>> {

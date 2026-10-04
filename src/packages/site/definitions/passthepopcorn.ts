@@ -1,8 +1,8 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/PassThePopcorn.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/passthepopcorn.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/passthepopcorn.me/config.json
  */
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import Gazelle, { SchemaMetadata } from "../schemas/Gazelle.ts";
 import { parseValidTimeString, parseSizeString, buildCategoryOptionsFromList } from "../utils";
 import type { ISiteMetadata, ITorrent, ISearchInput } from "../types";
@@ -121,9 +121,7 @@ export const siteMetadata: ISiteMetadata = {
       {
         requestConfig: {
           url: "/user.php",
-          params: {
-            /* id: flushUserInfo.id */
-          },
+          params: {/* id: flushUserInfo.id */},
           responseType: "document",
         },
         assertion: { id: "params.id" },
@@ -315,17 +313,17 @@ export default class PassThePopcorn extends Gazelle {
     if (torrent) {
       const id = torrent.TorrentId;
       const tempTitleDiv = this.createTempDiv(torrent.Title);
-      const rawTitle = Sizzle("a", tempTitleDiv)[0]?.getAttribute("title") || "";
+      const rawTitle = selectElements("a", tempTitleDiv)[0]?.getAttribute("title") || "";
       const titleParts = rawTitle.split("\n");
       const title = titleParts.length > 1 ? titleParts[1].trim() : rawTitle.trim();
-      const subTitlePart = Sizzle("a", tempTitleDiv)[0]?.textContent?.trim() || "";
+      const subTitlePart = selectElements("a", tempTitleDiv)[0]?.textContent?.trim() || "";
       const subTitle = `${movieName} ${movieYear} ${movieImdbId} ${subTitlePart}`.trim();
 
       const url = `${this.url}torrents.php?id=${movieId}&torrentid=${id}`;
       const link = `${this.url}torrents.php?action=download&id=${id}&authkey=${authKey}&torrent_pass=${torrentPass}`;
 
       const tempTimeDiv = this.createTempDiv(torrent.Time);
-      const timeStr = Sizzle("span", tempTimeDiv)[0]?.getAttribute("title") || "";
+      const timeStr = selectElements("span", tempTimeDiv)[0]?.getAttribute("title") || "";
       const time = parseValidTimeString(timeStr, ["MMM dd yyyy, HH:mm"]) as number;
       const size = parseSizeString(torrent.Size);
       const seeders = parseFloat(torrent.Seeders);
@@ -371,7 +369,7 @@ export default class PassThePopcorn extends Gazelle {
   public override async transformSearchPage(doc: Document, searchConfig: ISearchInput): Promise<ITorrent[]> {
     const torrents: ITorrent[] = [];
 
-    const scripts = Sizzle("script", doc) as HTMLScriptElement[];
+    const scripts = selectElements("script", doc) as HTMLScriptElement[];
     let pageDataContent = "";
     for (const script of scripts) {
       if (script.textContent?.includes("var PageData")) {

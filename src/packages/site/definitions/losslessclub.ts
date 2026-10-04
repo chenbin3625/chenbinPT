@@ -1,7 +1,7 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/losslessclub.com/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/losslessclub.com/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/losslessclub.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 站点为 Кinokрk releaser 系模板。注意：其论坛与 tracker 是两套独立账号
  * （Jackett 的 info_login 提示），PTD 走浏览器 cookie 会话，无需额外处理。

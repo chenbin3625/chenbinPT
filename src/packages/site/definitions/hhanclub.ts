@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/hhanclub.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hhanclub.top/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hhanclub.top/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hhanclub.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/hhanclub.json
  */
@@ -12,7 +12,7 @@ import NexusPHP, {
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
 import { parseValidTimeString } from "../utils";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 const hhLinkQuery = {
   selector: ['a[href*="download.php?id="]'],
@@ -27,7 +27,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "憨憨",
   aka: ["HHanClub"],
   tags: ["电影", "电视剧"],
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 
@@ -384,7 +383,7 @@ export default class Hhanclub extends NexusPHP {
     // 请求保重区结算日志页面，并解析出最近一次结算时获得的积分 数值
     let rescueDocument = await this.getRescueDocument(flushUserInfo.id as number);
     // 如果有分页，从最后一页获取
-    const totalPages = Sizzle("table + div b", rescueDocument);
+    const totalPages = selectElements("table + div b", rescueDocument);
     if (totalPages.length > 0) {
       rescueDocument = await this.getRescueDocument(
         flushUserInfo.id as number,

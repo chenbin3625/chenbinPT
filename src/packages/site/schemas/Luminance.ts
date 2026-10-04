@@ -2,7 +2,7 @@ import { toMerged } from "es-toolkit";
 import { ETorrentStatus, type ISiteMetadata, type IUserInfo, type ITorrent, type ISearchInput } from "../types";
 import { GazelleBase } from "./Gazelle";
 import { parseSizeString, definedFilters } from "../utils";
-import Sizzle from "sizzle";
+import { matchesSelector, selectElements } from "../utils/selector";
 
 export const SchemaMetadata: Partial<ISiteMetadata> = {
   version: 0,
@@ -85,9 +85,7 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
       {
         requestConfig: {
           url: "/user.php",
-          params: {
-            /* id: flushUserInfo.id */
-          },
+          params: {/* id: flushUserInfo.id */},
           responseType: "document",
         },
         assertion: { id: "params.id" },
@@ -165,9 +163,13 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         elementProcess: (element: HTMLElement) => {
           if (!element) return 0;
 
-          const firstLine = element.innerHTML.split("<br/>").find((log) => log.includes("hrs"));
-          const creditsMatch = firstLine?.match(/\|\s*[+-]?([\d.,]+)\s*credits\s*\|/);
-          const credits = creditsMatch ? parseFloat(creditsMatch?.[1].replace(/,/g, "")) : 0;
+          // E-5：innerHTML 序列化出来的换行标签是 <br>（不带斜杠），
+          // 早先按字面量 "<br/>" split 永远不生效，find 会检查整段日志并取到任意一条记录；
+          // 改按 /<br\s*\/?>/i 切分后才真正逐行查找，且要求该行确实含 "hrs"。
+          const logLine = element.innerHTML.split(/<br\s*\/?>/i).find((log) => log.includes("hrs"));
+          // 符号必须纳入捕获组：扣款行 "-500.0 credits" 若丢掉负号会得到正收益（错误的时魔）
+          const creditsMatch = logLine?.match(/\|\s*([+-]?[\d.,]+)\s*credits\s*\|/);
+          const credits = creditsMatch ? parseFloat(creditsMatch[1].replace(/,/g, "")) : 0;
           return credits / 24;
         },
       },
@@ -185,7 +187,7 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         selector: ":self",
         elementProcess: (doc: Document) => {
           // https://github.com/Empornium/Luminance/blob/23b568c157a58f36305cf447a3617bf2e4a2ca2e/application/Templates/snippets/header_bottom.html.twig#L93
-          const messageEls = Sizzle("a[onmousedown*='inbox'], a[onmousedown*='staffpm']", doc);
+          const messageEls = selectElements("a[onmousedown*='inbox'], a[onmousedown*='staffpm']", doc);
           return messageEls.reduce((sum, el) => sum + definedFilters.parseNumber(el.textContent), 0);
         },
       },
@@ -232,10 +234,13 @@ export default class Luminance extends GazelleBase {
     doc: Document | object | any,
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
-    const { keywords, searchEntry, requestConfig } = searchConfig;
+    let { keywords, searchEntry, requestConfig } = searchConfig;
 
     // 返回是 Document 的情况才自动生成选择器
     if (doc instanceof Document) {
+      // 自动生成的选择器写入局部副本，避免写回共享的 metadata.search.selectors (P2-15)
+      searchEntry = { ...searchEntry, selectors: { ...(searchEntry?.selectors ?? {}) } };
+
       // 如果配置文件没有传入 search 的选择器，则我们自己生成
       const legacyTableSelector = "table#torrent_table:last";
 
@@ -248,26 +253,38 @@ export default class Luminance extends GazelleBase {
 
       // 对于 Luminance，一般来说，表的第一行应该是标题行，即 ` > tr:nth-child(1)`
       const headSelector = `${legacyTableSelector} tr:first > td`;
-      const headAnother = Sizzle(headSelector, doc) as HTMLElement[];
+      const headAnother = selectElements(headSelector, doc) as HTMLElement[];
+
+      // 原实现外层循环缺少 break（last-match-wins），这里反序遍历、命中即跳出，结果等价且只需扫描一次
+      // guessSearchFieldIndexConfig() 提到循环外只调用一次
+      const guessSearchFieldIndexEntries = Object.entries(this.guessSearchFieldIndexConfig()).reverse();
+
       headAnother.forEach((element, elementIndex) => {
         // 比较好处理的一些元素，都是可以直接获取的
         let updateSelectorField;
-        for (const [dectField, dectSelector] of Object.entries(this.guessSearchFieldIndexConfig())) {
+        for (const [dectField, dectSelector] of guessSearchFieldIndexEntries) {
+          let matched = false;
           for (const dectFieldElement of dectSelector) {
-            if (Sizzle.matchesSelector(element, dectFieldElement)) {
-              updateSelectorField = dectField;
+            if (matchesSelector(element, dectFieldElement)) {
+              matched = true;
               break;
             }
+          }
+          if (matched) {
+            updateSelectorField = dectField;
+            break;
           }
         }
 
         if (updateSelectorField) {
-          // @ts-ignore
+          // @ts-expect-error
+          // 原因：updateSelectorField 是运行时推断出的动态字段名，selectors 的类型没有字符串索引签名
           searchEntry.selectors[updateSelectorField] = toMerged(
             {
               selector: [`> td:eq(${elementIndex})`],
             },
-            // @ts-ignore
+            // @ts-expect-error
+            // 原因：同上，读取同一个动态字段（可能不存在，故用 || {} 兜底）
             searchEntry.selectors[updateSelectorField] || {},
           );
         }

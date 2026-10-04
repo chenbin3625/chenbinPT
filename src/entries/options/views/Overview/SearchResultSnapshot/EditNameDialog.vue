@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -24,40 +24,28 @@ function saveSearchSnapshotData() {
 function dialogEnter() {
   snapshotName.value = metadataStore.snapshots[props.editId].name;
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(() => props.editId && dialogEnter());
+});
 </script>
 
 <template>
-  <v-dialog
-    v-model="showDialog"
-    width="500"
-    @after-enter="() => props.editId && dialogEnter()"
-    @after-leave="() => (snapshotName = '')"
+  <a-modal
+    v-model:open="showDialog"
+    :title="t('SearchResultSnapshot.EditNameDialog.title')"
+    :width="500"
+    :after-close="() => (snapshotName = '')"
   >
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="cyan-darken-2">
-          <v-toolbar-title>{{ t("SearchResultSnapshot.EditNameDialog.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-text-field
-          v-model="snapshotName"
-          density="compact"
-          hide-details
-          variant="outlined"
-          :label="t('SearchResultSnapshot.EditNameDialog.snapshotName')"
-        ></v-text-field>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="primary" @click="saveSearchSnapshotData">{{ t("common.save") }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-</template>
+    <a-form-item :label="t('SearchResultSnapshot.EditNameDialog.snapshotName')"
+      ><a-input v-model:value="snapshotName"></a-input
+    ></a-form-item>
 
-<style scoped lang="scss"></style>
+    <template #footer>
+      <a-flex align="center" justify="flex-end">
+        <a-button type="primary" @click="saveSearchSnapshotData">{{ t("common.save") }}</a-button>
+      </a-flex>
+    </template>
+  </a-modal>
+</template>

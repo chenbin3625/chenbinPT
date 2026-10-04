@@ -41,13 +41,13 @@ function toggleNumberSimplification() {
 
 <template>
   <span
-    class="text-no-wrap"
     :title="titleText"
     @dblclick="toggleNumberSimplification"
-    :style="{ cursor: normalizedValue.type === 'number' ? 'pointer' : 'default', userSelect: 'none' }"
+    :style="[
+      { 'white-space': 'nowrap' },
+      { cursor: normalizedValue.type === 'number' ? 'pointer' : 'default', userSelect: 'none' },
+    ]"
   >
     {{ displayText }}
   </span>
 </template>
-
-<style scoped lang="scss"></style>

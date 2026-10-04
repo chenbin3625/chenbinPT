@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "52movie",
   description: "The Ultimate File Sharing Experience",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["bfjy"],
 

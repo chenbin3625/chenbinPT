@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ISocialSitePageInformation } from "@ptd/social";
-import { doKeywordSearch, type IPtdData } from "../utils.ts";
+import { type IPtdData } from "../utils.ts";
 import { computed, inject } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+
+import ParseResultListItem from "./ParseResultListItem.vue";
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
@@ -43,6 +45,9 @@ const searchPlans = computed(() => {
 });
 
 const shouldShowSearchPlanMenu = computed(() => customSearchPlans.value.length > 0);
+
+/** 只有存在自定义搜索方案时才给行挂 hover 菜单，否则传空数组让 a-dropdown 禁用 */
+const planMenuSearchPlans = computed(() => (shouldShowSearchPlanMenu.value ? searchPlans.value : []));
 
 function buildSiteSearchKeyword(result: ISocialSitePageInformation) {
   return `${ptdData.socialSite!}|${result.id}`;
@@ -88,139 +93,77 @@ function shouldShowSeriesTitle(result: ISocialSitePageInformation, index: number
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="600" scrollable>
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("contentScript.SocialSiteParseResultsDialog.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-card-text>
-        <v-list density="compact">
-          <template v-for="(result, index) in parseResults" :key="getResultKey(result, index)">
-            <v-list-item
-              v-if="shouldShowSiteId(result, index)"
-              :title="`${ptdData.socialSite}: ${result.id}`"
-              @click="() => doKeywordSearch(buildSiteSearchKeyword(result), searchPlan)"
-            >
-              <template #append>
-                <v-chip color="indigo">{{ t("contentScript.SocialSiteParseResultsDialog.searchId") }}</v-chip>
-              </template>
-              <v-menu v-if="shouldShowSearchPlanMenu" activator="parent" location="end" open-on-hover>
-                <v-list density="compact">
-                  <v-list-subheader>{{ t("contentScript.SocialSiteParseResultsDialog.searchPlan") }}</v-list-subheader>
-                  <v-list-item
-                    v-for="plan in searchPlans"
-                    :key="`${result.id}|id|${plan.id}`"
-                    :title="plan.name"
-                    @click.stop="doKeywordSearch(buildSiteSearchKeyword(result), plan.id)"
-                  />
-                </v-list>
-              </v-menu>
-            </v-list-item>
-            <template v-if="result.external_ids && shouldShowExternalIds(result, index)">
-              <v-list-item
-                v-for="(externalId, externalType) in result.external_ids"
-                :key="`${result.id}|${externalType}|${externalId}`"
-                :title="`${externalType}: ${externalId}`"
-                @click="() => doKeywordSearch(`${externalType}|${externalId}`, searchPlan)"
-              >
-                <template #append>
-                  <v-chip color="green">{{ t("contentScript.SocialSiteParseResultsDialog.searchExternalId") }}</v-chip>
-                </template>
-                <v-menu v-if="shouldShowSearchPlanMenu" activator="parent" location="end" open-on-hover>
-                  <v-list density="compact">
-                    <v-list-subheader>{{ t("contentScript.SocialSiteParseResultsDialog.searchPlan") }}</v-list-subheader>
-                    <v-list-item
-                      v-for="plan in searchPlans"
-                      :key="`${result.id}|${externalType}|${plan.id}`"
-                      :title="plan.name"
-                      @click.stop="doKeywordSearch(`${externalType}|${externalId}`, plan.id)"
-                    />
-                  </v-list>
-                </v-menu>
-              </v-list-item>
-            </template>
-            <v-list-item
-              v-if="shouldShowSeriesTitle(result, index)"
-              :title="result.seriesTitle"
-              @click="() => doKeywordSearch(result.seriesTitle!, searchPlan)"
-            >
-              <template #append>
-                <v-chip color="blue-grey">{{ t("contentScript.SocialSiteParseResultsDialog.searchTitle") }}</v-chip>
-              </template>
-              <v-menu v-if="shouldShowSearchPlanMenu" activator="parent" location="end" open-on-hover>
-                <v-list density="compact">
-                  <v-list-subheader>{{ t("contentScript.SocialSiteParseResultsDialog.searchPlan") }}</v-list-subheader>
-                  <v-list-item
-                    v-for="plan in searchPlans"
-                    :key="`${result.id}|series|${plan.id}`"
-                    :title="plan.name"
-                    @click.stop="doKeywordSearch(result.seriesTitle!, plan.id)"
-                  />
-                </v-list>
-              </v-menu>
-            </v-list-item>
-            <template v-if="shouldCollapseTitles(result)">
-              <v-expansion-panels variant="accordion" flat>
-                <v-expansion-panel>
-                  <v-expansion-panel-title>
-                    {{ getCollapseTitle(result) }} ({{ result.titles.length }})
-                  </v-expansion-panel-title>
-                  <v-expansion-panel-text class="pa-0">
-                    <v-list density="compact">
-                      <template v-for="title in result.titles" :key="`${result.id}|${title}`">
-                        <v-list-item :title="title" @click="() => doKeywordSearch(title, searchPlan)">
-                          <template #append>
-                            <v-chip color="blue-grey">{{
-                              t("contentScript.SocialSiteParseResultsDialog.searchTitle")
-                            }}</v-chip>
-                          </template>
-                          <v-menu v-if="shouldShowSearchPlanMenu" activator="parent" location="end" open-on-hover>
-                            <v-list density="compact">
-                              <v-list-subheader>{{ t("contentScript.SocialSiteParseResultsDialog.searchPlan") }}</v-list-subheader>
-                              <v-list-item
-                                v-for="plan in searchPlans"
-                                :key="`${result.id}|${title}|${plan.id}`"
-                                :title="plan.name"
-                                @click.stop="doKeywordSearch(title, plan.id)"
-                              />
-                            </v-list>
-                          </v-menu>
-                        </v-list-item>
-                      </template>
-                    </v-list>
-                  </v-expansion-panel-text>
-                </v-expansion-panel>
-              </v-expansion-panels>
-            </template>
-            <template v-else v-for="title in result.titles" :key="`${result.id}|${title}`">
-              <v-list-item :title="title" @click="() => doKeywordSearch(title, searchPlan)">
-                <template #append>
-                  <v-chip color="blue-grey">{{ t("contentScript.SocialSiteParseResultsDialog.searchTitle") }}</v-chip>
-                </template>
-                <v-menu v-if="shouldShowSearchPlanMenu" activator="parent" location="end" open-on-hover>
-                  <v-list density="compact">
-                    <v-list-subheader>{{ t("contentScript.SocialSiteParseResultsDialog.searchPlan") }}</v-list-subheader>
-                    <v-list-item
-                      v-for="plan in searchPlans"
-                      :key="`${result.id}|${title}|${plan.id}`"
-                      :title="plan.name"
-                      @click.stop="doKeywordSearch(title, plan.id)"
-                    />
-                  </v-list>
-                </v-menu>
-              </v-list-item>
-            </template>
-            <v-divider v-if="index != parseResults.length - 1" inset />
-          </template>
-        </v-list>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
-</template>
+  <a-modal
+    v-model:open="showDialog"
+    :footer="null"
+    :title="t('contentScript.SocialSiteParseResultsDialog.title')"
+    :width="600"
+  >
+    <a-list>
+      <template v-for="(result, index) in parseResults" :key="getResultKey(result, index)">
+        <ParseResultListItem
+          v-if="shouldShowSiteId(result, index)"
+          :title="`${ptdData.socialSite}: ${result.id}`"
+          :tag-text="t('contentScript.SocialSiteParseResultsDialog.searchId')"
+          tag-color="geekblue"
+          :keyword="buildSiteSearchKeyword(result)"
+          :search-plan="searchPlan"
+          :search-plans="planMenuSearchPlans"
+        />
 
-<style scoped lang="scss"></style>
+        <template v-if="result.external_ids && shouldShowExternalIds(result, index)">
+          <ParseResultListItem
+            v-for="(externalId, externalType) in result.external_ids"
+            :key="`${result.id}|${externalType}|${externalId}`"
+            :title="`${externalType}: ${externalId}`"
+            :tag-text="t('contentScript.SocialSiteParseResultsDialog.searchExternalId')"
+            tag-color="green"
+            :keyword="`${externalType}|${externalId}`"
+            :search-plan="searchPlan"
+            :search-plans="planMenuSearchPlans"
+          />
+        </template>
+
+        <ParseResultListItem
+          v-if="shouldShowSeriesTitle(result, index)"
+          :title="result.seriesTitle!"
+          :tag-text="t('contentScript.SocialSiteParseResultsDialog.searchTitle')"
+          :keyword="result.seriesTitle!"
+          :search-plan="searchPlan"
+          :search-plans="planMenuSearchPlans"
+        />
+
+        <a-collapse v-if="shouldCollapseTitles(result)" :bordered="false" accordion>
+          <a-collapse-panel
+            :key="getResultKey(result, index)"
+            :header="`${getCollapseTitle(result)} (${result.titles.length})`"
+          >
+            <ParseResultListItem
+              v-for="title in result.titles"
+              :key="`${result.id}|${title}`"
+              :title="title"
+              :tag-text="t('contentScript.SocialSiteParseResultsDialog.searchTitle')"
+              :keyword="title"
+              :search-plan="searchPlan"
+              :search-plans="planMenuSearchPlans"
+            />
+          </a-collapse-panel>
+        </a-collapse>
+        <template v-else v-for="title in result.titles" :key="`${result.id}|${title}`">
+          <ParseResultListItem
+            :title="title"
+            :tag-text="t('contentScript.SocialSiteParseResultsDialog.searchTitle')"
+            :keyword="title"
+            :search-plan="searchPlan"
+            :search-plans="planMenuSearchPlans"
+          />
+        </template>
+
+        <a-divider v-if="index != parseResults.length - 1" />
+      </template>
+
+      <!-- 解析结果可能为空数组（解析器对当前页面没有产出），此时列表区域会完全空白，补明确占位 -->
+      <a-empty v-if="parseResults.length === 0" :description="t('contentScript.parseResultEmpty')" />
+    </a-list>
+  </a-modal>
+</template>

@@ -9,7 +9,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "修道院",
   description: "修身为始，修道为终。",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["bfjy"],
 

@@ -19,7 +19,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "MidnightScene",
   aka: ["MS"],
   tags: ["综合"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

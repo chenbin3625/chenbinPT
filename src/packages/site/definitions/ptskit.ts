@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["拾刻"],
   description: "短的是时间 长的是热爱",
   tags: ["短剧", "成人"],
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 
@@ -35,24 +34,26 @@ export const siteMetadata: ISiteMetadata = {
     },
     {
       name: "分类（综合）",
-      key: "cat",
+      // B-20a：原为 key: "cat"，与「十八禁」组撞车（UI 状态/方案/请求参数都会互相覆盖）。
+      // 参照同仓库 tu88.ts 的写法：key 唯一，用 cross.key 还原真正要发的参数名。
+      key: "cat_normal",
       options: [
         { name: "动态漫", value: 402 },
         { name: "动漫", value: 405 },
         { name: "短剧", value: 404 },
         { name: "电影", value: 401 },
       ],
-      cross: { mode: "append" },
+      cross: { mode: "append", key: "cat" },
     },
     {
       name: "分类（十八禁）",
-      key: "cat",
+      key: "cat_special",
       options: [
         { name: "欧美", value: 412 },
         { name: "日本", value: 411 },
         { name: "国产", value: 410 },
       ],
-      cross: { mode: "append" },
+      cross: { mode: "append", key: "cat" },
     },
     {
       name: "媒介",
@@ -68,6 +69,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "HD DVD", value: 2 },
         { name: "Blu-ray", value: 1 },
       ],
+      // B-20a：这四组是 NexusPHP 的标准分组，**不能**设 cross.key —— 否则会以 cat1=1 发出
+      // （见 SetSearchSolution/utils.ts:58-65：cross.key 覆盖 fieldKey），筛选静默失效并污染 cat 命名空间。
       cross: { mode: "append" },
     },
     {
@@ -80,6 +83,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "MPEG-2", value: 4 },
         { name: "Other", value: 5 },
       ],
+      // B-20a：这四组是 NexusPHP 的标准分组，**不能**设 cross.key —— 否则会以 cat1=1 发出
+      // （见 SetSearchSolution/utils.ts:58-65：cross.key 覆盖 fieldKey），筛选静默失效并污染 cat 命名空间。
       cross: { mode: "append" },
     },
     {
@@ -92,6 +97,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "SD", value: 4 },
         { name: "2160p", value: 5 },
       ],
+      // B-20a：这四组是 NexusPHP 的标准分组，**不能**设 cross.key —— 否则会以 cat1=1 发出
+      // （见 SetSearchSolution/utils.ts:58-65：cross.key 覆盖 fieldKey），筛选静默失效并污染 cat 命名空间。
       cross: { mode: "append" },
     },
     {
@@ -104,6 +111,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "WiKi", value: 4 },
         { name: "Other", value: 5 },
       ],
+      // B-20a：这四组是 NexusPHP 的标准分组，**不能**设 cross.key —— 否则会以 cat1=1 发出
+      // （见 SetSearchSolution/utils.ts:58-65：cross.key 覆盖 fieldKey），筛选静默失效并污染 cat 命名空间。
       cross: { mode: "append" },
     },
     CategoryIncldead,

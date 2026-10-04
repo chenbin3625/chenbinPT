@@ -6,7 +6,6 @@ import path from "node:path";
 import { defineConfig } from "vite";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 import vue from "@vitejs/plugin-vue";
-import vuetify from "vite-plugin-vuetify";
 import VueDevTools from "vite-plugin-vue-devtools";
 import webExtension from "vite-plugin-web-extension";
 
@@ -14,10 +13,10 @@ import webExtension from "vite-plugin-web-extension";
 import { vitePluginGenerateWebextLocales } from "./vite/plugin/generateWebextLocales.ts";
 
 import git from "git-rev-sync";
-import pkg from "./package.json";
+import pkg from "./package.json" with { type: "json" };
 
 function base_path(_path = "") {
-  return path.resolve(__dirname, _path);
+  return path.resolve(import.meta.dirname, _path);
 }
 
 const target = process.env.TARGET || "chrome";
@@ -39,7 +38,7 @@ const optionalPermissions = ["nativeMessaging"];
 // @ts-ignore
 const git_count = git.count("HEAD");
 const base_version = `${pkg.version}.${git_count}`;
-const commit_version = `${base_version}+${git.short(__dirname)}`;
+const commit_version = `${base_version}+${git.short(import.meta.dirname)}`;
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -47,22 +46,13 @@ export default defineConfig({
     target: "es2023",
     outDir: `dist-${target}`,
     emptyOutDir: true,
-  },
-  // Vuetify 4: 强制 Vite 预打包 overlay 相关模块，避免 dev 模式下 useStack 被拆分为
-  // 两份实例导致 dialog 内的 menu/select 等浮层 z-index 计算失效（官方 Upgrade Guide 建议）。
-  // 仅影响 dev 模式；生产构建不受影响。
-  optimizeDeps: {
-    include: [
-      "vuetify/components/VOverlay",
-      "vuetify/components/VDialog",
-      "vuetify/components/VMenu",
-      "vuetify/components/VSelect",
-      "vuetify/components/VTooltip",
-    ],
+    chunkSizeWarningLimit: 800,
+    reportCompressedSize: false,
   },
   plugins: [
     vitePluginGenerateWebextLocales(),
     nodePolyfills({
+      // parse-torrent 运行时会调用 path.join；Vite 无 polyfill 时会把 path externalize 为空对象。
       include: ["buffer", "path"],
       globals: {
         Buffer: true,
@@ -72,9 +62,6 @@ export default defineConfig({
       launchEditor: fs.existsSync(base_path("./.idea")) ? "webstorm" : "vscode",
     }),
     vue(),
-    vuetify({
-      styles: { configFile: "./src/styles/vuetify/settings.scss" },
-    }),
     webExtension({
       browser: target,
       disableAutoLaunch: true,
@@ -89,7 +76,7 @@ export default defineConfig({
         name: "__MSG_extName__",
         description: "__MSG_extDesc__",
         default_locale: "en",
-        homepage_url: "https://github.com/pt-plugins/PT-depiler",
+        homepage_url: "https://github.com/chenbin3625/chenbinPT",
         icons: {
           "16": "icons/logo/16.png",
           "19": "icons/logo/19.png",
@@ -142,7 +129,6 @@ export default defineConfig({
 
         "{{firefox}}.browser_specific_settings": {
           gecko: {
-            id: "ptdepiler.ptplugins@gmail.com",
             strict_min_version: "133.0",
           },
         },
@@ -152,12 +138,30 @@ export default defineConfig({
 
         web_accessible_resources: [
           {
-            resources: ["icons/*", "lib/*", "pt-depiler.css"],
+            resources: ["icons/*", "lib/*", "chenbinpt.css"],
             matches: ["*://*/*"],
           },
           // content script 的按需主逻辑（assets/cs-app.js）及其共享 chunk 依赖链，
           // 由轻量引导在匹配站点时于页面上下文动态 import 加载（见 issue #1467）。
           // 使用通配以避免依赖拓扑变化后遗漏新 chunk 导致运行时加载失败。
+          //
+          // ⚠️ 已知风险（Q-4，本轮有意不改行为）：
+          // `matches: ["*://*/*"]` 把 assets/* 与 vendor/* 暴露给**所有站点**，任何网站都可以
+          // fetch 一个已知 URL（例如 assets/cs-app.js，或那个 751 KB 的 pinia chunk）来判断
+          // "访问者装了本扩展" —— 即**扩展指纹识别**。对 PT 用户群体而言这是隐私问题
+          // （站点可以把"装了哪些扩展"作为画像/风控依据），因此这条通配是**有代价的**。
+          //
+          // 若要收窄，正确做法是（不要手写清单）：
+          //   1. 构建期从 rollup 的 chunk 图（`bundle` 的 `generateBundle` 钩子）算出
+          //      assets/cs-app.js 的**传递依赖闭包**，据此生成 `resources` 精确清单；
+          //   2. 在 CI 里断言该清单包含 cs-app.js 及其整条依赖链（缺一项就会在生产环境
+          //      静默 404 → 内容脚本功能整块失效，比指纹识别严重得多）。
+          //
+          // 本轮不做的原因：现有注释指出的失败模式是真实的 —— 手写/静态清单一旦遗漏新 chunk，
+          // 失败发生在**生产环境的运行时**且是静默的（用户在站点上看不到任何提示）；
+          // 而本轮无法做浏览器端验证（装包 + 真实站点跑一遍 cs-app.js 的按需加载）。
+          // 在"能用但可指纹识别"与"可能静默坏掉且无法验证"之间，本轮选择前者，并把
+          // 精确清单 + CI 断言作为后续独立改动。**不要在没有浏览器验证的情况下改成静态清单。**
           {
             resources: ["assets/*", "vendor/*"],
             matches: ["*://*/*"],
@@ -180,7 +184,7 @@ export default defineConfig({
           {
             name: "cs-app-entry",
             config(config) {
-              // content script 的重逻辑（Vue/Vuetify/站点包）挂到多页 ESM 构建中作为额外入口，
+              // content script 的重逻辑（Vue/antd/站点包）挂到多页 ESM 构建中作为额外入口，
               // 产物 assets/cs-app.js 由轻量引导在匹配站点时通过 chrome.runtime.getURL 动态加载，
               // 并直接复用 options 构建已拆分的 vendor chunk（见 issue #1467）。
               config.build ??= {};
@@ -193,7 +197,7 @@ export default defineConfig({
               // 必须保留入口导出签名，否则 mountApp 会被 rollup 树摇成纯副作用壳
               config.build.rollupOptions.preserveEntrySignatures = "strict";
               // 动态 import 不会自动加载按 chunk 拆分的 css 分片，cs-app 的组件树样式
-              // （vuetify 组件、页面组件等分散在各 chunk 的 css）无法逐份在页面上下文
+              // （组件、页面组件等分散在各 chunk 的 css）无法逐份在页面上下文
               // 引入，故合并为单文件，由 app/init.ts 按固定地址 link
               config.build.cssCodeSplit = false;
               // 关闭 module preload（见 issue #1524）：
@@ -251,10 +255,10 @@ export default defineConfig({
                   // 将 css 文件放到 assets/css 目录
                   if (assetName.endsWith(".css")) {
                     // cssCodeSplit=false 后全量样式合并为单一文件；content script 的
-                    // shadow DOM 通过 chrome.runtime.getURL("pt-depiler.css") 固定地址
+                    // shadow DOM 通过 chrome.runtime.getURL("chenbinpt.css") 固定地址
                     // 加载（见 app/init.ts），必须输出到根目录且使用稳定文件名
                     if (assetName === "index.css" || assetName === "style.css") {
-                      return "pt-depiler.css";
+                      return "chenbinpt.css";
                     }
                     return "assets/css/[name]-[hash][extname]";
                   }
@@ -281,11 +285,11 @@ export default defineConfig({
     __BROWSER__: JSON.stringify(target),
     __EXT_VERSION__: JSON.stringify(`v${commit_version}`),
     __GIT_VERSION__: {
-      short: git.short(__dirname),
-      long: git.long(__dirname),
+      short: git.short(import.meta.dirname),
+      long: git.long(import.meta.dirname),
       date: +git.date(),
       count: git_count,
-      branch: git.branch(__dirname),
+      branch: git.branch(import.meta.dirname),
     },
     __BUILD_TIME__: +Date.now(),
     __RESOURCE_SITE_ICONS__: fs.readdirSync(base_path("./public/icons/site")),

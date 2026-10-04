@@ -13,6 +13,6 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://www.ptdream.net/", "https://plus.ptdream.net/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/db87ee0843f474d31edb84bbe92f82dafb3236ad
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/db87ee0843f474d31edb84bbe92f82dafb3236ad
   isDead: true,
 };

@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdzone.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdzone.me/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hd_zone.json
  */
 import type { ISiteMetadata } from "../types";
@@ -19,7 +19,7 @@ export const siteMetadata: ISiteMetadata = {
 
   favicon: "./_default_nexusphp.png",
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/c6cab130b19ae5fe9e962115bd21bc1364d93c72
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/c6cab130b19ae5fe9e962115bd21bc1364d93c72
   isDead: true,
 
   levelRequirements: [

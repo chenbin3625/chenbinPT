@@ -15,6 +15,7 @@
  */
 
 import axios from "axios";
+import { logMessage } from "./adapter";
 import type { ISiteMetadata } from "../types";
 
 // from: https://stackoverflow.com/a/9967193/8824471
@@ -125,16 +126,31 @@ async function getFaviconFromUrl(url: string): Promise<Blob> {
   const manifestElement = doc.querySelector('head link[rel="manifest" i]') as HTMLLinkElement;
   if (manifestElement) {
     const { data: manifest } = await axios.get<{
-      icons: Record<"sizes" | "src" | "type", string>[];
+      icons?: Array<{ sizes?: string; src?: string; type?: string }>;
     }>(manifestElement.href, { responseType: "json" });
 
-    manifest.icons.forEach(({ sizes, src }) => {
-      favicons.push({
-        href: src,
-        sizes,
-        source: "manifest",
+    // manifest 可能是 `{"name":"x"}` 这类没有 icons（或 icons 不是数组）的合法 JSON：
+    // 这里必须降级而不是抛 TypeError —— 否则第 1 步已收集到的 <link rel=icon> 会一起丢失（A-19）
+    if (Array.isArray(manifest?.icons)) {
+      manifest.icons.forEach(({ sizes, src }) => {
+        if (typeof src !== "string" || src.length === 0) {
+          logMessage(`[Favicon] manifest 中存在缺少 src 的图标条目，已跳过`, {
+            url: manifestElement.href,
+            sizes,
+          });
+          return;
+        }
+        favicons.push({
+          href: src,
+          sizes: typeof sizes === "string" ? sizes : "",
+          source: "manifest",
+        });
       });
-    });
+    } else {
+      logMessage(`[Favicon] manifest 中缺少合法的 icons 数组，跳过该步骤`, {
+        url: manifestElement.href,
+      });
+    }
   }
 
   // 3. Default /favicon.ico
@@ -143,7 +159,8 @@ async function getFaviconFromUrl(url: string): Promise<Blob> {
       baseURL: baseUrl.origin,
       responseType: "blob",
     });
-    if (faviconIco && faviconIco.data?.type === "image/x-icon") {
+    // .ico 的 IANA 注册类型是 image/vnd.microsoft.icon，image/x-icon 是事实标准，两者都要接受（A-19）
+    if (faviconIco && /^image\/(x-icon|vnd\.microsoft\.icon)$/.test(faviconIco.data?.type ?? "")) {
       favicons.push({
         href: "/favicon.ico",
         sizes: "",
@@ -151,7 +168,13 @@ async function getFaviconFromUrl(url: string): Promise<Blob> {
         blob: faviconIco.data,
       } as IParsedFavicon);
     }
-  } catch (e) {}
+  } catch (e) {
+    // P1-5：站点没有 /favicon.ico 属于常见情况，这里不中断流程，但把原因记录下来便于排查
+    logMessage(`[Favicon] ${baseUrl.origin}/favicon.ico 获取失败`, {
+      url: baseUrl.origin,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 
   // 如果前面获取到足够的 favicons，我们需要比较下哪个更合适，并排序
   if (favicons.length > 0) {
@@ -189,7 +212,13 @@ async function getFaviconFromUrl(url: string): Promise<Blob> {
 
           const { data } = await axios.get(faviconUrl, { responseType: "blob" });
           return data;
-        } catch {}
+        } catch (e) {
+          // 单个候选图标下载失败是预期内的降级路径，继续尝试下一个候选
+          logMessage(`[Favicon] 候选图标下载失败：${usedFavicons.href}`, {
+            href: usedFavicons.href,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     }
   }
@@ -227,7 +256,14 @@ export async function getFavicon(site: getFaviconMetadata): Promise<string> {
     try {
       const configReq = await axios.get(siteFavicon, { responseType: "blob" });
       faviconMeta = configReq.data;
-    } catch {}
+    } catch (e) {
+      // 站点元数据中声明的 favicon 链接可能已失效，回落到请求首页解析
+      logMessage(`[Favicon] metadata 声明的 favicon 获取失败：${siteFavicon}`, {
+        siteId,
+        url: siteFavicon,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   // 2.2 请求网站首页，并从返回的html中解析所需要的 favicon 字段
@@ -236,7 +272,14 @@ export async function getFavicon(site: getFaviconMetadata): Promise<string> {
       try {
         faviconMeta = await getFaviconFromUrl(url);
         break;
-      } catch {}
+      } catch (e) {
+        // 单个站点地址解析失败时继续尝试下一个地址，全部失败后回落到 NO_IMAGE
+        logMessage(`[Favicon] 从首页解析 favicon 失败：${url}`, {
+          siteId,
+          url,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   }
 

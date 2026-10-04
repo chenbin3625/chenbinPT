@@ -10,6 +10,8 @@ import type { IStoredUserInfo, TUserInfoStorageSchema } from "@/shared/types.ts"
 
 import { fixUserInfo, realFormatRatio } from "../utils/format.ts";
 import { allAddedSiteMetadata, TOptionSiteMetadatas } from "../utils/siteMetadata.ts";
+// Konva 画布要用 MDI 字形绘制「站点已失效」等标记，必须显式注册该字体（原因见该文件注释）
+import "./mdi-canvas-font.css";
 
 const metadataStore = useMetadataStore();
 
@@ -142,7 +144,7 @@ export const timelineDataRef = useResetableRef<ITimelineData>(
         seedingSize: 0,
         bonus: 0,
         bonusPerHour: 0,
-        ratio: -1,
+        ratio: -1, // B-26：仅作占位，最终值在下方由总量推导（不再参与逐站累加）
       },
     };
 
@@ -190,15 +192,19 @@ export const timelineDataRef = useResetableRef<ITimelineData>(
         for (const userInfoField of CTimelineUserInfoField) {
           const userInfoKey = userInfoField.name as ITimelineUserInfoField["name"];
           if (userInfo[userInfoKey] && userInfo[userInfoKey] > 0) {
-            // refs: https://github.com/pt-plugins/PT-depiler/issues/48
-            let value = 0;
-            try {
-              value = parseFloat(userInfo[userInfoKey]);
-            } catch (e) {}
+            // refs: https://github.com/chenbin3625/chenbinPT/issues/48
+            // A-11：原先这里包了 `try { parseFloat(...) } catch (e) {}`，但 parseFloat 从不抛异常
+            // （非法输入返回 NaN），那段 catch 是死代码，也是全仓库唯一一条 `no-empty` 豁免。
+            // `String(...)` 与 parseFloat 对非字符串入参的隐式 ToString 语义一致，行为不变。
+            const value = parseFloat(String(userInfo[userInfoKey]));
 
             if (!isFinite(value)) continue; // 如果不是有限数字，则跳过
 
-            result.totalInfo[userInfoKey] += value; // 更新总量
+            // B-26：ratio 不能逐站累加——总分享率必须由总量推导。否则当总下载量为 0 时，
+            // 表头显示的是 `-1 + Σ(各站分享率)`（单站 2.5 会显示「1.50」，0.5 + 0.2 会显示负数「-0.30」）。
+            if (userInfoKey !== "ratio") {
+              result.totalInfo[userInfoKey] += value; // 更新总量
+            }
 
             // 更新最大值和次大值
             if (value > result.topInfo[userInfoKey].maxValue) {
@@ -215,9 +221,14 @@ export const timelineDataRef = useResetableRef<ITimelineData>(
       }
     }
 
-    if (result.totalInfo.downloaded > 0) {
-      result.totalInfo.ratio = result.totalInfo.uploaded / result.totalInfo.downloaded;
-    }
+    // B-26：总分享率只由总量推导。总下载量为 0 时：有上传量则为 +∞，完全没有流量则为 -∞
+    // （realFormatRatio 会把 +∞ 显示为「∞」、-∞ 显示为「-」）
+    result.totalInfo.ratio =
+      result.totalInfo.downloaded > 0
+        ? result.totalInfo.uploaded / result.totalInfo.downloaded
+        : result.totalInfo.uploaded > 0
+          ? Infinity
+          : -Infinity;
 
     if (result.joinTimeInfo.time !== Infinity) {
       result.joinTimeInfo.years = (differenceInDays(currentDate, result.joinTimeInfo.time) / 365).toFixed(2);

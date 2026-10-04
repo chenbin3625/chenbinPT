@@ -7,6 +7,9 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
+    // TypeScript 6 起 baseUrl 被标记为 deprecated（TS 7 将移除）；
+    // 这里未使用 paths，保留 baseUrl 以免改变既有的裸模块解析行为，仅忽略该弃用告警。
+    "ignoreDeprecations": "6.0",
     "baseUrl": "."
   },
   "include": ["package.json", "vite.config.ts", "vite/**/*.ts"]

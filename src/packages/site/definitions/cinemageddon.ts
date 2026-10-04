@@ -1,9 +1,9 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/cinemageddon.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/cinemageddon.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/cinemageddon.net/config.json
  */
 
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 import { type ISiteMetadata } from "../types";
 import { parseSizeString } from "../utils/filesize.ts";
@@ -144,7 +144,7 @@ export const siteMetadata: ISiteMetadata = {
           seeding: {
             selector: ["div#ka2 table:first"],
             elementProcess: (table: HTMLTableElement) => {
-              const trAnothers = Sizzle("tr:gt(0)", table);
+              const trAnothers = selectElements("tr:gt(0)", table);
               return trAnothers.length;
             },
           },
@@ -152,10 +152,13 @@ export const siteMetadata: ISiteMetadata = {
             selector: ["div#ka2 table:first tr:not(:eq(0))"],
             elementProcess: (table: HTMLTableElement) => {
               let seedingSize = 0;
-              const trAnothers = Sizzle("tr:gt(0)", table);
+              const trAnothers = selectElements("tr:gt(0)", table);
               trAnothers.forEach((trAnother) => {
-                const sizeAnother = Sizzle("td:eq(2)", trAnother);
-                seedingSize += parseSizeString((sizeAnother[0] as HTMLTableCellElement).innerText.trim());
+                const sizeAnother = selectElements("td:eq(2)", trAnother)[0] as HTMLTableCellElement | undefined;
+                // A-17：colspan/结构异常的行没有第 3 列时 selectElements 返回空数组，
+                // 直接取 [0].innerText 会抛 TypeError 并让整次用户信息刷新失败，故跳过该行。
+                if (!sizeAnother) return;
+                seedingSize += parseSizeString(sizeAnother.innerText.trim());
               });
               return seedingSize;
             },

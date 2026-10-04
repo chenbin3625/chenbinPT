@@ -1,10 +1,11 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/jpopsuki.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/jpopsuki.eu/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/jpopsuki.eu/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/jpop.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/jpopsuki.json
  */
 import { ISiteMetadata, ITorrent, IUserInfo, ISearchInput } from "../types";
+import { extractTextExcluding } from "../utils/html.ts";
 import Gazelle, {
   SchemaMetadata,
   GazelleUtils,
@@ -132,9 +133,8 @@ export const siteMetadata: ISiteMetadata = {
           selector: "div > h2",
           // [Album] Ayumi Hamasaki - Rock'n'Roll Circus [2010.04.14]
           elementProcess: (el: HTMLElement) => {
-            const clone = el.cloneNode(true) as HTMLElement;
-            clone.querySelectorAll("a[href*='artist.php']").forEach((e) => e.remove());
-            const query = clone.innerText ?? clone.textContent;
+            // 等价于「cloneNode + 删除 artist 链接 + innerText」；克隆体脱离文档，innerText 等于 textContent
+            const query = extractTextExcluding(el, "a[href*='artist.php']");
             const endBracket = query.indexOf("]");
             const dash = query.indexOf("-", endBracket);
             return query.slice(dash + 1).trim();

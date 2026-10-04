@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 type TDeleteId = any;
@@ -28,40 +28,27 @@ async function confirmDelete() {
 async function dialogEnter() {
   isDeleting.value = false;
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" :persistent="isDeleting" width="300" @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="bg-red-lighten-2">
-        {{ t("common.dialog.title.confirmAction") }}
-      </v-card-title>
-
-      <v-card-text class="text-body-large">
-        {{ t("common.dialog.deleteText", [toDeleteIds!.length]) }}
-
-        <slot name="append-text" />
-      </v-card-text>
-
-      <v-divider />
-
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="info" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          <span class="ml-1">{{ t("common.dialog.cancel") }}</span>
-        </v-btn>
-        <v-btn
-          :loading="isDeleting"
-          color="error"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
-          @click="confirmDelete"
-        >
-          <span class="ml-1">{{ t("common.dialog.ok") }}</span>
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :confirm-loading="isDeleting"
+    :keyboard="!isDeleting"
+    :mask-closable="!isDeleting"
+    :ok-text="t('common.dialog.ok')"
+    ok-type="danger"
+    :title="t('common.dialog.title.confirmAction')"
+    :width="300"
+    @ok="confirmDelete"
+  >
+    {{ t("common.dialog.deleteText", [toDeleteIds!.length]) }}
+    <slot name="append-text" />
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

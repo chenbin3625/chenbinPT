@@ -19,7 +19,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["CSPT"],
   description: "财神到，八方来财！",
   tags: ["中文", "综合", "影视", "综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["vanchkong", "Rhilip"],
   type: "private",

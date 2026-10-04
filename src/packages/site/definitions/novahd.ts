@@ -45,7 +45,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "WiKi", value: 4 },
         { name: "Other", value: 5 },
         { name: "FRDS", value: 6 },
-        { name: "beAst", value: 4 },
+        { name: "beAst", value: 7 },
         { name: "CMCT", value: 8 },
         { name: "TLF", value: 9 },
         { name: "M-Team", value: 10 },

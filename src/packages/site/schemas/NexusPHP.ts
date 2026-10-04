@@ -1,4 +1,4 @@
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { mergeWith, toMerged, omit } from "es-toolkit";
 import { set } from "es-toolkit/compat";
 
@@ -152,35 +152,99 @@ export const parseSectionedHitAndRunElement = (element: HTMLElement) => {
 };
 
 /**
+ * 原实现：序列化整行 innerHTML 后按 "<br>" 切分，取最后一段并二次解析。
+ * 仅在无法用直接子节点等价切分（存在嵌套 <br>）时作为回落使用。
+ */
+const legacySubTitleRemoveExtraElement = (element: HTMLElement, removeSelectors: string[], self: boolean): string => {
+  const testSubTitle = element.parentElement!.innerHTML.split("<br>");
+  if (testSubTitle && testSubTitle.length > 1) {
+    const subTitleHtml = testSubTitle[testSubTitle.length - 1];
+
+    // 移除 removeSelectors 的内容
+    const div = document.createElement("div");
+    div.innerHTML = subTitleHtml;
+    for (const removeSelectorsKey of removeSelectors) {
+      div.querySelectorAll(removeSelectorsKey).forEach((el) => (self ? el : el.parentElement!).remove());
+    }
+    return extractContent(div.innerHTML).trim();
+  }
+  return "";
+};
+
+/**
  * Create an element processor to extract a cleaned subtitle string from a torrent title element.
  *
  * This factory returns a function which, given an HTMLElement that belongs to a title row,
- * will inspect its parent's innerHTML, split on "<br>", and take the last fragment as the
- * subtitle HTML. It then removes any nodes matching `removeSelectors` from that fragment
- * before returning the cleaned text content. If no subtitle fragment is found, it returns
- * an empty string.
+ * will inspect its parent's child nodes, find the last direct `<br>` child, and take the
+ * nodes after it as the subtitle. It then removes any nodes matching `removeSelectors` from
+ * that fragment before returning the cleaned text content. If no subtitle fragment is found,
+ * it returns an empty string.
+ *
+ * 相比原实现（序列化整行 innerHTML + 两次 HTML 解析），这里直接读取 childNodes 的文本，
+ * 仅在需要剥离元素时才把尾部节点克隆到一个临时容器内处理。
  *
  * @param removeSelectors - Array of CSS selectors to remove from the subtitle fragment. Defaults to [].
- *                          Each selector will be used with querySelectorAll on a temporary container.
  * @param self - When true (default) remove the matched element itself; when false remove its parent element instead.
  * @returns A function that accepts the matched title element and returns the cleaned subtitle string.
  */
 export const subTitleRemoveExtraElement =
   (removeSelectors: string[] = [], self: boolean = true) =>
   (element: HTMLElement) => {
-    const testSubTitle = element.parentElement!.innerHTML.split("<br>");
-    if (testSubTitle && testSubTitle.length > 1) {
-      const subTitleHtml = testSubTitle[testSubTitle.length - 1];
+    const parent = element.parentElement!;
+    const childNodes = parent.childNodes;
 
-      // 移除 removeSelectors 的内容
-      const div = document.createElement("div");
-      div.innerHTML = subTitleHtml;
-      for (const removeSelectorsKey of removeSelectors) {
-        div.querySelectorAll(removeSelectorsKey).forEach((el) => (self ? el : el.parentElement!).remove());
+    // 原实现按 innerHTML 中的字面量 "<br>" 切分并取最后一段：
+    // 只有「无属性的 <br>」在序列化后才是字面量 "<br>"，带属性的 <br class="..."> 不是切分点
+    let lastBrIndex = -1;
+    let directPlainBrCount = 0;
+    for (let i = 0; i < childNodes.length; i++) {
+      const node = childNodes[i];
+      if (node.nodeName === "BR" && (node as Element).attributes.length === 0) {
+        directPlainBrCount += 1;
+        lastBrIndex = i;
       }
-      return extractContent(div.innerHTML).trim();
     }
-    return "";
+
+    // 统计整棵子树中无属性 <br> 的数量，用于判断是否存在嵌套的切分点
+    let allPlainBrCount = 0;
+    for (const br of parent.getElementsByTagName("br")) {
+      if (br.attributes.length === 0) {
+        allPlainBrCount += 1;
+      }
+    }
+
+    if (lastBrIndex === -1) {
+      // 没有无属性的直接 <br> 子节点：序列化结果中不含字面量 "<br>" 时原实现返回 ""
+      if (allPlainBrCount === 0) {
+        return "";
+      }
+      // 切分点全部是嵌套的 <br>，无法用直接子节点等价切分，回落原实现
+      return legacySubTitleRemoveExtraElement(element, removeSelectors, self);
+    }
+
+    if (allPlainBrCount !== directPlainBrCount) {
+      // 存在嵌套的 <br> 切分点，回落原实现保证行为一致
+      return legacySubTitleRemoveExtraElement(element, removeSelectors, self);
+    }
+
+    if (removeSelectors.length === 0) {
+      // 无需剥离元素时，直接拼接尾部节点的文本
+      let text = "";
+      for (let i = lastBrIndex + 1; i < childNodes.length; i++) {
+        text += childNodes[i].textContent ?? "";
+      }
+      return text.trim();
+    }
+
+    // 需要剥离元素时，把尾部节点克隆到临时容器内再移除，等价于"解析尾部 HTML 片段 → 删除匹配元素 → 取文本"
+    const div = document.createElement("div");
+    for (let i = lastBrIndex + 1; i < childNodes.length; i++) {
+      div.appendChild(childNodes[i].cloneNode(true));
+    }
+    for (const removeSelectorsKey of removeSelectors) {
+      div.querySelectorAll(removeSelectorsKey).forEach((el) => (self ? el : el.parentElement!).remove());
+    }
+    return (div.textContent || div.innerText).trim();
   };
 
 /**
@@ -445,7 +509,11 @@ export const SchemaMetadata: Pick<
             } else {
               time = parseValidTimeString(time);
             }
-          } catch (e) {}
+          } catch (e) {
+            // P1-5：时间字段解析失败时回落为原始值（time 仍可能是字符串），保持既有行为不抛出。
+            // 每行种子都会执行，属高频良性降级路径，故只用 console.debug 避免刷满 logger 缓冲。
+            console.debug("[PTD] NexusPHP parse row time failed, fallback to raw value:", time, e);
+          }
           return time as number;
         },
       },
@@ -500,8 +568,16 @@ export const SchemaMetadata: Pick<
         switchFilters: {
           "h1#top": [
             (title: string) => {
-              // ^(.+?)   .+$
-              let titleMatch = title.match(/^(.+?) +.+$/);
+              // 详情页标题形如 "{torrentName}\u00A0\u00A0\u00A0{附加信息}"：NexusPHP 核心用的是
+              // `htmlspecialchars($row["name"]).($sp_torrent ? "&nbsp;&nbsp;&nbsp;".$sp_torrent : "")`
+              // （details.php），即分隔符是 **U+00A0**，不是 ASCII 空格。
+              //
+              // B-2 的结论曾两次被误读，最终核实（按内容而非行号定位，hexdump 到 `c2 a0 2b`）：
+              // 原实现 `/^(.+?)\u00A0+.+$/` 里的 `+` 是**量词**（一个或多个 U+00A0），
+              // 因此它本来就能正确切分（lazy 的 `.+?` 会停在第一段 U+00A0 前）。
+              // 一度被"更正"为 `\s{3}`，那反而引入回归：单个 U+00A0 分隔的标题不再切分，
+              // 且含 3 个连续 ASCII 空格的标题会被新截断。故此处保持原语义，只把注释写清楚。
+              let titleMatch = title.match(/^(.+?)\u00A0+.+$/);
               if (titleMatch && titleMatch.length >= 2) {
                 return titleMatch[1].trim();
               }
@@ -512,9 +588,11 @@ export const SchemaMetadata: Pick<
           "html > body > title": [
             (title: string) => {
               // {siteName} :: 种子详情 "{torrentName}" - Powered by NexusPHP
+              // 注意：该正则只有 1 个捕获组，因此下面是 `>= 2` + `[1]`；
+              // 早先写成 `>= 3` + `[2]` 导致这个兜底过滤器永远走空、直接返回带后缀的原始串。
               let titleMatch = title.match(/"(.+)" - Powered by NexusPHP$/);
-              if (titleMatch && titleMatch.length >= 3) {
-                return titleMatch[2].trim();
+              if (titleMatch && titleMatch.length >= 2) {
+                return titleMatch[1].trim();
               }
               return title;
             },
@@ -791,15 +869,18 @@ export default class NexusPHP extends PrivateSite {
     doc: Document | object | any,
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
-    const { keywords, searchEntry, requestConfig } = searchConfig;
+    let { keywords, searchEntry, requestConfig } = searchConfig;
 
     // 返回是 Document 的情况才自动生成 row 选择器以及其他属性的选择器
     if (doc instanceof Document) {
+      // 自动生成的选择器写入局部副本，避免写回共享的 metadata.search.selectors (P2-15)
+      searchEntry = { ...searchEntry, selectors: { ...(searchEntry?.selectors ?? {}) } };
+
       // 如果配置文件没有传入 search 的选择器，则我们自己生成
       const legacyTableSelector = "table.torrents:last";
 
       // 对于NPHP，一般来说，表的第一行应该是标题行，即 `> tbody > tr:nth-child(1)` ，但是也有部分站点为 `> thead > tr`
-      const legacyTableHasThead = Sizzle(`${legacyTableSelector} > thead > tr`, doc).length > 0;
+      const legacyTableHasThead = selectElements(`${legacyTableSelector} > thead > tr`, doc).length > 0;
 
       if (!searchEntry!.selectors!.rows) {
         searchEntry!.selectors!.rows = {
@@ -811,30 +892,42 @@ export default class NexusPHP extends PrivateSite {
       // 开始遍历我们的head行，并设置其他参数
       const headSelector =
         legacyTableSelector + (legacyTableHasThead ? " > thead > tr > th" : " > tbody > tr:eq(0) > td");
-      const headAnother = Sizzle(headSelector, doc) as HTMLElement[];
+      const headAnother = selectElements(headSelector, doc) as HTMLElement[];
+
+      // 原实现外层循环缺少 break（last-match-wins），这里反序遍历、命中即跳出，结果等价且只需扫描一次
+      // guessSearchFieldIndexConfig() 提到循环外只调用一次
+      const guessSearchFieldIndexEntries = Object.entries(this.guessSearchFieldIndexConfig()).reverse();
+
       headAnother.forEach((element, elementIndex) => {
         // 比较好处理的一些元素，都是可以直接获取的
         let updateSelectorField;
         if (/(cat|类型|類型|分类|分類|Тип)/gi.test(element.innerText)) {
           updateSelectorField = "category";
         } else {
-          for (const [dectField, dectSelector] of Object.entries(this.guessSearchFieldIndexConfig())) {
+          for (const [dectField, dectSelector] of guessSearchFieldIndexEntries) {
+            let matched = false;
             for (const dectFieldElement of dectSelector) {
-              if (Sizzle(dectFieldElement, element).length > 0) {
-                updateSelectorField = dectField;
+              if (selectElements(dectFieldElement, element).length > 0) {
+                matched = true;
                 break;
               }
+            }
+            if (matched) {
+              updateSelectorField = dectField;
+              break;
             }
           }
         }
 
         if (updateSelectorField) {
-          // @ts-ignore
+          // @ts-expect-error
+          // 原因：updateSelectorField 是运行时推断出的动态字段名，selectors 的类型没有字符串索引签名
           searchEntry.selectors[updateSelectorField] = toMerged(
             {
               selector: [`> td:eq(${elementIndex})`],
             },
-            // @ts-ignore
+            // @ts-expect-error
+            // 原因：同上，读取同一个动态字段（可能不存在，故用 || {} 兜底）
             searchEntry.selectors[updateSelectorField] || {},
           );
         }
@@ -905,19 +998,19 @@ export default class NexusPHP extends PrivateSite {
        * 所以需要找到和 table 平级的 div 中包含 " | " 的文本，才认为是我们需要的做种和做种大小信息
        * https://github.com/xiaomlove/nexusphp/blob/09b785902f5da87de7fa45dd5409eee37f78bc89/public/getusertorrentlistajax.php#L357-L358
        */
-      const divSeeding = Sizzle("div:has( ~ table) > div:contains(' | ')", userSeedingDocument);
+      const divSeeding = selectElements("div:has( ~ table) > div:contains(' | ')", userSeedingDocument);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
         seedStatus.seeding = definedFilters.parseNumber(seedingText[0]);
         seedStatus.seedingSize = definedFilters.parseSize(seedingText[1]);
       } else {
-        const trAnothers = Sizzle("table:last tr:not(:eq(0))", userSeedingDocument);
+        const trAnothers = selectElements("table:last tr:not(:eq(0))", userSeedingDocument);
         if (trAnothers.length > 0) {
           seedStatus.seeding = trAnothers.length;
 
           // 根据自动判断应该用 td.rowfollow:eq(?)
           let sizeIndex = 2;
-          const tdAnothers = Sizzle("> td", trAnothers[0]);
+          const tdAnothers = selectElements("> td", trAnothers[0]);
           for (let i = 0; i < tdAnothers.length; i++) {
             if (sizePattern.test((tdAnothers[i] as HTMLElement).innerText)) {
               sizeIndex = i;
@@ -926,8 +1019,13 @@ export default class NexusPHP extends PrivateSite {
           }
 
           trAnothers.forEach((trAnother) => {
-            const sizeSelector = Sizzle(`td:eq(${sizeIndex})`, trAnother)[0] as HTMLElement;
-            seedStatus.seedingSize += parseSizeString(sizeSelector.innerText.trim());
+            // E-4：`td:eq(N)` 对少列的行（colspan 表头/表尾、结构异常行）会返回空数组，
+            // 直接取 [0] 再 .innerText 会抛 TypeError 并让整次用户信息刷新失败，
+            // 因此与 Gazelle 的同款循环一样必须先确认取到了元素。
+            const sizeElement = selectElements(`td:eq(${sizeIndex})`, trAnother)[0] as HTMLElement | undefined;
+            if (!sizeElement) return;
+
+            seedStatus.seedingSize += parseSizeString(sizeElement.innerText.trim());
           });
         }
       }
@@ -954,12 +1052,12 @@ export default class NexusPHP extends PrivateSite {
     } else if (userUploadsRequestString && userUploadsRequestString?.includes("<table")) {
       // 未匹配到关键字，则从表格中解析
       const userUploadsDocument = createDocument(userUploadsRequestString);
-      const divSeeding = Sizzle("div:has( ~ table) > div:contains(' | ')", userUploadsDocument);
+      const divSeeding = selectElements("div:has( ~ table) > div:contains(' | ')", userUploadsDocument);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
         flushUserInfo.uploads = definedFilters.parseNumber(seedingText[0]);
       } else {
-        const trAnothers = Sizzle("table:last tr:not(:eq(0))", userUploadsDocument);
+        const trAnothers = selectElements("table:last tr:not(:eq(0))", userUploadsDocument);
         flushUserInfo.uploads = trAnothers.length;
       }
     }

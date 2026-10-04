@@ -14,6 +14,6 @@ export const siteMetadata: ISiteMetadata = {
 
   // NOTE 这个站实在没有找到 favicon
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/d9516f1bb5b9551caf251c4c2a6bbd6dcf332f89
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/d9516f1bb5b9551caf251c4c2a6bbd6dcf332f89
   isDead: true,
 };

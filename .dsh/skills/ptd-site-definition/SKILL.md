@@ -1,9 +1,9 @@
 ---
 name: ptd-site-definition
-description: 为 PT-depiler 仓库新增或修改 PT/BT 站点定义文件（src/packages/site/definitions/*.ts）时使用。覆盖：判定站点所属引擎、编写 siteMetadata（id/urls/version/category/search/userInfo/levelRequirements）、编写选择器与 filters、覆写引擎类方法、以及提交前的类型检查与静态校验。Use when adding support for a new tracker site, editing an existing site definition, adapting a NexusPHP / Unit3D / Gazelle / GazelleJSONAPI / AvistazNetwork / Luminance / Rartracker / TCG site, or when the task mentions definitions/、schemas/、siteMetadata、search selectors、userInfo process。
+description: 为 chenbinPT 仓库新增或修改 PT/BT 站点定义文件（src/packages/site/definitions/*.ts）时使用。覆盖：判定站点所属引擎、编写 siteMetadata（id/urls/version/category/search/userInfo/levelRequirements）、编写选择器与 filters、覆写引擎类方法、以及提交前的类型检查与静态校验。Use when adding support for a new tracker site, editing an existing site definition, adapting a NexusPHP / Unit3D / Gazelle / GazelleJSONAPI / AvistazNetwork / Luminance / Rartracker / TCG site, or when the task mentions definitions/、schemas/、siteMetadata、search selectors、userInfo process。
 ---
 
-# PT-depiler 站点定义（site definition）编写
+# chenbinPT 站点定义（site definition）编写
 
 目标产物是 `src/packages/site/definitions/<id>.ts`：一个文件定义一个站点，导出 `siteMetadata: ISiteMetadata`，按需再导出一个覆写引擎行为的 `default class`。本 skill 只讲「如何写这个文件」；修改 `types/` 公共类型或 `schemas/` 引擎实现属于另一层次的工作，除非用户明确要求，不要顺手改动。
 
@@ -25,7 +25,7 @@ description: 为 PT-depiler 仓库新增或修改 PT/BT 站点定义文件（src
 2. **读该引擎的 reference**：见下方「按需读取」。**不要凭记忆套模板**，不同 schema 的 `SchemaMetadata` 默认值差异很大。
 3. **收集事实**：category 的 value→name、搜索入口、选择器、等级要求必须来自真实页面、接口响应或站点规则页。拿不到就明确写出假设并向用户确认，**严禁为了让文件"看起来完整"而编造数值、选择器或接口路径**。
 4. **写文件**：以同引擎既有定义文件为骨架（`...SchemaMetadata` 展开 + 覆写差异项），只写与默认值不同的部分。
-5. **校验**：跑 `pnpm check`（`vue-tsc --noEmit`，定义文件在 tsconfig include 内）与静态检查脚本（见下），必要时跑 `pnpm format`。
+5. **校验**：跑 `npm run check`（`vue-tsc --noEmit`，定义文件在 tsconfig include 内）与静态检查脚本（见下），必要时跑 `npm run format`。
 6. **交付**：说明改了什么、依据是什么、哪些值来自真实站点、哪些是待确认的假设。
 
 ## 硬性规则
@@ -69,7 +69,7 @@ node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs src/packa
 node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs   # 不带参数 = 全量扫描
 ```
 
-脚本检查：文件名与 `id` 是否一致、`id` 是否合法、必填字段是否齐全、`type` 取值、`urls` 是否非空且可 rot13 还原、`timezoneOffset` 格式、`category` 的 key 是否重复、`levelRequirements` 的 id 是否重复或非递增；并对 `schema` 命名、version 口径、明文 http 给出提示。脚本只做静态结构检查，**不能替代** `pnpm check` 与真实站点上的运行验证。
+脚本检查：文件名与 `id` 是否一致、`id` 是否合法、必填字段是否齐全、`type` 取值、`urls` 是否非空且可 rot13 还原、`timezoneOffset` 格式、`category` 的 key 是否重复、`levelRequirements` 的 id 是否重复或非递增；并对 `schema` 命名、version 口径、明文 http 给出提示。脚本只做静态结构检查，**不能替代** `npm run check` 与真实站点上的运行验证。
 
 ## 交付前检查清单
 
@@ -81,5 +81,5 @@ node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs   # 不�
 - [ ] `category` 的每个 key 在站点内唯一，value 与站点真实分类一致
 - [ ] 所有选择器/接口路径都有真实依据，没有猜测值
 - [ ] `node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs <file>` 通过
-- [ ] `pnpm check` 通过
+- [ ] `npm run check` 通过
 - [ ] 若覆写了类方法，确认签名与基类一致（`override` 关键字、参数个数与类型）

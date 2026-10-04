@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/cnlang.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/cnlang.org/config.json
  */
 import { type ISiteMetadata } from "../types";
 
@@ -16,6 +16,6 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://cnlang.org/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/1aa73d0f9b0afb4511c1be7810d7dafc4268cd4d
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/1aa73d0f9b0afb4511c1be7810d7dafc4268cd4d
   isDead: true,
 };

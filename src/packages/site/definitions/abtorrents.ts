@@ -1,11 +1,11 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/abtorrents.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/abtorrents.me/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/abtorrents.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  */
 import type { ISiteMetadata, ITorrent } from "../types";
 import { ETorrentStatus } from "../types";
-import { buildCategoryOptionsFromDict, parseSizeString } from "../utils";
+import { buildCategoryOptionsFromDict, parseSizeString, extractTextExcluding } from "../utils";
 import PrivateSite from "../schemas/AbstractPrivateSite";
 
 // U-232 V4.5 分类，取自 Jackett 定义（PTPP 未提供分类表）
@@ -141,10 +141,8 @@ export const siteMetadata: ISiteMetadata = {
       title: {
         selector: "a[href^='details.php?id=']",
         elementProcess: (element: HTMLElement) => {
-          // 行内可能带 span.has-text-red 等标记，需要剔除
-          const clone = element.cloneNode(true) as HTMLElement;
-          clone.querySelectorAll("span").forEach((span) => span.remove());
-          return (clone.textContent ?? "").trim() || undefined;
+          // 行内可能带 span.has-text-red 等标记，需要剔除（不深克隆，直接按文本节点读取）
+          return (extractTextExcluding(element, "span") ?? "").trim() || undefined;
         },
       },
       url: { selector: "a[href^='details.php?id=']", attr: "href" },

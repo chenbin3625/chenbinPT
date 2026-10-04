@@ -4,6 +4,7 @@
 import type { ISiteMetadata } from "../types.ts";
 import { set } from "es-toolkit/compat";
 import { buildCategoryOptionsFromDict } from "../utils.ts";
+import { extractTextExcluding } from "../utils/html.ts";
 
 const categoryMap: Record<number, string> = {
   15: "Movie / Blu-ray",
@@ -133,11 +134,9 @@ export const siteMetadata: ISiteMetadata = {
       subTitle: {
         selector: "td:nth-child(2) > span",
         elementProcess: (el: HTMLElement) => {
-          const cloneEl = el.cloneNode(true) as HTMLElement;
-          cloneEl.querySelectorAll("a").forEach((child) => {
-            child.remove();
-          });
-          return cloneEl.innerText.trim();
+          // 等价于「cloneNode + 删除全部后代 <a> + innerText.trim()」：
+          // 克隆体是脱离文档的节点，其 innerText 按规范等于 textContent（见 docs/performance-audit.md P2-14）。
+          return extractTextExcluding(el, "a").trim();
         },
       },
       tags: [

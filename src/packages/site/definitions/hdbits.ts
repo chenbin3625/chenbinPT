@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/HDBitsApi.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdbits.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdbits.org/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hdbits.json
  */
 import { ETorrentStatus, ISearchCategories, ISearchInput, ISiteMetadata, ITorrent } from "../types";
@@ -209,7 +209,7 @@ export const siteMetadata: ISiteMetadata = {
 
   userInfo: {
     pickLast: ["id", "name", "joinTime"],
-    // From https://github.com/pt-plugins/PT-Plugin-Plus/blob/e8559fbcbfac9d6149de0f5484807917355c9844/resource/sites/hdbits.org/config.json#L167-L225
+    // From https://github.com/chenbin3625/PT-Plugin-Plus/blob/e8559fbcbfac9d6149de0f5484807917355c9844/resource/sites/hdbits.org/config.json#L167-L225
     process: [
       {
         requestConfig: { url: "/index.php" },
@@ -285,7 +285,7 @@ export const siteMetadata: ISiteMetadata = {
     ],
   },
 
-  // From https://github.com/pt-plugins/PT-Plugin-Plus/blob/e8559fbcbfac9d6149de0f5484807917355c9844/resource/sites/hdbits.org/config.json#L19-L44
+  // From https://github.com/chenbin3625/PT-Plugin-Plus/blob/e8559fbcbfac9d6149de0f5484807917355c9844/resource/sites/hdbits.org/config.json#L19-L44
   levelRequirements: [
     {
       id: 1,
@@ -326,8 +326,8 @@ export default class HDBits extends PrivateSite {
       axiosConfig.method = "POST";
       axiosConfig.responseType = "json";
       axiosConfig.data ??= {};
-      axiosConfig.data.username = this.userConfig.inputSetting!.username;
-      axiosConfig.data.passkey = this.userConfig.inputSetting!.passkey;
+      axiosConfig.data.username = this.userConfig.inputSetting?.username ?? "";
+      axiosConfig.data.passkey = this.userConfig.inputSetting?.passkey ?? "";
     }
 
     return super.request(axiosConfig, checkLogin);
@@ -350,7 +350,7 @@ export default class HDBits extends PrivateSite {
     row: IHDBitsRawTorrent,
     searchConfig: ISearchInput,
   ): Partial<ITorrent> {
-    torrent.link = `/download.php/${row.filename}?id=${row.id}&passkey=${this.userConfig.inputSetting!.passkey}`;
+    torrent.link = `/download.php/${row.filename}?id=${row.id}&passkey=${this.userConfig.inputSetting?.passkey ?? ""}`;
     return torrent;
   }
 

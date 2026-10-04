@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { SyncOutlined, ToTopOutlined } from "@ant-design/icons-vue";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { EResultParseStatus } from "@ptd/site";
 
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { resolveColor } from "@/shared/colors.ts";
 import type { ISearchPlanStatus, TSearchSolutionKey } from "@/shared/types.ts";
 
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import SiteName from "@/options/components/SiteName.vue";
 import SolutionDetail from "@/options/components/SolutionDetail.vue";
@@ -26,6 +29,9 @@ function getSearchSolution(planKey: string, entryName: string) {
 
 const statusFilterRef = ref<EResultParseStatus[]>([]);
 
+// A-22：这份表里的颜色名是 Vuetify 的调色板写法（"yellow-darken-2"/"indigo"…）。antd 的 a-tag 只认
+// 预设色名，其余值会被原样写进 `style.backgroundColor` —— 非法 CSS 会被浏览器直接丢弃，标签就没有任何样式。
+// 因此消费时必须经 resolveColor() 转成真实色值（见 src/entries/shared/colors.ts）。
 const statusColorMap: Record<EResultParseStatus, string> = {
   [EResultParseStatus.success]: "green",
   [EResultParseStatus.waiting]: "indigo",
@@ -44,7 +50,11 @@ const statusChips = computed(() => {
   for (const plan of Object.values(runtimeStore.search.searchPlan ?? {})) {
     countMap.set(plan.status, (countMap.get(plan.status) ?? 0) + 1);
   }
-  return [...countMap.entries()].map(([status, count]) => ({ status, count, color: statusColorMap[status] }));
+  return [...countMap.entries()].map(([status, count]) => ({
+    status,
+    count,
+    color: resolveColor(statusColorMap[status]),
+  }));
 });
 
 const filteredSearchPlan = computed(() => {
@@ -55,125 +65,112 @@ const filteredSearchPlan = computed(() => {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable>
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>
-            {{
-              t("SearchEntity.SearchStatusDialog.title", [
-                metadataStore.getSearchSolutionName(runtimeStore.search.searchPlanKey),
-              ])
-            }}
-            <br />
-            <p class="text-body-small"><{{ runtimeStore.search.searchPlanKey }}></p>
-          </v-toolbar-title>
-
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-chip-group v-model="statusFilterRef" variant="tonal" column multiple>
-          <v-chip
-            v-for="{ status, count, color } in statusChips"
-            :key="status"
-            :base-color="color"
-            :value="status"
-            filter
-          >
-            <ResultParseStatus :status="status" />
-            <v-badge :content="count" color="grey" inline />
-          </v-chip>
-        </v-chip-group>
-        <v-divider v-if="statusChips.length > 0" class="mb-2" />
-        <v-list>
-          <v-list-item v-for="[solutionKey, searchPlan] in filteredSearchPlan" :key="solutionKey">
-            <template #prepend>
-              <SiteFavicon :site-id="searchPlan.siteId" class="mr-2" />
-            </template>
-            <v-list-item-title>
-              <div class="d-inline-flex">
-                <SiteName
-                  :class="['text-decoration-none', 'font-weight-bold', 'text-black']"
-                  :site-id="searchPlan.siteId"
-                />
-                ->
-                <span v-if="searchPlan.searchEntry.name">
-                  {{ searchPlan.searchEntry.name }}
-                </span>
-                <span
-                  v-else-if="
-                    runtimeStore.search.searchPlanKey === 'all' || runtimeStore.search.searchPlanKey.startsWith('site:')
-                  "
-                >
-                  {{ searchPlan.searchEntry.name ?? searchPlan.searchEntryName }}
-                </span>
-                <span v-else>
-                  <SolutionDetail
-                    :solution="getSearchSolution(runtimeStore.search.searchPlanKey, searchPlan.searchEntryName)"
-                  />
-                </span>
-              </div>
-              <br />
-              <span class="text-label-large text-grey"> <{{ searchPlan.searchEntryName }}> </span>
-            </v-list-item-title>
-            <template #append>
-              <span class="text-label-large text-end">
-                <ResultParseStatus :status="searchPlan.status" />
-                <template v-if="searchPlan.status === EResultParseStatus.success">
-                  <br />
-                  <span class="text-end">
-                    {{
-                      t("SearchEntity.SearchStatusDialog.successMsg", [
-                        searchPlan.count,
-                        (searchPlan.costTime ?? 0) / 1000,
-                      ])
-                    }}
-                  </span>
-                </template>
-                <template v-else-if="searchPlan.statusMsg">
-                  <br />
-                  <span class="text-end">
-                    {{
-                      searchPlan.statusMsg.startsWith("i18n.")
-                        ? t("SearchEntity.SearchStatusDialog.statusMsg" + searchPlan.statusMsg.replace("i18n.", "."))
-                        : searchPlan.statusMsg
-                    }}
-                  </span>
-                </template>
+  <a-modal v-model:open="showDialog" :footer="null" :width="800">
+    <template #title>
+      {{
+        t("SearchEntity.SearchStatusDialog.title", [
+          metadataStore.getSearchSolutionName(runtimeStore.search.searchPlanKey),
+        ])
+      }}
+      <br />
+      <p style="font-size: 12px"><{{ runtimeStore.search.searchPlanKey }}></p>
+    </template>
+    <a-space wrap>
+      <a-tag
+        v-for="{ status, count, color } in statusChips"
+        :key="status"
+        :bordered="!statusFilterRef.includes(status)"
+        :color="statusFilterRef.includes(status) ? color : undefined"
+        style="cursor: pointer"
+        @click="
+          () => {
+            statusFilterRef = statusFilterRef.includes(status)
+              ? statusFilterRef.filter((s) => s !== status)
+              : [...statusFilterRef, status];
+          }
+        "
+      >
+        <ResultParseStatus :status="status" />
+        <a-badge color="grey" :count="count" :number-style="{ position: 'static', transform: 'none' }"></a-badge>
+      </a-tag>
+    </a-space>
+    <a-divider v-if="statusChips.length > 0" style="margin-bottom: 8px"></a-divider>
+    <a-list>
+      <a-list-item v-for="[solutionKey, searchPlan] in filteredSearchPlan" :key="solutionKey">
+        <a-list-item-meta>
+          <template #avatar><SiteFavicon :site-id="searchPlan.siteId" style="margin-right: 8px" /></template>
+          <template #title>
+            <a-flex :gap="4">
+              <SiteName :site-id="searchPlan.siteId" strong style="text-decoration: none" />
+              ->
+              <span v-if="searchPlan.searchEntry.name">
+                {{ searchPlan.searchEntry.name }}
               </span>
-              <v-divider class="mx-2" vertical />
-              <v-btn-group size="small" variant="text">
-                <!-- 上移队列 -->
-                <v-btn
-                  v-if="searchPlan.status === EResultParseStatus.waiting"
-                  :title="t('SearchEntity.SearchStatusDialog.moveUp')"
-                  color="warning"
-                  icon="mdi-arrow-collapse-up"
-                  @click="() => raiseSearchPriority(solutionKey)"
-                >
-                </v-btn>
-                <!-- 重新搜索 -->
-                <v-btn
-                  v-else
-                  :title="t('SearchEntity.SearchStatusDialog.searchAgain')"
-                  :loading="searchPlan.status === EResultParseStatus.working"
-                  color="red"
-                  icon="mdi-cached"
-                  @click="
-                    () => doSearchEntity(searchPlan.siteId, searchPlan.searchEntryName, searchPlan.searchEntry, true)
-                  "
-                ></v-btn>
-              </v-btn-group>
-            </template>
-          </v-list-item>
-        </v-list>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
-</template>
+              <span
+                v-else-if="
+                  runtimeStore.search.searchPlanKey === 'all' || runtimeStore.search.searchPlanKey.startsWith('site:')
+                "
+              >
+                {{ searchPlan.searchEntry.name ?? searchPlan.searchEntryName }}
+              </span>
+              <span v-else>
+                <SolutionDetail
+                  :solution="getSearchSolution(runtimeStore.search.searchPlanKey, searchPlan.searchEntryName)"
+                />
+              </span>
+            </a-flex>
+            <br />
+            <span style="color: var(--ptd-text-tertiary); font-size: 14px"> <{{ searchPlan.searchEntryName }}> </span>
+          </template>
+        </a-list-item-meta>
 
-<style scoped lang="scss"></style>
+        <div style="font-size: 14px; text-align: right">
+          <ResultParseStatus :status="searchPlan.status" />
+          <template v-if="searchPlan.status === EResultParseStatus.success">
+            <br />
+            <span>
+              {{
+                t("SearchEntity.SearchStatusDialog.successMsg", [searchPlan.count, (searchPlan.costTime ?? 0) / 1000])
+              }}
+            </span>
+          </template>
+          <template v-else-if="searchPlan.statusMsg">
+            <br />
+            <span>
+              {{
+                searchPlan.statusMsg.startsWith("i18n.")
+                  ? t("SearchEntity.SearchStatusDialog.statusMsg" + searchPlan.statusMsg.replace("i18n.", "."))
+                  : searchPlan.statusMsg
+              }}
+            </span>
+          </template>
+        </div>
+        <a-divider style="margin: 0 8px" type="vertical" />
+        <a-button-group size="small">
+          <!-- 上移队列 -->
+          <a-button
+            v-if="searchPlan.status === EResultParseStatus.waiting"
+            type="text"
+            :title="t('SearchEntity.SearchStatusDialog.moveUp')"
+            @click="() => raiseSearchPriority(solutionKey)"
+          >
+            <template #icon><ToTopOutlined /></template>
+          </a-button>
+          <!-- 重新搜索 -->
+          <a-button
+            v-else
+            danger
+            :title="t('SearchEntity.SearchStatusDialog.searchAgain')"
+            :loading="searchPlan.status === EResultParseStatus.working"
+            @click="() => doSearchEntity(searchPlan.siteId, searchPlan.searchEntryName, searchPlan.searchEntry, true)"
+          >
+            <template #icon><SyncOutlined /></template>
+          </a-button>
+        </a-button-group>
+      </a-list-item>
+
+      <!-- 搜索方案尚未创建条目（或筛选条件把条目全部过滤掉）时，列表本身渲染为空，这里补一个明确占位 -->
+      <NoDataPlaceholder v-if="filteredSearchPlan.length === 0" />
+    </a-list>
+  </a-modal>
+</template>

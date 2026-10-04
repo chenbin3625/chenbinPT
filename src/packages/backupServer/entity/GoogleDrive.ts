@@ -22,6 +22,8 @@ import { sleep } from "~/helper.ts";
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
+import { getBackupRequestTimeout } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 import { EListOrderBy, EListOrderMode } from "../type";
 import type { IBackupConfig, IBackupFileInfo, IBackupFileListOption, IBackupMetadata, IBackupData } from "../type";
 
@@ -43,12 +45,11 @@ export const serverMetaData: IBackupMetadata<GoogleDriveConfig> = {
   description: "Google Drive 是 Google 提供的云存储服务，支持文件存储和共享功能。",
   requiredField: [
     { name: "client_id", key: "client_id", type: "string" },
-    { name: "client_secret", key: "client_secret", type: "string" },
-    { name: "refresh_token", key: "refresh_token", type: "string" },
+    { name: "client_secret", key: "client_secret", type: "string", secret: true },
+    { name: "refresh_token", key: "refresh_token", type: "string", secret: true },
   ],
 };
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface ApiResponse {}
 
 interface ErrorResponse extends ApiResponse {
@@ -109,6 +110,7 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
           refresh_token: this.userConfig.refresh_token,
           grant_type: "refresh_token",
         }),
+        { timeout: getBackupRequestTimeout(this.userConfig) },
       );
       this.accessInformation = { ...data, expired_at: Date.now() + 3500 * 1e3 };
     }
@@ -123,17 +125,28 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       ...config.headers,
       authorization: "Bearer " + accessToken.access_token,
     };
+    config.timeout ??= getBackupRequestTimeout(this.userConfig);
 
     try {
-      return axios.request<T>(config);
+      return await axios.request<T>(config);
     } catch (e) {
-      const response = (e as AxiosError<ErrorResponse>).response!;
-      if (response.data) {
-        const errorMsg = response.data?.error?.message;
-        if (errorMsg === "Rate Limit Exceeded" && retry > 0) {
-          await sleep(2e3);
-          return await this.request(config, retry - 1);
-        }
+      const error = e as AxiosError<ErrorResponse>;
+      // 先判 response?.data：网络层错误（无 response）时按原样抛出，
+      // 避免访问 undefined.status/.data 抛 TypeError 掩盖真实原因
+      const response = error.response;
+      if (response?.data?.error?.message === "Rate Limit Exceeded" && retry > 0) {
+        // 指数退避 + 抖动；如果服务端给了 Retry-After 则优先使用
+        const retryAfterSeconds = Number(response.headers?.["retry-after"]);
+        const baseDelay =
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+            ? retryAfterSeconds * 1e3
+            : 2e3 * 2 ** (3 - retry);
+        await sleep(baseDelay + Math.random() * 500);
+        return await this.request(config, retry - 1);
+      }
+
+      if (!response) {
+        throw error;
       }
 
       throw Error(`Network Error: ${response.status} ${response.statusText || ""}`.trim());
@@ -214,8 +227,8 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       });
       return true;
     } catch (e) {
-      const response = (e as AxiosError<ErrorResponse>).response!;
-      if (response.data?.error?.message?.startsWith("File not found: ")) {
+      const response = (e as AxiosError<ErrorResponse>).response;
+      if (response?.data?.error?.message?.startsWith("File not found: ")) {
         return true;
       }
     }
@@ -285,7 +298,10 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
     try {
       const accessToken = await this.fetchAccessToken();
       return typeof accessToken?.access_token !== "undefined";
-    } catch {}
+    } catch (e) {
+      // P1-5：ping 结果由返回值表达，但保留失败原因（refresh_token 失效、网络问题等）便于排查
+      logMessage("[GoogleDrive] ping 失败", { error: e instanceof Error ? e.message : String(e) });
+    }
     return false;
   }
 }

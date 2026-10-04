@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CodeOutlined, FileExcelOutlined } from "@ant-design/icons-vue";
 import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { saveAs } from "file-saver";
@@ -152,10 +153,16 @@ function convertToCSV(items: IHistoryUserInfo[]): string {
         const raw = (item as any)[key];
         const val =
           raw === Infinity || raw === -Infinity || (typeof raw === "number" && isNaN(raw)) ? "" : String(raw ?? "");
-        if (/[",\n\r]/.test(val)) {
-          return `"${val.replace(/"/g, '""')}"`;
+
+        // A-26：CSV 公式注入防护。站点可控的字段（用户名、等级名、站点名…）会原样进入 CSV，
+        // 以 = + - @ 或制表符/回车开头的单元格会被 Excel / Google Sheets 当作公式求值
+        // （例如 `=HYPERLINK("http://x","click")`）。这里前置一个单引号，让表格软件按文本处理。
+        const escaped = /^[=+\-@\t\r]/.test(val) ? `'${val}` : val;
+
+        if (/[",\n\r]/.test(escaped)) {
+          return `"${escaped.replace(/"/g, '""')}"`;
         }
-        return val;
+        return escaped;
       })
       .join(","),
   );
@@ -181,92 +188,68 @@ function convertToJSON(items: IHistoryUserInfo[]): string {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" width="700">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="orange-darken-3">
-          <v-toolbar-title>
-            <template v-if="isExportSelected">
-              {{ t("MyData.exportDialog.exportSelected", { count: querySiteIds.length }) }}
-            </template>
-            <template v-else>
-              {{ t("MyData.exportDialog.exportAll", { count: querySiteIds.length }) }}
-            </template>
-          </v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text class="pt-4">
-        <v-row>
-          <v-col cols="12">
-            <v-label class="text-body-medium font-weight-bold mb-2 d-block">
-              {{ t("MyData.exportDialog.formatLabel") }}
-            </v-label>
-            <v-btn-toggle v-model="exportFormat" color="orange-darken-3" density="compact" mandatory variant="outlined">
-              <v-btn value="csv">
-                <v-icon start icon="mdi-file-delimited-outline" />
-                {{ t("MyData.exportDialog.formatCSV") }}
-              </v-btn>
-              <v-btn value="json">
-                <v-icon start icon="mdi-code-json" />
-                {{ t("MyData.exportDialog.formatJSON") }}
-              </v-btn>
-            </v-btn-toggle>
-          </v-col>
-        </v-row>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :confirm-loading="isLoading"
+    :ok-button-props="{ disabled: isLoading }"
+    :ok-text="t('common.export')"
+    :width="700"
+    @ok="doExport"
+  >
+    <template #title>
+      <template v-if="isExportSelected">
+        {{ t("MyData.exportDialog.exportSelected", { count: querySiteIds.length }) }}
+      </template>
+      <template v-else>
+        {{ t("MyData.exportDialog.exportAll", { count: querySiteIds.length }) }}
+      </template>
+    </template>
 
-        <v-row>
-          <v-col cols="12">
-            <v-label class="text-body-medium font-weight-bold mb-2 d-block">
-              {{ t("MyData.exportDialog.fieldsLabel") }}
-            </v-label>
-            <v-card variant="outlined" class="pa-2">
-              <v-row density="compact">
-                <v-col v-for="field in allExportFields" :key="field.key" cols="6" md="4">
-                  <v-checkbox
-                    :model-value="selectedKeys.includes(field.key)"
-                    :disabled="field.required"
-                    :label="t(field.label)"
-                    density="compact"
-                    hide-details
-                    @update:model-value="
-                      (v) => {
-                        if (v) {
-                          selectedKeys.push(field.key);
-                        } else {
-                          selectedKeys = selectedKeys.filter((k) => k !== field.key);
-                        }
-                      }
-                    "
-                  />
-                </v-col>
-              </v-row>
-            </v-card>
-          </v-col>
-        </v-row>
-      </v-card-text>
+    <a-row :gutter="8">
+      <a-col :span="24">
+        <a-typography-text strong style="display: block; margin-bottom: 8px; font-size: 14px">
+          {{ t("MyData.exportDialog.formatLabel") }}
+        </a-typography-text>
+        <a-radio-group v-model:value="exportFormat" button-style="solid">
+          <a-radio-button value="csv">
+            <FileExcelOutlined />
+            {{ t("MyData.exportDialog.formatCSV") }}
+          </a-radio-button>
+          <a-radio-button value="json">
+            <CodeOutlined />
+            {{ t("MyData.exportDialog.formatJSON") }}
+          </a-radio-button>
+        </a-radio-group>
+      </a-col>
+    </a-row>
 
-      <v-divider />
-
-      <v-card-actions class="pa-4">
-        <v-spacer />
-        <v-btn variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn
-          :disabled="isLoading"
-          :loading="isLoading"
-          color="orange-darken-3"
-          variant="elevated"
-          prepend-icon="mdi-export"
-          @click="doExport"
-        >
-          {{ t("common.export") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <a-row :gutter="8">
+      <a-col :span="24">
+        <a-typography-text strong style="display: block; margin-bottom: 8px; font-size: 14px">
+          {{ t("MyData.exportDialog.fieldsLabel") }}
+        </a-typography-text>
+        <a-card style="padding: 8px">
+          <a-row :gutter="8">
+            <a-col v-for="field in allExportFields" :key="field.key" :span="12" :md="8">
+              <a-checkbox
+                :checked="selectedKeys.includes(field.key)"
+                :disabled="field.required"
+                @update:checked="
+                  (v: any) => {
+                    if (v) {
+                      selectedKeys.push(field.key);
+                    } else {
+                      selectedKeys = selectedKeys.filter((k) => k !== field.key);
+                    }
+                  }
+                "
+                >{{ t(field.label) }}</a-checkbox
+              >
+            </a-col>
+          </a-row>
+        </a-card>
+      </a-col>
+    </a-row>
+  </a-modal>
 </template>

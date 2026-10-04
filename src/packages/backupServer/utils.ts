@@ -1,5 +1,7 @@
 import JSZip from "jszip";
 import CryptoJS from "crypto-js";
+import PQueue from "p-queue";
+import { formatDate, isValid, parse } from "date-fns";
 import { EListOrderBy, EListOrderMode } from "./type";
 import type {
   IBackupData,
@@ -11,7 +13,24 @@ import type {
 } from "./type";
 import { omit } from "es-toolkit";
 
+import { createZipBlob } from "./zipStream.ts";
+
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** 恢复备份时逐文件解密/校验的并发上限（有界并发，避免大备份串行阻塞、也避免一次读入全部文件） */
+const RESTORE_FILE_CONCURRENCY = 4;
+
+/**
+ * 备份服务器请求的默认超时（毫秒）。
+ * 各 entity 之前都没有设置 timeout（axios 默认 0 = 永不超时），慢链路/对端挂死时会让备份流程永久 pending。
+ */
+export const DEFAULT_BACKUP_REQUEST_TIMEOUT = 60e3;
+
+/** 备份服务器请求的超时时间：优先使用服务器配置里的数值 timeout，否则使用默认的 60s */
+export function getBackupRequestTimeout(userConfig?: Record<string, any>): number {
+  const configured = userConfig?.timeout;
+  return typeof configured === "number" && configured > 0 ? configured : DEFAULT_BACKUP_REQUEST_TIMEOUT;
+}
 
 /** 时间窗口采样的默认规则（仅用于 UI 提示），单位为天 */
 export const DEFAULT_BACKUP_RETENTION_SAMPLE_RULES = {
@@ -74,6 +93,39 @@ export function hasBackupRetentionToApply(retention?: IBackupRetention): boolean
 }
 
 /**
+ * 备份文件名：`PTD_backup_<yyyyMMddTHHmm>.zip`（本地时间，精确到分钟）。
+ *
+ * 生成（`getBackupFilename`）与保留策略过滤（`isBackupFilename`）必须共用这里的同一份格式定义：
+ * 历史实现中生成用 `formatDate(..., "yyyyMMdd'T'HHmm")`（13 位、含字母 T），
+ * 过滤却写成 `/^PTD_backup_\d{16}\.zip$/`（16 位纯数字），两者不一致导致保留策略永远匹配不到任何备份，
+ * 自动清理完全失效、远端历史备份无限累积。
+ */
+const BACKUP_FILENAME_PREFIX = "PTD_backup_";
+const BACKUP_FILENAME_SUFFIX = ".zip";
+const BACKUP_FILENAME_DATE_FORMAT = "yyyyMMdd'T'HHmm";
+
+/** 按约定的格式生成备份文件名 */
+export function getBackupFilename(date: Date = new Date()): string {
+  return `${BACKUP_FILENAME_PREFIX}${formatDate(date, BACKUP_FILENAME_DATE_FORMAT)}${BACKUP_FILENAME_SUFFIX}`;
+}
+
+/**
+ * 判断一个文件名是否为本插件生成的备份文件（保留策略只应处理自己创建的文件，避免误删用户数据）。
+ *
+ * 校验严格对齐生成格式：用同一个格式解析后，再把解析结果按同一个格式格式化回来做往返比对。
+ * 不能只依赖 date-fns 的 `parse`：它对不完整的输入过于宽松（如 `20261004T021` 也会被解析成 02:01）。
+ */
+export function isBackupFilename(filename: string): boolean {
+  if (!filename.startsWith(BACKUP_FILENAME_PREFIX) || !filename.endsWith(BACKUP_FILENAME_SUFFIX)) {
+    return false;
+  }
+
+  const datePart = filename.slice(BACKUP_FILENAME_PREFIX.length, filename.length - BACKUP_FILENAME_SUFFIX.length);
+  const parsed = parse(datePart, BACKUP_FILENAME_DATE_FORMAT, new Date(0));
+  return isValid(parsed) && formatDate(parsed, BACKUP_FILENAME_DATE_FORMAT) === datePart;
+}
+
+/**
  * 根据保留策略挑选出需要清理的备份文件，返回 `[需要清理的备份, 需要保留的备份]`
  *
  * 传入的 `files` 需要按备份时间从新到旧排序（即 `AbstractBackupServer.list()` 的返回结果）。
@@ -131,45 +183,164 @@ export function pruneBackupFiles(
 /**
  * 注意，我们不直接使用用户提供的 secretKey 作为 AES 的密钥，因为可能无法提供足够强度的密钥
  */
-export function encryptData(data: any, encryptionKey?: string): string {
-  const stringifyData = JSON.stringify(data);
+function deriveEncryptionKey(encryptionKey?: string): string | undefined {
   if (!encryptionKey) {
+    return undefined;
+  }
+  return CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
+}
+
+/** 使用已经派生好的密钥加密（避免对同一个密钥重复做 CryptoJS.MD5） */
+function encryptDataWithKey(data: any, derivedKey?: string): string {
+  const stringifyData = JSON.stringify(data);
+  if (!derivedKey) {
     return stringifyData;
   }
-  const the_key = CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
-  return CryptoJS.AES.encrypt(stringifyData, the_key).toString();
+  return CryptoJS.AES.encrypt(stringifyData, derivedKey).toString();
+}
+
+export function encryptData(data: any, encryptionKey?: string): string {
+  return encryptDataWithKey(data, deriveEncryptionKey(encryptionKey));
+}
+
+/**
+ * `JSON.parse` 的 reviver：丢弃 `__proto__` 键。
+ *
+ * 备份文件是**不可信输入**（用户可能恢复他人分享的 zip）。`JSON.parse('{"__proto__":{"x":1}}')`
+ * 会建出一个**自有**属性 `__proto__`，随后任何 `{...obj}` 展开或 `target["__proto__"] = v`
+ * 赋值都会顺着原型链写到 `Object.prototype` 上（见审查报告 B-22 的实测）。
+ * 在 JSON 边界上直接丢掉该键，比在每个消费点分别设防更可靠。
+ */
+function stripProtoKeys(key: string, value: unknown): unknown {
+  if (key === "__proto__") {
+    return undefined;
+  }
+  return value;
 }
 
 export function decryptData<T = any>(data: string, encryptionKey?: string): T {
-  if (!encryptionKey) {
-    return JSON.parse(data);
+  const the_key = deriveEncryptionKey(encryptionKey);
+  if (!the_key) {
+    return JSON.parse(data, stripProtoKeys);
   }
-  const the_key = CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
   const decrypted = CryptoJS.AES.decrypt(data, the_key).toString(CryptoJS.enc.Utf8);
-  return JSON.parse(decrypted) as T;
+  return JSON.parse(decrypted, stripProtoKeys) as T;
 }
 
 export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: string): Promise<Blob> {
-  const zip = new JSZip();
+  const isEncrypted = typeof encryptionKey === "string" && encryptionKey !== "";
 
   const manifest = {
     ...(data.manifest ?? {}),
-    encryption: typeof encryptionKey === "string" && encryptionKey !== "",
+    encryption: isEncrypted,
     time: new Date().getTime(),
     files: {},
   } as IBackupFileManifest;
 
+  // 密钥派生只做一次，避免每个备份文件都重复计算一次 CryptoJS.MD5
+  const derivedKey = deriveEncryptionKey(encryptionKey);
+
   delete data.manifest; // 确保 manifest 不会被重复添加到 zip 中
-  for (const [key, value] of Object.entries(data)) {
-    const fileName = `${key}.json`;
-    const fileContent = encryptData(value, encryptionKey);
-    zip.file(fileName, fileContent);
-    manifest.files[key] = { name: fileName, hash: CryptoJS.MD5(fileContent).toString() };
+
+  /**
+   * 逐条目产出（生成器 = 惰性）：边加密边产出，调用方决定是立即写进 zip 流
+   * 还是交给 JSZip 持有。manifest 必须最后产出（它的 files[*].hash 依赖前面每个条目的内容）。
+   */
+  function* buildZipEntries(): Generator<{ name: string; content: string }> {
+    for (const [key, value] of Object.entries(data)) {
+      const fileName = `${key}.json`;
+      const fileContent = encryptDataWithKey(value, derivedKey);
+      // 这里的 MD5 是备份格式的一部分（manifest.files[*].hash），恢复时会用于校验，因此必须计算一次
+      manifest.files[key] = { name: fileName, hash: CryptoJS.MD5(fileContent).toString() };
+      yield { name: fileName, content: fileContent };
+    }
+    yield { name: "manifest.json", content: JSON.stringify(manifest) };
   }
 
-  zip.file("manifest.json", JSON.stringify(manifest));
+  // 两条路径都用自带的流式写出器：逐条目成 Blob（内容进入 blob 存储后即可释放 JS 堆引用），
+  // 峰值 ≈ 单条条目，而不是「全部内容 + 整包输出」（见 docs/performance-audit.md P1-25）。
+  // - 加密备份：条目是不可压缩的 base64 密文 → STORE
+  // - 未加密备份：JSON 压缩收益明显 → raw deflate（CompressionStream，浏览器原生实现）
+  // 产物仍是标准 ZIP（JSZip 等任意实现可读，已有测试覆盖恢复路径）。
+  return await createZipBlob(buildZipEntries(), { compress: !isEncrypted });
+}
 
-  return await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 9 } });
+const isPlainObject = (value: unknown): value is Record<string, any> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * 恢复时被拒绝/被安全化的条目说明（见 S-1）。
+ *
+ * 刻意用**非枚举**属性携带：`backupDataToJSZipBlob` 是用 `Object.entries(data)` 遍历顶层键
+ * 来生成条目的，普通字段会被写回下一个备份；非枚举属性既不会被遍历到，也不影响 structured clone。
+ */
+const BACKUP_WARNINGS_KEY = "__backupWarnings";
+
+export function getBackupWarnings(data: IBackupData): string[] {
+  const value = (data as Record<string, unknown>)[BACKUP_WARNINGS_KEY];
+  return Array.isArray(value) ? (value as string[]) : [];
+}
+
+export function setBackupWarnings(data: IBackupData, warnings: string[]): void {
+  Object.defineProperty(data, BACKUP_WARNINGS_KEY, {
+    value: warnings,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
+ * 备份条目的**结构**校验（S-1 的第一道防线）。
+ *
+ * 备份文件是不可信输入，这里只判断「形状对不对」，不代替恢复侧的策略判断
+ * （例如「backupServers 默认不恢复」由 offscreen 侧依据 `IRestoreOptions.restoreBackupServers` 执行）。
+ * 形状不符的条目会被**丢弃并记录原因**，而不是让整次恢复失败——既不静默接受脏数据，
+ * 也不让一个字段的问题毁掉整份可用备份。
+ */
+export function validateBackupPayload(key: string, value: unknown): string | null {
+  switch (key) {
+    case "metadata": {
+      if (!isPlainObject(value)) return "metadata 不是对象";
+      for (const container of [
+        "sites",
+        "solutions",
+        "snapshots",
+        "downloaders",
+        "mediaServers",
+        "backupServers",
+      ] as const) {
+        const child = value[container];
+        if (typeof child !== "undefined" && !isPlainObject(child)) {
+          return `metadata.${container} 不是对象`;
+        }
+      }
+      const servers = value.backupServers;
+      if (isPlainObject(servers)) {
+        for (const [id, server] of Object.entries(servers)) {
+          if (!isPlainObject(server)) return `metadata.backupServers.${id} 不是对象`;
+          if (typeof server.type !== "string") return `metadata.backupServers.${id} 缺少 type`;
+          if (server.config !== undefined && !isPlainObject(server.config)) {
+            return `metadata.backupServers.${id}.config 不是对象`;
+          }
+        }
+      }
+      return null;
+    }
+    // 以下 4 个都是 Record<..., ...> 形状的 storage 表
+    case "config":
+    case "userInfo":
+    case "searchResultSnapshot":
+    case "keepUploadTask":
+      return isPlainObject(value) ? null : `${key} 不是对象`;
+    case "cookies":
+      return isPlainObject(value) ? null : "cookies 不是对象";
+    case "downloadHistory":
+      return Array.isArray(value) ? null : "downloadHistory 不是数组";
+    default:
+      // 未知字段不判断形状（保持前向兼容），但仍会经过 decryptData 的 __proto__ 剥离
+      return null;
+  }
 }
 
 export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string): Promise<IBackupData> {
@@ -182,7 +353,8 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
     .file("manifest.json")
     ?.async("string")
     .then((content) => {
-      return JSON.parse(content) as IBackupFileManifest;
+      // manifest 同样是不可信输入：走同一套 __proto__ 剥离
+      return JSON.parse(content, stripProtoKeys) as IBackupFileManifest;
     });
 
   if (manifest?.files) {
@@ -190,29 +362,105 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
       encryptionKey = "";
     }
 
-    // 只解出 manifest 中记录的其他文件
-    for (const [fileKey, manifestFileData] of Object.entries(omit(manifest.files ?? {}, ["manifest"]))) {
-      const { name: fileName, hash: manifestFileHash } = manifestFileData;
-      const fileContent = await zipContent.file(fileName)?.async("string");
-      if (fileContent) {
-        const fileContentHash = CryptoJS.MD5(fileContent).toString();
-        if (fileKey != "manifest" && fileContentHash !== manifestFileHash) {
-          throw new Error(`File hash mismatch for ${fileName}.`);
-        }
+    // 只解出 manifest 中记录的其他文件；多文件的解压/解密/校验改为有界并发
+    const manifestFiles = Object.entries(omit(manifest.files ?? {}, ["manifest"]));
+    const decryptedFiles: Record<string, any> = {};
+    const queue = new PQueue({ concurrency: RESTORE_FILE_CONCURRENCY });
+    const warnings: string[] = [];
 
-        try {
-          data[fileKey] = decryptData(fileContent, encryptionKey);
-        } catch (e) {
-          throw new Error(`Failed to decrypt file: ${fileName}`);
-        }
+    await Promise.all(
+      manifestFiles.map(([fileKey, manifestFileData]) =>
+        queue.add(async () => {
+          // manifest.files[*] 的形状同样来自不可信输入，先确认能安全解构
+          if (!isPlainObject(manifestFileData) || typeof manifestFileData.name !== "string") {
+            warnings.push(`${fileKey}：manifest 中的条目缺少合法的文件名，已跳过`);
+            return;
+          }
+          const { name: fileName, hash: manifestFileHash } = manifestFileData;
+          const fileContent = await zipContent.file(fileName)?.async("string");
+          if (!fileContent) {
+            return;
+          }
+
+          const fileContentHash = CryptoJS.MD5(fileContent).toString();
+          if (fileKey != "manifest" && fileContentHash !== manifestFileHash) {
+            throw new Error(`File hash mismatch for ${fileName}.`);
+          }
+
+          let payload: unknown;
+          try {
+            payload = decryptData(fileContent, encryptionKey);
+          } catch (e) {
+            throw new Error(`Failed to decrypt file: ${fileName}`);
+          }
+
+          // S-1：结构校验。形状不符的条目直接丢弃并记录原因，避免把不可信结构写进
+          // chrome.storage（尤其是 metadata.backupServers——它是「恢复后被自动上传到哪」的决定因素）。
+          const problem = validateBackupPayload(fileKey, payload);
+          if (problem) {
+            warnings.push(`${fileKey}：${problem}，已跳过该条目`);
+            return;
+          }
+
+          decryptedFiles[fileKey] = payload;
+        }),
+      ),
+    );
+
+    // 按 manifest 的顺序写回，保证恢复结果的 key 顺序与并发前一致
+    for (const [fileKey] of manifestFiles) {
+      if (fileKey in decryptedFiles) {
+        data[fileKey] = decryptedFiles[fileKey];
       }
     }
+
+    setBackupWarnings(data, warnings);
+
     data.manifest = manifest; // 将 manifest 也添加到数据中
   } else {
     throw new Error("Manifest not found in the zip file");
   }
 
   return data;
+}
+
+/**
+ * 恢复下载历史所需的最小 IndexedDB 事务接口。
+ *
+ * 这里使用结构化类型而不是直接引用 `idb` 的 `IDBPDatabase`：backupServer 包不需要感知 offscreen 侧的数据库实例，
+ * 同时让「原子替换」这段逻辑可以在单测里用轻量 mock 覆盖（无需真实 IndexedDB 环境）。
+ */
+export interface IDownloadHistoryTransaction {
+  store: {
+    clear(): Promise<unknown>;
+    put(value: any): Promise<unknown>;
+  };
+  done: Promise<unknown>;
+}
+
+/**
+ * 用备份中的记录原子替换本机下载历史。
+ *
+ * - 先校验数据类型：zip 中缺少某个文件时 `jsZipBlobToBackupData` 只会跳过该 key（manifest 里却仍有它的名字），
+ *   因此 `downloadHistory` 可能是 undefined。旧实现在 `clear()` 之后才 `.map(...)`，会先把本机历史清空、
+ *   再抛错且不回滚，属于不可恢复的数据丢失。
+ * - `clear` 与全部 `put` 放在同一个事务里按顺序执行：任一步失败都会由 IndexedDB 整体回滚，
+ *   不会留下「已清空但未写入」的中间态。
+ *
+ * @param openTransaction 事务工厂，只在数据校验通过后才会被调用（数据非法时不会触碰数据库）
+ * @returns 数据非法（未实际写入）时返回 false
+ */
+export async function replaceDownloadHistory(
+  openTransaction: () => IDownloadHistoryTransaction,
+  downloadHistory: unknown,
+): Promise<boolean> {
+  if (!Array.isArray(downloadHistory)) {
+    return false;
+  }
+
+  const tx = openTransaction();
+  await Promise.all([tx.store.clear(), ...downloadHistory.map((item) => tx.store.put(item)), tx.done]);
+  return true;
 }
 
 export function localSort(files: IBackupFileInfo[], options: IBackupFileListOption): IBackupFileInfo[] {

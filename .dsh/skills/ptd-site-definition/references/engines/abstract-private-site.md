@@ -157,7 +157,7 @@ export const siteMetadata: ISiteMetadata = {
 | `protected async storeRuntimeSettings<T>(key, value)` / `retrieveRuntimeSettings<T>(key)` | 需要把一次性凭据（csrfToken 等）持久化跨调用复用 | `schemas/AbstractBittorrentSite.ts:108-117`；范例 `definitions/zhuque.ts:299-324` |
 | `protected fixParsedTorrent(torrent, row, searchConfig)` | 基类预留的统一后处理钩子；**当前 definitions 中无覆写实例** | `schemas/AbstractBittorrentSite.ts:639-645` |
 
-覆写时保持签名一致并加 `override` 关键字（`pnpm check` / `vue-tsc --noEmit` 会校验）。
+覆写时保持签名一致并加 `override` 关键字（`npm run check` / `vue-tsc --noEmit` 会校验）。
 
 ## 范例定义
 

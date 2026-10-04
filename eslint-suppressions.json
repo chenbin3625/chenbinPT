@@ -1,0 +1,575 @@
+{
+  "src/entries/background/main.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/background/utils/alarms.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/background/utils/base.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/background/utils/contextMenus.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 4
+    },
+    "no-console": {
+      "count": 5
+    }
+  },
+  "src/entries/background/utils/fixer.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/background/utils/nativeMessaging.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 7
+    }
+  },
+  "src/entries/background/utils/siteIndex.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/content-script/app/App.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    },
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/content-script/app/components/AdvanceListModuleDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/content-script/app/init.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/content-script/app/pages/SiteListPage.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/content-script/app/pages/SocialSitePage.vue": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/content-script/index.ts": {
+    "no-console": {
+      "count": 8
+    }
+  },
+  "src/entries/offscreen/utils/logger.ts": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/entries/offscreen/utils/socialRecommendations.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/options/App.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/components/DeleteDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/components/SentToDownloaderDialog/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 4
+    }
+  },
+  "src/entries/options/components/SiteFavicon/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/components/SiteName.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/components/TorrentTitleTd.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/stores/config.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
+  "src/entries/options/stores/runtime.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/ContextMenuLinkPush.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Layout/Navigation.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Layout/RecommendationMenu.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Layout/Topbar.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/DownloadHistory/AdvanceFilterGenerateDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/DownloadHistory/ReDownloadSelectDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/KeepUploadTask/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 4
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MediaServerEntity/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/MediaServerEntity/utils.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/MyClient/ClientStatusDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/MyClient/LabelDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyClient/PushToDownloaderDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyClient/RecheckConfirmDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyClient/SpeedLimitDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyClient/TorrentDetailDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
+  "src/entries/options/views/Overview/MyData/ExportUserInfoDialog.vue": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyData/HistoryDataViewDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/MyData/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
+  "src/entries/options/views/Overview/MyData/UserDataStatistic/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyData/UserDataStatistic/utils.ts": {
+    "no-console": {
+      "count": 5
+    }
+  },
+  "src/entries/options/views/Overview/MyData/UserDataTimeline/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/MyData/UserLevelShowSpan.vue": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/MyData/utils/lastUserData.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/SearchEntity/ActionTd.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/SearchEntity/AdvanceFilterGenerateDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/SearchEntity/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/entries/options/views/Overview/SearchEntity/SaveSnapshotDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/SearchEntity/utils/filter.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Overview/SearchEntity/utils/search.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "no-console": {
+      "count": 8
+    }
+  },
+  "src/entries/options/views/Overview/SearchResultSnapshot/EditNameDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Overview/SearchResultSnapshot/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetBackup/EditDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Settings/SetBackup/HistoryDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetBackup/Index.vue": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetBackup/LocalExportConfirmDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetBackup/RestoreDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/entries/options/views/Settings/SetBase/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetBase/NativeBridgeWindow.vue": {
+    "no-console": {
+      "count": 6
+    }
+  },
+  "src/entries/options/views/Settings/SetBase/UiWindow.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetBase/UserInfoWindow.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Settings/SetDownloader/AddDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetDownloader/DefaultDownloaderEditDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Settings/SetDownloader/EditDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Settings/SetDownloader/PathAndTagSuggestDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetDownloader/SiteFilterDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Settings/SetMediaServer/EditDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    }
+  },
+  "src/entries/options/views/Settings/SetSearchSolution/CustomSolutionDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetSearchSolution/EditDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    }
+  },
+  "src/entries/options/views/Settings/SetSearchSolution/Index.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 3
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetSite/AddDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetSite/EditDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetSite/Editor.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetSite/OneClickImportDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/entries/options/views/Settings/SetSite/RebuildMapDialog.vue": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/extends/axios/replaceUnsafeHeader.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/extends/axios/retryWhenCloudflareBlock.ts": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/extends/pinia/webExtPersistence.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/packages/backupServer/entity/CookieCloud.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/backupServer/entity/Gist.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/backupServer/entity/S3.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/definitions/animebytes.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/definitions/audiobookbay.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/definitions/broadcasthenet.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/packages/site/definitions/mteam.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/definitions/nebulance.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/definitions/passthepopcorn.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/schemas/AbstractBittorrentSite.ts": {
+    "no-console": {
+      "count": 8
+    }
+  },
+  "src/packages/site/schemas/AbstractPrivateSite.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/schemas/AvistazNetwork.ts": {
+    "no-console": {
+      "count": 5
+    }
+  },
+  "src/packages/site/schemas/Gazelle.ts": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/packages/site/schemas/NexusPHP.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/utils/filter.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/utils/helper.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/site/utils/html.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/social/entity/anidb.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/social/entity/bangumi.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/social/entity/douban.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/social/entity/imdb.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/social/entity/tmdb.ts": {
+    "no-console": {
+      "count": 4
+    }
+  },
+  "src/packages/social/entity/tvmaze.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/packages/social/index.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/packages/social/recommendations.ts": {
+    "no-console": {
+      "count": 2
+    }
+  }
+}

@@ -12,6 +12,6 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://awesome-hd.me/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/65e36ee58a53affd08485754b24293881b69e822
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/65e36ee58a53affd08485754b24293881b69e822
   isDead: true,
 };

@@ -10,7 +10,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["FengHuang PT", "521best"],
   description: "个人站，定位小体积压制、WEB-DL 电影资源，全站 Free",
   tags: ["影视", "电影", "压制"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

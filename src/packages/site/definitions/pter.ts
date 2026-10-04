@@ -1,10 +1,10 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/pterclub.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/pterclub.com/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/pterclub.com/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/pterclub.json
  */
 import { set } from "es-toolkit/compat";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import {
   ETorrentStatus,
   type IAdvancedSearchRequestConfig,
@@ -481,7 +481,7 @@ export default class Pter extends NexusPHP {
     });
 
     if (userTorrentPage) {
-      const trAnothers = Sizzle("p.np-pager:first b:last", userTorrentPage as Document);
+      const trAnothers = selectElements("p.np-pager:first b:last", userTorrentPage as Document);
       if (trAnothers.length > 0) {
         const match = trAnothers[0].innerHTML.trim().match(/\d+$/); // 末尾的数字
         return match ? parseInt(match[0], 10) : 0;

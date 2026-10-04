@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { inject, shallowRef, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { SearchOutlined } from "@ant-design/icons-vue";
 import { ISocialSitePageInformation, socialPageParserMatchesMap } from "@ptd/social";
 
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -67,14 +68,6 @@ async function handleSearch() {
 </script>
 
 <template>
-  <SpeedDialBtn
-    key="search"
-    color="indigo"
-    icon="mdi-home-search"
-    :title="t('contentScript.quickSearch')"
-    @click="handleSearch"
-  />
+  <SpeedDialBtn key="search" :icon="SearchOutlined" :title="t('contentScript.quickSearch')" @click="handleSearch" />
   <SocialSiteParseResultsDialog v-model="showSocialSiteParseResultsDialog" :parse-results="socialSiteParseResults" />
 </template>
-
-<style scoped lang="scss"></style>

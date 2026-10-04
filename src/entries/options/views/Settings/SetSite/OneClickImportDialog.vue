@@ -1,10 +1,21 @@
 <script setup lang="ts">
+import {
+  CheckCircleOutlined,
+  CheckOutlined,
+  CloseCircleOutlined,
+  CloseOutlined,
+  ExclamationCircleOutlined,
+  QuestionCircleOutlined,
+  SisternodeOutlined,
+  SyncOutlined,
+} from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
-import { computed, shallowRef } from "vue";
+import { type Component, computed, nextTick, ref, shallowRef, watch } from "vue";
 import { pickBy } from "es-toolkit";
 import { isEmpty } from "es-toolkit/compat";
 import { EResultParseStatus, ISiteMetadata, ISiteUserConfig, TSiteID } from "@ptd/site";
 
+import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -12,6 +23,8 @@ import { useResetableRef } from "@/options/directives/useResetableRef.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import CheckSwitchButton from "@/options/components/CheckSwitchButton.vue";
+import PageSkeleton from "@/options/components/PageSkeleton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 import { getCanAddedSiteMetadata } from "./utils.ts";
 
@@ -39,6 +52,8 @@ const metadataStore = useMetadataStore();
 
 // 获取所有能添加的站点
 const canAddSites = shallowRef<Record<TSiteID, ISiteMetadata>>({});
+// 待添加站点需要逐个读取站点定义，加载期间用骨架屏占位而不是直接显示「无数据」
+const isLoadingCanAddSites = ref<boolean>(false);
 
 const realCanAutoAddSiteId = computed(() =>
   Object.values(canAddSites.value)
@@ -46,39 +61,43 @@ const realCanAutoAddSiteId = computed(() =>
     .map((x) => x.id),
 );
 
-const statusIconPropComputed = (site: TSiteID) =>
-  computed(() => {
-    let progressIcon = "progress-helper"; // 默认
-    let progressColor = "grey";
-    let progressTitle = "";
-    if (canAddSites.value[site]?.userInputSettingMeta) {
-      progressIcon = "progress-close"; // 需要手动添加
-      progressColor = "purple";
-      progressTitle = t("SetSite.oneClickImportDialog.status.manual");
-    } else if (importStatus.value.working === site) {
-      progressIcon = "progress-wrench"; // 正在尝试中
-      progressColor = "blue";
-      progressTitle = t("SetSite.oneClickImportDialog.status.trying");
-    } else if (importStatus.value.success.includes(site)) {
-      progressIcon = "progress-check"; // 已添加成功
-      progressColor = "green";
-      progressTitle = t("SetSite.oneClickImportDialog.status.success");
-    } else if (importStatus.value.failed.includes(site)) {
-      progressIcon = "progress-alert"; // 添加失败
-      progressColor = "red";
-      progressTitle = t("SetSite.oneClickImportDialog.status.failed");
-    } else if (importStatus.value.toWork.includes(site)) {
-      progressIcon = "progress-pencil"; // 已选择
-      progressColor = "";
-      progressTitle = t("SetSite.oneClickImportDialog.status.selected");
-    }
+type TStatusIconProp = { icon: Component; color?: string; title: string };
 
+const statusIconProp = (site: TSiteID): TStatusIconProp => {
+  if (canAddSites.value[site]?.userInputSettingMeta) {
+    // 需要手动添加
     return {
-      icon: `mdi-${progressIcon}`,
-      color: progressColor,
-      title: progressTitle,
+      icon: CloseCircleOutlined,
+      color: "purple",
+      title: t("SetSite.oneClickImportDialog.status.manual"),
     };
-  });
+  }
+  if (importStatus.value.working === site) {
+    // 正在尝试中
+    return { icon: SyncOutlined, color: "blue", title: t("SetSite.oneClickImportDialog.status.trying") };
+  }
+  if (importStatus.value.success.includes(site)) {
+    // 已添加成功
+    return { icon: CheckCircleOutlined, color: "green", title: t("SetSite.oneClickImportDialog.status.success") };
+  }
+  if (importStatus.value.failed.includes(site)) {
+    // 添加失败
+    return { icon: ExclamationCircleOutlined, color: "red", title: t("SetSite.oneClickImportDialog.status.failed") };
+  }
+  if (importStatus.value.toWork.includes(site)) {
+    // 已选择
+    return { icon: SisternodeOutlined, color: undefined, title: t("SetSite.oneClickImportDialog.status.selected") };
+  }
+  // 默认
+  return { icon: QuestionCircleOutlined, color: "grey", title: "" };
+};
+
+function toggleToWork(siteId: TSiteID, checked: boolean) {
+  const current = importStatus.value.toWork;
+  importStatus.value.toWork = checked
+    ? Array.from(new Set([...current, siteId]))
+    : current.filter((id) => id !== siteId);
+}
 
 async function doAutoImport() {
   importStatus.value.isWorking = true;
@@ -145,133 +164,114 @@ async function doAutoImport() {
 
 async function dialogEnter() {
   resetImportStatus(); // 重置状态
-  const allCanAddedSite = await getCanAddedSiteMetadata(); // 加载待添加站点
-  canAddSites.value = pickBy(allCanAddedSite, (site) => site.isDead !== true) as Record<string, ISiteMetadata>;
+  isLoadingCanAddSites.value = true;
+  try {
+    const allCanAddedSite = await getCanAddedSiteMetadata(); // 加载待添加站点
+    canAddSites.value = pickBy(allCanAddedSite, (site) => site.isDead !== true) as Record<string, ISiteMetadata>;
+  } finally {
+    isLoadingCanAddSites.value = false;
+  }
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog
-    v-model="showDialog"
-    max-width="1000"
-    scrollable
-    @after-enter="dialogEnter"
-    :persistent="importStatus.isWorking"
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-button-props="{ disabled: importStatus.isWorking }"
+    :cancel-text="t('common.dialog.cancel')"
+    :closable="!importStatus.isWorking"
+    :keyboard="!importStatus.isWorking"
+    :mask-closable="!importStatus.isWorking"
+    :ok-button-props="{ disabled: importStatus.isWorking }"
+    :ok-text="t('common.import')"
+    :title="t('SetSite.oneClickImportDialog.title')"
+    :width="1000"
+    @ok="doAutoImport"
   >
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetSite.oneClickImportDialog.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn
-              icon="mdi-close"
-              :title="t('common.dialog.close')"
-              @click="showDialog = false"
-              :disabled="importStatus.isWorking"
-            />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-alert class="mb-2" :title="t('SetSite.oneClickImportDialog.alert1')" type="warning" variant="tonal">
-        </v-alert>
+    <a-alert :message="t('SetSite.oneClickImportDialog.alert1')" show-icon style="margin-bottom: 8px" type="warning" />
 
-        <v-alert class="mb-1 py-2" :title="t('SetSite.oneClickImportDialog.alert2')">
-          <template #text>
-            {{
-              t("SetSite.oneClickImportDialog.stats", {
-                count: importStatus.toWork.length,
-                success: importStatus.success.length,
-                failed: importStatus.failed.length,
-              })
-            }}
-            <span v-if="importStatus.isWorking">
-              {{ t("SetSite.oneClickImportDialog.trying", { name: canAddSites[importStatus.working].name }) }}
-            </span>
-          </template>
-          <template #append>
-            <CheckSwitchButton
-              v-model="importStatus.toWork"
-              :all="realCanAutoAddSiteId"
-              :size="undefined"
-              color="blue-lighten-1"
-              variant="tonal"
-            />
-          </template>
-        </v-alert>
+    <div class="ptd-section-heading">
+      <span>
+        {{ t("SetSite.oneClickImportDialog.alert2") }}
+        <a-typography-text type="secondary" style="margin-left: 8px">
+          {{
+            t("SetSite.oneClickImportDialog.stats", {
+              count: importStatus.toWork.length,
+              success: importStatus.success.length,
+              failed: importStatus.failed.length,
+            })
+          }}
+          <span v-if="importStatus.isWorking">
+            {{ t("SetSite.oneClickImportDialog.trying", { name: canAddSites[importStatus.working].name }) }}
+          </span>
+        </a-typography-text>
+      </span>
+      <!-- A-27：原 color="blue-lighten-1" / variant="tonal" 都不是 antd 语义，改用低强调的 text 按钮 -->
+      <CheckSwitchButton v-model="importStatus.toWork" :all="realCanAutoAddSiteId" :size="undefined" type="text" />
+    </div>
 
-        <v-skeleton-loader v-if="isEmpty(canAddSites)" type="image"> </v-skeleton-loader>
-        <v-list else class="overflow-x-hidden overflow-y-hidden px-3 pt-3">
-          <!-- Vuetify 4 的 v-row 默认 gap 为 24px，站点卡片间距由 v-col 的 pa-1 控制，需显式 gap="0" -->
-          <v-row gap="0">
-            <v-col v-for="site in canAddSites" :key="site.id" cols="12" md="4" sm="6" class="pa-1">
-              <v-list-item border class="bg-grey-lighten-4">
-                <template #prepend>
-                  <v-checkbox
-                    v-model="importStatus.toWork"
-                    :indeterminate="!!site.userInputSettingMeta || importStatus.success.includes(site.id)"
-                    :indeterminate-icon="importStatus.success.includes(site.id) ? 'mdi-check' : 'mdi-close'"
+    <!-- 待添加站点加载中：用卡片骨架占位，避免把「尚未加载完」误显示为「无数据」 -->
+    <PageSkeleton v-if="isLoadingCanAddSites" :count="6" :rows="2" variant="masonry" />
+    <NoDataPlaceholder v-else-if="isEmpty(canAddSites)" />
+    <a-list v-else style="overflow: hidden; padding: 12px 12px 0 12px">
+      <!-- 站点卡片间距由列上的 pa-1 控制，行容器保持零间距 -->
+      <a-row :gutter="0">
+        <a-col v-for="site in canAddSites" :key="site.id" :md="8" :sm="12" :xs="24" style="padding: 4px">
+          <a-list-item
+            class="ptd-list-item"
+            style="
+              border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+              background: var(--ptd-hover, #f5f5f5);
+            "
+          >
+            <a-list-item-meta>
+              <template #avatar>
+                <a-flex align="center" :gap="8">
+                  <a-checkbox
+                    :checked="importStatus.toWork.includes(site.id)"
                     :disabled="
                       !!site.userInputSettingMeta || importStatus.isWorking || importStatus.success.includes(site.id)
                     "
-                    :value="site.id"
-                    hide-details
-                    multiple
-                  />
-                  <SiteFavicon :site-id="site.id" class="mr-2" flush-on-click />
-                </template>
+                    :indeterminate="!!site.userInputSettingMeta || importStatus.success.includes(site.id)"
+                    @update:checked="(checked: boolean) => toggleToWork(site.id, checked)"
+                  >
+                    <CheckOutlined v-if="importStatus.success.includes(site.id)" />
+                    <CloseOutlined v-else-if="site.userInputSettingMeta" />
+                  </a-checkbox>
+                  <SiteFavicon :site-id="site.id" flush-on-click style="margin-right: 8px" />
+                </a-flex>
+              </template>
 
-                <template #title>
-                  <v-list-item-title>
-                    <b>{{ site.name ?? "" }}</b>
-                    <!-- 站点类型 -->
-                  </v-list-item-title>
-                </template>
+              <template #title>
+                <strong>{{ site.name ?? "" }}</strong>
+              </template>
 
-                <template #subtitle>
-                  <v-chip :color="site.type === 'private' ? 'primary' : 'secondary'" label size="x-small">
-                    {{ site.schema ?? (site.type === "private" ? "AbstractPrivateSite" : "AbstractBittorrentSite") }}
-                  </v-chip>
-                </template>
+              <template #description>
+                <a-tag :color="site.type === 'private' ? resolveColor('primary') : resolveColor('secondary')">
+                  {{ site.schema ?? (site.type === "private" ? "AbstractPrivateSite" : "AbstractBittorrentSite") }}
+                </a-tag>
+              </template>
+            </a-list-item-meta>
 
-                <template #append>
-                  <v-list-item-action>
-                    <a :href="site.urls[0]" target="_blank" rel="noopener noreferrer nofollow">
-                      <v-icon v-bind="statusIconPropComputed(site.id).value" class="mr-2" size="x-large"></v-icon>
-                    </a>
-                  </v-list-item-action>
-                </template>
-              </v-list-item>
-            </v-col>
-          </v-row>
-        </v-list>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn
-          :disabled="importStatus.isWorking"
-          color="error"
-          prepend-icon="mdi-close-circle"
-          variant="text"
-          @click="showDialog = false"
-        >
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-
-        <v-btn
-          :disabled="importStatus.isWorking"
-          color="success"
-          prepend-icon="mdi-import"
-          variant="text"
-          @click="doAutoImport"
-        >
-          {{ t("common.import") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+            <a-typography-link :href="site.urls[0]" rel="noopener noreferrer nofollow" target="_blank">
+              <component
+                :is="statusIconProp(site.id).icon"
+                :style="{
+                  color: resolveColor(statusIconProp(site.id).color),
+                  fontSize: '24px',
+                  marginRight: '8px',
+                }"
+                :title="statusIconProp(site.id).title"
+              />
+            </a-typography-link>
+          </a-list-item>
+        </a-col>
+      </a-row>
+    </a-list>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

@@ -1,9 +1,9 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/MyAnonamouse.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/myanonamouse.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/myanonamouse.net/config.json
  */
 import { mergeWith } from "es-toolkit/compat";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 import { EResultParseStatus, type ISiteMetadata, type IUserInfo } from "../types";
 import AbstractPrivateSite from "../schemas/AbstractPrivateSite.ts";
@@ -292,7 +292,7 @@ export const siteMetadata: ISiteMetadata = {
             selector: ":self",
             elementProcess: (element: Document | HTMLElement) => {
               let msgCount = 0;
-              const msgAnothers = Sizzle("a.tmnb, a.tmn, a.tmng", element);
+              const msgAnothers = selectElements("a.tmnb, a.tmn, a.tmng", element);
               msgAnothers.forEach((msgAnother) => {
                 const msgText = ((msgAnother as HTMLElement).innerText ?? msgAnother.textContent ?? "").trim();
                 const numMatch = msgText.match(/(\d+)/);
@@ -531,7 +531,10 @@ export default class MyAnonamouse extends AbstractPrivateSite {
         name: "mbsc",
       });
       mbsc = cookieObj?.value;
-    } catch {}
+    } catch {
+      // 读不到 mbsc cookie（未登录 / 无 cookies 权限）时按「无此 cookie」继续，
+      // 由下面的 `if (!mbsc)` 走空结果分支，不在此处抛错。
+    }
 
     if (!mbsc) {
       return {};
@@ -539,20 +542,26 @@ export default class MyAnonamouse extends AbstractPrivateSite {
 
     const retInfo = { seeding: 0, seedingSize: 0, uploads: 0 };
     const allTorrentKeys = ["seedUnsat", "seedHnr", "sSat", "upAct", "upInact"] as const;
+    const maxPages = 50; // 硬上限，防止接口异常（忽略 iteration）时无限翻页
+    const concurrency = 4;
+    const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay);
 
     for (const type of allTorrentKeys) {
       const isSeedingType = (seedingKeys as readonly string[]).includes(type);
       const isUploadType = (uploadKeys as readonly string[]).includes(type);
       const seenRowIds = new Set<string | number>();
+      // cacheTime 每种类型只取一次，避免逐页变化的时间戳使 CDN 缓存失效
+      const cacheTime = Math.round(Date.now() / 1000);
 
-      for (let page = 0; ; page++) {
+      const requestPage = async (page: number): Promise<any[]> => {
+        await throttle();
         const { data: seedJson } = await this.request<any>({
           url: "https://cdn.myanonamouse.net/json/loadUserDetailsTorrents.php",
           params: {
             uid: userid,
             iteration: page,
             type,
-            cacheTime: Math.round(Date.now() / 1000),
+            cacheTime,
             mbsc: decodeURIComponent(mbsc),
           },
         });
@@ -565,42 +574,59 @@ export default class MyAnonamouse extends AbstractPrivateSite {
           throw new Error("Invalid response from loadUserDetailsTorrents.php: missing rows");
         }
 
-        if (seedJson.rows.length === 0) {
-          break;
+        return seedJson.rows;
+      };
+
+      let stop = false;
+      for (let page = 0; !stop && page < maxPages; page += concurrency) {
+        const batchPages: number[] = [];
+        for (let i = 0; i < concurrency && page + i < maxPages; i++) {
+          batchPages.push(page + i);
         }
 
-        let newRowsCount = 0;
-        seedJson.rows.forEach((item: any) => {
-          const rowId = item?.id ?? item?.title;
-          if (rowId != null) {
-            if (seenRowIds.has(rowId)) {
-              return;
-            }
-            seenRowIds.add(rowId);
-          }
-          newRowsCount += 1;
+        // 有上限并发取一批，再按页序处理（去重与计数必须按页序才能与串行实现一致）
+        const batchRows = await Promise.all(batchPages.map((batchPage) => requestPage(batchPage)));
 
-          if (isSeedingType) {
-            retInfo.seeding += 1;
-            if (typeof item.size === "number" && !Number.isNaN(item.size)) {
-              retInfo.seedingSize += item.size;
-            } else if (typeof item.size === "string") {
-              const cleanSize = item.size.replace(/,/g, "").trim();
-              if (/^\d+(?:\.\d+)?$/.test(cleanSize)) {
-                retInfo.seedingSize += Number(cleanSize);
-              } else {
-                retInfo.seedingSize += parseSizeString(cleanSize);
+        for (const rows of batchRows) {
+          if (rows.length === 0) {
+            stop = true;
+            break;
+          }
+
+          let newRowsCount = 0;
+          rows.forEach((item: any) => {
+            const rowId = item?.id ?? item?.title;
+            if (rowId != null) {
+              if (seenRowIds.has(rowId)) {
+                return;
+              }
+              seenRowIds.add(rowId);
+            }
+            newRowsCount += 1;
+
+            if (isSeedingType) {
+              retInfo.seeding += 1;
+              if (typeof item.size === "number" && !Number.isNaN(item.size)) {
+                retInfo.seedingSize += item.size;
+              } else if (typeof item.size === "string") {
+                const cleanSize = item.size.replace(/,/g, "").trim();
+                if (/^\d+(?:\.\d+)?$/.test(cleanSize)) {
+                  retInfo.seedingSize += Number(cleanSize);
+                } else {
+                  retInfo.seedingSize += parseSizeString(cleanSize);
+                }
               }
             }
-          }
-          if (isUploadType) {
-            retInfo.uploads += 1;
-          }
-        });
+            if (isUploadType) {
+              retInfo.uploads += 1;
+            }
+          });
 
-        // 遇到短页或者所有行均为重复数据（例如接口忽略 iteration 持续返回同一页）时停止翻页
-        if (newRowsCount === 0 || seedJson.rows.length < 250) {
-          break;
+          // 遇到短页或者所有行均为重复数据（例如接口忽略 iteration 持续返回同一页）时停止翻页
+          if (newRowsCount === 0 || rows.length < 250) {
+            stop = true;
+            break;
+          }
         }
       }
     }

@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["OTW"],
   description: "Old Toons World (OTW) is a Private Torrent Tracker for ANIMATED MOVIES / TV",
   tags: ["动画", "电视剧"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

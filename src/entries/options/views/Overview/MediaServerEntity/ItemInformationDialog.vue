@@ -1,8 +1,23 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import {
+  ArrowsAltOutlined,
+  CheckOutlined,
+  ClockCircleOutlined,
+  FileTextOutlined,
+  HddOutlined,
+  HeartFilled,
+  HeartOutlined,
+  MinusCircleOutlined,
+  SelectOutlined,
+  TagsOutlined,
+  VideoCameraOutlined,
+} from "@ant-design/icons-vue";
+import { computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { IMediaServerItem } from "@ptd/mediaServer";
 import { formatSize } from "@/options/utils.ts";
+
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 const { t } = useI18n();
 
@@ -20,9 +35,9 @@ function streamsTextFactory(type: "Video" | "Audio" | "Subtitle") {
   );
 }
 
-const showSteams = [
-  { name: "Audio", icon: "mdi-expansion-card" },
-  { name: "Subtitle", icon: "mdi-closed-caption" },
+const showSteams: Array<{ name: "Audio" | "Subtitle"; icon: Component }> = [
+  { name: "Audio", icon: HddOutlined },
+  { name: "Subtitle", icon: FileTextOutlined },
 ];
 
 function secondsToISO8601(seconds: number) {
@@ -57,142 +72,127 @@ function secondsToISO8601(seconds: number) {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable>
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("MediaServerEntity.ItemInformationDialog.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-
-      <v-card-text>
-        <v-row class="align-center">
-          <v-col cols="8" offset="2" offset-sm="0" sm="4">
-            <v-img :src="item.poster" :title="item.name" />
-          </v-col>
-          <v-col cols="12" sm="8">
-            <a
-              :href="item.url"
-              :title="item.name"
-              class="w-100 text-headline-small d-inline-block"
+  <a-modal
+    v-model:open="showDialog"
+    :footer="null"
+    :title="t('MediaServerEntity.ItemInformationDialog.title')"
+    :width="800"
+  >
+    <a-row align="middle" :gutter="8">
+      <a-col :span="16" :offset="4" :sm="{ span: 8, offset: 0 }">
+        <a-image :src="item.poster" :title="item.name" :preview="false"></a-image>
+      </a-col>
+      <a-col :span="24" :sm="16">
+        <a-typography-link
+          :href="item.url"
+          :title="item.name"
+          rel="noopener noreferrer nofollow"
+          target="_blank"
+          style="display: inline-block; width: 100%; font-size: 24px"
+        >
+          {{ item.name }}
+        </a-typography-link>
+        <p style="font-size: 12px">{{ item.description ?? "" }}</p>
+        <div v-if="item.tags && item.tags.length > 0" class="info-label">
+          <a-typography-text style="padding-right: 12px">{{
+            t("MediaServerEntity.ItemInformationDialog.type")
+          }}</a-typography-text>
+          <a-space wrap>
+            <a-tag
+              v-for="tag in item.tags ?? []"
+              :key="tag.name"
+              :href="tag.url ?? (false as unknown as undefined)"
+              :target="tag.url ? '_blank' : undefined"
+              style="margin-right: 4px"
               rel="noopener noreferrer nofollow"
-              target="_blank"
-            >
-              {{ item.name }}
-            </a>
-            <p class="text-body-small">{{ item.description ?? "" }}</p>
-            <div v-if="item.tags && item.tags.length > 0" class="info-label">
-              <v-label class="pr-3">{{ t("MediaServerEntity.ItemInformationDialog.type") }}</v-label>
-              <v-chip-group show-arrows>
-                <v-chip
-                  v-for="tag in item.tags ?? []"
-                  :key="tag.name"
-                  :href="tag.url ?? (false as unknown as undefined)"
-                  :target="tag.url ? '_blank' : undefined"
-                  base-color="orange"
-                  class="mr-1"
-                  label
-                  prepend-icon="mdi-tag"
-                  rel="noopener noreferrer nofollow"
-                  size="small"
-                >
-                  {{ tag.name }}
-                </v-chip>
-              </v-chip-group>
-            </div>
-            <div v-if="item.duration" class="info-label">
-              <v-label class="pr-3">{{ t("MediaServerEntity.ItemInformationDialog.duration") }}</v-label>
-              <v-chip base-color="green" class="mr-1" label prepend-icon="mdi-clock-time-four" size="small">
-                {{ secondsToISO8601(item.duration ?? 0) }}
-              </v-chip>
-            </div>
-            <div v-if="item.size" class="info-label">
-              <v-label class="pr-3">{{ t("MediaServerEntity.ItemInformationDialog.size") }}</v-label>
-              <v-chip base-color="deep-purple" class="mr-1" label prepend-icon="mdi-harddisk" size="small">
-                {{ formatSize(item.size ?? 0) }}
-              </v-chip>
-            </div>
-            <div v-if="item.streams && item.streams.length > 0" class="info-label">
-              <v-label class="pr-3">{{ t("MediaServerEntity.ItemInformationDialog.mediaInfo") }}</v-label>
-              <v-chip-group show-arrows>
-                <v-chip v-if="item.format" base-color="blue" label prepend-icon="mdi-aspect-ratio" size="small">
-                  {{ item.format?.toUpperCase() }}
-                </v-chip>
+              color="#ff9800"
+              ><TagsOutlined style="margin-right: 4px" />
+              {{ tag.name }}
+            </a-tag>
+          </a-space>
+        </div>
+        <div v-if="item.duration" class="info-label">
+          <a-typography-text style="padding-right: 12px">{{
+            t("MediaServerEntity.ItemInformationDialog.duration")
+          }}</a-typography-text>
+          <a-tag style="margin-right: 4px" color="#4caf50"
+            ><ClockCircleOutlined style="margin-right: 4px" />
+            {{ secondsToISO8601(item.duration ?? 0) }}
+          </a-tag>
+        </div>
+        <div v-if="item.size" class="info-label">
+          <a-typography-text style="padding-right: 12px">{{
+            t("MediaServerEntity.ItemInformationDialog.size")
+          }}</a-typography-text>
+          <a-tag style="margin-right: 4px" color="#673ab7"
+            ><HddOutlined style="margin-right: 4px" />
+            {{ formatSize(item.size ?? 0) }}
+          </a-tag>
+        </div>
+        <div v-if="item.streams && item.streams.length > 0" class="info-label">
+          <a-typography-text style="padding-right: 12px">{{
+            t("MediaServerEntity.ItemInformationDialog.mediaInfo")
+          }}</a-typography-text>
+          <a-space wrap>
+            <a-tag v-if="item.format" color="#2196f3"
+              ><ArrowsAltOutlined style="margin-right: 4px" />
+              {{ item.format?.toUpperCase() }}
+            </a-tag>
 
-                <v-chip
-                  v-if="item.streams.filter((s) => s.type === 'Video')!.length > 0"
-                  base-color="blue"
-                  label
-                  prepend-icon="mdi-movie"
-                  size="small"
-                >
-                  {{ item.streams.filter((s) => s.type === "Video")[0].title }}
-                </v-chip>
+            <a-tag v-if="item.streams.filter((s) => s.type === 'Video')!.length > 0" color="#2196f3"
+              ><VideoCameraOutlined style="margin-right: 4px" />
+              {{ item.streams.filter((s) => s.type === "Video")[0].title }}
+            </a-tag>
 
-                <template v-for="showStream in showSteams" :key="showStream.name">
-                  <v-menu v-if="item.streams.filter((s) => s.type === showStream.name)!.length > 0" open-on-hover>
-                    <template #activator="{ props }">
-                      <v-chip v-bind="props" :prepend-icon="showStream.icon" base-color="blue" label size="small">
-                        {{ item.streams.filter((s) => s.type === showStream.name)!.length }}
-                      </v-chip>
-                    </template>
-
-                    <v-card class="pl-2">
-                      <v-chip-group direction="vertical">
-                        <v-chip
-                          v-for="stream in item.streams.filter((s) => s.type === showStream.name)"
-                          :prepend-icon="showStream.icon"
-                          label
-                          size="small"
-                        >
-                          {{ stream.title }}
-                        </v-chip>
-                      </v-chip-group>
-                    </v-card>
-                  </v-menu>
+            <template v-for="showStream in showSteams" :key="showStream.name">
+              <a-popover v-if="item.streams.filter((s) => s.type === showStream.name)!.length > 0" trigger="hover">
+                <template #content>
+                  <a-card style="padding-left: 8px">
+                    <a-space direction="vertical">
+                      <a-tag
+                        v-for="stream in item.streams.filter((s) => s.type === showStream.name)"
+                        :key="stream.title"
+                        ><component :is="showStream.icon" style="margin-right: 4px" />
+                        {{ stream.title }}
+                      </a-tag>
+                    </a-space>
+                  </a-card>
                 </template>
-              </v-chip-group>
-            </div>
-            <v-divider class="my-2" />
+                <a-tag color="#2196f3"
+                  ><component :is="showStream.icon" style="margin-right: 4px" />
+                  {{ item.streams.filter((s) => s.type === showStream.name)!.length }}
+                </a-tag>
+              </a-popover>
+            </template>
+          </a-space>
+        </div>
+        <!-- 部分媒体服务器（如 Plex 的搜索结果）不返回 streams，此处给出空状态占位而不是让整块信息消失 -->
+        <div v-else class="info-label">
+          <a-typography-text style="padding-right: 12px">{{
+            t("MediaServerEntity.ItemInformationDialog.mediaInfo")
+          }}</a-typography-text>
+          <NoDataPlaceholder compact />
+        </div>
+        <a-divider style="margin: 8px 0" />
 
-            <div class="d-flex w-100 align-center">
-              <v-icon :icon="item.user?.IsPlayed ? 'mdi-check-bold' : 'mdi-radiobox-blank'" color="green" size="36" />
-              <v-icon :icon="item.user?.IsFavorite ? 'mdi-heart' : 'mdi-heart-outline'" color="red" size="36" />
-              <v-spacer />
-              <v-btn
-                :href="item.url"
-                append-icon="mdi-arrow-top-right-bold-box-outline"
-                class="visit-btn"
-                rel="noopener noreferrer nofollow"
-                target="_blank"
-              >
-                {{ t("common.visit") }}
-              </v-btn>
-            </div>
-          </v-col>
-        </v-row>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
+        <a-flex align="center" style="width: 100%">
+          <component
+            :is="item.user?.IsPlayed ? CheckOutlined : MinusCircleOutlined"
+            class="ptd-icon-lg"
+            style="color: var(--ptd-success)"
+          />
+          <component
+            :is="item.user?.IsFavorite ? HeartFilled : HeartOutlined"
+            class="ptd-icon-lg"
+            style="color: var(--ptd-danger)"
+          />
+          <div style="flex: 1 1 auto"></div>
+          <a-button :href="item.url" rel="noopener noreferrer nofollow" target="_blank">
+            <template #icon><SelectOutlined /></template>
+            {{ t("common.visit") }}
+          </a-button>
+        </a-flex>
+      </a-col>
+    </a-row>
+  </a-modal>
 </template>
-
-<style scoped lang="scss">
-.info-label {
-  display: flex;
-  margin-top: 4px;
-
-  :deep(.v-chip-group .v-chip) {
-    margin-top: 0;
-    margin-bottom: 0;
-  }
-}
-
-.visit-btn {
-  width: calc(100% - 80px);
-  margin-left: 8px;
-}
-</style>

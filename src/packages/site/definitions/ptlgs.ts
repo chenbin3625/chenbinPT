@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["劳改所"],
   description: "PTLGS(劳改所)，黑奴的最终归宿",
   tags: ["综合", "影视"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

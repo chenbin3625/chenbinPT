@@ -1,15 +1,27 @@
 <script setup lang="ts">
-import { inject, provide, useTemplateRef, ref, shallowReactive, computed, withModifiers } from "vue";
+import { inject, provide, useTemplateRef, ref, shallowReactive, computed, withModifiers, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useDraggable } from "@vueuse/core";
+import { HomeOutlined } from "@ant-design/icons-vue";
+import { Modal } from "ant-design-vue";
 import { type ITorrent } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
+import { registerModalApi } from "./modal.ts";
 import type { IRemoteDownloadDialogData } from "./types.ts";
-import { currentView, type IPtdData, pageType, updatePageType } from "./utils.ts";
+import {
+  CUSTOM_DRAG_MIME,
+  currentView,
+  getIDFromURL,
+  installPageTypeUrlWatcher,
+  pageType,
+  resolveDroppedTorrents,
+  updatePageType,
+  type IPtdData,
+} from "./utils.ts";
 
 import SpeedDialBtn from "./components/SpeedDialBtn.vue";
 import SentToDownloaderDialog from "@/options/components/SentToDownloaderDialog/Index.vue";
@@ -17,6 +29,11 @@ import SentToDownloaderDialog from "@/options/components/SentToDownloaderDialog/
 const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const { t } = useI18n();
+
+// shadow root 内的 Modal 实例：contextHolder 必须渲染在 ConfigProvider 之下（本组件的模板里），
+// 弹窗才会继承主题/语言/getPopupContainer。详见 ./modal.ts。
+const [modal, modalContextHolder] = Modal.useModal();
+registerModalApi(modal);
 
 const ptdIcon = chrome.runtime.getURL("icons/logo/64.png");
 const ptdData = inject<IPtdData>("ptd_data", {});
@@ -40,8 +57,8 @@ const { x, y, style } = useDraggable(el, {
   },
 });
 
-// 监听窗口大小变化，更新位置
-window.addEventListener("resize", () => {
+// 监听窗口大小变化，更新位置（组件卸载时需要移除，避免 content-script 重挂载时监听器累积）
+function handleWindowResize() {
   const { clientWidth, clientHeight } = document.documentElement;
 
   x.value = clientWidth - rightX.value; // 右侧吸附
@@ -55,15 +72,23 @@ window.addEventListener("resize", () => {
     y.value = clientHeight - 100; // 确保不会超出下边界
   }
   bottomY.value = clientHeight - y.value;
-});
+}
+window.addEventListener("resize", handleWindowResize);
 
 // 由于App.vue是整个应用的根组件，此时 configStore 等 pinia store 可能还未初始化完成，所以需要监听 $onReady
+let stopUrlWatcher: (() => void) | undefined;
+
 configStore.$onReady(() => {
   openSpeedDial.value = configStore.contentScript?.defaultOpenSpeedDial ?? false;
 
   if (openSpeedDial.value) {
     updatePageType(ptdData).catch();
   }
+
+  // A-8：SPA 站点（Unit3D/Livewire 等）列表 → 详情是 pushState 导航，内容脚本不会重新执行，
+  // 必须订阅 URL 变化并重新求值 pageType/站点实例（在 store 就绪后再装，避免水合竞态）。
+  stopUrlWatcher?.(); // 幂等：$onReady 若重复触发，先释放上一轮的订阅，避免监听器累积
+  stopUrlWatcher = installPageTypeUrlWatcher(ptdData);
 
   let { x: storeX = -100, y: storeY = -100 } = configStore.contentScript?.position ?? {};
   let { clientWidth, clientHeight } = document.documentElement;
@@ -81,8 +106,6 @@ const remoteDownloadDialogData = shallowReactive<IRemoteDownloadDialogData>({
 });
 provide("remoteDownloadDialogData", remoteDownloadDialogData);
 
-const CUSTOM_DRAG_MIME = "text/json+ptd";
-
 const isDragging = ref<boolean>(false);
 
 function fixDraggingLink(link: string): string {
@@ -92,7 +115,7 @@ function fixDraggingLink(link: string): string {
   return link;
 }
 
-document.addEventListener("dragstart", (e: DragEvent) => {
+function handleDocumentDragStart(e: DragEvent) {
   const target = e.target as HTMLElement;
   if (target.tagName == "A") {
     const a = target as HTMLAnchorElement;
@@ -110,70 +133,14 @@ document.addEventListener("dragstart", (e: DragEvent) => {
     }
   }
   // fallback to default text/html behavior
+}
+document.addEventListener("dragstart", handleDocumentDragStart);
+
+onUnmounted(() => {
+  window.removeEventListener("resize", handleWindowResize);
+  document.removeEventListener("dragstart", handleDocumentDragStart);
+  stopUrlWatcher?.(); // A-8：移除 URL 变化订阅（含 history 上的补丁）
 });
-
-const SIMPLE_URL_REGEX = /https?:\/\/[^\s]+/g;
-
-function extractLinksManually(dataTransfer: DataTransfer): string[] {
-  // prefer types: uri-list > html > text
-  // ref: [MDN - Recommended_drag_types](https://developer.mozilla.org/en-US/docs/Web/API/HTML_Drag_and_Drop_API/Recommended_drag_types#dragging_links)
-  if (Array.from(dataTransfer.types).includes("text/uri-list")) {
-    const uriList = dataTransfer.getData("text/uri-list");
-    if (uriList) {
-      return uriList
-        .split("\r\n")
-        .map((line) => line.trim())
-        .filter((uri) => !uri.startsWith("#") && uri.startsWith("http"));
-    }
-  }
-  /**
-   * 可以很好的适配<p><a href="...">...</a></p>这种情况
-   * TODO: 但是面对选了一大片html的时候，可能会解析出来很多不是下载的链接，是否需要给每个站点/框架定义下载链接的正则表达式？
-   * 比如简单的过滤 nexusphp => /passkey=[a-zA-Z0-9-]+/
-   */
-  if (dataTransfer.types.includes("text/html")) {
-    const textData = dataTransfer.getData("text/html");
-    if (textData) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(textData, "text/html");
-      const links = Array.from(doc.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href);
-      return links.filter((link) => link.startsWith("http") || link.startsWith("magnet:"));
-    }
-  }
-  // fallback to plain text extraction
-  if (dataTransfer.types.includes("text/plain")) {
-    const textData = dataTransfer.getData("text/plain");
-    if (textData) {
-      return Array.from(
-        textData
-          .matchAll(SIMPLE_URL_REGEX)
-          .map((matched) => matched[0])
-          .filter((url) => URL.canParse(url)),
-      );
-    }
-  }
-  return [];
-}
-
-function getIDFromURL(url?: URL | null): string {
-  if (!url) return "";
-  // 尝试从 searchParams 中提取 id
-  for (const i of ["id", "tid", "torrent_id", "torrentId", "hash", "hash_id"]) {
-    if (url.searchParams.has(i)) {
-      return url.searchParams.get(i) || "";
-    }
-  }
-  // 如果无法从 searchParams 中解出 id，则尝试从 pathname 中提取 id
-  if (url.pathname) {
-    for (const pathnameMatcher of [/\/(\d+)(?:\/|$)/]) {
-      const match = url.pathname.match(pathnameMatcher);
-      if (match) {
-        return match[1] || "";
-      }
-    }
-  }
-  return "";
-}
 
 function onDrop(event: DragEvent) {
   const dataTransfer = event.dataTransfer;
@@ -181,24 +148,11 @@ function onDrop(event: DragEvent) {
     isDragging.value = false;
     return;
   }
-  let torrents: ITorrent[] = [];
-  // perfer types: custom > manual
-  if (Array.from(dataTransfer.types).includes(CUSTOM_DRAG_MIME)) {
-    try {
-      torrents = JSON.parse(dataTransfer.getData(CUSTOM_DRAG_MIME));
-    } catch (error) {
-      console.warn("[PTD] Failed to parse dropped data as JSON:", error);
-    }
-  } else {
-    // 尝试从其他类型中提取链接
-    const links = extractLinksManually(dataTransfer);
-    for (const link of links) {
-      const url = URL.parse(link);
-      if (!url || !(url.protocol.startsWith("http") || url.protocol.startsWith("magnet"))) continue;
-      const torrentData: ITorrent = { link, title: "", site: ptdData.siteId || "", id: getIDFromURL(url) };
-      torrents.push(torrentData);
-    }
-  }
+
+  // S-2：拖拽内容完全由页面提供，必须在这里做形状 + 协议白名单校验，
+  // 并强制把 site 改写为当前站点（校验失败时 resolveDroppedTorrents 会给出提示）
+  const { torrents } = resolveDroppedTorrents(dataTransfer, ptdData.siteId || "");
+
   if (torrents.length > 0) {
     console.debug("[PTD] Dropped data:", torrents);
     remoteDownloadDialogData.torrents = torrents;
@@ -214,7 +168,7 @@ const dropAction = computed(() => {
     return {
       drop: withModifiers((e) => onDrop(e as DragEvent), ["prevent"]),
       dragover: withModifiers(() => (isDragging.value = true), ["prevent"]),
-      dragenter: () => withModifiers(() => (isDragging.value = true), ["prevent"]),
+      dragenter: withModifiers(() => (isDragging.value = true), ["prevent"]),
       // dragleave 和 mouseleave 事件直接使用 vue 的普通注册方式，而不是用 对象方式（因为不会有任何副作用）
     };
   }
@@ -227,63 +181,47 @@ function openOptions() {
 </script>
 
 <template>
-  <v-theme-provider :theme="configStore.contentScript.applyTheme ? configStore.uiTheme : ''">
-    <div
-      ref="el"
-      :style="style"
-      style="position: fixed; z-index: 9999999"
-      :class="{
-        'ptd-fade-enter': configStore.contentScript.fadeEnterStyle,
-      }"
+  <div
+    ref="el"
+    :style="style"
+    class="ptd-content-script-draggable"
+    :class="{
+      'ptd-fade-enter': configStore.contentScript.fadeEnterStyle,
+    }"
+    @mouseleave.prevent="isDragging = false"
+    @dragleave.prevent="isDragging = false"
+    v-on="dropAction"
+  >
+    <a-float-button-group
+      v-model:open="openSpeedDial"
+      :shape="configStore.contentScript.stackedButtons ? 'square' : 'circle'"
+      trigger="click"
+      type="primary"
     >
-      <v-speed-dial
-        v-model="openSpeedDial"
-        :close-on-content-click="false"
-        disable-initial-focus
-        no-click-animation
-        persistent
-      >
-        <template v-slot:activator="{ props: activatorProps }">
-          <v-fab
-            v-bind="activatorProps"
-            color="amber"
-            icon
-            size="x-large"
-            @click="updatePageType(ptdData)"
-            @mouseleave.prevent="isDragging = false"
-            @dragleave.prevent="isDragging = false"
-            v-on="dropAction"
-          >
-            <v-avatar :class="{ 'ptd-fab-loading': isDragging }" :image="ptdIcon" color="transparent" rounded="0" />
-          </v-fab>
-        </template>
+      <template #icon>
+        <a-avatar
+          :src="ptdIcon"
+          :size="32"
+          shape="square"
+          class="ptd-fab-logo"
+          :class="{ 'ptd-fab-logo--dragging': isDragging }"
+          @click="updatePageType(ptdData)"
+        />
+      </template>
 
-        <!-- 这里根据 pageType 来决定显示哪些按钮 -->
-        <component :is="currentView" :key="pageType" />
+      <!-- 这里根据 pageType 来决定显示哪些按钮 -->
+      <component :is="currentView" :key="pageType" />
 
-        <SpeedDialBtn key="home" color="amber" icon="mdi-home" :title="t('contentScript.openPTD')" @click="openOptions" />
-      </v-speed-dial>
-    </div>
+      <SpeedDialBtn key="home" :icon="HomeOutlined" :title="t('contentScript.openPTD')" @click="openOptions" />
+    </a-float-button-group>
+  </div>
 
-    <v-snackbar-queue v-model="runtimeStore.uiGlobalSnakebar" closable :attach="true" />
+  <SentToDownloaderDialog
+    v-model="remoteDownloadDialogData.show"
+    :torrent-items="remoteDownloadDialogData.torrents"
+    :is-default-send="remoteDownloadDialogData.isDefaultSend"
+  />
 
-    <SentToDownloaderDialog
-      v-model="remoteDownloadDialogData.show"
-      :content-class="['bg-white']"
-      :torrent-items="remoteDownloadDialogData.torrents"
-      :is-default-send="remoteDownloadDialogData.isDefaultSend"
-    />
-  </v-theme-provider>
+  <!-- Modal.useModal() 的 contextHolder：把 confirm/prompt 弹窗渲染在 shadow root 内 -->
+  <component :is="modalContextHolder" />
 </template>
-
-<style scoped lang="scss">
-@keyframes onFABLoading {
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-.ptd-fab-loading {
-  animation: onFABLoading 1.9s linear infinite running;
-}
-</style>

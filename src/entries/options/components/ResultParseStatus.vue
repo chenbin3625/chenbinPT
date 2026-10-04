@@ -10,37 +10,35 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <span v-if="status === EResultParseStatus.unknownError" class="text-red">
+  <a-tag v-if="status === EResultParseStatus.unknownError" color="error">
     {{ t("resultParseStatus.unknownError") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.waiting" class="text-indigo">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.waiting" color="processing">
     {{ t("resultParseStatus.waiting") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.working" class="text-indigo">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.working" color="processing">
     {{ t("resultParseStatus.working") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.success" class="text-green">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.success" color="success">
     {{ t("resultParseStatus.success") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.parseError" class="text-red">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.parseError" color="error">
     {{ t("resultParseStatus.parseError") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.passParse" class="text-yellow-darken-2">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.passParse" color="warning">
     {{ t("resultParseStatus.passParse") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.CFBlocked" :title="t('resultParseStatus.CFBlockedNotes')">
-    {{ t("resultParseStatus.CFBlocked") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.needLogin" class="text-red">
+  </a-tag>
+  <a-tooltip v-else-if="status === EResultParseStatus.CFBlocked" :title="t('resultParseStatus.CFBlockedNotes')">
+    <a-tag>{{ t("resultParseStatus.CFBlocked") }}</a-tag>
+  </a-tooltip>
+  <a-tag v-else-if="status === EResultParseStatus.needLogin" color="error">
     {{ t("resultParseStatus.needLogin") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.noUserInput" class="text-red">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.noUserInput" color="error">
     {{ t("resultParseStatus.noUserInput") }}
-  </span>
-  <span v-else-if="status === EResultParseStatus.noResults" class="text-red">
+  </a-tag>
+  <a-tag v-else-if="status === EResultParseStatus.noResults" color="error">
     {{ t("resultParseStatus.noResults") }}
-  </span>
-  <span v-else class="text-blue-grey">{{ t("resultParseStatus.unknown") }}</span>
+  </a-tag>
+  <a-tag v-else>{{ t("resultParseStatus.unknown") }}</a-tag>
 </template>
-
-<style scoped lang="scss"></style>

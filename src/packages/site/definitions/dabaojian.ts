@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["大保健"],
   description: "大宝剑是一个中文私有站点，提供电影/剧集/综艺/动漫/纪录片/短剧资源。",
   tags: ["影视", "综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

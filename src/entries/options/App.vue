@@ -1,78 +1,78 @@
 <script setup lang="ts">
-import { watch, ref } from "vue";
+import { watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
-import { useLocale as useVuetifyLocal } from "vuetify";
 import { useDevicePixelRatio } from "@vueuse/core";
 
 import { useConfigStore } from "@/options/stores/config.ts";
-import { useRuntimeStore } from "@/options/stores/runtime.ts";
-import { vuetifyLangMap } from "@/options/plugins/vuetify.ts";
+import { useAntdConfig } from "@/options/plugins/antd.ts";
 
 import Navigation from "./views/Layout/Navigation.vue";
 import Topbar from "./views/Layout/Topbar.vue";
-import ReleaseNoteDialog from "./views/Layout/ReleaseNoteDialog.vue";
 
-const { current: currentVuetifyLocal } = useVuetifyLocal();
 const { locale: currentVueI18nLocal, t } = useI18n({ useScope: "global" });
 
 const configStore = useConfigStore();
-const runtimeStore = useRuntimeStore();
+const { locale: antdLocale, themeConfig, themeVars } = useAntdConfig();
+
+/**
+ * 把 antd Design Token 派生的 `--ptd-*` 变量写到 <html> 上。
+ *
+ * 必须挂在 documentElement 而不是 `#ptd`：style.css 里 `body { background: var(--ptd-bg) }`
+ * 这类规则作用在 `#ptd` 的**祖先**上，自定义属性只向下继承，挂在 `#ptd` 上时 body 取不到值。
+ * 主题的唯一来源是 ConfigProvider 的 algorithm（见 plugins/antd.ts 的 themeVars）。
+ */
+watchEffect(() => {
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(themeVars.value)) {
+    root.style.setProperty(name, value);
+  }
+});
 
 watch(
   () => configStore.lang,
   (newLang) => {
     currentVueI18nLocal.value = newLang; // 修改 vue-i18n 的语言
-    currentVuetifyLocal.value = vuetifyLangMap[newLang]; // 修改 vuetify 的语言
   },
   { immediate: true },
 );
 
+// 页面缩放（devicePixelRatio）异常提示
 const { pixelRatio } = useDevicePixelRatio();
 function setIgnoreWrongPixelRatio() {
   configStore.ignoreWrongPixelRatio = true;
   configStore.$save();
 }
-
-const showReleaseNoteDialog = ref<boolean>(false);
-
-// 由于App.vue是整个应用的根组件，此时 configStore 等 pinia store 可能还未初始化完成，所以需要监听 $onReady
-configStore.$onReady(() => {
-  if (configStore.showReleaseNoteOnVersionChange && configStore.version !== __EXT_VERSION__) {
-    showReleaseNoteDialog.value = true;
-  }
-});
 </script>
 
 <template>
-  <v-app id="ptd" :theme="configStore.uiTheme">
-    <!-- 页面比例提示 -->
-    <v-system-bar
-      v-if="(pixelRatio > 1.1 || pixelRatio < 0.8) && !configStore.ignoreWrongPixelRatio"
-      class="justify-center"
-      color="purple-darken-2"
-    >
-      {{ t("layout.header.wrongPixelRatioNotice") }}&nbsp;&nbsp;
-      <v-icon class="ms-2" icon="mdi-close" @click="setIgnoreWrongPixelRatio" />
-    </v-system-bar>
+  <!-- auto-insert-space-in-button：antd 默认会在「恰好两个汉字」的按钮文案里插一个空格
+       （取消 → 取 消），而工具条按钮走插槽渲染不会有空格，两种写法并排时明显不一致；
+       这里统一关闭，按钮文案一律按 i18n 原文渲染。 -->
+  <a-config-provider :auto-insert-space-in-button="false" :locale="antdLocale" :theme="themeConfig">
+    <a-layout id="ptd">
+      <!-- 页面缩放异常提示 -->
+      <a-alert
+        v-if="(pixelRatio > 1.1 || pixelRatio < 0.8) && !configStore.ignoreWrongPixelRatio"
+        banner
+        closable
+        :message="t('layout.header.wrongPixelRatioNotice')"
+        type="warning"
+        @close="setIgnoreWrongPixelRatio"
+      />
 
-    <!-- 顶部工具条 -->
-    <Topbar />
+      <!-- 顶部工具条 -->
+      <Topbar />
 
-    <!-- 导航栏 -->
-    <Navigation />
+      <a-layout>
+        <!-- 导航栏 -->
+        <Navigation />
 
-    <v-main id="ptd-main">
-      <v-container fluid>
-        <router-view v-slot="{ Component }">
-          <component :is="Component" />
-        </router-view>
-      </v-container>
-    </v-main>
-  </v-app>
-
-  <ReleaseNoteDialog v-model="showReleaseNoteDialog" />
-
-  <v-snackbar-queue v-model="runtimeStore.uiGlobalSnakebar" closable />
+        <a-layout-content id="ptd-main">
+          <router-view v-slot="{ Component }">
+            <component :is="Component" />
+          </router-view>
+        </a-layout-content>
+      </a-layout>
+    </a-layout>
+  </a-config-provider>
 </template>
-
-<style scoped></style>

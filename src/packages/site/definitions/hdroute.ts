@@ -1,18 +1,18 @@
 /**
  * HDRoute 完全自定义采集配置
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/hdroute.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdroute.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdroute.org/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hdroute.json
  */
 import PrivateSite from "../schemas/AbstractPrivateSite";
 import { type ISiteMetadata, type ITorrent, type ISearchInput } from "../types";
+import { extractTextExcluding } from "../utils";
 
 // 辅助函数：去除装饰性文本
 const stripDecorativeText = (element?: Element | null): string => {
   if (!element) return "";
-  const clone = element.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("span, small, i, em").forEach((el) => el.remove());
-  return (clone.textContent || "").trim();
+  // 剔除装饰性元素后直接读取文本节点，避免深克隆
+  return extractTextExcluding(element, "span, small, i, em").trim();
 };
 
 // 辅助函数：提取种子数量（做种/下载）

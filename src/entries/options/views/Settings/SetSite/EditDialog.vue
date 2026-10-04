@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { provide, ref } from "vue";
+import { nextTick, provide, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
 
@@ -31,40 +31,23 @@ function dialogEnter() {
     ...(metadataStore.sites[props.siteId] ?? {}),
   };
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetSite.edit.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <Editor v-model="props.siteId" @update:form-valid="(v) => (isFormValid = v)" />
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-
-        <v-btn
-          :disabled="!isFormValid"
-          color="success"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
-          @click="patchSite"
-        >
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-button-props="{ disabled: !isFormValid }"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('SetSite.edit.title')"
+    :width="800"
+    @ok="patchSite"
+  >
+    <Editor v-model="props.siteId" @update:form-valid="(v) => (isFormValid = v)" />
+  </a-modal>
 </template>

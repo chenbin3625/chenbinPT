@@ -3,6 +3,7 @@ import { AuthType, createClient, type FileStat, type WebDAVClient } from "webdav
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
 import { localSort } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption, IBackupMetadata } from "../type";
 
 interface WebDAVConfig extends IBackupConfig {
@@ -25,7 +26,7 @@ export const serverMetaData: IBackupMetadata<WebDAVConfig> = {
   requiredField: [
     { name: "地址", key: "address", type: "string" },
     { name: "用户名", key: "loginName", type: "string" },
-    { name: "密码", key: "loginPwd", type: "string" },
+    { name: "密码", key: "loginPwd", type: "string", secret: true },
     { name: "Digest", key: "digest", type: "boolean" },
   ],
 };
@@ -50,7 +51,10 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
     try {
       await this.getServer().getDirectoryContents("/");
       return true;
-    } catch {}
+    } catch (e) {
+      // P1-5：ping 失败由返回值 false 表达，但仍需记录原因（地址/账号错误、证书、网络不可达等）
+      logMessage("[WebDAV] ping 失败", { error: e instanceof Error ? e.message : String(e) });
+    }
     return false;
   }
 
@@ -74,6 +78,8 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
 
   async addFile(fileName: string, file: IBackupData): Promise<boolean> {
     const fileBlob = await this.backupDataToJSZipBlob(file);
+    // webdav 客户端（浏览器环境）只接受 string / ArrayBuffer / Uint8Array / Node 流，
+    // 不接受 Blob（会被当成 JSON 序列化），因此这里必须整包转成 ArrayBuffer 一次并直接复用。
     const fileBuffer = await fileBlob.arrayBuffer();
 
     return await this.getServer().putFileContents(fileName, fileBuffer);

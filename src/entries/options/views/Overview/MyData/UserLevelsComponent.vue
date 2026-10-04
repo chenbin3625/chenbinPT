@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { TableOutlined } from "@ant-design/icons-vue";
 import { type ILevelRequirement, type IUserInfo } from "@ptd/site";
 
 import UserLevelShowSpan from "./UserLevelShowSpan.vue";
@@ -24,7 +25,7 @@ const {
     :useJoinTimeAsRef="useJoinTimeAsRef"
   />
   <template v-if="levelRequirement.alternative">
-    <v-icon icon="mdi-file-table-box-multiple-outline" size="small" />
+    <TableOutlined />
     (
     <template v-for="(alternative, key) in levelRequirement.alternative" :key="key">
       [
@@ -39,5 +40,3 @@ const {
     )
   </template>
 </template>
-
-<style scoped lang="scss"></style>

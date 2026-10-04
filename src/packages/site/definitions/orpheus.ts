@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/Orpheus.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/orpheus.network/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/orpheus.network/config.json
  */
 import type { ISiteMetadata, IUserInfo } from "../types";
 import GazelleJSONAPI, { SchemaMetadata } from "../schemas/GazelleJSONAPI.ts";

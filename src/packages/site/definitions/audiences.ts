@@ -1,11 +1,11 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/audiences.yml
  * @JackettIssue https://github.com/Jackett/Jackett/issues/13156
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/audiences.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/audiences.me/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/audiences.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/audiences.json
  */
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { mergeWith } from "es-toolkit";
 import { ETorrentStatus, type IElementQuery, type ISiteMetadata, type IUserInfo } from "../types";
 import NexusPHP, {
@@ -36,7 +36,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["观众", "人人人"],
   description: "观众",
   tags: ["综合", "影视", "音乐", "电子书", "有声书", "体育", "游戏"],
-  timezoneOffset: "+0800",
 
   collaborator: ["hui-shao"],
 
@@ -482,7 +481,7 @@ export default class Audiences extends NexusPHP {
 
     if (data && data?.includes("<table")) {
       const userSeedingPage = createDocument(data);
-      const trAnothers = Sizzle("table:first tr:contains('Total')", userSeedingPage as Document);
+      const trAnothers = selectElements("table:first tr:contains('Total')", userSeedingPage as Document);
       if (trAnothers.length > 0) {
         const tds = trAnothers[0].getElementsByTagName("td");
         seedStatus.seeding = tryToNumber(tds[1].innerText.trim());

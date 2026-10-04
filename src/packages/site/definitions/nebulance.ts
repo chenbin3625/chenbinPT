@@ -1,9 +1,9 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/NebulanceAPI.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/nebulance.io/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/nebulance.io/config.json
  */
 import { ISiteMetadata, ITorrent, ISearchInput, ETorrentStatus } from "../types";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import Gazelle, { SchemaMetadata, top10PageList } from "../schemas/Gazelle.ts";
 import { createDocument, parseValidTimeString, buildCategoryOptionsFromList } from "../utils.ts";
 
@@ -165,7 +165,7 @@ export const siteMetadata: ISiteMetadata = {
           selector: "> td > script",
           elementProcess: (el: HTMLElement) => {
             const overlayDoc = createOverlayDocument(el);
-            const lastTd = Sizzle("td:last", overlayDoc)[0];
+            const lastTd = selectElements("td:last", overlayDoc)[0];
             return lastTd.textContent.trim();
           },
         },
@@ -357,7 +357,7 @@ export default class Nebulance extends Gazelle {
 
     const torrents: ITorrent[] = [];
 
-    const trs = Sizzle(groupPageSelectors.rows.selector, doc);
+    const trs = selectElements(groupPageSelectors.rows.selector, doc);
     const patchedSearchConfig = {
       ...searchConfig,
       searchEntry: {
@@ -375,11 +375,11 @@ export default class Nebulance extends Gazelle {
 
     for (const tr of trs) {
       try {
-        const overlayScriptEl = Sizzle("div.tagssh > script", tr)[0];
+        const overlayScriptEl = selectElements("div.tagssh > script", tr)[0];
         const overlayDoc = createOverlayDocument(overlayScriptEl);
-        const title = Sizzle("table.overlay tr:nth-child(3) > td", overlayDoc)[0].textContent;
+        const title = selectElements("table.overlay tr:nth-child(3) > td", overlayDoc)[0].textContent;
 
-        const rightTd = Sizzle("td.rightOverlay", overlayDoc)[0];
+        const rightTd = selectElements("td.rightOverlay", overlayDoc)[0];
         const dateStr = rightTd.textContent.match(/Uploaded:\s*([0-9-]+\s+[0-9:]+)/)![1];
         const parsedTime = parseValidTimeString(dateStr) as number;
         const time = parsedTime + nblTimezoneOffset * 3600000;

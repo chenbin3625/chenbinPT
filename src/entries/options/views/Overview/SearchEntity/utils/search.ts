@@ -28,6 +28,21 @@ const globalExistingIds = new Set<string>();
 
 export const searchQueue = new PQueue({ concurrency: 1 }); // 默认设置为 1，避免并发搜索
 
+/**
+ * V-15：搜索轮次 epoch。
+ *
+ * 切换快照（或开始新一轮 flush 搜索）时 `runtimeStore.search.*` 会被**整体替换**，但此前排队/在途的
+ * 队列任务仍会继续写入（`searchPlan[...]`、`searchResult.push(...)`、`advanceItemPropsRef`），
+ * 把实时搜索结果污染到快照视图上。这里让每个任务在入队时捕获当时的 epoch，每次写入前校验：
+ * 一旦轮次被 `invalidateSearchTasks()` 取代，任务就静默结束，不再碰 store。
+ */
+let searchTaskEpoch = 0;
+
+/** 让当前所有在途/排队的搜索任务失效（调用方通常还会 `searchQueue.clear()` 清掉尚未开始的任务） */
+export function invalidateSearchTasks() {
+  searchTaskEpoch++;
+}
+
 searchQueue.on("active", () => {
   runtimeStore.search.isSearching = true;
   // 启动后，根据 configStore 的值，自动更新 searchQueue 的并发数
@@ -125,9 +140,15 @@ export async function doSearchEntity(
   console.log(`Add search ${solutionKey} to queue.`);
   runtimeStore.search.searchPlan[solutionKey].queueAt = Date.now();
 
+  // V-15：捕获入队时的搜索轮次，任务开始/写入前校验（见 searchTaskEpoch 的说明）
+  const taskEpoch = searchTaskEpoch;
+
   // noinspection ES6MissingAwait
   searchQueue.add(
     async () => {
+      // V-15：轮次已被取代（切换快照 / 新一轮 flush 搜索）时直接结束，避免写入已被替换的 store
+      if (taskEpoch !== searchTaskEpoch) return;
+
       const startAt = (runtimeStore.search.searchPlan[solutionKey].startAt = Date.now());
       console.log(`search ${solutionKey} start at ${startAt}`);
       runtimeStore.search.searchPlan[solutionKey].status = EResultParseStatus.working;
@@ -150,7 +171,12 @@ export async function doSearchEntity(
         keyword: searchKeyword,
         siteId,
         searchEntry,
+        autoDetectOfficialGroupFromTitle: configStore.searchEntity.autoDetectOfficialGroupFromTitle,
       });
+
+      // V-15：等待响应期间轮次可能已被取代（例如用户切到了某个搜索快照），此时这份实时结果必须丢弃
+      if (taskEpoch !== searchTaskEpoch) return;
+
       console.log(
         `success get search ${solutionKey} result, with code ${searchStatus}: ${searchStatusMsg ?? ""}`,
         searchResult,

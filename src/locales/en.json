@@ -3,43 +3,6 @@
     "invalidLink": "Invalid download link",
     "keywordWarning": "When pushing links via right-click, some keyword features for download paths or labels may not work correctly!"
   },
-  "Debugger": {
-    "addServerFirst": "Please add a server on the Set{serverType} page first",
-    "confirmReset": "Are you sure you want to reset?",
-    "consoleOutput": "All output is in the console panel!!!",
-    "dangerWarning": "EXTREMELY DANGEROUS!!!!",
-    "debug": "Debug {serverType}",
-    "debugBuiltinSite": "Debug Built-in Site",
-    "debugPinia": "Debug Pinia",
-    "enableLibrary": "Enable Dev Library",
-    "libraryList": "Enable sendMessage, axios, Sizzle, es-toolkit (as _), datefns in console",
-    "mergeUserConfig": "Merge User Config",
-    "outputConfig": "Output User Config",
-    "outputFavicon": "Output Favicon",
-    "outputInstance": "Output {serverType} Instance",
-    "outputPinia": "Output Pinia Info",
-    "outputSiteDefinition": "Output Site Definition",
-    "outputSiteInstance": "Output Site Instance",
-    "outputUserConfig": "Output User Config",
-    "pluginReset": "Plugin Reset",
-    "resetItems": {
-      "clearDownloadHistory": "Clear Download History",
-      "clearFaviconCache": "Clear Site Favicon Cache",
-      "clearMediaCache": "Clear media summary cache from Douban, IMDb, etc.",
-      "clearSearchSnapshot": "Clear Search Snapshots",
-      "clearSearchSnapshotDesc": "Clear all search snapshot data",
-      "clearSiteData": "Clear Site Data",
-      "clearSiteDataDesc": "Clear user-fetched site data (including user info history and latest user info)",
-      "clearUserConfig": "Clear User Config",
-      "clearUserConfigDesc": "Clear all user configs (including sites, downloaders, search plans, snapshot metadata, latest user info)",
-      "resetSystemSettings": "Reset System Settings",
-      "resetSystemSettingsDesc": "Reset all system settings (including language, theme, table display, image style, etc.) to defaults"
-    },
-    "resetSuccess": "Reset successful",
-    "selectSite": "Select Site",
-    "siteAll": "All",
-    "title": "Debug Page!!!!"
-  },
   "DownloadHistory": {
     "AdvanceFilterGenerateDialog": {
       "downloader": "Downloader"
@@ -351,6 +314,7 @@
       "lastAccessAt": "Last Access At",
       "lastAccessDurationNote": "Not Access for {0} days",
       "levelName": "Level",
+      "noData": "No user info yet. Add a site and allow querying user info in its settings.",
       "trueUserData": "True Data",
       "updateAt": "Updated At",
       "userData": "Data"
@@ -361,6 +325,13 @@
       "copyLink": "Copy Download Link",
       "copyLinkFailed": "Failed to copy download link",
       "copyLinkSuccess": "Download link copied to clipboard",
+      "label": {
+        "copyLink": "Copy Links",
+        "keepUpload": "Reseed Check",
+        "localDownload": "Download Locally",
+        "sendToDefault": "Default Downloader",
+        "sendToDownloader": "Send to Downloader"
+      },
       "localDownload": "Download Torrent File Locally",
       "sendToDefault": "Send to Default Downloader",
       "sendToDownloader": "Send to Downloader"
@@ -429,9 +400,18 @@
         "saveSnapshot": "Save Search Snapshot",
         "start": "Start search queue"
       },
+      "actionLabel": {
+        "cancel": "Cancel",
+        "displayPreferences": "Display",
+        "pause": "Pause",
+        "retry": "Retry",
+        "retryFailed": "Retry Failed",
+        "saveSnapshot": "Snapshot",
+        "start": "Start"
+      },
       "alert": {
         "duration": "Duration: {0} seconds.",
-        "enterKeyword": "Please enter keywords to start searching",
+        "enterKeyword": "Enter a keyword or pick a search plan to start.",
         "keyword": "Keyword",
         "paused": "Search paused...",
         "plan": "Search Plan",
@@ -441,7 +421,9 @@
         "searching": "Searching...",
         "snapshot": "Search Snapshot"
       },
+      "clearSelection": "Clear Selection",
       "filterLabel": "Filter search results",
+      "noData": "No search results yet. Enter a keyword or pick a search plan above to start.",
       "highlightSameSizeTorrent": "Mark same-size torrents when sorted by size",
       "limitTorrentTitleTdWidth": "Limit torrent title column width",
       "selectedTorrents": "Selected {0} torrents",
@@ -460,6 +442,7 @@
         "time": "Published(≈)",
         "title": "Title"
       },
+      "totalSize": "Total size {0}",
       "uploadAtFormatAsAlive": "Display Upload Time as Relative Time"
     },
     "siteFilter": {
@@ -549,6 +532,7 @@
     "HistoryDialog": {
       "deleteFailure": "Failed to delete backup history [{name}]",
       "deleteSuccess": "Deleted backup history [{name}] successfully",
+      "loadFailure": "Failed to load backup history: {error}",
       "restore": "Restore Backup",
       "table": {
         "filename": "Backup Filename",
@@ -567,14 +551,24 @@
       "keepExistUserInfo": "Keep locally fetched user information",
       "loadFailure": "Load failed: {error}",
       "missingVersion": "Backup data is missing version info, cannot restore",
+      "partialFailure": "Restore finished with errors: some content was not restored, please check the backup data",
       "ptppImport": "PT-Plugin-Plus Backup Import",
       "ptppPrompt": "Need to import PT-Plugin-Plus backup?",
+      "restoreBackupServers": "Also restore the {count} backup server configuration(s) from this backup (addresses and credentials included)",
       "restoreOptions": "Restore Options",
       "retry": "Retry",
+      "securityWarning": {
+        "backupServers": "This backup contains {count} backup server configuration(s):",
+        "parseWarnings": "{count} entry(ies) in this backup file failed validation and will not be restored:",
+        "sensitiveFields": "This restore will write sensitive data: {fields}.",
+        "title": "This backup contains server configuration or sensitive data. If it was not created by you, restoring it may make the extension upload your local credentials to an unknown server. Please confirm before continuing."
+      },
       "selectFile": "Select Backup File",
       "success": "Restored successfully",
+      "successWithNotice": "Restore finished, but part of the content was skipped or sanitized: {detail}",
       "title": "Restore from Backup File",
-      "versionWarning": "Backup data version is higher than the current extension version. Restoring may cause data incompatibility or loss. Continue?"
+      "versionWarning": "Backup data version is higher than the current extension version. Restoring may cause data incompatibility or loss. Continue?",
+      "willNotRestoreBackupServers": "The {count} backup server configuration(s) in this backup will NOT be restored"
     },
     "fields": {
       "config": "Extension configuration (config)",
@@ -630,6 +624,31 @@
       "saveLastDownloader": "Save the last used download server settings",
       "useQuickSendToClient": "Use quick push by default"
     },
+    "reset": {
+      "clearDownloadHistory": "Clear Download History",
+      "clearDownloadHistoryDesc": "Clear all saved download history records",
+      "clearFaviconCache": "Clear Favicon Cache",
+      "clearFaviconCacheDesc": "Clear the site icon cache, icons will be fetched again on next visit",
+      "clearMediaCache": "Clear Media Cache",
+      "clearMediaCacheDesc": "Clear the search result cache of media servers / social sites",
+      "clearSearchSnapshot": "Clear Search Snapshots",
+      "clearSearchSnapshotDesc": "Clear all saved search result snapshots and their metadata",
+      "clearSiteData": "Clear Site Data",
+      "clearSiteDataAll": "All sites",
+      "clearSiteDataDesc": "Clear saved site user info (uploaded / downloaded / seeding / bonus points and other history data)",
+      "clearSiteDataTarget": "Clear scope",
+      "clearUserConfig": "Clear User Config",
+      "clearUserConfigDesc": "Clear all user config data such as site list, downloaders, search solutions and media servers",
+      "confirmOk": "Confirm",
+      "confirmText": "Are you sure you want to run \"{0}\"? This operation cannot be undone!",
+      "confirmTitle": "Confirm Operation",
+      "resetButton": "Reset",
+      "resetSuccess": "Operation completed",
+      "resetSystemSettings": "Reset System Settings",
+      "resetSystemSettingsDesc": "Restore all plugin settings to their default values (same as a fresh install)",
+      "title": "Plugin Reset / Clear Data",
+      "warning": "The following operations cannot be undone. Please export a backup on the \"Backup & Restore\" page first."
+    },
     "searchEntity": {
       "allowSingleSiteSearch": "Allow single-site search",
       "autoDetectOfficialGroupFromTitle": "Auto Detect Official Tag From Torrent Title",
@@ -658,6 +677,7 @@
       "backup": "Backup & Restore",
       "download": "Download",
       "native-bridge": "Native Bridge",
+      "reset": "Plugin Reset",
       "search-entity": "@:common.search",
       "social-information": "Social Rating",
       "ui": "Option UI",
@@ -690,7 +710,6 @@
       "expandByDefault": "Expand sidebar button by default",
       "respondDisplayMode": "Respond to plugin setting ",
       "saveTableBehavior": "Remember table header columns, sorting, pagination, etc.",
-      "showReleaseNote": "Show changelog window when plugin updates",
       "sidebarFunctions": "Sidebar Functions",
       "sidebarStyle": "Sidebar Style",
       "socialSiteSearchBy": {
@@ -813,7 +832,9 @@
   },
   "SetMediaServer": {
     "Editor": {
-      "authInfo": "Authentication Info"
+      "authInfo": "Authentication Info",
+      "addressTip": "Full Media Server Address (may include port or path), Like: http://192.168.1.1:8096/",
+      "nameTip": "Pick a nice and recognizable name for this Media Server"
     },
     "add": {
       "title": "Add Media Server"
@@ -836,7 +857,7 @@
     "info": {
       "cliLink": "ptd-cli",
       "cliRequired": "The external CLI tool must be installed for this feature to work. Native bridge is not available on mobile platforms. See {0} for installation instructions.",
-      "description": "The native bridge allows the PT-Depiler CLI tool to communicate with this extension. It requires the CLI tool to be installed separately on your computer.",
+      "description": "The native bridge allows the chenbinPT CLI tool to communicate with this extension. It requires the CLI tool to be installed separately on your computer.",
       "privacy": "When enabled, the native bridge allows the locally installed CLI tool to access extension data including site configuration, search results, download history, user info, and downloader status. All communication is local (between browser and local process) — no data is sent to remote servers. You can disable this feature or revoke the permission at any time.",
       "setupCommand": "Run the following command to register this extension with the CLI tool:",
       "setupHint": "After running the command, restart the browser or click Test Connection.",
@@ -947,6 +968,7 @@
     },
     "index": {
       "flushFaviconFinish": "The selected site favicon has been refreshed successfully!",
+      "flushFaviconPartial": "Favicon refresh finished: {success} succeeded, {failed} failed.",
       "oneClickImport": "One-Click Import Sites",
       "reBuildMap": "Rebuild Site Cache",
       "settingNote": [
@@ -1016,10 +1038,12 @@
   "UserDataTimeline": {
     "controls": {
       "components": "Components",
+      "consolePanel": "Console",
       "customBgColor": "Custom Background Color",
       "displayContent": "Display Content",
       "displaySiteSettings": "Display Site Settings",
       "faviconBlur": "Site Favicon Blur",
+      "previewPanel": "Display Panel",
       "showTimeline": "Show individual site information (master switch)",
       "showTopSites": "Show champion and runner-up sites for each data type",
       "siteDisplay": "Site Display Component",
@@ -1082,6 +1106,7 @@
       "invert": "Invert Selection",
       "none": "Select None"
     },
+    "columnSelector": "Columns",
     "count": "Count",
     "date": "Date",
     "default": "default",
@@ -1105,8 +1130,10 @@
     "howToUse": "How To Use",
     "import": "Import",
     "language": "Language",
+    "loading": "Loading…",
     "name": "Name",
-    "project": "PT Depiler",
+    "noData": "No data",
+    "project": "chenbinPT",
     "remove": "Delete",
     "save": "Save",
     "saveSettings": "Save Settings",
@@ -1198,15 +1225,7 @@
       "wiki": "Wiki",
       "wrongPixelRatioNotice": "Your page display may be affected by zooming. It is recommended to zoom at 100% to ensure your browsing experience~"
     },
-    "init": "Please wait patiently for the page to load.....",
-    "releaseNote": {
-      "changelog": "Changelog",
-      "currentVersion": " (current version)",
-      "faq": "FAQ",
-      "startUsing": "Get Started",
-      "title": "Welcome to {extName}",
-      "wiki": "Wiki Help"
-    }
+    "init": "Please wait patiently for the page to load....."
   },
   "levelRequirement": {
     "adoptions": "Adopted Torrents",
@@ -1234,19 +1253,19 @@
     "uploads": "Uploaded Torrents"
   },
   "manifest": {
-    "contextMenuSearch": "Using PT Depiler to Search for \"%s\" related torrents",
+    "contextMenuSearch": "Using chenbinPT to Search for \"%s\" related torrents",
     "contextMenuSearchInDefault": "Search in the default plan",
     "contextMenuSearchInSite": "Search in the specified site",
     "contextMenuSearchInSolution": "Search in the specified plan",
     "contextMenuSearchInThisSite": "Search in this site",
-    "contextMenuSearchWithDouban": "Using PT Depiler to Search This Douban ID",
-    "contextMenuSearchWithIMDb": "Using PT Depiler to Search This IMDb ID",
-    "contextMenuSendToDownloader": "Using PT Depiler to Download link",
+    "contextMenuSearchWithDouban": "Using chenbinPT to Search This Douban ID",
+    "contextMenuSearchWithIMDb": "Using chenbinPT to Search This IMDb ID",
+    "contextMenuSendToDownloader": "Using chenbinPT to Download link",
     "contextMenuSendToDownloaderAdvanced": "Advanced push",
     "contextMenuSendToDownloaderDefaultFolder": "Default path",
     "contextMenuSendToDownloaderIn": "Push to $1 -> $2",
-    "extDesc": "PT Depiler",
-    "extName": "PT Depiler",
+    "extDesc": "chenbinPT",
+    "extName": "chenbinPT",
     "notificationSendLinkToDownloaderFailure": "Failed to send the link to the downloader [$1]",
     "notificationSendLinkToDownloaderSuccess": "Successfully sent the link to the downloader [$1]",
     "omniboxSearch": "Search $2 in [ $1 ]",
@@ -1255,31 +1274,10 @@
     "searchPlanSingleSite": "Single Site"
   },
   "ptppSettings": {
-    "RestorePtppUserDataDialog": {
-      "importCancelled": "Import operation cancelled.",
-      "importFailure": "Import failed.",
-      "importSuccess": "Import successful. The window will close automatically in 5s. Please refresh the page.",
-      "noSiteWarning": "You don't seem to have added any sites, which may cause import issues. Continue?",
-      "notSupported": "This site is not supported",
-      "overwriteExisting": "Overwrite existing data",
-      "pendingImportData": "Data to Import",
-      "recordCount": "{0} records",
-      "selected": "Selected",
-      "title": "Restore PT-Plugin-Plus User History Data"
-    },
     "basicConfig": "Basic Configuration",
     "encryptionKeyLabel": "Backup file encryption/decryption key",
-    "importConfigInfoLine1": "{repoName} can only import user history data from the original PT-Plugin-Plus. Other configuration files are not supported.",
-    "importConfigInfoPrep": "Before importing, please make the following preparations:",
-    "importConfigTitle": "PT-Plugin-Plus Configuration Import",
-    "importStep1": "First, please back up the current configuration file of {repoName}.",
-    "importStep2": "In the site settings of {repoName}, add the sites that need to be restored. (If a site is not added, its corresponding user history data will be ignored).",
-    "importStep3": "In PT-Plugin-Plus, disable the backup encryption feature and export the local backup file. It should be a zip file named <code>PT-Plugin-Plus-Backup-yyyy-MM-DD_hh-mm-ss.zip</code>.",
-    "importStep4": "Upload the zip package or the extracted <code>userdatas.json</code> file to the input box below.",
-    "invalidFileFormat": "Invalid file format, please check if the backup was exported correctly (with the backup encryption feature turned off).",
     "randomGenTitle": "Generate Randomly",
     "saveKeyNotice": "Note: The key is only saved in the current browser and will not be backed up, please keep it safe; data cannot be recovered if the key is lost after encryption. Leave blank for no encryption.",
-    "selectBackupFile": "Select PTPP Backup File",
     "undoKeyTitle": "Restore previous key"
   },
   "resultParseStatus": {
@@ -1297,28 +1295,23 @@
     "working": "Fetching..."
   },
   "route": {
-    "Devtools": {
-      "Debugger": "Debugger",
-      "SystemLog": "System Log",
-      "default": "Devtools"
-    },
     "Overview": {
-      "DownloadHistory": "Download History",
-      "KeepUploadTask": "Reseed Task",
-      "MediaServerEntity": "Media Library",
-      "MyClient": "My BtClient",
+      "DownloadHistory": "History",
+      "KeepUploadTask": "Reseed",
+      "MediaServerEntity": "Library",
+      "MyClient": "Clients",
       "MyCollection": "Collection",
       "MyData": "My Data",
-      "SearchEntity": "Search Results",
-      "SearchResultSnapshot": "Search Snapshot",
+      "SearchEntity": "Search",
+      "SearchResultSnapshot": "Snapshot",
       "default": "Overview"
     },
     "Settings": {
-      "SetBackup": "Backup & Restore",
+      "SetBackup": "Backup",
       "SetBase": "General",
-      "SetDownloader": "Download Server",
-      "SetMediaServer": "Media Server",
-      "SetSearchSolution": "Search Solution",
+      "SetDownloader": "Downloader",
+      "SetMediaServer": "Media",
+      "SetSearchSolution": "Plans",
       "SetSite": "Sites",
       "default": "Settings"
     }
@@ -1348,7 +1341,7 @@
     }
   },
   "userInfo": {
-    "alwaysPickLastUserInfo": "",
+    "alwaysPickLastUserInfo": "Reuse the stored historical information as much as possible when refreshing user data",
     "autoExtendCookies": {
       "enabled": "Enable auto-extend cookies period?",
       "extensionDuration": "Extension duration",

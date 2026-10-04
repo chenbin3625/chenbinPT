@@ -363,7 +363,7 @@ export default class YemaPT extends PrivateSite {
   ): Promise<AxiosResponse<T>> {
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      Authorization: this.userConfig.inputSetting!.token ?? "",
+      Authorization: this.userConfig.inputSetting?.token ?? "",
     };
 
     const response = await super.request<T>(axiosConfig, false);

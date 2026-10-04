@@ -1,5 +1,5 @@
 import axios from "axios";
-import Sizzle from "sizzle";
+import { selectElements } from "../../site/utils/selector";
 import {
   IFetchSocialSiteInformationConfig,
   IPtgenApiResponse,
@@ -24,7 +24,7 @@ function pageParser$1(doc: Document): ISocialSitePageInformation {
   const foreign_title = (doc.querySelector('span[property="v:itemreviewed"]')?.textContent ?? "")
     .replace(chinese_title, "")
     .trim();
-  const aka_anchor = Sizzle('#info span.pl:contains("又名")', doc);
+  const aka_anchor = selectElements('#info span.pl:contains("又名")', doc);
   let aka_title: string[] = [];
   if (aka_anchor.length > 0) {
     aka_title = (aka_anchor[0].nextSibling?.nodeValue ?? "")
@@ -43,7 +43,7 @@ function pageParser$1(doc: Document): ISocialSitePageInformation {
   if (imdb_link_another) {
     imdb_id = parseImdb(imdb_link_another.getAttribute("href")!);
   } else {
-    const raw_imdb_another = Sizzle('#info span.pl:contains("IMDb:")', doc);
+    const raw_imdb_another = selectElements('#info span.pl:contains("IMDb:")', doc);
     if (raw_imdb_another.length > 0) {
       const imdb_link = raw_imdb_another[0].nextSibling?.nodeValue?.trim();
       if (imdb_link) {
@@ -69,7 +69,7 @@ function pageParse$2Factory(urlPattern: string, rowSelector: string): TSupportSo
     urlPattern,
     (doc: Document) => {
       const retItems: ISocialSitePageInformation[] = [];
-      const items = Sizzle(rowSelector, doc);
+      const items = selectElements(rowSelector, doc);
       for (const item of items) {
         const titleElement = item.querySelector("a[href*='/subject/']");
         if (titleElement) {
@@ -100,7 +100,7 @@ export const pageParserMatches: TSupportSocialSitePageParserMatches = [
     (doc: Document) => {
       const retItems: ISocialSitePageInformation[] = [];
 
-      const items = Sizzle("ul.subject-list-list > li", doc);
+      const items = selectElements("ul.subject-list-list > li", doc);
       for (const item of items) {
         const another = item.querySelector("a[href*='doubanapp/dispatch?uri=']");
         if (another) {

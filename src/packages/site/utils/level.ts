@@ -6,7 +6,9 @@ import { intervalToDuration } from "date-fns";
 
 import type { IImplicitUserInfo, ILevelRequirement, IUserInfo, TLevelGroupType, TLevelId } from "../types";
 import { parseSizeString } from "./filesize";
-import { convertIsoDurationToDate, type isoDuration } from "./datetime";
+// P1-4：拆成「值导入 + 类型导入」两条，类型边不再与运行时边混在一起
+import { convertIsoDurationToDate } from "./datetime";
+import type { isoDuration } from "./datetime";
 
 export const MinVipLevelId = 100;
 export const MinManagerLevelId = 200;

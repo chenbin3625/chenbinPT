@@ -19,7 +19,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "包子",
   description: "包子PT。",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["liuyaowen"],
 

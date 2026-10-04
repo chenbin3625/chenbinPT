@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import {
+  DownOutlined,
+  ExclamationCircleOutlined,
+  ExportOutlined,
+  ReloadOutlined,
+  StopOutlined,
+  UpOutlined,
+} from "@ant-design/icons-vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { getDownloaderIcon, type TorrentClientStatus } from "@ptd/downloader";
@@ -73,126 +81,118 @@ async function fetchAll() {
 function onEnter() {
   fetchAll();
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(onEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable @afterEnter="onEnter()">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("MyClient.clientStatusDialog.title") }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-refresh" :title="t('MyClient.refresh')" @click="fetchAll" />
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
+  <a-modal v-model:open="showDialog" :title="t('MyClient.clientStatusDialog.title')" :width="800">
+    <a-list>
+      <a-list-item
+        v-for="d in enabledDownloaders"
+        :key="d.id"
+        :style="[isDownloaderActive(d.id) ? { color: 'var(--ptd-primary)' } : undefined, { cursor: 'pointer' }]"
+        @click="toggleDownloaderFilter(d.id)"
+      >
+        <a-list-item-meta>
+          <template #avatar>
+            <a-avatar :src="getDownloaderIcon(d.type)" :size="32" style="margin-right: 8px"></a-avatar>
           </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-list>
-          <v-list-item
-            v-for="d in enabledDownloaders"
-            :key="d.id"
-            :active="isDownloaderActive(d.id)"
-            color="primary"
-            rounded
-            @click="toggleDownloaderFilter(d.id)"
-          >
-            <template #prepend>
-              <v-avatar :image="getDownloaderIcon(d.type)" size="32" class="mr-2" />
-            </template>
+          <template #title>
+            <strong>{{ d.name }}</strong>
+            <span
+              v-if="clientVersions[d.id]"
+              style="margin-left: 8px; color: var(--ptd-text-tertiary); font-size: 12px"
+            >
+              {{ clientVersions[d.id] }}
+            </span>
+            <a-tooltip v-if="suspendedDownloaders.has(d.id)" :title="t('MyClient.autoRefresh.suspendedTip')">
+              <ExclamationCircleOutlined class="ptd-icon-sm" style="margin-left: 4px; color: var(--ptd-danger)" />
+            </a-tooltip>
+          </template>
+          <template #description>
+            <a-typography-link
+              :href="d.address"
+              rel="noopener noreferrer nofollow"
+              target="_blank"
+              style="font-size: 12px"
+              @click.stop
+            >
+              {{ d.address }}
+            </a-typography-link>
+          </template>
+        </a-list-item-meta>
 
-            <v-list-item-title class="font-weight-bold">
-              {{ d.name }}
-              <span v-if="clientVersions[d.id]" class="ml-2 text-body-small text-grey">
-                {{ clientVersions[d.id] }}
+        <a-spin v-if="clientLoading[d.id]" style="margin-right: 16px"></a-spin>
+        <template v-else>
+          <div style="margin-right: 8px; text-align: right; font-size: 12px">
+            <a-flex align="center" justify="flex-end" :gap="4">
+              <UpOutlined style="color: var(--ptd-success)" />
+              <span style="white-space: nowrap">
+                {{ formatSizeOrDash(clientStatuses[d.id]?.upSpeed) }}/s ({{
+                  formatSizeOrDash(clientStatuses[d.id]?.upData)
+                }})
               </span>
-              <v-icon
-                v-if="suspendedDownloaders.has(d.id)"
-                icon="mdi-alert-circle"
-                color="error"
-                size="x-small"
-                class="ml-1"
-              >
-                <v-tooltip activator="parent" location="bottom">
-                  {{ t("MyClient.autoRefresh.suspendedTip") }}
-                </v-tooltip>
-              </v-icon>
-            </v-list-item-title>
-            <v-list-item-subtitle>
-              <a
-                :href="d.address"
-                class="text-primary text-decoration-underline text-body-small"
-                rel="noopener noreferrer nofollow"
-                target="_blank"
-                @click.stop
-              >
-                {{ d.address }}
-              </a>
-            </v-list-item-subtitle>
+            </a-flex>
+            <a-flex align="center" justify="flex-end" :gap="4">
+              <DownOutlined style="color: var(--ptd-danger)" />
+              <span style="white-space: nowrap">
+                {{ formatSizeOrDash(clientStatuses[d.id]?.dlSpeed) }}/s ({{
+                  formatSizeOrDash(clientStatuses[d.id]?.dlData)
+                }})
+              </span>
+            </a-flex>
+            <div style="color: var(--ptd-text-tertiary)">
+              {{ t("MyClient.clientStatusDialog.torrentCount", { count: torrentCountFor(d.id) }) }}
+            </div>
+          </div>
+        </template>
 
-            <template #append>
-              <v-progress-circular v-if="clientLoading[d.id]" indeterminate size="20" width="2" class="mr-4" />
-              <template v-else>
-                <div class="text-end text-body-small mr-2">
-                  <div class="d-flex align-center justify-end ga-1">
-                    <v-icon color="green-darken-4" icon="mdi-chevron-up" size="small" />
-                    <span class="text-no-wrap">
-                      {{ formatSizeOrDash(clientStatuses[d.id]?.upSpeed) }}/s ({{
-                        formatSizeOrDash(clientStatuses[d.id]?.upData)
-                      }})
-                    </span>
-                  </div>
-                  <div class="d-flex align-center justify-end ga-1">
-                    <v-icon color="red-darken-4" icon="mdi-chevron-down" size="small" />
-                    <span class="text-no-wrap">
-                      {{ formatSizeOrDash(clientStatuses[d.id]?.dlSpeed) }}/s ({{
-                        formatSizeOrDash(clientStatuses[d.id]?.dlData)
-                      }})
-                    </span>
-                  </div>
-                  <div class="text-grey">
-                    {{ t("MyClient.clientStatusDialog.torrentCount", { count: torrentCountFor(d.id) }) }}
-                  </div>
-                </div>
-              </template>
-
-              <v-divider vertical class="mx-2" />
-              <v-btn
-                v-if="suspendedDownloaders.has(d.id)"
-                :title="t('MyClient.autoRefresh.resumeDownloader')"
-                icon="mdi-refresh"
-                color="error"
-                size="small"
-                variant="text"
-                @click.stop="resumeDownloaderRefresh(d.id)"
-              />
-              <v-btn
-                v-else
-                :title="t('MyClient.autoRefresh.stopDownloader')"
-                :disabled="!autoRefreshRunning"
-                color="amber"
-                size="small"
-                icon="mdi-stop"
-                variant="text"
-                @click.stop="() => suspendedDownloader(d.id)"
-              />
-              <v-btn
-                :href="d.address"
-                :title="t('MyClient.clientStatusDialog.openClient')"
-                icon="mdi-open-in-new"
-                rel="noopener noreferrer nofollow"
-                size="small"
-                target="_blank"
-                variant="text"
-                @click.stop
-              />
-            </template>
-          </v-list-item>
-        </v-list>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
+        <a-divider style="margin: 0 8px" type="vertical" />
+        <a-button
+          v-if="suspendedDownloaders.has(d.id)"
+          :title="t('MyClient.autoRefresh.resumeDownloader')"
+          type="text"
+          danger
+          size="small"
+          @click.stop="resumeDownloaderRefresh(d.id)"
+          ><template #icon><ReloadOutlined /></template
+        ></a-button>
+        <a-button
+          v-else
+          :title="t('MyClient.autoRefresh.stopDownloader')"
+          :disabled="!autoRefreshRunning"
+          type="text"
+          size="small"
+          @click.stop="() => suspendedDownloader(d.id)"
+          ><template #icon><StopOutlined /></template
+        ></a-button>
+        <a-button
+          :href="d.address"
+          :title="t('MyClient.clientStatusDialog.openClient')"
+          rel="noopener noreferrer nofollow"
+          target="_blank"
+          type="text"
+          size="small"
+          @click.stop
+          ><template #icon><ExportOutlined /></template
+        ></a-button>
+      </a-list-item>
+    </a-list>
+    <template #footer>
+      <a-flex align="center" justify="space-between">
+        <a-flex align="center" :gap="8">
+          <a-button type="text" :title="t('MyClient.refresh')" @click="fetchAll">
+            <ReloadOutlined />
+          </a-button>
+        </a-flex>
+        <a-flex align="center" :gap="8">
+          <a-button @click="showDialog = false">{{ t("common.dialog.close") }}</a-button>
+        </a-flex>
+      </a-flex>
+    </template>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

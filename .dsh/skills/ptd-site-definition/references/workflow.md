@@ -94,20 +94,20 @@ export default class Example extends NexusPHP {}
 node .dsh/skills/ptd-site-definition/scripts/check-site-definition.mjs src/packages/site/definitions/<id>.ts
 
 # 2) 类型检查（定义文件在 tsconfig include 内，错误会在此暴露）
-pnpm check
+npm run check
 
 # 3) 格式化
-pnpm format
+npm run format
 ```
 
-`pnpm check` 是 `vue-tsc --noEmit`（根 `package.json:31`）。有覆写类方法时，类型检查能抓出签名不匹配、缺 `override` 等问题。
+`npm run check` 是 `vue-tsc --noEmit`（根 `package.json:31`）。有覆写类方法时，类型检查能抓出签名不匹配、缺 `override` 等问题。
 
 ## 6. 真机验证
 
 ```bash
-pnpm dev              # 开发模式，产物输出到 dist-chrome（vite.config.ts:48）
-pnpm build:dist       # Chrome 构建，同样输出 dist-chrome
-pnpm build:dist-firefox   # Firefox 构建，输出 dist-firefox
+npm run dev              # 开发模式，产物输出到 dist-chrome（vite.config.ts:48）
+npm run build:dist       # Chrome 构建，同样输出 dist-chrome
+npm run build:dist-firefox   # Firefox 构建，输出 dist-firefox
 ```
 
 在浏览器「加载已解压的扩展程序」中指向对应输出目录，然后至少验证：

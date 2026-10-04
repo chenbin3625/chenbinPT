@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/BrokenStones.cs
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/brokenstones.is/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/brokenstones.is/config.json
  */
 import { ISearchInput, ISiteMetadata, ITorrent } from "../types.ts";
 import GazelleJSONAPI, { SchemaMetadata } from "../schemas/GazelleJSONAPI.ts";

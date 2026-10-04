@@ -13,7 +13,6 @@ import {
   getBackupServerMetaData,
   type IBackupMetadata,
 } from "@ptd/backupServer";
-import { REPO_URL } from "~/helper.ts";
 
 import Editor from "./Editor.vue";
 
@@ -42,7 +41,6 @@ async function updateStoredDownloaderConfigByDefault(type: IBackupServerMetadata
     id: nanoid(),
     backupFields: [...BackupFields],
   } as IBackupServerMetadata;
-  console.log("storedBackupServerConfig", storedBackupServerConfig.value);
 }
 
 async function saveStoredBackupServerConfig() {
@@ -59,114 +57,63 @@ function resetDialog() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable @after-leave="resetDialog">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetBackup.AddDialog.title") }}</v-toolbar-title>
-          <v-spacer />
-          <v-btn
-            :title="t('layout.header.wiki')"
-            :href="`${REPO_URL}/wiki/config-backup-server`"
-            color="success"
-            icon="mdi-help-circle"
-            rel="noopener noreferrer nofollow"
-            target="_blank"
-          />
-        </v-toolbar>
-      </v-card-title>
+  <a-modal v-model:open="showDialog" :title="t('SetBackup.AddDialog.title')" :width="800" :after-close="resetDialog">
+    <div>
+      <!-- 选取可添加的备份服务器类型 -->
+      <div v-show="currentStep === 0">
+        <a-select
+          v-model:value="selectedBackupServerType"
+          :options="Object.values(allBackupServerMetaData).map((item) => ({ label: item.type, value: item.type }))"
+          show-search
+          style="width: 100%"
+          @change="(e: any) => updateStoredDownloaderConfigByDefault(e)"
+        >
+          <template #option="{ value }">
+            <a-flex align="center" :gap="8">
+              <a-avatar :size="20" shape="square" :src="getBackupServerIcon(value)" />
+              <span>{{ value }}</span>
+            </a-flex>
+          </template>
+        </a-select>
 
-      <v-divider />
-      <v-card-text>
-        <v-window v-model="currentStep">
-          <!-- 选取可添加的备份服务器类型 -->
-          <v-window-item :value="0">
-            <v-autocomplete
-              v-model="selectedBackupServerType"
-              :items="Object.values(allBackupServerMetaData)"
-              item-value="type"
-              item-title="type"
-              :multiple="false"
-              persistent-hint
-              :hint="
-                allBackupServerMetaData[selectedBackupServerType!]?.description ??
-                t('SetDownloader.add.NoneSelectNotice')
-              "
-              @update:model-value="(e) => updateStoredDownloaderConfigByDefault(e)"
-            >
-              <template #selection="{ item: backupServer }">
-                <v-list-item :prepend-avatar="getBackupServerIcon(backupServer.type)" :title="backupServer.type" />
-              </template>
-              <template #item="{ props, item: backupServer }">
-                <v-list-item
-                  v-bind="props"
-                  :prepend-avatar="getBackupServerIcon(backupServer.type)"
-                  :title="backupServer.type"
-                >
-                </v-list-item>
-              </template>
-            </v-autocomplete>
-          </v-window-item>
-          <v-window-item :value="1">
-            <Editor
-              v-if="storedBackupServerConfig.type"
-              v-model="storedBackupServerConfig"
-              @update:config-valid="(v) => (isBackupServerConfigValid = v)"
-            />
-          </v-window-item>
-        </v-window>
-      </v-card-text>
+        <a-typography-text style="display: block; margin-top: 4px" type="secondary">
+          {{
+            allBackupServerMetaData[selectedBackupServerType!]?.description ?? t("SetDownloader.add.NoneSelectNotice")
+          }}
+        </a-typography-text>
+      </div>
+      <div v-show="currentStep === 1">
+        <Editor
+          v-if="storedBackupServerConfig.type"
+          v-model="storedBackupServerConfig"
+          @update:config-valid="(v: any) => (isBackupServerConfigValid = v)"
+        />
+      </div>
+    </div>
 
-      <v-divider />
-
-      <v-card-actions>
-        <v-btn
-          v-show="currentStep === 0"
-          :href="`${REPO_URL}/tree/master/src/packages/backupServer`"
-          color="grey-darken-1"
-          flat
-          rel="noopener noreferrer nofollow"
-          target="_blank"
-        >
-          <v-icon icon="mdi-help-circle" />
-          <span class="ml-1">{{ t("SetDownloader.add.newType") }}</span>
-        </v-btn>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 1"
-          color="blue-darken-1"
-          prepend-icon="mdi-chevron-left"
-          variant="text"
-          @click="currentStep--"
-        >
-          {{ t("common.dialog.prev") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 0"
-          :disabled="selectedBackupServerType == null"
-          append-icon="mdi-chevron-right"
-          color="blue-darken-1"
-          variant="text"
-          @click="currentStep++"
-        >
-          {{ t("common.dialog.next") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 1"
-          :disabled="!isBackupServerConfigValid"
-          color="success"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
-          @click="saveStoredBackupServerConfig"
-        >
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <template #footer>
+      <a-flex align="center" justify="end">
+        <a-flex align="center" :gap="8">
+          <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+          <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+          <a-button
+            v-if="currentStep === 0"
+            :disabled="selectedBackupServerType == null"
+            type="primary"
+            @click="currentStep++"
+          >
+            {{ t("common.dialog.next") }}
+          </a-button>
+          <a-button
+            v-if="currentStep === 1"
+            :disabled="!isBackupServerConfigValid"
+            type="primary"
+            @click="saveStoredBackupServerConfig"
+          >
+            {{ t("common.dialog.ok") }}
+          </a-button>
+        </a-flex>
+      </a-flex>
+    </template>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

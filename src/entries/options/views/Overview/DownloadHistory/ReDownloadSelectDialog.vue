@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, shallowRef } from "vue";
+import { CloudDownloadOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons-vue";
+import { nextTick, ref, shallowRef, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import type { CAddTorrentOptions } from "@ptd/downloader";
 
@@ -32,10 +33,14 @@ const disableLocalDownload = ref<boolean>(false);
 const showSentToDownloaderDialog = ref<boolean>(false);
 const downloadTorrentsRef = shallowRef<ITorrentDownloadMetadata["torrent"][]>([]);
 
-const btnItem: Record<TReDownloadType, { icon: string; color: string; title: string }> = {
-  old: { icon: "mdi-reload", color: "indigo", title: t("DownloadHistory.ReDownloadSelectDialog.oldMethod") },
-  local: { icon: "mdi-content-save", color: "orange", title: t("downloaderLabel.localDownload") },
-  downloader: { icon: "mdi-cloud-download", color: "cyan", title: t("DownloadHistory.ReDownloadSelectDialog.selectDownloader") },
+const btnItem: Record<TReDownloadType, { icon: Component; color: string; title: string }> = {
+  old: { icon: ReloadOutlined, color: "indigo", title: t("DownloadHistory.ReDownloadSelectDialog.oldMethod") },
+  local: { icon: SaveOutlined, color: "orange", title: t("downloaderLabel.localDownload") },
+  downloader: {
+    icon: CloudDownloadOutlined,
+    color: "cyan",
+    title: t("DownloadHistory.ReDownloadSelectDialog.selectDownloader"),
+  },
 };
 
 function submitDownloadFinish(reDownloadType: TReDownloadType) {
@@ -83,39 +88,34 @@ function dialogEnter() {
   // 如果传入的种子列表中有 magnet 链接，则禁用本地下载按钮
   disableLocalDownload.value = torrentItems.some((t) => t?.torrent?.link?.startsWith("magnet:"));
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="600" @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="primary">
-          <v-toolbar-title>{{ t("DownloadHistory.ReDownloadSelectDialog.title", [torrentItems.length]) }}</v-toolbar-title>
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-      <v-card-text class="pa-1">
-        <v-list>
-          <v-list-item v-for="(value, key) in btnItem" :key="key">
-            <v-btn
-              :loading="isReDownloading[key]"
-              block
-              class="justify-start"
-              :color="value.color"
-              :prepend-icon="value.icon"
-              size="x-large"
-              variant="tonal"
-              @click="reDownload(key)"
-            >
-              {{ value.title }}
-            </v-btn>
-          </v-list-item>
-        </v-list>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
+  <a-modal
+    v-model:open="showDialog"
+    :footer="null"
+    :title="t('DownloadHistory.ReDownloadSelectDialog.title', [torrentItems.length])"
+    :width="600"
+  >
+    <a-list>
+      <a-list-item v-for="(value, key) in btnItem" :key="key">
+        <a-button
+          :loading="isReDownloading[key]"
+          block
+          size="large"
+          style="justify-content: flex-start"
+          @click="reDownload(key)"
+          ><component :is="value.icon" />
+          {{ value.title }}
+        </a-button>
+      </a-list-item>
+    </a-list>
+  </a-modal>
 
   <SentToDownloaderDialog
     v-model="showSentToDownloaderDialog"
@@ -124,5 +124,3 @@ function dialogEnter() {
     @done="() => submitDownloadFinish('downloader')"
   />
 </template>
-
-<style scoped lang="scss"></style>

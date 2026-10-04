@@ -8,7 +8,7 @@ import { setupReplaceUnsafeHeader } from "~/extends/axios/replaceUnsafeHeader.ts
 import { logger } from "./logger.ts";
 import { getSocialInformation } from "./socialInformation.ts";
 
-setupReplaceUnsafeHeader(axios);
+const posterAxios = setupReplaceUnsafeHeader(axios.create());
 
 type TRecommendationEnrichmentMode = "all" | "none" | "visible";
 
@@ -124,7 +124,7 @@ async function fetchPosterDataUrl(
 
   for (const candidate of candidates) {
     try {
-      const response = await axios.get<Blob>(candidate, {
+      const response = await posterAxios.get<Blob>(candidate, {
         headers: isDoubanPosterUrl(candidate) ? { Referer: "https://m.douban.com/" } : undefined,
         responseType: "blob",
         timeout: posterFetchOptions.timeout,

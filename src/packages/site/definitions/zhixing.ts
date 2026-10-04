@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/pt.zhixing.bjtu.edu.cn/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/pt.zhixing.bjtu.edu.cn/config.json
  */
 import urlJoin from "url-join";
 

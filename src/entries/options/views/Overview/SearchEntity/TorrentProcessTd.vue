@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ArrowDownOutlined, ArrowUpOutlined, CheckOutlined, DisconnectOutlined } from "@ant-design/icons-vue";
+import { computed, type Component } from "vue";
 import { ETorrentStatus } from "@ptd/site";
 
 import { ISearchResultTorrent } from "@/shared/types.ts";
@@ -8,20 +9,20 @@ const { torrent } = defineProps<{
   torrent: ISearchResultTorrent;
 }>();
 
-const icon = computed(() => {
+const icon = computed<Component>(() => {
   switch (torrent.status) {
     case ETorrentStatus.downloading:
-      return "mdi-arrow-down";
+      return ArrowDownOutlined;
 
     case ETorrentStatus.completed:
-      return "mdi-check";
+      return CheckOutlined;
 
     case ETorrentStatus.inactive:
-      return "mdi-wifi-strength-off";
+      return DisconnectOutlined;
 
     case ETorrentStatus.seeding:
     default:
-      return "mdi-arrow-up";
+      return ArrowUpOutlined;
   }
 });
 
@@ -43,19 +44,16 @@ const color = computed(() => {
 
 <template>
   <!--
-    Vuetify 4 的 v-row 改用 flex gap（默认 24px）、v-col 不再带 padding：
-    - gap="0" 让 cols="2" 的图标列恢复宽度、图标与进度条保持紧凑；
-    - align-center 让 4px 高的进度条与图标垂直居中（v3 是靠 v-col 的 12px padding 达到同样效果），
-      否则进度条会贴在行首、完成对勾看起来偏低（#1554）。
+    保持图标列与进度条紧凑对齐：
+    - gutter=0 避免图标列被默认间距拉宽；
+    - align="middle" 让 4px 高的进度条与图标垂直居中。
   -->
-  <v-row gap="0" class="align-center pt-1">
-    <v-col class="pa-0" cols="2">
-      <v-icon :color="color" :icon="icon" size="x-small"></v-icon>
-    </v-col>
-    <v-col class="pl-1">
-      <v-progress-linear v-model="torrent.progress!" :color="color" :title="`${torrent.progress}%`"></v-progress-linear>
-    </v-col>
-  </v-row>
+  <a-row align="middle" :gutter="0" style="padding-top: 4px">
+    <a-col :span="4" style="padding: 0">
+      <component class="ptd-icon-sm" />
+    </a-col>
+    <a-col flex="1 1 0" style="padding-left: 4px">
+      <a-progress :percent="torrent.progress" :show-info="false" status="active" :title="`${torrent.progress}%`" />
+    </a-col>
+  </a-row>
 </template>
-
-<style scoped lang="scss"></style>

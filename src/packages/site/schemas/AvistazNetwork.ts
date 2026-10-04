@@ -1,6 +1,6 @@
 import { type AxiosError, type AxiosRequestConfig, type AxiosResponse } from "axios";
 import urlJoin from "url-join";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { axios, isCloudflareBlocked } from "../utils/adapter";
 
 import PrivateSite from "./AbstractPrivateSite";
@@ -17,7 +17,7 @@ import {
   CFBlockedError,
   NoTorrentsError,
 } from "../types";
-import { parseSizeString } from "../utils";
+import { parseSizeString, mapWithConcurrency, classifySiteError, logMessage, siteErrorLogData } from "../utils";
 
 const enableAvistazUserInfoFetching = import.meta.env.VITE_ENABLE_AVISTAZ_USER_INFO_FETCHING === "true";
 
@@ -76,7 +76,7 @@ function getOwnText(element?: Element | null): string {
 
 function getProfileTableValue(document: Document, label: string): string {
   const labelPattern = new RegExp(`^${label}$`, "i");
-  for (const row of Sizzle("table tr", document)) {
+  for (const row of selectElements("table tr", document)) {
     const cells = Array.from(row.children);
     if (cells.length < 2) continue;
 
@@ -85,7 +85,7 @@ function getProfileTableValue(document: Document, label: string): string {
       const ownText = getOwnText(cells[1]);
       if (ownText) return ownText;
 
-      const semanticValue = Sizzle(".user-group, .badge-user, .badge, strong, span", cells[1])[0];
+      const semanticValue = selectElements(".user-group, .badge-user, .badge, strong, span", cells[1])[0];
       return getText(semanticValue) || getText(cells[1]);
     }
   }
@@ -102,7 +102,7 @@ function getTorrentRowSize(row: Element): number {
   ];
 
   for (const selector of selectors) {
-    const element = Sizzle(selector, row)[0];
+    const element = selectElements(selector, row)[0];
     if (!element) continue;
 
     const size = parseSizeString(getText(element));
@@ -121,21 +121,21 @@ function isSeedingTorrentRow(row: Element): boolean {
 }
 
 function getActivePageCount(document: Document): number {
-  return Sizzle("a[href*='page=']", document).reduce((maxPage, link) => {
+  return selectElements("a[href*='page=']", document).reduce((maxPage, link) => {
     const pageMatch = link.getAttribute("href")?.match(/[?&]page=(\d+)/);
     return pageMatch ? Math.max(maxPage, Number(pageMatch[1])) : maxPage;
   }, 1);
 }
 
 function getSeedingSize(document: Document): number {
-  return Sizzle("table tr", document).reduce((total, row) => {
+  return selectElements("table tr", document).reduce((total, row) => {
     if (!isSeedingTorrentRow(row)) return total;
     return total + getTorrentRowSize(row);
   }, 0);
 }
 
 function getBonusPerHour(document: Document): string {
-  for (const row of Sizzle("table tr", document)) {
+  for (const row of selectElements("table tr", document)) {
     const cells = Array.from(row.children);
     if (cells.length < 2) continue;
 
@@ -145,7 +145,7 @@ function getBonusPerHour(document: Document): string {
     }
   }
 
-  for (const heading of Sizzle("h1, h2, h3, h4, h5, h6", document)) {
+  for (const heading of selectElements("h1, h2, h3, h4, h5, h6", document)) {
     const text = getText(heading);
     if (/\d[\d,.]*\s*(?:points per hour|BP\/hr)/i.test(text)) return text;
   }
@@ -156,7 +156,7 @@ function getBonusPerHour(document: Document): string {
 function getProfileCounterValue(document: Document, labels: string[]): string {
   const escapedLabels = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const labelPattern = new RegExp(`(?:${escapedLabels.join("|")})`, "i");
-  for (const item of Sizzle(".card .tag, .well li", document)) {
+  for (const item of selectElements(".card .tag, .well li", document)) {
     const text = getText(item);
     if (labelPattern.test(text)) {
       return text;
@@ -166,13 +166,13 @@ function getProfileCounterValue(document: Document, labels: string[]): string {
 }
 
 function getRatioBarValue(document: Document, label: string): string {
-  const titledElement = Sizzle(`.ratio-bar [title='${label}']`, document)[0];
+  const titledElement = selectElements(`.ratio-bar [title='${label}']`, document)[0];
   if (titledElement) {
     return getText(titledElement);
   }
 
   const labelPattern = new RegExp(`\\b${label}\\s*:`, "i");
-  for (const item of Sizzle(".ratio-bar li, .ratio-bar .d-inline-block", document)) {
+  for (const item of selectElements(".ratio-bar li, .ratio-bar .d-inline-block", document)) {
     const text = getText(item);
     if (labelPattern.test(text)) {
       return text;
@@ -181,13 +181,23 @@ function getRatioBarValue(document: Document, label: string): string {
   return "";
 }
 
+/**
+ * 合并「可选页面」的解析结果：这些页面（做种列表 / 时魔等）失败只应丢掉对应字段，
+ * 因此保留既有的「吞掉异常」语义，但记一条日志，避免网络失败被无声地当成「站点没有该数据」。
+ */
 async function mergeUserInfo<T extends Partial<IUserInfo>>(
   userInfo: IUserInfo,
   parseAction: () => Promise<T>,
+  optionalField: string,
 ): Promise<IUserInfo> {
   try {
     return { ...userInfo, ...(await parseAction()) };
   } catch (error) {
+    logMessage(
+      `[Site] ${userInfo.site} optional user info step '${optionalField}' failed`,
+      { site: userInfo.site, error: siteErrorLogData(error) },
+      "debug",
+    );
     return userInfo;
   }
 }
@@ -250,11 +260,11 @@ export const listTorrentPageMetadata = {
       attr: "href",
       filters: [
         (href: string) => {
-          const torrentIdMatch = href.match(/\/torrent\/(\d)/);
-          if (torrentIdMatch && torrentIdMatch[1]) {
-            return torrentIdMatch[1];
-          }
-          return undefined;
+          // B-3：必须是 \d+，早先的 \d 只取首位数字（/torrent/12345/name → "1"），
+          // 会让列表页每一行拿到重复/错误的 ITorrent.id，而 id 是扩展级身份；
+          // 返回风格与 listHistoryPageMetadata 中的同款过滤保持一致。
+          const torrentIdMatch = href.match(/\/torrent\/(\d+)/);
+          return torrentIdMatch?.[1] ?? undefined;
         },
       ],
     },
@@ -284,7 +294,7 @@ export const listHistoryPageMetadata = {
       filters: [
         (href: string) => {
           const match = href.match(/\/torrent\/(\d+)/);
-          return match ? match[1] : undefined;
+          return match?.[1] ?? undefined;
         },
       ],
     },
@@ -406,7 +416,7 @@ export const SchemaMetadata: Pick<
         elementProcess: (document: Document) =>
           getProfileTableValue(document, "Username") ||
           getText(
-            Sizzle(
+            selectElements(
               ".ratio-bar a[href*='/profile/'] .user-group, .ratio-bar a[href*='/profile/'] .badge-user",
               document,
             )[0],
@@ -417,7 +427,7 @@ export const SchemaMetadata: Pick<
         elementProcess: (document: Document) =>
           getProfileTableValue(document, "Rank") ||
           getText(
-            Sizzle(
+            selectElements(
               ".ratio-bar .container > div:nth-child(2) .user-group, .ratio-bar li:nth-child(2) .badge-user",
               document,
             )[0],
@@ -518,7 +528,7 @@ export default class AvistazNetwork extends PrivateSite {
   /*
     应站点要求，默认不启用用户数据获取。仅供非上游构建显式开启。
     > User information will never be available in any form or API, as we respect the privacy and confidentiality of user information.
-    @refs: https://github.com/pt-plugins/PT-Plugin-Plus/issues/996#issuecomment-1057856310
+    @refs: https://github.com/chenbin3625/PT-Plugin-Plus/issues/996#issuecomment-1057856310
   */
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
     let flushUserInfo: IUserInfo = {
@@ -552,12 +562,36 @@ export default class AvistazNetwork extends PrivateSite {
       return flushUserInfo;
     }
 
-    flushUserInfo = await mergeUserInfo(flushUserInfo, () => this.getBaseInfoFromSite(userName));
+    // E-6：基础信息（profile 页）是「必须成功」的一步：它的失败必须保留错误、
+    // 经 classifySiteError 归类后返回，而不是被 mergeUserInfo 吞掉后
+    // 统一误判成「站点没有该数据」的 parseError（且没有可展示的 statusMsg）。
+    try {
+      flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite(userName)) };
+    } catch (error) {
+      const { status, statusMsg, retryable } = classifySiteError(error);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
+
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        {
+          site: this.metadata.id,
+          status,
+          retryable,
+          error: siteErrorLogData(error),
+        },
+        retryable ? "warn" : "error",
+      );
+
+      return flushUserInfo;
+    }
     flushUserInfo.name ||= userName;
 
     if (flushUserInfo.name) {
-      flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
-        this.getExtendInfoFromProfile(flushUserInfo.name as string),
+      flushUserInfo = await mergeUserInfo(
+        flushUserInfo,
+        () => this.getExtendInfoFromProfile(flushUserInfo.name as string),
+        "extendInfo",
       );
     }
 
@@ -577,10 +611,16 @@ export default class AvistazNetwork extends PrivateSite {
     ].some((key) => typeof flushUserInfo[key] !== "undefined" && flushUserInfo[key] !== "");
 
     if (hasProfileInfo) {
-      flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
-        this.getUserSeedingTorrents(flushUserInfo.name as string),
+      flushUserInfo = await mergeUserInfo(
+        flushUserInfo,
+        () => this.getUserSeedingTorrents(flushUserInfo.name as string),
+        "seedingTorrents",
       );
-      flushUserInfo = await mergeUserInfo(flushUserInfo, () => this.getUserBonusPerHour(flushUserInfo.name as string));
+      flushUserInfo = await mergeUserInfo(
+        flushUserInfo,
+        () => this.getUserBonusPerHour(flushUserInfo.name as string),
+        "bonusPerHour",
+      );
     }
 
     if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
@@ -641,20 +681,39 @@ export default class AvistazNetwork extends PrivateSite {
       });
 
       let seedingSize = getSeedingSize(firstPage);
-      const pageCount = Math.min(getActivePageCount(firstPage), 100);
+      const maxPages = 100; // 硬上限，与原实现一致
+      const concurrency = 4;
+      const pageCount = Math.min(getActivePageCount(firstPage), maxPages);
 
-      for (let page = 2; page <= pageCount; page++) {
-        await this.sleepAction(this.metadata.userInfo?.requestDelay);
-        const { data: pageDocument } = await this.request<Document>({
-          url: activePageUrl,
-          params: { page },
-          responseType: "document",
+      if (pageCount > 1) {
+        // 保证并发请求之间仍然满足站点 requestDelay 的请求间隔
+        const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay);
+        const restPages = Array.from({ length: pageCount - 1 }, (_, index) => index + 2);
+
+        const restPageSizes = await mapWithConcurrency(restPages, concurrency, async (page) => {
+          await throttle();
+          const { data: pageDocument } = await this.request<Document>({
+            url: activePageUrl,
+            params: { page },
+            responseType: "document",
+          });
+          return getSeedingSize(pageDocument);
         });
-        seedingSize += getSeedingSize(pageDocument);
+
+        // 按页序累加，保证浮点累加顺序与串行实现一致
+        for (const pageSize of restPageSizes) {
+          seedingSize += pageSize;
+        }
       }
 
       return seedingSize > 0 ? { seedingSize } : {};
     } catch (error) {
+      // 可选页面：失败只丢掉 seedingSize，但保留日志，便于区分「站点没有该数据」与「请求失败」(E-6)
+      logMessage(
+        `[Site] ${this.name} getUserSeedingTorrents failed`,
+        { site: this.metadata.id, error: siteErrorLogData(error) },
+        "debug",
+      );
       return {};
     }
   }
@@ -672,6 +731,12 @@ export default class AvistazNetwork extends PrivateSite {
         ? { bonusPerHour }
         : {};
     } catch (error) {
+      // 可选页面：失败只丢掉 bonusPerHour，但保留日志，便于区分「站点没有该数据」与「请求失败」(E-6)
+      logMessage(
+        `[Site] ${this.name} getUserBonusPerHour failed`,
+        { site: this.metadata.id, error: siteErrorLogData(error) },
+        "debug",
+      );
       return {};
     }
   }

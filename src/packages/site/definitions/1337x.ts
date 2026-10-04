@@ -256,7 +256,13 @@ export const siteMetadata: ISiteMetadata = {
     urlPattern: ["/torrent/\\d+/.*"],
     selectors: {
       title: { selector: "div.box-info-heading h1" },
-      link: { selector: ["a[href^='magnet:?xt=']", "a[href^='http://itorrents.org/']"], attr: "href" },
+      link: {
+        selector: ["a[href^='magnet:?xt=']", "a[href^='http://itorrents.org/']"],
+        attr: "href",
+        // A-13：Jackett 的 1337x.yml 已把该回退域名重写为 https://itorrents.net/
+        // （见该定义文件头部引用的上游来源），否则回退路径会去请求一个已废弃的明文 http 主机。
+        filters: [{ name: "replace", args: ["http://itorrents.org/", "https://itorrents.net/"] }],
+      },
       size: { selector: "li:contains('Total size') > span", filters: [{ name: "parseSize" }] },
     },
   },

@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "PT GTK",
   description: "分享好看的电影剧集",
   tags: ["综合", "影视"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

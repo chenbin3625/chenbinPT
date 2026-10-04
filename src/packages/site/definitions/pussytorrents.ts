@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/pussytorrents.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/pussytorrents.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/pussytorrents.org/config.json
  */
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import type { ISearchInput, ISiteMetadata, ITorrent, IUserInfo } from "../types";

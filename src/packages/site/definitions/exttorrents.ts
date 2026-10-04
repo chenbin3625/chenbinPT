@@ -1,6 +1,6 @@
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
 import { ISearchInput, ITorrent, type ISiteMetadata } from "../types";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import CryptoJS from "crypto-js";
 import { set } from "es-toolkit/compat";
 import { parseTimeToLiveToDate, parseValidTimeString } from "../utils";
@@ -204,7 +204,7 @@ export default class ExtTorrents extends BittorrentSite {
   ): Promise<ITorrent[]> {
     const torrents = await super.transformSearchPage(doc, searchConfig);
 
-    const injectScriptEl = Sizzle(injectScriptSelector, doc)[0];
+    const injectScriptEl = selectElements(injectScriptSelector, doc)[0];
     const pageToken = this.extractWindowVar(injectScriptEl, "searchPageToken");
     const csrfToken = this.extractWindowVar(injectScriptEl, "csrfToken");
 
@@ -218,8 +218,8 @@ export default class ExtTorrents extends BittorrentSite {
     const torrent = await super.transformDetailPage(doc);
     torrent.id = parseId(torrent.url!);
 
-    const pageToken = this.extractWindowVar(Sizzle(injectScriptSelector, doc)[0], "pageToken")!;
-    const csrfToken = this.extractWindowVar(Sizzle(`${injectScriptSelector} + script`, doc)[0], "csrfToken")!;
+    const pageToken = this.extractWindowVar(selectElements(injectScriptSelector, doc)[0], "pageToken")!;
+    const csrfToken = this.extractWindowVar(selectElements(`${injectScriptSelector} + script`, doc)[0], "csrfToken")!;
     torrent.link = (await this.getTorrentMagnet({ id: torrent.id as number, pageToken, csrfToken })) ?? "";
 
     return torrent;
@@ -254,7 +254,7 @@ export default class ExtTorrents extends BittorrentSite {
     isSearch?: boolean;
   }): Promise<string | null> {
     const timestamp = Math.floor(Date.now() / 1000);
-    const hmacToken = this.computeHMAC(id, timestamp, pageToken);
+    const hmacToken = this.computeTokenDigest(id, timestamp, pageToken);
 
     const getMagnetResp = await this.request<extGetMagnetResp>({
       url: `${isSearch ? "/ajax/getSearchMagnet.php" : "/ajax/getTorrentMagnet.php"}`,
@@ -282,7 +282,8 @@ export default class ExtTorrents extends BittorrentSite {
     return match ? match[1] : null;
   }
 
-  private computeHMAC(torrentId: number, timestamp: number, token: string) {
+  /** A-16：这不是 HMAC（无密钥摘要），只是把 token 拼进待哈希串；按实际语义命名以免误导。 */
+  private computeTokenDigest(torrentId: number, timestamp: number, token: string) {
     const data = `${torrentId}|${timestamp}|${token}`;
     return CryptoJS.SHA256(data).toString();
   }

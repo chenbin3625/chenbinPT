@@ -8,6 +8,9 @@ export function vitePluginGenerateWebextLocales() {
       const localesDir = path.resolve(process.cwd(), "src/locales");
       const publicLocalesDir = path.resolve(process.cwd(), "public/_locales");
 
+      // 生成前先清理目标目录：否则删除某个语言后，旧目录会一直残留在 public/ 中并被继续拷贝进 dist
+      fs.rmSync(publicLocalesDir, { recursive: true, force: true });
+
       const localeFiles = fs.readdirSync(localesDir).filter((file) => file.endsWith(".json"));
 
       localeFiles.forEach((file) => {

@@ -1,53 +1,77 @@
 {
-  "name": "pt-depiler",
+  "name": "chenbinpt",
   "private": true,
   "version": "0.0.6",
+  "description": "PT 站点辅助工具：多站搜索、用户信息汇总、推送到下载器、辅种与备份（浏览器扩展）",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chenbin3625/chenbinPT.git"
+  },
+  "homepage": "https://github.com/chenbin3625/chenbinPT#readme",
+  "bugs": {
+    "url": "https://github.com/chenbin3625/chenbinPT/issues"
+  },
+  "keywords": [
+    "pt",
+    "bittorrent",
+    "browser-extension",
+    "nexusphp",
+    "unit3d",
+    "gazelle",
+    "qbittorrent",
+    "transmission"
+  ],
   "type": "module",
-  "homepage": "https://github.com/pt-plugins/PT-depiler",
-  "packageManager": "pnpm@10.21.0",
+  "packageManager": "npm@11.19.0",
   "author": {
-    "name": "Pt-Plugins",
-    "url": "https://github.com/pt-plugins"
+    "name": "chenbin3625",
+    "url": "https://github.com/chenbin3625"
   },
   "maintainers": [
     {
-      "name": "Rhilip",
-      "url": "https://github.com/Rhilip"
-    }
-  ],
-  "contributors": [
-    {
-      "name": "ronggang",
-      "url": "https://github.com/ronggang"
-    },
-    {
-      "name": "ted423",
-      "url": "https://github.com/ted423"
+      "name": "chenbin3625",
+      "url": "https://github.com/chenbin3625"
     }
   ],
   "scripts": {
     "dev": "vite dev",
     "format": "prettier --list-different -w ./",
     "check": "vue-tsc --noEmit",
+    "check:node": "tsc -p tsconfig.node.json --noEmit",
+    "check:antd": "node scripts/check-antd-migration.mjs",
+    "check:bundle": "node scripts/check-bundle-budget.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/e2e-extension-smoke.mjs",
+    "test:legacy": "tsx tests/unit.test.mts",
     "build:dist": "vite build",
     "build:dist-firefox": "cross-env TARGET=firefox vite build",
     "build:watch": "vite build --watch --mode development --minify false",
+    "pack:crx": "node scripts/pack-crx.mjs",
+    "pack:crx:build": "node scripts/pack-crx.mjs --build",
     "action:upload_telegram": "tsx vite/sendToTgChannel.ts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "patch-package",
+    "check:pins": "node scripts/check-action-pins.mjs"
   },
   "engines": {
-    "node": ">=23.7.0",
-    "pnpm": ">=10.14.0"
+    "node": ">=24",
+    "npm": ">=11"
   },
   "dependencies": {
-    "@vueuse/components": "^15.0.0",
+    "@ant-design/icons-vue": "7.0.1",
     "@vueuse/core": "^15.0.0",
     "@webext-core/job-scheduler": "^2.0.0",
     "@webext-core/messaging": "^4.0.0",
     "@webext-core/storage": "^2.0.0",
+    "ant-design-vue": "4.2.6",
     "axios": "^1.20.0",
     "crypto-js": "^4.2.0",
     "date-fns": "^4.4.0",
+    "dayjs": "1.11.23",
     "echarts": "^6.1.0",
     "es-toolkit": "^1.52.0",
     "file-saver": "^2.0.5",
@@ -59,9 +83,8 @@
     "p-queue": "^9.3.3",
     "parse-torrent": "^11.0.24",
     "pinia": "^4.0.3",
-    "pinia-plugin-state-persistence": "^1.11.0",
+    "pinia-plugin-state-persistence": "^1.12.0",
     "search-query-parser": "^1.6.0",
-    "sizzle": "^2.3.10",
     "url-join": "^5.0.0",
     "urlencode": "^2.0.0",
     "valid-filename": "^5.0.0",
@@ -70,10 +93,12 @@
     "vue-i18n": "^11.4.12",
     "vue-konva": "^4.0.1",
     "vue-router": "^5.3.1",
-    "vuetify": "^4.2.2",
     "webdav": "^5.11.0"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "@eslint/js": "^10.0.1",
     "@intlify/unplugin-vue-i18n": "^11.2.5",
     "@types/chrome": "^0.3.0",
     "@types/crypto-js": "^4.2.2",
@@ -81,22 +106,40 @@
     "@types/git-rev-sync": "^2.0.2",
     "@types/node": "^26.6.3",
     "@types/parse-torrent": "^11.0.1",
-    "@types/sizzle": "^2.3.10",
     "@vitejs/plugin-vue": "^6.0.9",
     "cross-env": "^10.1.0",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.11.1",
     "git-rev-sync": "^3.0.2",
+    "globals": "^17.13.0",
+    "happy-dom": "^20.14.5",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
+    "patch-package": "^8.0.1",
+    "playwright": "^1.63.0",
     "prettier": "^3.9.9",
     "sass": "^1.105.0",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
-    "vite": "^6.4.3",
+    "typescript-eslint": "^8.71.0",
+    "vite": "^8.3.2",
     "vite-plugin-node-polyfills": "^0.28.0",
     "vite-plugin-vue-devtools": "^8.2.1",
-    "vite-plugin-vuetify": "^2.1.3",
     "vite-plugin-web-extension": "4.5.1",
+    "vitest": "^5.0.3",
     "vue-tsc": "^3.3.11"
+  },
+  "overrides": {
+    "git-rev-sync": {
+      "shelljs": "0.10.0"
+    }
+  },
+  "allowScripts": {
+    "@parcel/watcher": true,
+    "core-js": true,
+    "esbuild": true,
+    "spawn-sync": true
   },
   "prettier": {
     "printWidth": 120,
@@ -109,6 +152,9 @@
   "lint-staged": {
     "*.{js,ts,json,vue,html,css,scss}": [
       "prettier --write "
+    ],
+    "*.{ts,vue}": [
+      "eslint --fix --no-warn-ignored"
     ]
   }
 }

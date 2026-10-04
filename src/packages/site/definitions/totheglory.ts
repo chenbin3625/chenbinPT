@@ -1,10 +1,10 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/totheglory.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/totheglory.im/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/totheglory.im/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/ttg.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/ttg.json
  */
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { set } from "es-toolkit/compat";
 
 import { type ISiteMetadata } from "../types";
@@ -59,7 +59,9 @@ export const siteMetadata: ISiteMetadata = {
   timezoneOffset: "+0800",
 
   type: "private",
-  schema: "TBSource",
+  // A-13：原为 schema: "TBSource"，仓库内并无该引擎实现，index.ts 会按 type 静默回退到
+  // AbstractPrivateSite。直接声明真实使用的基类，避免读者以为存在 TBSource 引擎。
+  schema: "AbstractPrivateSite",
 
   urls: ["https://totheglory.im/"],
   category: [
@@ -269,7 +271,7 @@ export const siteMetadata: ISiteMetadata = {
             text: 0,
             selector: "div#ka2",
             elementProcess: (element: HTMLElement) => {
-              const trAnothers = Sizzle("tr:not(:eq(0))", element);
+              const trAnothers = selectElements("tr:not(:eq(0))", element);
               return trAnothers.length;
             },
           },
@@ -278,9 +280,9 @@ export const siteMetadata: ISiteMetadata = {
             selector: "div#ka2",
             elementProcess: (element: HTMLElement) => {
               let seedingSize = 0;
-              const trAnothers = Sizzle("tr:not(:eq(0))", element);
+              const trAnothers = selectElements("tr:not(:eq(0))", element);
               trAnothers.forEach((trAnother) => {
-                const sizeAnother = Sizzle("td:eq(3)", trAnother)[0];
+                const sizeAnother = selectElements("td:eq(3)", trAnother)[0];
                 seedingSize += parseSizeString((sizeAnother as HTMLElement).innerText.trim());
               });
               return seedingSize;
@@ -290,7 +292,7 @@ export const siteMetadata: ISiteMetadata = {
             text: 0,
             selector: "div#ka1",
             elementProcess: (element: HTMLElement) => {
-              const trAnothers = Sizzle("tr:not(:eq(0))", element);
+              const trAnothers = selectElements("tr:not(:eq(0))", element);
               return trAnothers.length;
             },
           },

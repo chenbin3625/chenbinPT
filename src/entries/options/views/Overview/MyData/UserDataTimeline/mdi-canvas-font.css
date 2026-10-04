@@ -1,0 +1,28 @@
+/**
+ * UserDataTimeline 的 Konva 画布字体。
+ *
+ * 背景：该页面用 Konva 直接把 MDI 字形**绘制到 canvas**（不是 DOM 图标），
+ * 用于渲染「站点已失效」等标记：
+ *   - `Index.vue`  中 `text: '󰖛'`（U+F059B, mdi-weather-sunset-down）
+ *   - `Index.vue`  中 `icon({ text: '󰀉' })`（U+F0009, mdi-account-circle）
+ *   - `Index.vue`  中 `icon({ text: '󰔸' })`（U+F0538, mdi-trophy）
+ * 这些私有区码点只有 MDI 字体里有，因此**必须显式注册该字体**，否则 canvas 会渲染成豆腐块/空白。
+ *
+ * 为什么把 @font-face 放在这里（而不是像迁移前那样全局注入）：
+ *   1) 兼容层退役后，DOM 侧已经完全不使用 MDI 图标（`<PtdIcon>`/`mdi-*` 类名均已清除），
+ *      全站注入 820KB 的 webfont 属于纯浪费；
+ *   2) 本页面是 options 的**懒加载路由**，把字体声明就近放在这里，只有用户真的打开时间线时才加载；
+ *   3) 字体已按实际用到的字形子集化（403KB → 11KB），代价可忽略。
+ *
+ * 注意：`/lib/mdi/webfont.woff2` 是扩展内绝对路径。本页面运行在扩展页（chrome-extension://），
+ * 该路径可直接访问；**不要**在 content-script（宿主页面文档）里引用本文件，那里的 `/lib/...`
+ * 会被解析成站点自身的域名（参见 vite.config.ts 中关于 module preload 的同类说明）。
+ */
+@font-face {
+  font-family: "Material Design Icons For PTD";
+  src: url("/lib/mdi/webfont.woff2?v=7.4.47-subset1") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  /* canvas 用：不需要参与布局，避免任何 FOUT 影响 */
+  font-display: block;
+}

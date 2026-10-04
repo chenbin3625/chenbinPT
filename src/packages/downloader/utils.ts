@@ -2,9 +2,39 @@ import { Buffer } from "buffer";
 import axios, { AxiosRequestConfig } from "axios";
 import parseTorrent, { Instance as TorrentInstance } from "parse-torrent";
 import isValidFilename from "valid-filename";
-import { decode } from "urlencode";
 
 export * from "./utils/adapter";
+
+/**
+ * 本文件原先使用 `urlencode` 的 `decode`，而 `urlencode` 会静态引入 `iconv-lite`（约 300KB），
+ * 使得 content script 的共享 chunk 也被迫带上整套编码表。这里只用到 `utf-8` 与 `ascii` 两个分支，
+ * 因此改为等价的本地实现，避免该依赖进入依赖图。
+ *
+ * 等价实现参考 urlencode@1.1.0 src/index.ts 的 decode()：
+ *   - 未指定 charset / utf-8 → decodeURIComponent(str)
+ *   - 其他 charset（本文件仅 ascii）→ 逐字节读入后交给 iconv-lite 解码
+ */
+function decodeUrlEncodedUtf8(str: string): string {
+  return decodeURIComponent(str);
+}
+
+function decodeUrlEncodedAscii(str: string): string {
+  const bytes: number[] = [];
+  for (let i = 0; i < str.length;) {
+    if (str[i] === "%") {
+      i++;
+      bytes.push(parseInt(str.substring(i, i + 2), 16));
+      i += 2;
+    } else {
+      bytes.push(str.charCodeAt(i));
+      i++;
+    }
+  }
+
+  // iconv-lite 的 ascii 解码会把 >= 0x80 的字节替换为 U+FFFD（与 Buffer 的 latin1 不同），
+  // 非法/截断的 %xx 与原实现一样按 0 处理。
+  return bytes.map((byte) => (byte >= 0x80 ? "\uFFFD" : String.fromCharCode(Number.isNaN(byte) ? 0 : byte))).join("");
+}
 
 export interface ParsedTorrent {
   name: string;
@@ -64,7 +94,7 @@ export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Pr
   if (disposition && disposition.includes("filename")) {
     let dispositionName = "";
     if (utf8FilenameRegex.test(disposition)) {
-      dispositionName = decode(utf8FilenameRegex.exec(disposition)![1]);
+      dispositionName = decodeUrlEncodedUtf8(utf8FilenameRegex.exec(disposition)![1]);
     } else {
       // prevent ReDos attacks by anchoring the ascii regex to string start and
       // slicing off everything before 'filename='
@@ -73,7 +103,7 @@ export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Pr
         const partialDisposition = disposition.slice(filenameStart);
         const matches = asciiFilenameRegex.exec(partialDisposition);
         if (matches != null && matches[2]) {
-          dispositionName = decode(matches[2], "ascii"); // 按照规范使用 ascii 转换
+          dispositionName = decodeUrlEncodedAscii(matches[2]); // 按照规范使用 ascii 转换
         }
       }
     }

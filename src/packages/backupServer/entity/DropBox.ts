@@ -14,7 +14,7 @@ import { merge } from "es-toolkit";
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { localSort } from "../utils";
+import { getBackupRequestTimeout, localSort } from "../utils";
 import type { IBackupConfig, IBackupMetadata, IBackupFileListOption, IBackupFileInfo, IBackupData } from "../type";
 
 interface DropBoxConfig extends IBackupConfig {
@@ -31,7 +31,7 @@ export const serverConfig: DropBoxConfig = {
 
 export const serverMetaData: IBackupMetadata<DropBoxConfig> = {
   description: "DropBox 是一个云存储服务，提供文件存储和共享功能。",
-  requiredField: [{ name: "access_token", key: "access_token", type: "string" }],
+  requiredField: [{ name: "access_token", key: "access_token", type: "string", secret: true }],
 };
 
 interface DropBoxBaseEntry {
@@ -98,6 +98,7 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
       merge(
         {
           method: "POST",
+          timeout: getBackupRequestTimeout(this.userConfig),
           headers: {
             Authorization: `Bearer ${this.accessToken}`,
           },
@@ -169,7 +170,8 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
     let cursor;
     let hasMore = true;
     while (hasMore) {
-      // @ts-ignore
+      // @ts-expect-error
+      // 原因：cursor 是未显式标注类型的游标变量（evolving any），axios 请求体联合类型在此处无法被静态收窄
       const { data } = await this.request<DropBoxList>({
         url: `https://api.dropboxapi.com/2/files/list_folder${cursor ? "/continue" : ""}`,
         data: cursor ? { cursor } : { path: "" },

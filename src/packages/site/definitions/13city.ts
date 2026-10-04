@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["13城"],
   description: "一切美好源于分享",
   tags: ["影视", "综合"],
-  timezoneOffset: "+0800",
   collaborator: ["13City"],
   type: "private",
   schema: "NexusPHP",

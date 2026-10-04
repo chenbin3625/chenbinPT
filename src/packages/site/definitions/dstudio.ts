@@ -9,7 +9,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "Depth Studio",
   description: "本站主打海外WEB-DL追更",
   tags: ["影视", "综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["bfjy"],
 

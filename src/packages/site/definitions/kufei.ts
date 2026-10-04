@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["Kufei"],
   description: "库非资源下载分享",
   tags: ["影视", "综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

@@ -244,6 +244,28 @@ interface SynologyFailureResponse {
 
 type SynologyResponse<S> = SynologySuccessResponse<S> | SynologyFailureResponse;
 
+/** 会话相关的错误码：105 会话超时/权限不足，106 会话被其它登录顶替（见下方 SynologyErrorCode 注释） */
+const SYNOLOGY_SESSION_ERROR_CODES = [105, 106];
+
+/**
+ * 常见错误码的可读说明（取值同下方 SynologyErrorCode 注释）。
+ * 400~404 在认证与种子上传两个场景含义不同，故一并列出。
+ */
+const SYNOLOGY_ERROR_MESSAGES: Record<number, string> = {
+  100: "未知错误",
+  101: "参数无效",
+  102: "请求的 API 不存在",
+  103: "请求的方法不存在",
+  104: "请求的版本不支持该功能",
+  105: "会话超时或权限不足",
+  106: "会话被其它登录中断",
+  400: "账号或密码错误 / 上传文件失败",
+  401: "账号已被停用 / 任务数已达上限",
+  402: "权限被拒绝 / 目标位置被拒绝",
+  403: "需要两步验证码 / 目标位置不存在",
+  404: "两步验证码校验失败 / 任务 ID 无效",
+};
+
 type rawTaskStatus =
   | "downloading"
   | "error"
@@ -428,7 +450,10 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
   }
 
   // entry.cgi 请求方法
-  private async requestEntryCGI<T>(field: DSRequestField | FormData): Promise<SynologyResponse<T>> {
+  private async requestEntryCGI<T>(
+    field: DSRequestField | FormData,
+    skipAuthRetry = false,
+  ): Promise<SynologyResponse<T>> {
     // 覆写 _sid 参数
     const sid = await this.getSessionId();
 
@@ -441,10 +466,33 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
       postData = transObjToData(field);
     }
 
-    return await this.request<T>("entry.cgi", {
+    const req = await this.request<T>("entry.cgi", {
       method: "post",
       data: postData,
     });
+
+    if (!req.success) {
+      const code = req.error?.code;
+
+      /**
+       * 105 / 106（会话超时、会话被顶替）说明缓存的 sid 已失效：
+       * 清空缓存并重登一次再重试。此前 `_sessionId` 永久缓存，
+       * 会话一旦过期，整个实例生命周期内所有请求都会失败。
+       */
+      if (!skipAuthRetry && typeof code === "number" && SYNOLOGY_SESSION_ERROR_CODES.includes(code)) {
+        this._sessionId = undefined;
+        if (await this.login()) {
+          return await this.requestEntryCGI<T>(field, true);
+        }
+      }
+
+      // 其余错误统一抛出可读信息，避免调用方继续访问 undefined 的 data
+      throw new Error(
+        `Synology Download Station API error (${code ?? "unknown"}): ${SYNOLOGY_ERROR_MESSAGES[code as number] ?? "未知错误"}`,
+      );
+    }
+
+    return req;
   }
 
   // 请求登录并获得sid信息
@@ -460,7 +508,14 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
 
     try {
       const req = await this.request<{ sid: string }>("auth.cgi", {
-        params: {
+        /**
+         * 登录参数必须走 POST body：此前用 `params` 且未指定 `method`，
+         * axios 会退化为 GET，账号密码因此进入 URL query
+         * （DSM / 反向代理的访问日志、Referer、浏览器历史都会留下凭据）。
+         * DSM 的 auth.cgi 同样支持 POST。
+         */
+        method: "post",
+        data: transObjToData({
           api: "SYNO.API.Auth",
           version: loginVersion,
           method: "login",
@@ -468,19 +523,25 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
           passwd: this.config.password,
           session: "DownloadStation",
           format: "sid",
-        } as DSRequestFieldForApiAuth,
+        } as DSRequestFieldForApiAuth),
       });
       if (req.success) {
         this._sessionId = req.data.sid;
+      } else {
+        // 登录失败时必须丢弃旧 sid，否则后续请求会一直复用它
+        this._sessionId = undefined;
       }
 
       return req.success;
     } catch (e) {
+      this._sessionId = undefined;
       return false;
     }
   }
 
   async ping(): Promise<boolean> {
+    // 测试连接即重新登录：不能复用可能已失效的 _sessionId（此前它被永久缓存）
+    this._sessionId = undefined;
     return this.login();
   }
 
@@ -613,6 +674,8 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
       params.id = filter.ids;
     }
 
+    // requestEntryCGI 已负责校验 success：会话失效（105/106）会自动重登重试，其余错误直接抛出，
+    // 因此这里拿到的必然是成功响应（此前直接访问 req.data.task，会话过期即 TypeError）
     const req = (await this.requestEntryCGI(params)) as SynologySuccessResponse<{
       offset: number;
       task: rawTask[];
@@ -707,7 +770,8 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
           state,
           dateAdded: task.additional!.detail!.created_time,
           isCompleted,
-          progress: download / task.size,
+          // CTorrent.progress 的约定是 0-100（见 types.ts），task.size 可能为 0，需要防御除零
+          progress: task.size > 0 ? (download / task.size) * 100 : 0,
           savePath: task.additional!.detail!.destination,
           totalSize: task.size,
           ratio: upload / download,

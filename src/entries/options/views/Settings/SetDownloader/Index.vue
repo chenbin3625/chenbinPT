@@ -4,7 +4,18 @@ import { computedAsync } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { countBy } from "es-toolkit";
-import type { DataTableHeader } from "vuetify";
+import {
+  CloudDownloadOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  ExportOutlined,
+  FilterOutlined,
+  FolderOutlined,
+  InfoCircleOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  PushpinOutlined,
+} from "@ant-design/icons-vue";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -13,6 +24,8 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type { TDownloaderKey } from "@/shared/types.ts";
 import { getDownloaderIcon, getDownloaderMetaData, type TorrentClientMetaData } from "@ptd/downloader";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
+import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 
 import AddDialog from "./AddDialog.vue";
 import EditDialog from "./EditDialog.vue";
@@ -22,12 +35,16 @@ import DefaultDownloaderEditDialog from "./DefaultDownloaderEditDialog.vue";
 
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 const { t } = useI18n();
 const router = useRouter();
 const metadataStore = useMetadataStore();
 const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
+
+// 下载器列表来自 metadata store，异步水合完成前不能把空列表当成「暂无数据」
+const isStoreHydrating = useStoreHydrating(metadataStore);
 
 const showAddDialog = ref<boolean>(false);
 const showEditDialog = ref<boolean>(false);
@@ -46,16 +63,6 @@ const downloaderMetadata = computedAsync(async () => {
   return downloaderMetaData;
 }, {});
 
-const fullTableHeader = [
-  { title: "№", key: "sortIndex", align: "end", width: "100" },
-  { title: t("common.type"), key: "type", align: "center" },
-  { title: t("SetDownloader.common.name"), key: "name", align: "start" },
-  { title: t("SetDownloader.common.address"), key: "address", align: "start" },
-  { title: t("common.username"), key: "username", align: "start" },
-  { title: t("SetDownloader.index.table.enabled"), key: "enabled", align: "center" },
-  { title: t("SetDownloader.index.table.autodl"), key: "feature.DefaultAutoStart", align: "center" },
-  { title: t("common.action"), key: "action", sortable: false },
-] as DataTableHeader[];
 const tableSelected = ref<TDownloaderKey[]>([]);
 
 const booleanField = {
@@ -83,6 +90,107 @@ const {
   initialItems: metadataStore.getDownloaders,
   watchItems: true,
 });
+
+const tableData = computed(() =>
+  metadataStore.getDownloaders.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
+);
+
+function sortOrderOf(key: string): "ascend" | "descend" | undefined {
+  const item = (configStore.tableBehavior.SetDownloader.sortBy ?? []).find((s: any) => s.key === key);
+  return item?.order === "asc" ? "ascend" : item?.order === "desc" ? "descend" : undefined;
+}
+
+const columns = computed(() => {
+  const multiple = configStore.enableTableMultiSort ? 4 : undefined;
+  return [
+    {
+      title: "№",
+      dataIndex: "sortIndex",
+      key: "sortIndex",
+      align: "right" as const,
+      width: 100,
+      sorter: {
+        compare: (a: any, b: any) => Number(a.sortIndex ?? 0) - Number(b.sortIndex ?? 0),
+        multiple,
+      },
+      sortOrder: sortOrderOf("sortIndex"),
+    },
+    { title: t("common.type"), dataIndex: "type", key: "type", align: "center" as const },
+    withEllipsisCell(
+      {
+        title: t("SetDownloader.common.name"),
+        dataIndex: "name",
+        key: "name",
+        sorter: {
+          compare: (a: any, b: any) => String(a.name ?? "").localeCompare(String(b.name ?? "")),
+          multiple,
+        },
+        sortOrder: sortOrderOf("name"),
+      },
+      "14rem",
+    ),
+    withEllipsisCell(
+      {
+        title: t("SetDownloader.common.address"),
+        dataIndex: "address",
+        key: "address",
+        sorter: {
+          compare: (a: any, b: any) => String(a.address ?? "").localeCompare(String(b.address ?? "")),
+          multiple,
+        },
+        sortOrder: sortOrderOf("address"),
+      },
+      "16rem",
+    ),
+    withEllipsisCell({ title: t("common.username"), dataIndex: "username", key: "username" }, "10rem"),
+    { title: t("SetDownloader.index.table.enabled"), dataIndex: "enabled", key: "enabled", align: "center" as const },
+    { title: t("SetDownloader.index.table.autodl"), key: "feature.DefaultAutoStart", align: "center" as const },
+    { title: t("common.action"), key: "action" },
+  ];
+});
+
+const pagination = computed(() => {
+  const pageSize = configStore.tableBehavior.SetDownloader.itemsPerPage;
+  if (Number(pageSize) === -1) return false as const;
+  return {
+    pageSize: Number(pageSize) || 25,
+    pageSizeOptions: ["5", "10", "25", "50", "100"],
+    showSizeChanger: true,
+    onChange: (_page: number, size: number) => configStore.updateTableBehavior("SetDownloader", "itemsPerPage", size),
+  };
+});
+
+function onSelectionChange(keys: (string | number)[]) {
+  tableSelected.value = keys.map((key) => String(key));
+}
+
+function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
+  const list = Array.isArray(sorter) ? sorter : [sorter];
+  configStore.updateTableBehavior(
+    "SetDownloader",
+    "sortBy",
+    list
+      .filter((s: any) => s?.order)
+      .map((s: any) => ({ key: String(s.columnKey ?? s.field), order: s.order === "ascend" ? "asc" : "desc" })),
+  );
+}
+
+function isKeywordRequired(field: string, value: string): boolean {
+  return (advanceFilterDictRef.value[field]?.required ?? []).includes(value);
+}
+
+/** V-21：该关键字当前是否以「排除」形式参与筛选（勾选之外还需要展示的第三种状态） */
+function isKeywordExcluded(field: string, value: string): boolean {
+  return (advanceFilterDictRef.value[field]?.exclude ?? []).includes(value);
+}
+
+function setKeywordRequired(field: string, value: string, checked: boolean) {
+  const current = (advanceFilterDictRef.value[field]?.required ?? []) as unknown[];
+  advanceFilterDictRef.value[field].required = checked
+    ? Array.from(new Set([...current, value]))
+    : current.filter((x: any) => x !== value);
+  updateTableFilterValueFn();
+}
 
 const toEditDownloaderId = ref<TDownloaderKey | null>(null);
 function editDownloader(downloaderId: TDownloaderKey) {
@@ -125,224 +233,208 @@ async function confirmDeleteDownloader(downloaderId: TDownloaderKey) {
 </script>
 
 <template>
-  <v-alert :title="t('route.Settings.SetDownloader')" type="info" />
-  <v-card class="set-downloader">
-    <v-card-title>
-      <v-row gap="0" class="ma-0">
-        <NavButton :text="t('common.btn.add')" color="success" icon="mdi-plus" @click="showAddDialog = true" />
+  <a-card class="ptd-settings-card">
+    <template #title>
+      <a-flex class="page-toolbar" align="center" :gap="8">
+        <NavButton :icon="PlusOutlined" :text="t('common.btn.add')" color="success" @click="showAddDialog = true" />
 
         <NavButton
           :disabled="tableSelected.length === 0"
+          :icon="MinusOutlined"
           :text="t('common.remove')"
           color="error"
-          icon="mdi-minus"
           @click="deleteDownloader(tableSelected)"
         />
 
-        <v-divider class="mx-2" inset vertical />
+        <a-divider style="margin: 0 8px" type="vertical" />
 
         <NavButton
           :disabled="metadataStore.getDownloaders.length == 0"
+          :icon="CloudDownloadOutlined"
           :text="t('SetDownloader.index.editDefaultDownloaderBtn')"
           color="indigo"
-          icon="mdi-auto-download"
           @click="showDefaultDownloaderEditDialog = true"
         />
 
-        <v-spacer />
+        <span style="flex: 1 1 auto" />
 
-        <v-text-field
-          v-model="tableWaitFilterRef"
-          append-icon="mdi-magnify"
-          clearable
-          density="compact"
-          hide-details
-          label="Search"
-          max-width="500"
-          single-line
-          @click:clear="buildFilterDictFn('')"
+        <a-input
+          v-model:value="tableWaitFilterRef"
+          allow-clear
+          placeholder="Search"
+          style="max-width: 500px"
+          @change="(e: any) => !e.target.value && buildFilterDictFn('')"
         >
-          <template #prepend-inner>
-            <v-menu min-width="100">
-              <template v-slot:activator="{ props }">
-                <v-icon icon="mdi-filter" v-bind="props" variant="plain" />
+          <template #prefix>
+            <a-popover placement="bottom" trigger="click">
+              <FilterOutlined style="cursor: pointer" />
+              <template #content>
+                <a-list size="small" style="padding: 0">
+                  <a-list-item v-for="(transKey, filterKey) in booleanField" :key="filterKey">
+                    <a-checkbox
+                      :checked="isKeywordRequired(filterKey, '1')"
+                      :indeterminate="isKeywordExcluded(filterKey, '1')"
+                      @click.stop="toggleKeywordStateFn(filterKey, '1')"
+                      @update:checked="(checked: boolean) => setKeywordRequired(filterKey, '1', checked)"
+                    >
+                      {{ t(transKey) }}
+                    </a-checkbox>
+                  </a-list-item>
+
+                  <a-divider style="margin: 4px 0" />
+
+                  <a-list-item>
+                    <a-typography-text strong style="margin: 8px">
+                      {{ t("SetDownloader.index.table.downloaderCategory") }}
+                    </a-typography-text>
+                  </a-list-item>
+                  <a-list-item v-for="(count, type) in downloaderTypeCount" :key="type">
+                    <a-checkbox
+                      :checked="isKeywordRequired('type', type)"
+                      :indeterminate="isKeywordExcluded('type', type)"
+                      @click.stop="toggleKeywordStateFn('type', type)"
+                      @update:checked="(checked: boolean) => setKeywordRequired('type', type, checked)"
+                    >
+                      {{ `${type} (${count})` }}
+                    </a-checkbox>
+                  </a-list-item>
+                </a-list>
               </template>
-              <v-list class="pa-0">
-                <v-list-item v-for="(transKey, filterKey) in booleanField">
-                  <v-checkbox
-                    v-model="advanceFilterDictRef[filterKey].required"
-                    :label="t(transKey)"
-                    density="compact"
-                    hide-details
-                    indeterminate
-                    true-value="1"
-                    @click.stop="(v: any) => toggleKeywordStateFn(filterKey, '1')"
-                    @update:model-value="() => updateTableFilterValueFn()"
-                  ></v-checkbox>
-                </v-list-item>
-
-                <v-divider />
-
-                <v-list-item-subtitle class="ma-2">
-                  {{ t("SetDownloader.index.table.downloaderCategory") }}
-                </v-list-item-subtitle>
-                <v-list-item v-for="(count, type) in downloaderTypeCount" :key="type" :value="type">
-                  <v-checkbox
-                    v-model="advanceFilterDictRef.type.required"
-                    :label="`${type} (${count})`"
-                    :value="type"
-                    density="compact"
-                    hide-details
-                    indeterminate
-                    @click.stop="(v: any) => toggleKeywordStateFn('type', type)"
-                    @update:model-value="() => updateTableFilterValueFn()"
-                  ></v-checkbox>
-                </v-list-item>
-              </v-list>
-            </v-menu>
+            </a-popover>
           </template>
-        </v-text-field>
-      </v-row>
-    </v-card-title>
+        </a-input>
+      </a-flex>
+    </template>
 
-    <v-data-table
-      v-model="tableSelected"
-      :custom-filter="tableFilterFn"
-      :filter-keys="['id']"
-      :headers="fullTableHeader"
-      :items="metadataStore.getDownloaders"
-      :items-per-page="configStore.tableBehavior.SetDownloader.itemsPerPage"
-      :search="tableFilterRef"
-      :sort-by="configStore.tableBehavior.SetDownloader.sortBy"
+    <a-table
+      :columns="columns"
+      :data-source="tableData"
+      :loading="isStoreHydrating"
+      :pagination="pagination"
+      :row-key="'id'"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
       class="table-stripe table-header-no-wrap"
-      hover
-      item-value="id"
-      :multi-sort="configStore.enableTableMultiSort"
-      show-select
-      @update:itemsPerPage="(v) => configStore.updateTableBehavior('SetDownloader', 'itemsPerPage', v)"
-      @update:sortBy="(v) => configStore.updateTableBehavior('SetDownloader', 'sortBy', v)"
+      size="small"
+      @change="onTableChange"
     >
-      <template #item.type="{ item }">
-        <v-avatar :image="getDownloaderIcon(item.type)" :alt="item.type" />
-      </template>
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'type'">
+          <a-avatar :alt="record.type" :src="getDownloaderIcon(record.type)" :title="record.type" />
+        </template>
 
-      <template #item.name="{ item }">
-        <v-icon
-          v-if="item.id == metadataStore.defaultDownloader?.id"
-          icon="mdi-pin mdi-rotate-45"
-          color="indigo"
-          class="mr-1"
-        />
-        <span class="font-weight-bold" :class="{ 'text-indigo': item.id == metadataStore.defaultDownloader?.id }">
-          {{ item.name }}
-        </span>
-      </template>
+        <template v-else-if="column.key === 'name'">
+          <span style="display: inline-flex; align-items: center; min-width: 0; max-width: 14rem">
+            <PushpinOutlined
+              v-if="record.id == metadataStore.defaultDownloader?.id"
+              :style="{ color: 'var(--ptd-primary)', marginRight: '4px', flex: '0 0 auto' }"
+            />
+            <strong
+              class="ptd-cell-ellipsis"
+              :style="{
+                color: record.id == metadataStore.defaultDownloader?.id ? 'var(--ptd-primary)' : undefined,
+                maxWidth: '14rem',
+              }"
+              :title="String(record.name ?? '')"
+            >
+              {{ record.name }}
+            </strong>
+          </span>
+        </template>
 
-      <template #item.address="{ item }">
-        <a
-          :href="item.address"
-          class="text-primary font-weight-medium text-decoration-underline"
-          rel="noopener noreferrer nofollow"
-          target="_blank"
-        >
-          {{ item.address }}
-          <v-icon icon="mdi-open-in-new" size="x-small"></v-icon>
-        </a>
-      </template>
+        <template v-else-if="column.key === 'address'">
+          <span class="ptd-cell-ellipsis" style="max-width: 24rem" :title="String(record.address ?? '')">
+            <a-typography-link :href="record.address" rel="noopener noreferrer nofollow" target="_blank">
+              {{ record.address }}
+              <ExportOutlined class="ptd-icon-sm" />
+            </a-typography-link>
+          </span>
+        </template>
 
-      <template #item.enabled="{ item }">
-        <v-switch
-          v-model="item.enabled"
-          :readonly="item.id == metadataStore.defaultDownloader?.id /* 默认下载器不允许禁用 */"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="(v) => metadataStore.simplePatch('downloaders', item.id, 'enabled', v as boolean)"
-        />
-      </template>
-
-      <template #item.feature.DefaultAutoStart="{ item }">
-        <v-switch
-          v-model="item.feature!.DefaultAutoStart"
-          :disabled="!item.enabled || downloaderMetadata?.[item.type]?.feature?.DefaultAutoStart.allowed === false"
-          class="table-switch-btn"
-          color="success"
-          hide-details
-          @update:model-value="
-            (v) => metadataStore.simplePatch('downloaders', item.id, 'feature.DefaultAutoStart', v as boolean)
-          "
-        />
-      </template>
-
-      <template #item.action="{ item }">
-        <v-btn-group class="table-action" density="compact" variant="plain">
-          <v-btn
-            :disabled="!item.enabled /* 未启用的下载服务器无法获取状态 */"
-            :title="t('SetDownloader.index.table.action.status')"
-            color="green"
-            icon="mdi-information-outline"
-            size="small"
-            @click="manageDownloader(item.id)"
+        <template v-else-if="column.key === 'enabled'">
+          <a-switch
+            v-model:checked="record.enabled"
+            class="table-switch-btn"
+            :disabled="record.id == metadataStore.defaultDownloader?.id /* 默认下载器不允许禁用 */"
+            @change="(v: any) => metadataStore.simplePatch('downloaders', record.id, 'enabled', v as boolean)"
           />
+        </template>
 
-          <v-btn
-            :title="t('common.edit')"
-            color="info"
-            icon="mdi-pencil"
-            size="small"
-            @click="editDownloader(item.id)"
+        <template v-else-if="column.key === 'feature.DefaultAutoStart'">
+          <a-switch
+            :checked="record.feature?.DefaultAutoStart"
+            class="table-switch-btn"
+            :disabled="
+              !record.enabled || downloaderMetadata?.[record.type]?.feature?.DefaultAutoStart?.allowed === false
+            "
+            @change="
+              (v: any) => metadataStore.simplePatch('downloaders', record.id, 'feature.DefaultAutoStart', v as boolean)
+            "
           />
+        </template>
 
-          <!-- 该下载服务器下载路径和标签选择 -->
-          <v-btn
-            :title="t('SetDownloader.index.table.action.setPathAndTag')"
-            color="amber"
-            icon="mdi-folder-settings"
-            size="small"
-            @click="editDownloaderPathAndTag(item.id)"
-          ></v-btn>
+        <template v-else-if="column.key === 'action'">
+          <a-button-group class="table-action">
+            <a-button
+              :disabled="!record.enabled /* 未启用的下载服务器无法获取状态 */"
+              :title="t('SetDownloader.index.table.action.status')"
+              size="small"
+              type="primary"
+              @click="manageDownloader(record.id)"
+            >
+              <template #icon><InfoCircleOutlined /></template>
+            </a-button>
 
-          <!-- 该下载服务器站点过滤设置 -->
-          <v-btn
-            v-if="configStore.download.allowDownloaderFilterForSite"
-            :disabled="!item.enabled"
-            :title="t('SetDownloader.index.table.action.setSiteFilter')"
-            color="cyan"
-            icon="mdi-filter-variant"
-            size="small"
-            @click="editDownloaderSiteFilter(item.id)"
-          ></v-btn>
+            <a-button :title="t('common.edit')" size="small" @click="editDownloader(record.id)">
+              <template #icon><EditOutlined /></template>
+            </a-button>
 
-          <!-- 默认下载服务器不允许删除；disabled 的 v-btn 不触发鼠标事件，故用外层 v-tooltip 的 activator 插槽包裹以承载提示 -->
-          <v-tooltip
-            v-if="item.id == metadataStore.defaultDownloader?.id"
-            :text="t('SetDownloader.index.table.action.deleteDefaultDownloader')"
-            location="top"
-            max-width="400"
-          >
-            <template #activator="{ props: tooltipProps }">
-              <v-btn
-                v-bind="tooltipProps"
-                :title="t('SetDownloader.index.table.action.deleteDefaultDownloader')"
-                color="error"
+            <!-- 该下载服务器下载路径和标签选择 -->
+            <a-button
+              :title="t('SetDownloader.index.table.action.setPathAndTag')"
+              size="small"
+              @click="editDownloaderPathAndTag(record.id)"
+            >
+              <template #icon><FolderOutlined /></template>
+            </a-button>
+
+            <!-- 该下载服务器站点过滤设置 -->
+            <a-button
+              v-if="configStore.download.allowDownloaderFilterForSite"
+              :disabled="!record.enabled"
+              :title="t('SetDownloader.index.table.action.setSiteFilter')"
+              size="small"
+              @click="editDownloaderSiteFilter(record.id)"
+            >
+              <template #icon><FilterOutlined /></template>
+            </a-button>
+
+            <!-- 默认下载服务器不允许删除；禁用按钮不触发鼠标事件，故用外层提示组件承载说明 -->
+            <a-tooltip
+              v-if="record.id == metadataStore.defaultDownloader?.id"
+              :title="t('SetDownloader.index.table.action.deleteDefaultDownloader')"
+            >
+              <a-button
+                danger
                 disabled
-                icon="mdi-delete"
+                :title="t('SetDownloader.index.table.action.deleteDefaultDownloader')"
                 size="small"
-              />
-            </template>
-          </v-tooltip>
-          <v-btn
-            v-else
-            :title="t('common.remove')"
-            color="error"
-            icon="mdi-delete"
-            size="small"
-            @click="deleteDownloader([item.id])"
-          />
-        </v-btn-group>
+              >
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </a-tooltip>
+            <a-button v-else danger :title="t('common.remove')" size="small" @click="deleteDownloader([record.id])">
+              <template #icon><DeleteOutlined /></template>
+            </a-button>
+          </a-button-group>
+        </template>
       </template>
-    </v-data-table>
-  </v-card>
+
+      <!-- 无任何下载服务器时的空状态占位（复用已有的引导文案） -->
+      <template #emptyText>
+        <NoDataPlaceholder compact :description="t('SetDownloader.index.emptyNotice')" />
+      </template>
+    </a-table>
+  </a-card>
 
   <AddDialog v-model="showAddDialog" />
   <EditDialog v-model="showEditDialog" :client-id="toEditDownloaderId!" />
@@ -351,5 +443,3 @@ async function confirmDeleteDownloader(downloaderId: TDownloaderKey) {
   <PathAndTagSuggestDialog v-model="showPathAndTagSuggestDialog" :client-id="toEditDownloaderId!" />
   <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteDownloader" />
 </template>
-
-<style scoped lang="scss"></style>

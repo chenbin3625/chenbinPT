@@ -52,9 +52,9 @@ interface AxiosRetryWhenCloudflareBlockInstance extends AxiosInstance {
 }
 
 function fixConfig(axiosInstance: AxiosInstance | AxiosStatic, config: AxiosRequestConfig) {
-  // @ts-ignore
+  // @ts-expect-error agent 是 node 适配器专属字段，axios 浏览器端类型未声明
   if (axiosInstance.defaults.agent === config.agent) {
-    // @ts-ignore
+    // @ts-expect-error 同上：浏览器端类型未声明 agent 字段
     delete config.agent;
   }
   if (axiosInstance.defaults.httpAgent === config.httpAgent) {
@@ -68,7 +68,10 @@ function fixConfig(axiosInstance: AxiosInstance | AxiosStatic, config: AxiosRequ
 function removeCustomCloudflareCookie(response: AxiosResponse | undefined) {
   if ((response?.config as any)?.cfCookie) {
     // 如果请求中有 cf_clearance 的 set cookie detail，说明是重试请求，删除我们设置的 cf_clearance cookie
-    sendMessage("removeCookie", (response!.config as any)!.cfCookie).catch();
+    // 删除失败不改变控制流（下次请求会重新设置），但保留可诊断日志
+    sendMessage("removeCookie", (response!.config as any)!.cfCookie).catch((e) =>
+      console.warn("[PTD] failed to remove custom cf_clearance cookie:", e),
+    );
   }
 }
 
@@ -131,6 +134,9 @@ export function setupRetryWhenCloudflareBlock(axios: AxiosInstance): AxiosRetryW
 
           (config as any).isCfBlockedRetry = true; // 标记为已重试过，防止反复重试
           (config as any).cfCookie = newCfCookie; // 保存当前的 cf_clearance cookie 信息，以便于在成功获取信息时删除我们设置的 cf_clearance
+
+          // 退避一小段时间再重试：立刻重发很容易再次被 Cloudflare 拦截（见 docs/performance-audit.md P2-4）
+          await new Promise((resolve) => setTimeout(resolve, 800));
 
           // 重新发送请求
           return new Promise((resolve) => {

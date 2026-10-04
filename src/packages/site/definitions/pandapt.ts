@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "PandaPT",
   aka: ["熊猫高清"],
   description: "熊猫高清",
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuhhx"],
 

@@ -7,14 +7,12 @@ import {
   EResultParseStatus,
   type ISiteMetadata,
   type IUserInfo,
-  NeedLoginError,
-  NoUserInputError,
   type ITorrent,
   type ISearchInput,
   type ITorrentTag,
   type ISearchCategories,
 } from "../types";
-import { parseTimeToLiveToDate, parseValidTimeString } from "../utils";
+import { classifySiteError, logMessage, parseTimeToLiveToDate, parseValidTimeString, siteErrorLogData } from "../utils";
 
 type TUserInfoTransKey =
   "id" | "seedingSize" | "joinTime" | "averageSeedingTime" | "invites" | "ratio" | "trueRatio" | "lastAccessAt";
@@ -591,17 +589,37 @@ export default class Unit3D extends PrivateSite {
         flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
       }
 
-      flushUserInfo.bonusPerHour = await this.getUserBonusPerHour(userName);
+      // E-7：/users/{name}/earnings 是可选页面，它的失败不能覆盖已经解析出的整份结果：
+      // 此前会跳到外层 catch，把 status 改成失败，而 setSiteLastUserInfo 只在 success 时
+      // 写当日历史 → 一个可选页面失败就丢掉整天的记录。这里只丢掉 bonusPerHour 字段。
+      try {
+        flushUserInfo.bonusPerHour = await this.getUserBonusPerHour(userName);
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} getUserBonusPerHour failed`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
+      }
 
       flushUserInfo.status = EResultParseStatus.success;
     } catch (e) {
-      flushUserInfo.status = EResultParseStatus.parseError;
+      // 与 AbstractBittorrentSite / AbstractPrivateSite 保持一致：区分网络/服务端错误与解析失败，
+      // 并把错误信息透传到 statusMsg，避免网络错误被误标为 parseError 且没有可展示原因。
+      const { status, statusMsg, retryable } = classifySiteError(e);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
 
-      if (e instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      } else if (e instanceof NoUserInputError) {
-        flushUserInfo.status = EResultParseStatus.noUserInput;
-      }
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        {
+          site: this.metadata.id,
+          status,
+          retryable,
+          error: siteErrorLogData(e),
+        },
+        retryable ? "warn" : "error",
+      );
     }
 
     return flushUserInfo;
@@ -619,7 +637,7 @@ export default class Unit3D extends PrivateSite {
     );
     return this.getFieldData(
       indexDocument,
-      // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
+
       this.metadata.userInfo?.selectors?.name!,
     );
   }

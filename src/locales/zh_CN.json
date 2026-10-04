@@ -3,43 +3,6 @@
     "invalidLink": "无效的下载链接",
     "keywordWarning": "右键推送链接时，部分 下载路径或标签的 关键字功能可能无法正常工作！"
   },
-  "Debugger": {
-    "addServerFirst": "请先在 Set{serverType} 页面添加服务器",
-    "confirmReset": "确定要重置吗？",
-    "consoleOutput": "所有输出均在console面板！！！",
-    "dangerWarning": "极其危险！！！！",
-    "debug": "调试{serverType}",
-    "debugBuiltinSite": "调试内置站点",
-    "debugPinia": "调试Pinia",
-    "enableLibrary": "启用开发库",
-    "libraryList": "在console中启用 sendMessage, axios, Sizzle, es-toolkit ( as _ ）, datefns 等方法",
-    "mergeUserConfig": "合并用户配置",
-    "outputConfig": "输出用户配置信息",
-    "outputFavicon": "输出Favicon",
-    "outputInstance": "输出 {serverType} 实例",
-    "outputPinia": "输出Pinia信息",
-    "outputSiteDefinition": "输出站点定义",
-    "outputSiteInstance": "输出站点实例",
-    "outputUserConfig": "输出用户配置信息",
-    "pluginReset": "插件重置",
-    "resetItems": {
-      "clearDownloadHistory": "清空历史下载记录",
-      "clearFaviconCache": "清空站点 Favicon 缓存",
-      "clearMediaCache": "清空来自豆瓣、IMDb等信息站点的媒体简介缓存",
-      "clearSearchSnapshot": "清空搜索快照",
-      "clearSearchSnapshotDesc": "清空所有搜索快照数据",
-      "clearSiteData": "清空站点数据",
-      "clearSiteDataDesc": "清空用户获取的站点数据（包括用户信息历史记录和最近一次用户信息）",
-      "clearUserConfig": "清空用户配置",
-      "clearUserConfigDesc": "清空所有用户配置（包括但不限于站点、下载器、搜索方案及默认值、搜索快照元数据、最近一次用户信息）",
-      "resetSystemSettings": "重置系统设置",
-      "resetSystemSettingsDesc": "重置所有系统设置（包括但不限于语言、主题、表格展示、图片样式等常规设置）为默认值"
-    },
-    "resetSuccess": "重置成功",
-    "selectSite": "选择站点",
-    "siteAll": "全部",
-    "title": "调试页面！！！！"
-  },
   "DownloadHistory": {
     "AdvanceFilterGenerateDialog": {
       "downloader": "下载器"
@@ -351,6 +314,7 @@
       "lastAccessAt": "最近访问时间",
       "lastAccessDurationNote": "已经 {0} 天未访问了",
       "levelName": "等级",
+      "noData": "暂无用户信息数据，请先添加站点并在站点设置中允许查询用户信息",
       "trueUserData": "真实数据量",
       "updateAt": "更新时间",
       "userData": "数据量"
@@ -361,6 +325,13 @@
       "copyLink": "复制下载链接",
       "copyLinkFailed": "复制下载链接失败",
       "copyLinkSuccess": "下载链接已复制到剪贴板",
+      "label": {
+        "copyLink": "复制链接",
+        "keepUpload": "辅种检测",
+        "localDownload": "下载到本地",
+        "sendToDefault": "默认下载器",
+        "sendToDownloader": "发送到下载器"
+      },
       "localDownload": "下载种子文件到本地",
       "sendToDefault": "发送到默认下载器",
       "sendToDownloader": "发送到下载器"
@@ -429,9 +400,18 @@
         "saveSnapshot": "保存搜索快照",
         "start": "开始搜索队列"
       },
+      "actionLabel": {
+        "cancel": "取消",
+        "displayPreferences": "展示偏好",
+        "pause": "暂停",
+        "retry": "重试",
+        "retryFailed": "重试失败",
+        "saveSnapshot": "搜索快照",
+        "start": "开始"
+      },
       "alert": {
         "duration": "耗时： {0} 秒。",
-        "enterKeyword": "请输入搜索关键词开始搜索",
+        "enterKeyword": "请输入关键词或选择搜索方案后开始搜索",
         "keyword": "关键词",
         "paused": "搜索暂停中…",
         "plan": "搜索方案",
@@ -441,7 +421,9 @@
         "searching": "搜索中…",
         "snapshot": "搜索快照"
       },
+      "clearSelection": "取消选择",
       "filterLabel": "过滤搜索结果",
+      "noData": "暂无搜索结果，请在上方输入关键词或选择搜索方案后开始搜索",
       "highlightSameSizeTorrent": "按大小排序时标记相同大小的种子",
       "limitTorrentTitleTdWidth": "限制种子标题宽度",
       "selectedTorrents": "已选择 {0} 个种子",
@@ -460,6 +442,7 @@
         "time": "发布于(≈)",
         "title": "标题"
       },
+      "totalSize": "总大小 {0}",
       "uploadAtFormatAsAlive": "上传时间显示为相对时间"
     },
     "siteFilter": {
@@ -549,6 +532,7 @@
     "HistoryDialog": {
       "deleteFailure": "删除备份历史 [{name}] 失败",
       "deleteSuccess": "删除备份历史 [{name}] 成功",
+      "loadFailure": "获取备份历史失败：{error}",
       "restore": "恢复备份",
       "table": {
         "filename": "备份文件名",
@@ -567,14 +551,24 @@
       "keepExistUserInfo": "保留本地已获取过的用户信息",
       "loadFailure": "加载失败: {error}",
       "missingVersion": "备份数据缺少版本信息，无法恢复",
+      "partialFailure": "恢复过程中出现错误：部分内容未能恢复，请检查备份数据",
       "ptppImport": "PT-Plugin-Plus 备份导入",
       "ptppPrompt": "需要导入 PT-Plugin-Plus 备份？",
+      "restoreBackupServers": "同时恢复备份中的 {count} 个备份服务器配置（含地址与凭据）",
       "restoreOptions": "恢复选项",
       "retry": "重试",
+      "securityWarning": {
+        "backupServers": "该备份包含 {count} 个备份服务器配置：",
+        "parseWarnings": "该备份文件中有 {count} 个条目未通过校验，将不会被恢复：",
+        "sensitiveFields": "本次恢复会写入敏感数据：{fields}。",
+        "title": "该备份包含服务器配置或敏感数据。如果它不是你本人创建的，恢复后扩展可能把本机凭据上传到陌生服务器，请确认后再继续。"
+      },
       "selectFile": "选择备份文件",
       "success": "恢复成功",
+      "successWithNotice": "恢复完成，但部分内容被跳过或被安全化处理：{detail}",
       "title": "从备份文件中恢复",
-      "versionWarning": "备份数据版本高于当前扩展版本，恢复可能会导致数据不兼容或丢失，是否继续？"
+      "versionWarning": "备份数据版本高于当前扩展版本，恢复可能会导致数据不兼容或丢失，是否继续？",
+      "willNotRestoreBackupServers": "将不恢复其中的 {count} 个备份服务器配置"
     },
     "fields": {
       "config": "插件配置（config）",
@@ -630,6 +624,31 @@
       "saveLastDownloader": "保存上一次使用的下载服务器设置",
       "useQuickSendToClient": "默认使用快速推送"
     },
+    "reset": {
+      "clearDownloadHistory": "清空下载历史",
+      "clearDownloadHistoryDesc": "清空所有已保存的下载历史记录",
+      "clearFaviconCache": "清空 Favicon 缓存",
+      "clearFaviconCacheDesc": "清空站点图标缓存，下次访问站点时会重新获取",
+      "clearMediaCache": "清空媒体缓存",
+      "clearMediaCacheDesc": "清空媒体服务器 / 社交站点的搜索结果缓存",
+      "clearSearchSnapshot": "清空搜索快照",
+      "clearSearchSnapshotDesc": "清空所有已保存的搜索结果快照及其元数据",
+      "clearSiteData": "清空站点数据",
+      "clearSiteDataAll": "全部站点",
+      "clearSiteDataDesc": "清空已保存的站点用户信息（上传量 / 下载量 / 做种数 / 魔力值等历史数据）",
+      "clearSiteDataTarget": "清空范围",
+      "clearUserConfig": "清空用户配置",
+      "clearUserConfigDesc": "清空站点列表、下载器、搜索方案、媒体服务器等全部用户配置数据",
+      "confirmOk": "确认执行",
+      "confirmText": "确认执行「{0}」吗？该操作不可撤销！",
+      "confirmTitle": "确认操作",
+      "resetButton": "重置",
+      "resetSuccess": "操作已完成",
+      "resetSystemSettings": "重置系统设置",
+      "resetSystemSettingsDesc": "将插件的全部设置恢复为默认值（等同于重新安装插件后的默认配置）",
+      "title": "插件重置 / 清空数据",
+      "warning": "以下操作均不可撤销，请谨慎操作！建议先到「备份恢复」页面导出一份备份。"
+    },
     "searchEntity": {
       "allowSingleSiteSearch": "是否允许单一站点搜索",
       "autoDetectOfficialGroupFromTitle": "自动识别种子标题中的官方组信息，并形成标签",
@@ -658,6 +677,7 @@
       "backup": "备份恢复",
       "download": "下载",
       "native-bridge": "原生通信桥",
+      "reset": "插件重置",
       "search-entity": "@:common.search",
       "social-information": "媒体评分",
       "ui": "界面UI",
@@ -690,7 +710,6 @@
       "expandByDefault": "默认展开侧边栏按钮",
       "respondDisplayMode": "响应插件设置中的 ",
       "saveTableBehavior": "记忆部分表格的 表头列展示、排序、分页 等信息",
-      "showReleaseNote": "插件更新时显示更新日志窗口",
       "sidebarFunctions": "侧边栏功能",
       "sidebarStyle": "侧边栏样式",
       "socialSiteSearchBy": {
@@ -813,7 +832,9 @@
   },
   "SetMediaServer": {
     "Editor": {
-      "authInfo": "认证信息"
+      "authInfo": "认证信息",
+      "addressTip": "媒体服务器完整地址（可含端口或路径），例如：http://192.168.1.1:8096/",
+      "nameTip": "为这个媒体服务器取一个便于识别的好名字"
     },
     "add": {
       "title": "添加媒体服务器"
@@ -836,7 +857,7 @@
     "info": {
       "cliLink": "ptd-cli",
       "cliRequired": "此功能需要安装外部 CLI 工具。移动平台上不可用。安装说明请参考 {0}。",
-      "description": "原生通信桥允许 PT-Depiler CLI 工具与本扩展进行通信。需要在电脑上单独安装 CLI 工具。",
+      "description": "原生通信桥允许 chenbinPT CLI 工具与本扩展进行通信。需要在电脑上单独安装 CLI 工具。",
       "privacy": "启用后，原生通信桥允许本地安装的 CLI 工具访问扩展数据，包括站点配置、搜索结果、下载历史、用户信息和下载器状态。所有通信均在本地进行（浏览器与本机进程之间），不会将数据发送至任何远程服务器。您可以随时禁用此功能或撤销权限。",
       "setupCommand": "运行以下命令将此扩展注册到 CLI 工具：",
       "setupHint": "运行命令后，重启浏览器或点击测试连接。",
@@ -947,6 +968,7 @@
     },
     "index": {
       "flushFaviconFinish": "所选站点的图标已成功刷新！",
+      "flushFaviconPartial": "图标刷新完成：成功 {success} 个，失败 {failed} 个。",
       "oneClickImport": "一键导入站点",
       "reBuildMap": "重建站点映射",
       "settingNote": ["只有配置过的站点才会显示插件图标及相应的功能；", "已离线的站点不再参与搜索和信息获取；"],
@@ -1013,10 +1035,12 @@
   "UserDataTimeline": {
     "controls": {
       "components": "组件",
+      "consolePanel": "控制台",
       "customBgColor": "自定义背景色",
       "displayContent": "展示内容",
       "displaySiteSettings": "展示站点设置",
       "faviconBlur": "站点Favicon模糊度",
+      "previewPanel": "展示面板",
       "showTimeline": "展示各个站点信息（总开关）",
       "showTopSites": "展示各类数据的冠军及亚军站点",
       "siteDisplay": "站点展示组件",
@@ -1079,6 +1103,7 @@
       "invert": "反选",
       "none": "全不选"
     },
+    "columnSelector": "自定义列",
     "count": "数量",
     "date": "日期",
     "default": "默认",
@@ -1102,8 +1127,10 @@
     "howToUse": "如何使用？",
     "import": "导入",
     "language": "语言",
+    "loading": "加载中…",
     "name": "名称",
-    "project": "PT 助手 Plus",
+    "noData": "暂无数据",
+    "project": "chenbinPT",
     "remove": "删除",
     "save": "保存",
     "saveSettings": "保存设置",
@@ -1195,15 +1222,7 @@
       "wiki": "帮助",
       "wrongPixelRatioNotice": "检测到您的页面展示可能受到缩放影响，建议您将当前页面缩放调整为100%，以保障您的浏览体验～"
     },
-    "init": "请耐心等待页面加载.....",
-    "releaseNote": {
-      "changelog": "更新日志",
-      "currentVersion": "（当前版本）",
-      "faq": "常见问题",
-      "startUsing": "开始使用",
-      "title": "欢迎使用 {extName}",
-      "wiki": "Wiki 帮助"
-    }
+    "init": "请耐心等待页面加载....."
   },
   "levelRequirement": {
     "adoptions": "认领数",
@@ -1231,19 +1250,19 @@
     "uploads": "发布数"
   },
   "manifest": {
-    "contextMenuSearch": "使用 PT Depiler 搜索 \"%s\" 相关的种子",
+    "contextMenuSearch": "使用 chenbinPT 搜索 \"%s\" 相关的种子",
     "contextMenuSearchInDefault": "在默认方案中搜索",
     "contextMenuSearchInSite": "在指定站点中搜索",
     "contextMenuSearchInSolution": "在指定方案中搜索",
     "contextMenuSearchInThisSite": "在本站点中搜索",
-    "contextMenuSearchWithDouban": "使用 PT Depiler 搜索当前豆瓣链接相关种子",
-    "contextMenuSearchWithIMDb": "使用 PT Depiler 搜索IMDb链接相关种子",
-    "contextMenuSendToDownloader": "使用 PT Depiler 下载链接",
+    "contextMenuSearchWithDouban": "使用 chenbinPT 搜索当前豆瓣链接相关种子",
+    "contextMenuSearchWithIMDb": "使用 chenbinPT 搜索IMDb链接相关种子",
+    "contextMenuSendToDownloader": "使用 chenbinPT 下载链接",
     "contextMenuSendToDownloaderAdvanced": "高级推送",
     "contextMenuSendToDownloaderDefaultFolder": "默认路径",
     "contextMenuSendToDownloaderIn": "推送到 $1 -> $2",
-    "extDesc": "PT Depiler",
-    "extName": "PT Depiler",
+    "extDesc": "chenbinPT",
+    "extName": "chenbinPT",
     "notificationSendLinkToDownloaderFailure": "将链接发送到下载器 [$1] 失败",
     "notificationSendLinkToDownloaderSuccess": "已成功将链接发送到下载器 [$1]",
     "omniboxSearch": "在 [ $1 ] 中搜索 $2",
@@ -1252,31 +1271,10 @@
     "searchPlanSingleSite": "单个站点"
   },
   "ptppSettings": {
-    "RestorePtppUserDataDialog": {
-      "importCancelled": "导入操作已取消。",
-      "importFailure": "导入失败。",
-      "importSuccess": "导入成功，窗口将在 5s 后自动关闭，请刷新页面。",
-      "noSiteWarning": "你似乎还没有添加任何站点，这可能导致导入异常，是否继续？",
-      "notSupported": "该站点暂不支持",
-      "overwriteExisting": "是否覆盖已有数据",
-      "pendingImportData": "待导入数据",
-      "recordCount": "{0}条",
-      "selected": "已选择",
-      "title": "恢复 PT-Plugin-Plus 的用户历史数据信息"
-    },
     "basicConfig": "基本配置",
     "encryptionKeyLabel": "备份文件加密、解密密钥",
-    "importConfigInfoLine1": "{repoName} 只能导入原 PT-Plugin-Plus 的用户历史数据信息，其他配置文件不支持导入。",
-    "importConfigInfoPrep": "在导入之前，请做好以下准备：",
-    "importConfigTitle": "PT-Plugin-Plus 配置导入",
-    "importStep1": "请先备份好当前 {repoName} 的配置文件。",
-    "importStep2": "在 {repoName} 的站点设置中添加需要恢复的站点。（如果没有添加站点，对应的用户历史数据会被忽略）",
-    "importStep3": "在 PT-Plugin-Plus 中，关闭备份加密功能，并导出本地备份文件。其应该是一个名为 <code>PT-Plugin-Plus-Backup-yyyy-MM-DD_hh-mm-ss.zip</code> 的 zip 压缩文件。",
-    "importStep4": "将压缩包或者从压缩包中解压出的 <code>userdatas.json</code> 文件，上传到下面的输入框中。",
-    "invalidFileFormat": "文件格式错误，请检查是否按正确步骤（关闭备份加密功能）导出备份。",
     "randomGenTitle": "随机生成",
     "saveKeyNotice": "注意：密钥仅保存在当前浏览器，不会备份，请妥善保存；加密后如密钥丢失将无法恢复数据。留空表示不做加密。",
-    "selectBackupFile": "选择 PTPP 备份文件",
     "undoKeyTitle": "恢复上一个密钥"
   },
   "resultParseStatus": {
@@ -1294,28 +1292,23 @@
     "working": "正在获取中..."
   },
   "route": {
-    "Devtools": {
-      "Debugger": "调试信息",
-      "SystemLog": "系统日志",
-      "default": "开发工具"
-    },
     "Overview": {
       "DownloadHistory": "下载历史",
       "KeepUploadTask": "辅种任务",
       "MediaServerEntity": "媒体库",
-      "MyClient": "我的下载器",
+      "MyClient": "下载器",
       "MyCollection": "收藏列表",
       "MyData": "我的数据",
       "SearchEntity": "搜索结果",
-      "SearchResultSnapshot": "搜索结果快照",
+      "SearchResultSnapshot": "搜索快照",
       "default": "概览"
     },
     "Settings": {
-      "SetBackup": "参数备份与恢复",
+      "SetBackup": "备份恢复",
       "SetBase": "常规设置",
-      "SetDownloader": "下载器设置",
-      "SetMediaServer": "媒体服务器设置",
-      "SetSearchSolution": "搜索方案定义",
+      "SetDownloader": "下载设置",
+      "SetMediaServer": "媒体服务",
+      "SetSearchSolution": "搜索方案",
       "SetSite": "站点设置",
       "default": "参数设置"
     }

@@ -15,7 +15,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "LST",
   description: "Something cool",
   tags: ["综合", "影视"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/hdarea.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdarea.co/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdarea.co/config.json
  */
 import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
 import NexusPHP, {
@@ -19,7 +19,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "HDArea",
   aka: ["高清视界", "好大"],
   tags: ["影视", "综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["lzl20110", "zhuweitung"],
 

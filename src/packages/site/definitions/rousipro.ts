@@ -252,7 +252,7 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class RousiPro extends PrivateSite {
   get userPasskey(): string {
-    return this.userConfig.inputSetting!.passkey ?? "";
+    return this.userConfig.inputSetting?.passkey ?? "";
   }
 
   public override async request<T>(

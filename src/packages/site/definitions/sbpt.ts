@@ -19,7 +19,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "SBPT",
   description: "SBPT is a CHINESE Private Torrent Tracker for MOVIES / TV / GENERAL",
   tags: ["影视", "综合"],
-  timezoneOffset: "+0800",
   favicon: "./_default_nexusphp.png",
 
   type: "private",

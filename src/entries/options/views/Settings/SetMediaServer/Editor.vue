@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { useI18n } from "vue-i18n";
+import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons-vue";
 import { computedAsync } from "@vueuse/core";
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { getMediaServer, getMediaServerMetaData, IMediaServerMetadata } from "@ptd/mediaServer";
 
 import type { IMediaServerMetadata as IMediaServerConfig } from "@/shared/types.ts";
@@ -22,7 +23,67 @@ const clientMeta = computedAsync<IMediaServerMetadata>(
     clientConfig.value?.type ? await getMediaServerMetaData(clientConfig.value.type) : ({} as IMediaServerMetadata),
   {} as IMediaServerMetadata,
 );
-const formValid = ref<boolean>(false);
+
+// V-9：原先复用 `SetDownloader.editor.*` 的文案，于是媒体服务器对话框会显示
+// 「为这个**下载服务器**取个好记的名字」——术语与场景都不对。已补 `SetMediaServer.Editor.*` 专属文案。
+const nameRules = [formValidateRules.require(t("SetMediaServer.Editor.nameTip"))];
+const addressRules = [formValidateRules.url(t("SetMediaServer.Editor.addressTip"))];
+
+function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
+  for (const rule of rules) {
+    const result = rule(value);
+    if (result !== true) return typeof result === "string" ? result : String(result);
+  }
+  return undefined;
+}
+
+const nameError = computed(() => firstError(nameRules, clientConfig.value?.name));
+const addressError = computed(() => firstError(addressRules, clientConfig.value?.address));
+
+function authFieldName(authField: string | { name: string }) {
+  return typeof authField === "string" ? authField : authField.name;
+}
+
+// B-31：媒体服务器凭据（fnOS 的 password、emby/jellyfin/plex 的 apikey ...）默认掩码显示，
+// 与 SetDownloader/Editor.vue 的密码框保持一致，可按字段切换明文。
+const revealedAuthFields = ref<Set<string>>(new Set());
+const SECRET_AUTH_FIELD_PATTERN = /passw|passwd|password|pwd|apikey|api[_-]?key|token|cookie|secret/i;
+
+function isSecretAuthField(authField: string | { name: string }): boolean {
+  return SECRET_AUTH_FIELD_PATTERN.test(authFieldName(authField));
+}
+
+/** 该字段当前是否以掩码显示 */
+function isAuthFieldMasked(authField: string | { name: string }): boolean {
+  // revealedAuthFields 是 ref：在 <script setup> 的普通函数体里不会自动解包（模板里才会）
+  return isSecretAuthField(authField) && !revealedAuthFields.value.has(authFieldName(authField));
+}
+
+function toggleAuthFieldReveal(authField: string | { name: string }) {
+  const name = authFieldName(authField);
+  const next = new Set(revealedAuthFields.value);
+  if (next.has(name)) {
+    next.delete(name);
+  } else {
+    next.add(name);
+  }
+  revealedAuthFields.value = next;
+}
+
+function authFieldRules(authField: string | { name: string; required?: boolean }) {
+  return typeof authField === "string" || authField.required ? [formValidateRules.require()] : [];
+}
+
+function authFieldError(authField: string | { name: string; required?: boolean }) {
+  const name = authFieldName(authField);
+  return firstError(authFieldRules(authField), clientConfig.value?.auth?.[name]);
+}
+
+// 与迁移前 PtdForm 广播的「表单是否合法」语义一致：任一字段的 rules 未通过即为不合法
+const formValid = computed(() => {
+  if (nameError.value || addressError.value) return false;
+  return (clientMeta.value?.auth_field ?? []).every((authField) => !authFieldError(authField));
+});
 
 async function checkConnect() {
   if (formValid) {
@@ -34,82 +95,101 @@ async function checkConnect() {
 </script>
 
 <template>
-  <v-card class="mb-5">
-    <v-form v-model="formValid" v-if="clientConfig" fast-fail>
-      <v-container class="pa-0">
-        <v-row>
-          <v-col cols="12" md="4">
-            <v-text-field v-model="clientConfig.type" :label="t('common.type')" disabled />
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="clientConfig.name"
-              :label="t('SetDownloader.common.name')"
-              :placeholder="t('SetDownloader.common.name')"
-              :rules="[formValidateRules.require(t('SetDownloader.editor.nameTip'))]"
+  <a-card style="margin-bottom: 20px">
+    <a-form v-if="clientConfig" layout="vertical">
+      <div>
+        <a-row :gutter="16">
+          <a-col :md="8" :xs="24">
+            <a-form-item :label="t('common.type')">
+              <a-input v-model:value="clientConfig.type" disabled />
+            </a-form-item>
+          </a-col>
+          <a-col :md="8" :xs="24">
+            <a-form-item :help="nameError" :label="t('SetDownloader.common.name')" required>
+              <a-input
+                v-model:value="clientConfig.name"
+                :placeholder="t('SetDownloader.common.name')"
+                :status="nameError ? 'error' : undefined"
+              />
+            </a-form-item>
+          </a-col>
+          <a-col :md="8" :xs="24">
+            <a-form-item :label="t('SetDownloader.common.uid') + t('SetDownloader.editor.uidPlaceholder')">
+              <a-input v-model:value="clientConfig.id" disabled />
+            </a-form-item>
+          </a-col>
+        </a-row>
+        <a-row>
+          <a-col :span="24">
+            <a-form-item :help="addressError" :label="t('SetDownloader.common.address')" required>
+              <a-input v-model:value="clientConfig.address" :status="addressError ? 'error' : undefined" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+
+        <a-row>
+          <a-col style="padding-block: 0" :span="24">
+            <a-typography-text strong>{{ t("SetMediaServer.Editor.authInfo") }}</a-typography-text>
+          </a-col>
+          <a-col v-for="authField in clientMeta!.auth_field" :key="authFieldName(authField)" :span="24">
+            <a-form-item
+              v-if="typeof authField === 'string'"
+              :help="authFieldError(authField)"
+              :label="authField"
               required
-            />
-          </v-col>
-          <v-col cols="12" md="4">
-            <v-text-field
-              v-model="clientConfig.id"
-              :label="t('SetDownloader.common.uid') + t('SetDownloader.editor.uidPlaceholder')"
-              disabled
-            />
-          </v-col>
-        </v-row>
-        <v-row>
-          <v-text-field
-            v-model="clientConfig.address"
-            :label="t('SetDownloader.common.address')"
-            :rules="[formValidateRules.url(t('SetDownloader.editor.addressTip'))]"
-            required
-          />
-        </v-row>
+            >
+              <a-input
+                v-model:value="clientConfig.auth[authField]"
+                :status="authFieldError(authField) ? 'error' : undefined"
+                :type="isAuthFieldMasked(authField) ? 'password' : 'text'"
+              >
+                <template v-if="isSecretAuthField(authField)" #suffix>
+                  <EyeOutlined
+                    v-if="revealedAuthFields.has(authField)"
+                    style="cursor: pointer"
+                    @click="toggleAuthFieldReveal(authField)"
+                  />
+                  <EyeInvisibleOutlined v-else style="cursor: pointer" @click="toggleAuthFieldReveal(authField)" />
+                </template>
+              </a-input>
+            </a-form-item>
+            <a-form-item v-else :help="authField.message ?? authFieldError(authField)" :label="authField.name" required>
+              <a-input
+                v-model:value="clientConfig.auth[authField.name]"
+                :status="authFieldError(authField) ? 'error' : undefined"
+                :type="isAuthFieldMasked(authField) ? 'password' : 'text'"
+              >
+                <template v-if="isSecretAuthField(authField)" #suffix>
+                  <EyeOutlined
+                    v-if="revealedAuthFields.has(authField.name)"
+                    style="cursor: pointer"
+                    @click="toggleAuthFieldReveal(authField)"
+                  />
+                  <EyeInvisibleOutlined v-else style="cursor: pointer" @click="toggleAuthFieldReveal(authField)" />
+                </template>
+              </a-input>
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <v-row>
-          <v-col class="py-0"
-            ><v-label>{{ t("SetMediaServer.Editor.authInfo") }}</v-label></v-col
-          >
-          <v-col v-for="(auth_field, index) in clientMeta!.auth_field" :key="index" cols="12">
-            <template v-if="typeof auth_field === 'string'">
-              <v-text-field
-                v-model="clientConfig.auth[auth_field]"
-                :label="auth_field"
-                :rules="[formValidateRules.require()]"
-                hide-details
-                required
-              />
-            </template>
-            <template v-else>
-              <v-text-field
-                v-model="clientConfig.auth[auth_field.name]"
-                :label="auth_field.name"
-                :messages="auth_field.message ?? ''"
-                :rules="auth_field.required ? [formValidateRules.require()] : []"
-                required
-              />
-            </template>
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <v-slider
-            v-model="clientConfig.timeout"
-            :color="clientConfig.timeout! > 8 * 60e3 ? 'red' : clientConfig.timeout! > 5 * 60e3 ? 'amber' : 'green'"
-            :label="t('SetDownloader.editor.timeout')"
-            :max="10 * 60e3"
-            :min="0"
-            :step="1e3"
-            class="px-2"
-          >
-            <template #append>
-              <v-btn variant="flat" @click="clientConfig.timeout = 60e3">
-                {{ formatDate(clientConfig.timeout!, "mm:ss") }}
-              </v-btn>
-            </template>
-          </v-slider>
-        </v-row>
+        <a-row>
+          <a-col :span="24">
+            <a-form-item :label="t('SetDownloader.editor.timeout')" style="padding-inline: 8px">
+              <a-flex align="center" :gap="8">
+                <a-slider
+                  v-model:value="clientConfig.timeout"
+                  :max="10 * 60e3"
+                  :min="0"
+                  :step="1e3"
+                  style="flex: 1 1 auto"
+                />
+                <a-button type="text" @click="clientConfig.timeout = 60e3">
+                  {{ formatDate(clientConfig.timeout!, "mm:ss") }}
+                </a-button>
+              </a-flex>
+            </a-form-item>
+          </a-col>
+        </a-row>
 
         <ConnectCheckButton
           :check-fn="checkConnect"
@@ -119,14 +199,14 @@ async function checkConnect() {
           "
         />
 
-        <v-alert v-if="clientMeta?.warning" color="warning">
-          <ul>
-            <li v-for="(data, index) in clientMeta.warning" :key="index">● {{ data }}</li>
-          </ul>
-        </v-alert>
-      </v-container>
-    </v-form>
-  </v-card>
+        <a-alert v-if="clientMeta?.warning" show-icon type="warning">
+          <template #message>
+            <a-list size="small">
+              <a-list-item v-for="data in clientMeta.warning" :key="data">● {{ data }}</a-list-item>
+            </a-list>
+          </template>
+        </a-alert>
+      </div>
+    </a-form>
+  </a-card>
 </template>
-
-<style scoped lang="scss"></style>

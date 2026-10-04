@@ -2,6 +2,7 @@
 import { reactive, ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import { ArrowRightOutlined, SearchOutlined, SelectOutlined } from "@ant-design/icons-vue";
 
 import { socialBuildUrlMap } from "@ptd/social";
 import type { ITorrent } from "@ptd/site";
@@ -10,9 +11,14 @@ import type { ISocialInformation, TSupportSocialSite } from "@ptd/social/types.t
 import { useConfigStore } from "@/options/stores/config.ts";
 import { sendMessage } from "@/messages.ts";
 
-const { item, showSocial = true } = defineProps<{
+const {
+  item,
+  showSocial = true,
+  maxWidth,
+} = defineProps<{
   item: Partial<ITorrent>;
   showSocial?: boolean;
+  maxWidth?: string | number;
 }>();
 
 const { t } = useI18n();
@@ -21,10 +27,21 @@ const configStore = useConfigStore();
 
 interface ISocialInformationData extends ISocialInformation {
   loading?: boolean;
+  error?: boolean;
 }
 
 // @ts-ignore
 const socialInformation = reactive<Record<TSupportSocialSite | string, ISocialInformationData>>({});
+
+// P1-17：社交菜单内容按需渲染。
+// 表格每行对每个支持的社交站点都渲染一个社交菜单，若内容（海报卡片 / 骨架屏 / 按钮组）
+// 也参与渲染，则整表每次 patch 都要为「从未被悬停过」的菜单创建上百个 vnode。
+// 这里仅在用户首次悬停 / 点击某站点图标后才渲染该菜单的内容，已激活的保持挂载（语义不变）。
+const activatedSocialMenus = reactive<Record<string, boolean>>({});
+
+function activateSocialMenu(site: TSupportSocialSite | string) {
+  activatedSocialMenus[site] = true;
+}
 
 const tagsExpanded = ref(false);
 
@@ -50,18 +67,21 @@ const hasMoreTags = computed(
 
 const hiddenTagCount = computed(() => visibleTags.value.length - maxTagCount.value);
 
-function tempHideTag(name: string) {
-  if (!configStore.searchEntifyControl.hiddenTagNames.includes(name)) {
-    configStore.searchEntifyControl.hiddenTagNames = [...configStore.searchEntifyControl.hiddenTagNames, name];
-  }
-}
-
 function loadSocialInformation(site: TSupportSocialSite) {
-  if (item[`ext_${site}`] && !socialInformation[site]) {
+  const current = socialInformation[site];
+
+  // V-4：重入守卫不能只判断「有没有值」。请求失败时若把 `{loading:true}` 留在原处，
+  // popover 会永久停在 Loading....，悬停也无法重试（守卫永远为假）。这里允许错误态重试。
+  if (item[`ext_${site}`] && (!current || current.error)) {
     socialInformation[site] = { loading: true } as ISocialInformationData;
-    sendMessage("getSocialInformation", { site, sid: item[`ext_${site}`] as unknown as string }).then((info) => {
-      socialInformation[site] = info;
-    });
+    sendMessage("getSocialInformation", { site, sid: item[`ext_${site}`] as unknown as string })
+      .then((info) => {
+        socialInformation[site] = info;
+      })
+      .catch(() => {
+        // 置为错误态（保留键，避免悬停时的并发重复请求），再次悬停 / 点击图标会重新发起请求
+        socialInformation[site] = { error: true } as ISocialInformationData;
+      });
   }
 }
 
@@ -81,155 +101,173 @@ function canAdvanceSearch(site: TSupportSocialSite) {
 </script>
 
 <template>
-  <v-container class="t_main pa-0">
-    <v-row gap="0" class="flex-nowrap">
-      <!-- 种子主标题信息 -->
-      <span class="text-truncate flex-1-1-0">
-        <a
-          :href="item.url"
-          :title="item.title"
-          class="t_title text-decoration-none text-high-emphasis text-body-large text-truncate"
-          rel="noopener noreferrer nofollow"
-          target="_blank"
-        >
-          {{ item.title ?? item.url ?? item.link }}
-        </a>
-      </span>
+  <div :style="{ maxWidth, minWidth: 0 }">
+    <!-- 种子主标题信息 -->
+    <a-flex align="center" wrap="nowrap">
+      <a-tooltip
+        :title="item.title ?? item.url ?? item.link"
+        placement="topLeft"
+        :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
+        :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
+      >
+        <span style="flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+          <a-typography-link
+            :href="item.url"
+            rel="noopener noreferrer nofollow"
+            style="font-size: 16px"
+            target="_blank"
+          >
+            {{ item.title ?? item.url ?? item.link }}
+          </a-typography-link>
+        </span>
+      </a-tooltip>
 
       <!-- 种子的媒体信息 -->
-      <div class="ml-2 flex-0-0">
+      <div style="flex: 0 0 auto; margin-left: 8px">
         <template v-if="showSocial && configStore.searchEntifyControl.showSocialInformation">
           <template v-for="(meta, key) in socialBuildUrlMap" :key="key">
-            <v-menu v-if="item[`ext_${key}`]" open-on-hover>
-              <template v-slot:activator="{ props }">
-                <v-avatar
-                  v-bind="props"
-                  :image="`/icons/social/${key}.png`"
-                  rounded="0"
-                  size="x-small"
-                  class="ml-1"
-                  @click="() => loadSocialInformation(key as TSupportSocialSite)"
-                  @mouseenter="() => loadSocialInformation(key as TSupportSocialSite)"
-                />
-              </template>
-              <v-card>
-                <v-card-text class="pa-0 py-1">
-                  <div class="text-center" style="max-width: 150px">
-                    <template v-if="socialInformation[key]?.loading === true">
-                      <h3 class="font-weight-bold my-2">Loading....</h3>
-                    </template>
+            <a-dropdown v-if="item[`ext_${key}`]" :trigger="['hover']" placement="bottomRight">
+              <a-avatar
+                :size="20"
+                :src="`/icons/social/${key}.png`"
+                shape="square"
+                style="margin-left: 4px; cursor: pointer"
+                @click="
+                  () => {
+                    activateSocialMenu(key);
+                    loadSocialInformation(key as TSupportSocialSite);
+                  }
+                "
+                @mouseenter="
+                  () => {
+                    activateSocialMenu(key);
+                    loadSocialInformation(key as TSupportSocialSite);
+                  }
+                "
+              />
+              <template #overlay>
+                <a-card
+                  v-if="activatedSocialMenus[key]"
+                  :body-style="{ padding: '4px 8px' }"
+                  :bordered="false"
+                  style="width: 166px"
+                >
+                  <div style="max-width: 150px; text-align: center">
+                    <a-typography-title
+                      v-if="socialInformation[key]?.loading === true"
+                      :level="5"
+                      style="margin: 8px 0"
+                    >
+                      Loading....
+                    </a-typography-title>
                     <template v-else-if="socialInformation[key]?.id">
-                      <v-img :src="socialInformation[key]?.poster" class="mb-1" width="150" aspect-ratio="2/3">
+                      <a-image
+                        :fallback="'/icons/movie_placeholder.png'"
+                        :height="225"
+                        :preview="false"
+                        :src="socialInformation[key]?.poster"
+                        style="margin-bottom: 4px; object-fit: cover"
+                        :width="150"
+                      >
                         <template #placeholder>
-                          <v-skeleton-loader type="image@2" height="225"></v-skeleton-loader>
+                          <a-skeleton active :paragraph="{ rows: 4 }" :title="false" />
                         </template>
-                        <template #error>
-                          <v-img width="150" src="/icons/movie_placeholder.png" class="mb-1" />
-                        </template>
-                      </v-img>
-                      <h3
+                      </a-image>
+                      <a-typography-title
                         v-if="socialInformation[key]?.title"
-                        class="text-decoration-none text-ellipsis text-truncate font-weight-bold"
-                        :title="socialInformation[key]?.title"
+                        :ellipsis="{ tooltip: socialInformation[key]?.title }"
+                        :level="5"
+                        :style="{ fontSize: '14px', margin: '8px 0' }"
                       >
                         {{ socialInformation[key]?.title.split(" / ")[0] }}
-                      </h3>
-                      <p v-if="socialInformation[key]?.ratingScore" class="text-body-small">
+                      </a-typography-title>
+                      <a-typography-paragraph
+                        v-if="socialInformation[key]?.ratingScore"
+                        :style="{ fontSize: '12px', marginBottom: 0 }"
+                      >
                         {{ socialInformation[key].ratingScore }}
                         <span v-if="socialInformation[key]?.ratingCount">
                           from {{ socialInformation[key].ratingCount }} votes
                         </span>
-                      </p>
+                      </a-typography-paragraph>
                     </template>
-                    <template v-else>
-                      <h3 class="font-weight-bold my-2">No Information</h3>
-                    </template>
+                    <!-- V-4：请求失败时给出可重试的错误态，而不是永久停在 Loading.... -->
+                    <a-typography-title
+                      v-else-if="socialInformation[key]?.error"
+                      :level="5"
+                      style="margin: 8px 0; font-size: 13px"
+                    >
+                      {{ t("MyClient.state.error") }}
+                    </a-typography-title>
+                    <a-typography-title v-else :level="5" style="margin: 8px 0">No Information</a-typography-title>
 
                     <template v-if="canAdvanceSearch(key as TSupportSocialSite)">
-                      <v-divider class="my-1" />
-                      <v-btn
-                        variant="text"
+                      <a-divider style="margin: 4px 0" />
+                      <a-button
                         block
-                        append-icon="mdi-magnify"
+                        type="text"
                         @click="doAdvanceSearch(key as TSupportSocialSite, item[`ext_${key}`] as string)"
                       >
+                        <template #icon><SearchOutlined /></template>
                         {{ t("common.search") }}
-                      </v-btn>
+                      </a-button>
                     </template>
 
-                    <v-divider class="my-1" />
-                    <v-btn
-                      variant="text"
-                      :href="meta(item[`ext_${key}`]! as string)"
-                      target="_blank"
+                    <a-divider style="margin: 4px 0" />
+                    <a-button
                       block
+                      :href="meta(item[`ext_${key}`]! as string)"
                       rel="noopener noreferrer nofollow"
+                      target="_blank"
                       :title="`${key}: ${item[`ext_${key}`]}`"
-                      append-icon="mdi-arrow-top-right-bold-box-outline"
+                      type="text"
                     >
+                      <template #icon><SelectOutlined /></template>
                       {{ t("common.visit") }}
-                    </v-btn>
-                    <v-divider class="my-1" />
-                    <p class="text-body-small mt-1">( {{ key }}: {{ item[`ext_${key}`] }} )</p>
+                    </a-button>
+                    <a-divider style="margin: 4px 0" />
+                    <a-typography-paragraph :style="{ fontSize: '12px', marginTop: '4px' }">
+                      ( {{ key }}: {{ item[`ext_${key}`] }} )
+                    </a-typography-paragraph>
                   </div>
-                </v-card-text>
-              </v-card>
-            </v-menu>
+                </a-card>
+              </template>
+            </a-dropdown>
           </template>
         </template>
       </div>
-    </v-row>
-    <v-row
-      gap="0"
-      class="flex-nowrap"
+    </a-flex>
+
+    <a-flex
       v-if="configStore.searchEntifyControl.showTorrentTag || configStore.searchEntifyControl.showTorrentSubtitle"
+      align="center"
+      wrap="nowrap"
     >
       <!-- 种子标签信息 -->
-      <div class="flex-0-0">
+      <div style="flex: 0 0 auto">
         <template v-if="configStore.searchEntifyControl.showTorrentTag && item.tags && item.tags.length > 0">
-          <v-hover v-for="tag in displayedTags" :key="tag.name" v-slot:default="{ isHovering, props }">
-            <v-chip
-              v-bind="props"
-              :color="tag.color"
-              :closable="isHovering as unknown as boolean"
-              class="mr-1"
-              label
-              size="x-small"
-              @click:close="tempHideTag(tag.name)"
-            >
-              {{ tag.name }}
-            </v-chip>
-          </v-hover>
-          <v-chip
-            v-if="hasMoreTags"
-            class="mr-1"
-            label
-            size="x-small"
-            color="primary"
-            variant="tonal"
-            prepend-icon="mdi-arrow-expand-right"
-            @click="tagsExpanded = true"
-          >
+          <a-tag v-for="tag in displayedTags" :key="tag.name" color="default" style="margin-right: 4px">
+            {{ tag.name }}
+          </a-tag>
+          <a-tag v-if="hasMoreTags" color="default" style="margin-right: 4px" @click="tagsExpanded = true">
+            <template #icon><ArrowRightOutlined /></template>
             {{ hiddenTagCount }}
-          </v-chip>
+          </a-tag>
         </template>
       </div>
 
       <!-- 种子副标题信息 -->
-      <span
+      <a-tooltip
         v-if="configStore.searchEntifyControl.showTorrentSubtitle && item.subTitle"
         :title="item.subTitle"
-        class="t_subTitle text-grey text-truncate flex-1-1-0"
+        placement="topLeft"
+        :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
+        :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
       >
-        {{ item.subTitle }}
-      </span>
-    </v-row>
-  </v-container>
+        <span class="ptd-cell-ellipsis" :style="{ flex: '1 1 0', minWidth: 0, color: 'var(--ptd-text-secondary)' }">
+          {{ item.subTitle }}
+        </span>
+      </a-tooltip>
+    </a-flex>
+  </div>
 </template>
-
-<style scoped lang="scss">
-// flex item 默认 min-width: auto 会阻止 text-overflow: ellipsis 收缩截断,需显式归零
-.t_main .text-truncate.flex-1-1-0 {
-  min-width: 0;
-}
-</style>

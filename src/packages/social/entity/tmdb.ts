@@ -71,6 +71,67 @@ function buildTmdbSeasonsUrl(docUrl: string): string {
   return `https://www.themoviedb.org/${baseId}/seasons`;
 }
 
+/**
+ * TMDb 附属页面（external_ids / 基础标题 / seasons）的进程内缓存。
+ *
+ * 同一部剧在搜索结果中会有多个版本，pageParser 会对每一条结果抓 3~4 张完整 HTML；
+ * 这些页面在短时间内不会变化，因此按 URL 复用已经拿到的 Document，避免重复整页下载与解析。
+ * 只缓存"确实是目标页面"的成功结果：请求失败、或拿到登录页等非目标页面时，
+ * 照旧由调用方捕获并返回空值，且不写入缓存。
+ */
+const TMDB_DOCUMENT_CACHE_TTL = 10 * 60 * 1000;
+const TMDB_DOCUMENT_CACHE_MAX_SIZE = 256;
+
+const tmdbDocumentCache = new Map<string, { createAt: number; promise: Promise<Document> }>();
+
+/** 校验拿到的 Document 确实是目标页面；未登录时 TMDb 会以 HTTP 200 返回登录页 */
+type TTmdbDocumentValidator = (doc: Document) => boolean;
+
+function isTmdbLoginDocument(doc: Document): boolean {
+  if (typeof doc.URL === "string" && doc.URL.toLowerCase().includes("/login")) {
+    return true;
+  }
+
+  return !!doc.querySelector('#auth_login_form, form[action*="/login"], input[type="password"]');
+}
+
+function fetchTmdbDocument(url: string, isValidDocument: TTmdbDocumentValidator): Promise<Document> {
+  const cached = tmdbDocumentCache.get(url);
+  if (cached && Date.now() - cached.createAt < TMDB_DOCUMENT_CACHE_TTL) {
+    return cached.promise;
+  }
+
+  const promise = axios.get<Document>(url, { responseType: "document", withCredentials: true }).then((response) => {
+    const doc = response.data;
+
+    // 未登录时 /edit?active_nav_item=external_ids 等页面会以 200 返回登录页（不抛错），
+    // 关键元素不存在时按抓取失败处理：不写入缓存，避免这份"空文档"被 TTL 钉住 10 分钟。
+    if (!isValidDocument(doc) || isTmdbLoginDocument(doc)) {
+      throw new Error(`Unexpected TMDb document for ${url}`);
+    }
+
+    return doc;
+  });
+
+  tmdbDocumentCache.set(url, { createAt: Date.now(), promise });
+
+  // 失败（含"拿到的不是目标页面"）不缓存，保持原有"下次调用重新请求"的行为
+  promise.catch(() => {
+    if (tmdbDocumentCache.get(url)?.promise === promise) {
+      tmdbDocumentCache.delete(url);
+    }
+  });
+
+  if (tmdbDocumentCache.size > TMDB_DOCUMENT_CACHE_MAX_SIZE) {
+    const oldestKey = tmdbDocumentCache.keys().next().value;
+    if (oldestKey !== undefined && oldestKey !== url) {
+      tmdbDocumentCache.delete(oldestKey);
+    }
+  }
+
+  return promise;
+}
+
 async function fetchTmdbExternalIds(docUrl: string): Promise<{ imdb?: string; tvdb?: string }> {
   const externalIdsUrl = buildTmdbExternalIdsUrl(docUrl);
   if (!externalIdsUrl) {
@@ -78,10 +139,7 @@ async function fetchTmdbExternalIds(docUrl: string): Promise<{ imdb?: string; tv
   }
 
   try {
-    const { data: extDoc } = await axios.get<Document>(externalIdsUrl, {
-      responseType: "document",
-      withCredentials: true,
-    });
+    const extDoc = await fetchTmdbDocument(externalIdsUrl, (doc) => !!doc.querySelector("#imdb_id, #tvdb_id"));
     const imdb = extDoc.querySelector<HTMLInputElement>("#imdb_id")?.value?.trim() || undefined;
     const tvdb = extDoc.querySelector<HTMLInputElement>("#tvdb_id")?.value?.trim() || undefined;
 
@@ -99,10 +157,10 @@ async function fetchTmdbSeriesOgTitleFromSeasons(docUrl: string): Promise<string
   }
 
   try {
-    const { data: seasonsDoc } = await axios.get<Document>(seasonsUrl, {
-      responseType: "document",
-      withCredentials: true,
-    });
+    const seasonsDoc = await fetchTmdbDocument(
+      seasonsUrl,
+      (doc) => !!doc.querySelector('div.season_wrapper, meta[property="og:title"]'),
+    );
     return seasonsDoc.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || undefined;
   } catch (error) {
     console.warn("Failed to fetch TMDb seasons page", error);
@@ -117,10 +175,7 @@ async function fetchTmdbBaseTitles(docUrl: string): Promise<{ displayTitle?: str
   }
 
   try {
-    const { data: baseDoc } = await axios.get<Document>(baseUrl, {
-      responseType: "document",
-      withCredentials: true,
-    });
+    const baseDoc = await fetchTmdbDocument(baseUrl, (doc) => !!doc.querySelector('meta[property="og:title"]'));
     const displayTitle =
       baseDoc.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || undefined;
     const originalTitle = getOriginalTitleText(baseDoc) || undefined;
@@ -157,12 +212,20 @@ async function pageParser(doc: Document): Promise<ISocialSitePageInformation | I
   const ogTitle = doc.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() ?? "";
   const originalTitleText = getOriginalTitleText(doc);
   const shouldUseBaseTitles = mediaType === "tv" && /\/(seasons|season\/\d+)(?:\?.*)?$/.test(doc.URL);
-  const { displayTitle: baseDisplayTitle, originalTitle: baseOriginalTitle } = shouldUseBaseTitles
-    ? await fetchTmdbBaseTitles(doc.URL)
-    : {};
+  const shouldUseSeasonsOgTitle = mediaType === "tv" && /\/season\/\d+(?:\?.*)?$/.test(doc.URL);
+
+  // 三张附属页面互不依赖，并行抓取（各自的 Document 也有进程内缓存），避免串行整页下载
+  const [{ displayTitle: baseDisplayTitle, originalTitle: baseOriginalTitle }, external_ids, seriesOgTitle] =
+    await Promise.all([
+      shouldUseBaseTitles
+        ? fetchTmdbBaseTitles(doc.URL)
+        : Promise.resolve({} as { displayTitle?: string; originalTitle?: string }),
+      fetchTmdbExternalIds(doc.URL),
+      shouldUseSeasonsOgTitle ? fetchTmdbSeriesOgTitleFromSeasons(doc.URL) : Promise.resolve(undefined),
+    ]);
+
   const displayTitle = baseDisplayTitle || ogTitle;
   const originalTitle = baseOriginalTitle || originalTitleText;
-  const external_ids = await fetchTmdbExternalIds(doc.URL);
 
   if (mediaType === "tv" && /\/seasons(?:\?.*)?$/.test(doc.URL)) {
     const seasonResults: ISocialSitePageInformation[] = Array.from(
@@ -201,7 +264,7 @@ async function pageParser(doc: Document): Promise<ISocialSitePageInformation | I
 
   if (mediaType === "tv" && /\/season\/\d+(?:\?.*)?$/.test(doc.URL)) {
     const seasonCode = formatSeasonCode(doc.URL);
-    const seasonDisplayTitle = (await fetchTmdbSeriesOgTitleFromSeasons(doc.URL)) ?? displayTitle;
+    const seasonDisplayTitle = seriesOgTitle ?? displayTitle;
     const currentSeasonTitle =
       doc.querySelector("h2 a[href*='/season/']")?.textContent?.trim() ??
       doc.querySelector("section.header h2")?.textContent?.trim() ??

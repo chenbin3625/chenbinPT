@@ -60,5 +60,3 @@ function onCancel() {
 <template>
   <SentToDownloaderDialog v-model="showDialog" :torrent-items="torrentItems" @done="onDone" @cancel="onCancel" />
 </template>
-
-<style scoped lang="scss"></style>

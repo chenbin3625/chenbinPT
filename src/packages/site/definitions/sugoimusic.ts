@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/sugoimusic.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/sugoimusic.me/config.json
  */
 import { type ISiteMetadata } from "../types";
 // import { SchemaMetadata } from "../schemas/GazelleJSONAPI.ts";

@@ -57,6 +57,14 @@ export const formatDate = (date: Date | number | string, format: string = "yyyy-
   }
 };
 
+export const formatDateTimeForTable = (
+  date: Date | number | string,
+  format: string = "yyyy-MM-dd HH:mm:ss",
+): string => {
+  const formatted = formatDate(date, format);
+  return typeof formatted === "string" ? formatted.replace(" ", "\n") : String(formatted);
+};
+
 interface formatTimeAgoOptions {
   weekOnly?: boolean; // 是否只显示周数（即小于一周的显示为“不到一周”）
   spacer?: string; // 年月日等单位之间的分隔符，默认为一个空格
@@ -100,6 +108,62 @@ export const formatTimeAgo = (sourceDate: Date | number | string, options: forma
 
 export const formatNumber = (num: number, options: Intl.NumberFormatOptions = {}) =>
   Number(num).toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2, ...options });
+
+/**
+ * 分享率的展示值。
+ *
+ * 语义与 `MyData/utils/format.ts` 的 `realFormatRatio` **对齐**（同一概念不应在不同页面显示不同）：
+ * - `Infinity`（以及 ≥ 10000 这种事实上无限大）→ `"∞"`；
+ * - 缺失 / `NaN` / 空串 / 非数字 → `"-"`；
+ * - 其余 → 保留 `digits` 位小数。
+ *
+ * 为什么视图层不能直接 `.toFixed(2)`：`ratio` 是**跨消息边界传过来的运行期数据**，
+ * 各下载器实体对它的处理并不一致（有的客户端在分母为 0 时会算出 `Infinity`，字段也可能整体缺失）。
+ * 裸调 `.toFixed(2)` 一旦拿到 `undefined` 就抛 `TypeError`，**让整个 antd 表格渲染崩掉**
+ * （实测：MyClient 的 bodyCell 抛错 → 表格空白）。同文件既有的
+ * `totalUpSpeed`/`totalDlSpeed` 展示也采用「守卫后返回 `-`」的写法。
+ *
+ * 与 `realFormatRatio` 的一处**有意差异**：后者把 `-1` 也显示为 `"∞"`——那是 MyData
+ * 「尚无下载量」哨兵的语义（见 B-26），下载器侧的种子不存在该哨兵，故这里如实显示 `-1.00`。
+ *
+ * @param ratio 任意可能为 undefined/NaN/空串/字符串的原始值
+ * @param digits 小数位，默认 2
+ */
+export const formatRatio = (ratio: unknown, digits: number = 2): string => {
+  const value = normalizeRatioValue(ratio);
+  if (value === null) {
+    return "-";
+  }
+  if (value === Infinity || value >= 10000) {
+    return "∞";
+  }
+  return Number.isFinite(value) ? value.toFixed(digits) : "-";
+};
+
+/**
+ * `ratio` 的展示值是否应视为「达标」（≥ 1）。
+ *
+ * 与 `formatRatio` **共用同一个归一化**，避免出现「文本显示 2.50 却给了危险色」这种自相矛盾的渲染
+ * （曾经两处各自判断：文本走 `Number()` 能认字符串 `"2.5"`，而颜色表达式用 `Number.isFinite("2.5")`
+ * 得到 false → 判定为不达标）。
+ */
+export const isRatioHealthy = (ratio: unknown): boolean => {
+  const value = normalizeRatioValue(ratio);
+  return value !== null && (value === Infinity || value >= 1);
+};
+
+/** 把任意原始值归一化为 number / null（null 表示「无数据」，与 0 区别开）。 */
+function normalizeRatioValue(ratio: unknown): number | null {
+  // 空串/" " 不能走 Number()（会得到 0，把「没有数据」显示成 "0.00"）
+  if (typeof ratio === "string" && ratio.trim() === "") {
+    return null;
+  }
+  const value = typeof ratio === "string" ? Number(ratio) : ratio;
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return null;
+  }
+  return value;
+}
 
 // 定义单位和对应的阈值
 const simplifyNumberUnits = [

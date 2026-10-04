@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "PT分享站",
   description: "PT分享",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

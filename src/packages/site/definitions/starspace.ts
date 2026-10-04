@@ -1,6 +1,6 @@
 import { ETorrentStatus, type ISiteMetadata } from "../types";
 import { parseSizeString } from "../utils";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 const levelMap: Record<string, string> = {
   class1: "User",
@@ -197,9 +197,9 @@ export const siteMetadata: ISiteMetadata = {
             selector: "table#table_tm > tbody",
             elementProcess: (element: HTMLElement) => {
               let seedingSize = 0;
-              const trAnothers = Sizzle("tr[class^='tm_tr']", element);
+              const trAnothers = selectElements("tr[class^='tm_tr']", element);
               trAnothers.forEach((trAnother) => {
-                const sizeAnother = Sizzle("td:nth-child(4)", trAnother)[0] as HTMLElement | undefined;
+                const sizeAnother = selectElements("td:nth-child(4)", trAnother)[0] as HTMLElement | undefined;
                 seedingSize += parseSizeString((sizeAnother?.innerText?.trim() ?? "0") + "B");
               });
               return seedingSize;

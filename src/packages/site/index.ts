@@ -106,6 +106,7 @@ export async function getSite<TYPE extends "private" | "public">(
   userConfig.allowQueryUserInfo ??= checkSiteMetadataAllow(siteMetadata, "userInfo");
   userConfig.showMessageCount ??= checkSiteMetadataAllow(siteMetadata, "userInfo");
 
-  // @ts-ignore
+  // @ts-expect-error
+  // 原因：SiteClass 来自动态 import 的 schema/definition 模块，其构造签名在联合类型下无法被静态收窄
   return new SiteClass(siteMetadata, userConfig);
 }

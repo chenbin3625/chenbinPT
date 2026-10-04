@@ -334,7 +334,8 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
 
     return req.torrents.map((torrent: TorrentData) => {
       const torrentState: number = torrent[1];
-      const progress: number = torrent[4] / 100;
+      // uTorrent Web API 的 PROGRESS 是千分比（integer in per mils），换算成 CTorrent 约定的 0-100
+      const progress: number = torrent[4] / 10;
       const done = progress >= 100;
       const isCompleted = progress >= 100;
 

@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "雨",
   description: "与你相逢，就是奇迹",
   tags: ["综合", "影视"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

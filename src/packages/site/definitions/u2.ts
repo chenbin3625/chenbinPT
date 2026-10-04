@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/u2.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/u2.dmhy.org/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/u2.dmhy.org/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/u2.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/u2share.json
  */
@@ -120,7 +120,7 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       ext_anidb: {
-        selector: ["a[href*='http://anidb.net/']"],
+        selector: ["a[href*='anidb.net/']"],
         attr: "href",
         filters: [{ name: "extAnidbId" }],
       },

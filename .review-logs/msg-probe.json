@@ -1,0 +1,58 @@
+{
+  "msgs": [
+    {
+      "type": "ping",
+      "ok": true,
+      "res": "{\"res\":\"pong\"}"
+    },
+    {
+      "type": "getExtStorage(config)",
+      "ok": true,
+      "res": "{\"res\":{\"autoExtendCookies\":{\"enabled\":false,\"extensionDuration\":3,\"triggerThreshold\":2},\"autoToggleNavBarOnDisplayChange\":true,\"backup\":{\"enabledAutoBackup\":false,\"encryptionKey\":\"\"},\"contentScript\":{\"allowExceptionSites\":false,\"applyTheme\":false,\"defaultOpenSpeedDial\":false,\"doubleConfirmAction\":true,\"dragLinkOnSpeedDial\":true,\"enabled\":true,\"enabledAtSocialSite\":true,\"fadeEnterStyle\":false,\"position\":{\"x\":0,\"y\":0},\"socialSiteSearchBy\":\"chosen\",\"stackedButtons\":false},\"contextMenus\":{\"allowLinkDownloadPush\":true,\"allowSelectionTextSearch\":true,\"allowSocialLinkSearch\":true,\"enabled\":true},\"download\":{\"allowDirectSendToClient\":false,\"allowDownloaderFilterForSite\":false,\"ignoreSiteDownloadIntervalWhenLocalDownload\":true,\"initDownloaderTorrentOnEnter\":false,\"localDownloadMethod\":\"browser\",\"saveDownloadHistory\":true,\"saveLastDownloader\":false,\"useQuickSendToClient\":true},\"enableTableMultiSort\":false,\"ignoreWrongPixelRatio\":false,\"isNavBarOpen\":true,\"lang\":\"zh_CN\",\"mediaServerEntity\":{\"autoSearchMoreWhenScroll\":true,\"autoSearchWhenMount\":true,\"queueConcurrency\":5,\"searchLimit\":50},\"myDataTableControl\":{\"joinTimeFormat\":\"added\",\"normalizeLevelName\":true,\"onlyShowUserLevelRequirement\":true,\"showBonusNeededInterval\":true,\"showHnR\":true,\"showIntervalAsDate\":false,\"showLevelRequirement\":true,\"showNextLevelInDialog\":true,\"showNextLevelInTable\":false,\"showSeedingBonus\":true,\"showSiteName\":true,\"showUnreadMessage\":true,\"showUserName\":true,\"simplifyBonusNumbers\":false,\"updateAtFormatAsAlive\":false},\"saveTableBehavior\":true,\"searchEntifyControl\":{\"hiddenTagNames\":[],\"highlightSameSizeTorrent\":false,\"limitTorrentTitleTdWidth\":true,\"maxTagCountBeforeGroup\":0,\"showSiteName\":true,\"showSocialInformation\":true,\"showTorrentSubtitle\":true,\"showTorrentTag\":true,\"socialInformationSearchOnNewTab\":true,\"uploadAtFormatAsAlive\":false},\"searchEntity\":{\"allowSingleSiteSearch\":false,\"autoDetectOfficialGroupFromTitle\":false,\"forceImdbIdMatchFilter\":true,\"queueConcurrency\":8,\"quickSiteFilter\":true,\"saveLastFilter\":true,\"showHotRecommendations\":true,\"treatTTQueryAsImdbSearch\":true},\"socialSiteInformation\":{\"cacheDay\":7,\"preferPtGen\":true,\"socialSite\":{\"anidb\":{},\"bangumi\":{},\"douban\":{},\"imdb\":{},\"tmdb\":{},\"tvmaze\":{}},\"timeout\":10000},\"tableBehavior\":{\"DownloadHistory\":{\"itemsPerPage\":10,\"sortBy\":[{\"key\":\"downloadAt\",\"order\":\"desc\"}]},\"MyClient\":{\"columns\":[\"clientId\",\"name\",\"totalSize\",\"progress\",\"state\",\"ratio\",\"uploadSpeed\",\"downloadSpeed\",\"dateAdded\",\"action\"],\"itemsPerPage\":25,\"sortBy\":[{\"key\":\"dateAdded\",\"order\":\"desc\"}]},\"MyData\":{\"columns\":[\"siteUserConfig.sortIndex\",\"name\",\"levelName\",\"uploaded\",\"ratio\",\"uploads\",\"seeding\",\"seedingSize\",\"bonus\",\"joinTime\",\"updateAt\",\"action\"],\"itemsPerPage\":20,\"sortBy\":[{\"key\":\"siteUserConfig.sortIndex\",\"order\":\"desc\"}]},\"SearchEntity\":{\"columns\":[\"site\",\"title\",\"category\",\"size\",\"seeders\",\"leechers\",\"completed\",\"comments\",\"time\",\"action\"],\"itemsPerPage\":50,\"sortBy\":[{\"key\":\"time\",\"order\":\"desc\"}]},\"SearchResultSnapshot\":{\"itemsPerPage\":25,\"sortBy\":[{\"key\":\"createdAt\",\"order\":\"desc\"}]},\"SetDownloader\":{\"itemsPerPage\":10,\"sortBy\":[{\"key\":\"enabled\",\"order\":\"desc\"}]},\"SetSearchSolution\":{\"itemsPerPage\":10},\"SetSite\":{\"itemsPerPage\":25,\"sortBy\":[{\"key\":\"userConfig.sortIndex\",\"order\":\"desc\"}]}},\"theme\":\"light\",\"userDataTimelineControl\":{\"backgroundColor\":\"#455A64\",\"dateFormat\":\"time_added\",\"faviconBlue\":3,\"selectedSites\":[],\"showField\":{\"bonus\":true,\"bonusPerHour\":true,\"downloaded\":true,\"ratio\":true,\"seeding\":true,\"seedingSize\":true,\"uploaded\":true,\"uploads\":true},\"showPerSiteField\":{\"level\":true,\"name\":true,\"siteName\":false,\"uid\":true},\"showTimeline\":true,\"showTop\":true,\"title\":\"\"},\"userInfo\":{\"alwaysPickLastUserInfo\":true,\"autoReflush\":{\"afterTime\":\"00:00\",\"enabled\":true,\"interval\":3,\"retry\":{\"interval\":5,\"max\":3}},\"queueConcurrency\":5,\"showDeadSiteInOverview\":false,\"showPassedSiteInOverview\":false},\"userName\":\"\",\"userStatisticControl\":{\"dateRange\":30,\"hidePerSitePrecentThreshold\":1,\"selectedSites\":[],\"showChart\":{\"perSiteKbonus\":true,\"perSiteKbonusIncr\":true,\"perSiteKdownloaded\":true,\"perSiteKdownloadedIncr\":true,\"perSiteKseeding\":true,\"perSiteKseedingBonus\":false,\"perSiteKseedingBonusIncr\":false,\"perSiteKseedingIncr\":true,\"perSiteKseedingSize\":true,\"perSiteKseedingSizeIncr\":true,\"perSiteKuploaded\":true,\"perSiteKuploadedIncr\":true,\"totalSiteBase\":true,\"totalSiteSeeding\":true}}}}"
+    },
+    {
+      "type": "getExtStorage(metadata)",
+      "ok": true,
+      "res": "{\"res\":{\"backupServers\":{},\"defaultDownloader\":{},\"defaultSolutionId\":\"default\",\"downloaders\":{},\"lastDownloader\":{},\"lastKeepUpload\":{},\"lastSearchFilter\":\"\",\"lastUserInfo\":{},\"lastUserInfoAutoFlushAt\":0,\"mediaServers\":{},\"siteHostMap\":{},\"siteNameMap\":{},\"sites\":{},\"snapshots\":{},\"solutions\":{}}}"
+    },
+    {
+      "type": "getSiteUserInfoResult(fakesite)",
+      "ok": true,
+      "res": "{\"err\":{\"name\":\"TypeError\",\"message\":\"Ui[t] is not a function\",\"stack\":\"TypeError: Ui[t] is not a function\\n    at qi (chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/vendor/nanoid/index.browser-DZa6p530.js:10:66099)\\n    at $l (chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/vendor/nanoid/index.browser-DZa6p530.js:10:66263)\\n    at me (chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/assets/src/entries/offscreen/offscreen-CbxKWCGz.js:1:6210)\\n    at async D (chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/assets/src/entries/offscreen/offscreen-CbxKWCGz.js:1:7218)\\n    at async chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/assets/src/entries/offscreen/offscreen-CbxKWCGz.js:1:19459\\n    at async c (chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/vendor/p-queue/index-BILlxXcl.js:1:9408)\"}}"
+    },
+    {
+      "type": "unknownMessage",
+      "ok": true,
+      "res": "(undefined)"
+    }
+  ],
+  "swLogs": [
+    "[ADAEA4] debug: Scheduling job:  Object",
+    "[ADAEA4] debug: Scheduling job:  Object",
+    "[ADAEA4] debug: [PTD] Installed!",
+    "[ADAEA4] log: [881] Executing job: Object",
+    "[ADAEA4] log: [699] Executing job: Object",
+    "[ADAEA4] log: [881] Job ran in 0:00 Object",
+    "[ADAEA4] log: [699] Job ran in 0:00 Object",
+    "[C9DC46] debug: setupReplaceUnsafeHeader() should be called only once",
+    "[C9DC46] debug: setupReplaceUnsafeHeader() should be called only once",
+    "[19B79F] debug: setupReplaceUnsafeHeader() should be called only once",
+    "[19B79F] debug: Restoring state for key: config from storage: local",
+    "[19B79F] debug: Restoring state for key: metadata from storage: local",
+    "[ADAEA4] log: ping "
+  ],
+  "targets": [
+    "page :: chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/src/entries/options/index.html#/",
+    "background_page :: chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/src/entries/offscreen/offscreen.html",
+    "browser_ui :: chrome://omnibox-popup.top-chrome/",
+    "browser_ui :: chrome://omnibox-popup.top-chrome/omnibox_popup_aim.html",
+    "background_page :: chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/background.html",
+    "page :: about:blank",
+    "service_worker :: chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/service_worker.js",
+    "service_worker :: chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/src/entries/background/main.js"
+  ],
+  "extId": "lggdieihfigbjlphckeeddcdgkffemlk",
+  "pageHref": "chrome-extension://lggdieihfigbjlphckeeddcdgkffemlk/src/entries/options/index.html#/",
+  "mounted": true,
+  "storageKeys": ["config", "metadata"]
+}

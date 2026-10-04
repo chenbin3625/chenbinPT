@@ -1,6 +1,8 @@
 // noinspection ES6PreferShortImport
 
-import { type TSiteID, EResultParseStatus } from "./base";
+// P1-4：EResultParseStatus 在本文件仅作为类型使用（status: EResultParseStatus），
+// 统一收敛为 import type，避免 types 层产生多余的运行时依赖边。
+import type { TSiteID, EResultParseStatus } from "./base";
 import type { ITorrent } from "./torrent";
 import type { isoDuration } from "../utils/datetime";
 import type { TSize } from "../utils/filesize";
@@ -92,6 +94,12 @@ export interface ILevelRequirement extends IImplicitUserInfo {
 
 export interface IUserInfo extends Omit<IImplicitUserInfo, "interval"> {
   status: EResultParseStatus;
+  /**
+   * 额外的状态信息（与 ISearchResult.statusMsg 对齐，见 P1-3）。
+   * 请求/解析失败时用于透传原始错误信息（如 `Network Error: timeout of 30000ms exceeded`），
+   * 便于 UI 与日志定位原因；成功或无需说明时为空。
+   */
+  statusMsg?: `i18n.${string}` | string;
   updateAt: number; // 更新时间
   site: TSiteID;
 

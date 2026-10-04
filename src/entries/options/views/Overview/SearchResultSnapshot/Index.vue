@@ -1,29 +1,43 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { DeleteOutlined, EditOutlined, FileSearchOutlined, MinusOutlined } from "@ant-design/icons-vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { refDebounced } from "@vueuse/core";
-import type { DataTableHeader } from "vuetify";
+import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
-import { formatDate } from "@/options/utils.ts";
+import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
+import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import { type TSearchSnapshotKey } from "@/shared/types.ts";
 
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import EditNameDialog from "./EditNameDialog.vue";
+import { matchesHeaders, toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
 
 const { t } = useI18n();
 const router = useRouter();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 
+// 快照列表来自 metadata store，该 store 需要先从 chrome.storage 异步水合；
+// 水合完成前绑定 loading，避免先闪一下「暂无数据」再蹦出数据
+const isStoreHydrating = useStoreHydrating(metadataStore);
+
 const showEditNameDialog = ref<boolean>(false);
 const showDeleteDialog = ref<boolean>(false);
 
 const tableHeader = [
-  { title: t("SearchResultSnapshot.table.header.name"), key: "name", align: "start" },
+  {
+    title: t("SearchResultSnapshot.table.header.name"),
+    key: "name",
+    align: "start",
+    // 快照名 = [方案] 搜索词 (时间)，可能很长；限宽后单行省略、悬停看全文
+    maxWidth: "48rem",
+  },
   { title: t("SearchResultSnapshot.table.header.recordCount"), key: "recordCount", align: "end", width: 100 },
   {
     title: t("SearchResultSnapshot.table.header.createdAt"),
@@ -45,6 +59,29 @@ const tableHeader = [
 const tableSelected = ref<TSearchSnapshotKey[]>([]);
 const tableWaitFilter = ref("");
 const tableFilter = refDebounced(tableWaitFilter, 500); // 延迟搜索过滤词的生成
+
+const columns = computed(() =>
+  toAntdColumns(tableHeader, {
+    sortBy: configStore.tableBehavior.SearchResultSnapshot.sortBy,
+    multiSort: configStore.enableTableMultiSort,
+  }),
+);
+const tableData = computed(() =>
+  metadataStore.getSearchSnapshotList.filter((item) => matchesHeaders(item, tableFilter.value, tableHeader)),
+);
+const pagination = computed(() =>
+  toPagination(configStore.tableBehavior.SearchResultSnapshot.itemsPerPage, (v) =>
+    configStore.updateTableBehavior("SearchResultSnapshot", "itemsPerPage", v),
+  ),
+);
+
+function onSelectionChange(keys: (string | number)[]) {
+  tableSelected.value = keys as TSearchSnapshotKey[];
+}
+
+function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
+  configStore.updateTableBehavior("SearchResultSnapshot", "sortBy", toSortBy(sorter as never));
+}
 
 function viewSnapshot(searchSnapshotId: TSearchSnapshotKey) {
   router.push({
@@ -73,81 +110,68 @@ async function confirmDeleteSearchSnapshot(searchSnapshotId: TSearchSnapshotKey)
 </script>
 
 <template>
-  <v-alert type="info" :title="t('route.Overview.SearchResultSnapshot')" />
-  <v-card>
-    <v-card-title>
-      <v-row class="ma-0">
+  <a-card>
+    <a-typography-text strong>
+      <a-flex class="page-toolbar" align="center" :gap="8">
         <NavButton
           :disabled="tableSelected.length === 0"
           color="error"
-          icon="mdi-minus"
+          :icon="MinusOutlined"
           :text="t('common.remove')"
           @click="tryToDeleteSearchSnapshot(tableSelected)"
         />
 
-        <v-spacer />
-        <v-text-field
-          v-model="tableWaitFilter"
-          append-icon="mdi-magnify"
-          clearable
-          density="compact"
-          hide-details
-          :label="t('SearchResultSnapshot.table.filterLabel')"
-          max-width="500"
-          single-line
-        />
-      </v-row>
-    </v-card-title>
+        <div style="flex: 1 1 auto"></div>
+        <a-input
+          v-model:value="tableWaitFilter"
+          allow-clear
+          :placeholder="t('SearchResultSnapshot.table.filterLabel')"
+        ></a-input>
+      </a-flex>
+    </a-typography-text>
 
-    <v-data-table
-      v-model="tableSelected"
-      :headers="tableHeader"
-      :items="metadataStore.getSearchSnapshotList"
-      :items-per-page="configStore.tableBehavior.SearchResultSnapshot.itemsPerPage"
-      :search="tableFilter"
-      :sort-by="configStore.tableBehavior.SearchResultSnapshot.sortBy"
+    <a-table
+      :columns="columns"
+      :data-source="tableData"
+      :loading="isStoreHydrating"
+      :pagination="pagination"
+      :row-key="'id'"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
       class="table-stripe table-header-no-wrap"
-      hover
-      item-value="id"
-      :multi-sort="configStore.enableTableMultiSort"
-      show-select
-      @update:itemsPerPage="(v) => configStore.updateTableBehavior('SearchResultSnapshot', 'itemsPerPage', v)"
-      @update:sortBy="(v) => configStore.updateTableBehavior('SearchResultSnapshot', 'sortBy', v)"
+      @change="onTableChange"
     >
-      <template #item.createdAt="{ item }">
-        <span class="text-no-wrap"> {{ formatDate(item.createdAt) }}</span>
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'createdAt'">
+          <span class="ptd-date-time">{{ formatDateTimeForTable(record.createdAt) }}</span>
+        </template>
+        <template v-else-if="column.key === 'action'">
+          <a-button-group class="table-action">
+            <a-button
+              :title="t('SearchResultSnapshot.table.action.view')"
+              type="primary"
+              size="small"
+              @click="() => viewSnapshot(record.id)"
+              ><template #icon><FileSearchOutlined /></template
+            ></a-button>
+            <a-button
+              :title="t('SearchResultSnapshot.table.action.editTitle')"
+              size="small"
+              @click="() => editSnapshotName(record.id)"
+              ><template #icon><EditOutlined /></template
+            ></a-button>
+            <a-button :title="t('common.remove')" danger size="small" @click="tryToDeleteSearchSnapshot([record.id])"
+              ><template #icon><DeleteOutlined /></template
+            ></a-button>
+          </a-button-group>
+        </template>
       </template>
-      <template #item.action="{ item }">
-        <v-btn-group class="table-action" density="compact" variant="plain">
-          <v-btn
-            color="green"
-            icon="mdi-archive-search"
-            size="small"
-            :title="t('SearchResultSnapshot.table.action.view')"
-            @click="() => viewSnapshot(item.id)"
-          ></v-btn>
-          <v-btn
-            color="blue"
-            icon="mdi-archive-edit"
-            size="small"
-            :title="t('SearchResultSnapshot.table.action.editTitle')"
-            @click="() => editSnapshotName(item.id)"
-          ></v-btn>
-          <v-btn
-            :title="t('common.remove')"
-            color="error"
-            icon="mdi-delete"
-            size="small"
-            @click="tryToDeleteSearchSnapshot([item.id])"
-          >
-          </v-btn>
-        </v-btn-group>
+
+      <template #emptyText>
+        <NoDataPlaceholder compact />
       </template>
-    </v-data-table>
-  </v-card>
+    </a-table>
+  </a-card>
 
   <EditNameDialog v-model="showEditNameDialog" :edit-id="toEditId!" />
   <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteSearchSnapshot" />
 </template>
-
-<style scoped lang="scss"></style>

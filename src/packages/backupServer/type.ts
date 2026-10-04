@@ -13,6 +13,14 @@ export interface IBackupMetadata<T extends IBackupConfig> {
     key: keyof T["config"];
     type: "strings" /* textarea */ | "string" /* input */ | "boolean" /* switch */;
     description?: string;
+    /**
+     * 该字段是否为凭据（密码 / 令牌 / 密钥等）。见审查报告 B-31。
+     *
+     * 设置页会据此默认掩码显示并提供「显示明文」切换，导出的备份在需要时也能据此识别敏感字段。
+     * 未声明（`undefined`）时按历史行为处理：普通明文输入框。因此新增凭据字段时必须显式标注，
+     * 而 endpoint / bucket / client_id 这类非凭据的标识字段不要标注，避免无谓的掩码。
+     */
+    secret?: boolean;
   }[];
 }
 

@@ -10,7 +10,6 @@ export const siteMetadata: ISiteMetadata = {
   id: "nordicquality",
   name: "NordicQuality",
   tags: ["北欧"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

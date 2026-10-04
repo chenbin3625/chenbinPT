@@ -17,7 +17,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "ULCX",
   description: "upload.cx",
   tags: ["影视"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

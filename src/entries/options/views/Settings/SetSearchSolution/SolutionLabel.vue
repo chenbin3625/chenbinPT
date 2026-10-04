@@ -7,11 +7,12 @@ import SiteName from "@/options/components/SiteName.vue";
 const {
   solutions,
   closable = true,
-  groupProps = {},
+  column = false,
 } = defineProps<{
   solutions: ISearchSolution[];
   closable?: boolean;
-  groupProps?: any;
+  /** 竖直排列（原 PtdChipGroup 的 `column`），用于侧栏/窄容器 */
+  column?: boolean;
 }>();
 
 const emit = defineEmits(["remove:solution"]);
@@ -22,18 +23,18 @@ function removeSolution(solution: ISearchSolution) {
 </script>
 
 <template>
-  <div class="pt-1">
-    <v-chip-group v-bind="groupProps">
-      <v-chip v-for="solution in solutions" :key="solution.id" class="mb-1 mr-1 h-auto py-1" label size="small">
-        <template #prepend>
-          <v-icon v-if="closable" class="mr-1" icon="$delete" @click="() => removeSolution(solution)" />
-        </template>
-
+  <div style="padding-top: 4px">
+    <a-space :direction="column ? 'vertical' : 'horizontal'" :size="4" wrap>
+      <a-tag
+        v-for="solution in solutions"
+        :key="solution.id"
+        :closable="closable"
+        style="height: auto; padding: 2px 8px"
+        @close="() => removeSolution(solution)"
+      >
         <SiteName class="" :site-id="solution.siteId" tag="span" />&nbsp;->&nbsp;
         <SolutionDetail :solution="solution" />
-      </v-chip>
-    </v-chip-group>
+      </a-tag>
+    </a-space>
   </div>
 </template>
-
-<style scoped lang="scss"></style>

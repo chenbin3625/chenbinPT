@@ -16,7 +16,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "BTSCHOOL",
   description: "汇聚每一个人的影响力",
   tags: ["影视", "综合", "学习"],
-  timezoneOffset: "+0800",
   aka: ["学校"],
   collaborator: ["hui-shao"],
 

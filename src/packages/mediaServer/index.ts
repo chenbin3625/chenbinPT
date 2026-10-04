@@ -34,7 +34,8 @@ export async function getMediaServerDefaultConfig(type: string): Promise<IMediaS
 export async function getMediaServer(config: IMediaServerBaseConfig): Promise<AbstractMediaServer> {
   const mediaServerClass = (await getMediaServerModule(config.type)).default;
 
-  // @ts-ignore
+  // @ts-expect-error
+  // 原因：mediaServerClass 来自动态 import 的实体模块，其构造签名在联合类型下无法被静态收窄
   return new mediaServerClass(config);
 }
 

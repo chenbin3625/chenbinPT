@@ -204,7 +204,7 @@ export default class GenerationFree extends Unit3D {
   ): Promise<AxiosResponse<T>> {
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      Authorization: `Bearer ${this.userConfig.inputSetting!.token ?? ""}`,
+      Authorization: `Bearer ${this.userConfig.inputSetting?.token ?? ""}`,
       Accept: "application/json",
     };
 
@@ -234,7 +234,9 @@ export default class GenerationFree extends Unit3D {
       if (freeleech === "100%") {
         tags.push({ name: "Free", color: "blue" });
       } else if (freeleech === "75%" || freeleech === "50%" || freeleech === "25%") {
-        tags.push({ name: freeleech.replace("%", "%"), color: "orange" });
+        // A-16：原为 freeleech.replace("%", "%")，把 % 换成 % 不可能改变字符串；
+        // 这里原本像是想做「折扣百分比 ↔ 剩余百分比」的换算但没写完，按现状直接使用原值。
+        tags.push({ name: freeleech, color: "orange" });
       }
       if (doubleUpload) {
         tags.push({ name: "2xUp", color: "green" });

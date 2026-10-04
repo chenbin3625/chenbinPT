@@ -14,6 +14,6 @@ export const siteMetadata: ISiteMetadata = {
 
   favicon: "./_default_nexusphp.png", // 实在找不到favicon了
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/db87ee0843f474d31edb84bbe92f82dafb3236ad
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/db87ee0843f474d31edb84bbe92f82dafb3236ad
   isDead: true,
 };

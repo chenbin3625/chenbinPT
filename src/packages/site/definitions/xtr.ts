@@ -1,6 +1,6 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/extremlymtorrents.ws/config.json
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/extremlymtorrents.ws/config.json
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 站点为 TSUE 系模板（torrents-search.php / ttable_col2 / account-details.php），
  * Jackett 无对应定义，此处依据 PTPP 配置迁移。

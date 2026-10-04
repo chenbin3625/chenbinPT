@@ -1,9 +1,11 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/azusa.yml
  * @JackettIssue https://github.com/Jackett/Jackett/issues/14478
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/azusa.wiki/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/azusa.wiki/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/azusa.json
  */
+import { selectElements } from "../utils/selector";
+
 import { type ISiteMetadata } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP.ts";
 
@@ -19,7 +21,6 @@ export const siteMetadata: ISiteMetadata = {
     "2025.7.12应站点公告要求取消用户信息获取",
   ],
   tags: ["漫画", "轻小说", "Galgame", "画集"],
-  timezoneOffset: "+0800",
 
   collaborator: ["zhuweitung"],
 
@@ -262,7 +263,7 @@ export default class Azusa extends NexusPHP {
 
     if (data && data?.includes("<b")) {
       const userSeedingPage = createDocument(`<div>${data}</div>`);
-      const divSeeding = Sizzle("div:contains(' | ')", userSeedingPage);
+      const divSeeding = selectElements("div:contains(' | ')", userSeedingPage);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
         seedStatus.seeding = definedFilters.parseNumber(seedingText[0]);
@@ -286,7 +287,7 @@ export default class Azusa extends NexusPHP {
 
     if (data && data?.includes("<b")) {
       const userSeedingPage = createDocument(`<div>${data}</div>`);
-      const divSeeding = Sizzle("div:contains(' | ')", userSeedingPage);
+      const divSeeding = selectElements("div:contains(' | ')", userSeedingPage);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
         flushUserInfo.uploads = definedFilters.parseNumber(seedingText[0]);

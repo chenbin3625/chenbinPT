@@ -20,6 +20,9 @@ const metadataStore = useMetadataStore();
 export const perSiteLastUserData = ref<Record<TSiteID, IUserInfoItem>>({});
 export const tableData = computed(() => Object.values(perSiteLastUserData.value));
 
+/** 表格首次加载 / 重新加载期间为 true，供页面显示表格 loading 占位 */
+export const isTableDataLoading = ref<boolean>(false);
+
 async function updatePerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo) {
   const currentDate = new Date();
 
@@ -32,7 +35,7 @@ async function updatePerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo) {
     site: siteId,
     siteUserConfig: metadataStore.sites[siteId],
     siteName: siteMeta.combinedSiteName,
-    // 对 isDead 或者 isOffline 的站点不允许选择（ https://github.com/pt-plugins/PT-depiler/pull/140 ）
+    // 对 isDead 或者 isOffline 的站点不允许选择（ https://github.com/chenbin3625/chenbinPT/pull/140 ）
     selectable: !(siteMeta.isDead || siteMeta.isOffline),
 
     // 预先计算 多少天未访问站点，以防止在 template 中反复计算
@@ -46,50 +49,73 @@ async function updatePerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo) {
 export async function initTableData() {
   const configStore = useConfigStore();
 
-  // 预加载所有已配置的站点基本属性，同时预加载的变量在全局统一，这样可以加快 Timeline 和 Statistic 的加载速度
-  const addedSiteMetaData = await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));
+  isTableDataLoading.value = true;
 
-  const tasks: Promise<void>[] = [];
+  try {
+    // metadata store 从 chrome.storage 的恢复是异步的：水合完成前 metadataStore.sites 还是空对象，
+    // 直接建表会渲染出「暂无数据」，需要先等水合完成（页面上的 loading 也正好覆盖这段时间）。
+    await metadataStore.$onReady();
 
-  for (const [siteId, siteUserConfig] of Object.entries(metadataStore.sites)) {
-    const siteMeta = addedSiteMetaData[siteId];
+    // 预加载所有已配置的站点基本属性，同时预加载的变量在全局统一，这样可以加快 Timeline 和 Statistic 的加载速度
+    const addedSiteMetaData = await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));
 
-    if (
-      // 只显示私有站点的用户信息
-      siteMeta.type === "public" ||
-      // 根据配置决定是否显示已死亡站点的用户信息
-      (!configStore.userInfo.showDeadSiteInOverview && siteMeta.isDead) ||
-      // 根据配置决定是否显示设置了离线模式或不允许查询用户信息的站点
-      (!siteMeta.isDead &&
-        !configStore.userInfo.showPassedSiteInOverview &&
-        (siteUserConfig.isOffline || siteUserConfig.allowQueryUserInfo === false))
-    ) {
-      continue;
+    const tasks: Promise<void>[] = [];
+
+    for (const [siteId, siteUserConfig] of Object.entries(metadataStore.sites)) {
+      const siteMeta = addedSiteMetaData[siteId];
+
+      // B-25 的配套守卫：站点元数据加载失败时（例如该站点 id 已不在构建产物里）这里会是 undefined，
+      // 直接解引用会让整张表建不出来，跳过该站点即可（失败原因已由 loadAllAddedSiteMetadata 统一提示）。
+      if (!siteMeta) {
+        continue;
+      }
+
+      if (
+        // 只显示私有站点的用户信息
+        siteMeta.type === "public" ||
+        // 根据配置决定是否显示已死亡站点的用户信息
+        (!configStore.userInfo.showDeadSiteInOverview && siteMeta.isDead) ||
+        // 根据配置决定是否显示设置了离线模式或不允许查询用户信息的站点
+        (!siteMeta.isDead &&
+          !configStore.userInfo.showPassedSiteInOverview &&
+          (siteUserConfig.isOffline || siteUserConfig.allowQueryUserInfo === false))
+      ) {
+        continue;
+      }
+
+      const siteUserInfoData = metadataStore.lastUserInfo[siteId] ?? {};
+      tasks.push(
+        updatePerSiteData(siteId as TSiteID, siteUserInfoData).catch((e) => {
+          console.error(`initTableData: updatePerSiteData failed for ${siteId}`, e);
+        }),
+      );
     }
 
-    const siteUserInfoData = metadataStore.lastUserInfo[siteId] ?? {};
-    tasks.push(
-      updatePerSiteData(siteId as TSiteID, siteUserInfoData).catch((e) => {
-        console.error(`initTableData: updatePerSiteData failed for ${siteId}`, e);
-      }),
-    );
+    await Promise.allSettled(tasks);
+  } finally {
+    isTableDataLoading.value = false;
   }
-
-  await Promise.allSettled(tasks);
 }
 
 export function flushSiteLastUserInfo(sites: TSiteID[]) {
   const runtimeStore = useRuntimeStore();
+  const configStore = useConfigStore();
+
   for (const site of sites) {
     runtimeStore.userInfo.flushPlan[site] = true;
 
-    sendMessage("getSiteUserInfoResult", site)
+    sendMessage("getSiteUserInfoResult", {
+      siteId: site,
+      queueConcurrency: configStore.userInfo.queueConcurrency,
+    })
       .then((userInfo) => updatePerSiteData(site, userInfo))
-      .catch((e) => {
-        // 首先检查是否还在刷新，如果没有，则说明队列已经取消了，此时不报错
-        if (!runtimeStore.userInfo.flushPlan[site]) {
+      .catch(() => {
+        // 这里必须判断「是否仍在刷新队列中」：仍在刷新说明是真实失败，要提示；
+        // 已被 cancelFlushSiteLastUserInfo / finally 置为 false 则说明是队列取消，静默处理。
+        // 注意条件不能取反，否则真实失败会被静默吞掉（按钮点了没有任何反馈）。
+        // 失败详情由下面的提示直接告知用户，不再往控制台重复打印（options 侧没有日志查看器，见审查报告 L-7）。
+        if (runtimeStore.userInfo.flushPlan[site]) {
           runtimeStore.showSnakebar(`获取站点 [${site}] 用户信息失败`, { color: "error" });
-          console.error(e);
         }
       })
       .finally(() => {

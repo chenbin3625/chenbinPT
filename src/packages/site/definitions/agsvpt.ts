@@ -6,7 +6,7 @@
  */
 import { type ISiteMetadata } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
-import { extractContent } from "../utils";
+import { extractTextExcluding } from "../utils";
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
@@ -16,7 +16,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["末日种子库"],
   description: "Arctic Global Seed Vault", // 站点说明
   tags: ["综合", "短剧", "影视"],
-  timezoneOffset: "+0800",
   collaborator: ["0X0000005"],
 
   type: "private",
@@ -58,9 +57,8 @@ export const siteMetadata: ISiteMetadata = {
       subTitle: {
         selector: ["div.torrent_title_desc"],
         elementProcess: (element: HTMLDivElement) => {
-          const e = element.cloneNode(true) as HTMLDivElement;
-          e.querySelectorAll("span").forEach((el) => el.remove());
-          return extractContent(e.innerHTML).trim();
+          // 剔除 span 后直接读取文本节点，避免每行深克隆
+          return extractTextExcluding(element, "span").trim();
         },
       },
     },

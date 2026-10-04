@@ -1,5 +1,5 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/hdmayi.com/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdmayi.com/config.json
  */
 import type { ISiteMetadata } from "../types";
 
@@ -16,7 +16,7 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["http://hdmayi.com/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/c6d81bb5bc5d8ea68fcf02860c3aa9310ae0a614
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/c6d81bb5bc5d8ea68fcf02860c3aa9310ae0a614
   isDead: true,
 
   levelRequirements: [

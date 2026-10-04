@@ -1,0 +1,9 @@
+# 校验提交信息是否符合 Conventional Commits（规则见 commitlint.config.mjs）。
+#
+# 为什么放在 commit-msg 而不是 pre-commit：
+#   pre-commit 阶段提交信息还没生成，拿不到；commit-msg 才能拿到 $1（提交信息文件）。
+#
+# 为什么用 `npx --no-install` 而不是裸 `npx`：
+#   --no-install 强制只用本地 node_modules 里已装的版本，缺包直接失败，
+#   不会像裸 npx 那样联网下载另一份 commitlint。
+npx --no-install commitlint --edit "$1"

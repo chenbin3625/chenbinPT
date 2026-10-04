@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["RFX"],
   description: "Keep it Reel",
   tags: ["电影"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

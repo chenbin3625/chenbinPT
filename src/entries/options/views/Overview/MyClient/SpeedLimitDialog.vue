@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { CTorrent, TorrentSpeedLimit } from "@ptd/downloader";
@@ -24,6 +24,11 @@ function dialogEnter() {
   uploadLimit.value = typeof raw?.up_limit === "number" ? Math.round(raw.up_limit / 1024) : null;
   downloadLimit.value = typeof raw?.dl_limit === "number" ? Math.round(raw.dl_limit / 1024) : null;
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 
 async function confirmSetLimit() {
   const limits: TorrentSpeedLimit = {};
@@ -52,52 +57,23 @@ async function confirmSetLimit() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="480" @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar :title="t('MyClient.speedLimit.title', { count: torrents.length })" color="blue-grey-darken-2">
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('MyClient.speedLimit.title', { count: torrents.length })"
+    :width="480"
+    @ok="confirmSetLimit"
+  >
+    <a-typography-paragraph class="ptd-section-description">
+      {{ t("MyClient.speedLimit.unitNote") }}
+    </a-typography-paragraph>
 
-      <v-divider />
-
-      <v-card-text>
-        <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-          {{ t("MyClient.speedLimit.unitNote") }}
-        </v-alert>
-
-        <v-text-field
-          v-model.number="uploadLimit"
-          :label="t('MyClient.speedLimit.upload')"
-          min="0"
-          type="number"
-          clearable
-        />
-        <v-text-field
-          v-model.number="downloadLimit"
-          :label="t('MyClient.speedLimit.download')"
-          min="0"
-          type="number"
-          clearable
-        />
-      </v-card-text>
-
-      <v-divider />
-
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="info" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          <span class="ml-1">{{ t("common.dialog.cancel") }}</span>
-        </v-btn>
-        <v-btn color="success" prepend-icon="mdi-check-circle-outline" variant="text" @click="confirmSetLimit">
-          <span class="ml-1">{{ t("common.dialog.ok") }}</span>
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <a-form-item :label="t('MyClient.speedLimit.upload')"
+      ><a-input-number v-model:value="uploadLimit" :min="0"></a-input-number
+    ></a-form-item>
+    <a-form-item :label="t('MyClient.speedLimit.download')"
+      ><a-input-number v-model:value="downloadLimit" :min="0"></a-input-number
+    ></a-form-item>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

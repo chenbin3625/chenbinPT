@@ -118,7 +118,7 @@ export default class Example extends Rartracker {}
 | `public override async request<T>(axiosConfig, checkLogin = true)` | 需要给所有 API 请求统一加 header / 改 `responseType` 时（基类方法，不是本 schema 定义） | `schemas/AbstractBittorrentSite.ts:119-167`；同类写法见 `definitions/milkie.ts:125-139`、`definitions/hdbits.ts:318-329` |
 | `protected override loggedCheck(res)` | 分叉站未登录时返回的是 HTTP 200 + JSON 错误体时（基类默认只处理状态码/跳转/refresh 头）。Rartracker 路径默认走 `AbstractPrivateSite` 的实现 | `schemas/AbstractPrivateSite.ts:50-107`；范例 `definitions/hdbits.ts:331-341` |
 
-覆写时保持签名一致并加 `override` 关键字（`pnpm check` 会校验：`vue-tsc --noEmit`）。
+覆写时保持签名一致并加 `override` 关键字（`npm run check` 会校验：`vue-tsc --noEmit`）。
 
 ## 范例定义
 

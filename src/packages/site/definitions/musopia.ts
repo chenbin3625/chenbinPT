@@ -12,7 +12,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "音乐乌托邦",
   description: "汇聚每一个人的影响力，让音乐流行起来吧！",
   tags: ["音乐"],
-  timezoneOffset: "+0800",
 
   collaborator: ["bfjy"],
 

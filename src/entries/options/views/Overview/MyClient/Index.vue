@@ -1,8 +1,31 @@
 <script setup lang="ts">
+import {
+  ClockCircleOutlined,
+  CloudUploadOutlined,
+  DashboardOutlined,
+  DatabaseOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
+  DeleteOutlined,
+  DownOutlined,
+  FieldTimeOutlined,
+  FileSearchOutlined,
+  PauseOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
+  StopOutlined,
+  SwapOutlined,
+  SyncOutlined,
+  TagOutlined,
+  UpOutlined,
+} from "@ant-design/icons-vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import ColumnSelector from "../components/ColumnSelector.vue";
+import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import type { DataTableHeader } from "vuetify";
+import { refDebounced } from "@vueuse/core";
+import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import {
   CTorrentState,
@@ -13,10 +36,12 @@ import {
   type TorrentQueueDirection,
 } from "@ptd/downloader";
 import { sendMessage } from "@/messages.ts";
-import { formatSize, formatDate } from "@/options/utils.ts";
+import { formatDateTimeForTable, formatRatio, formatSize, isRatioHealthy } from "@/options/utils.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
+
+import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 import DeleteDialog from "./DeleteDialog.vue";
 import PushToDownloaderDialog from "./PushToDownloaderDialog.vue";
@@ -32,6 +57,9 @@ import {
   selectedDownloaderIds,
   autoRefreshRunning,
   globalRefreshInterval,
+  normalizeTorrentProgress,
+  formatTorrentProgressLabel,
+  torrentKey,
   useClientRefresh,
 } from "./utils.ts";
 
@@ -48,6 +76,7 @@ const {
   scheduleDownloaderRefresh,
   stopAllTimers,
   resetRefreshState,
+  startAutoRefresh,
   toggleAutoRefresh,
 } = useClientRefresh();
 
@@ -56,6 +85,8 @@ const loading = ref(false);
 
 const tableSelected = ref<CTorrent[]>([]);
 const searchText = ref("");
+// P1-20：搜索框输入做防抖，避免每敲一个字符都对数千种子做一次全量过滤
+const searchTextDebounced = refDebounced(searchText, 300);
 
 // delete dialog
 const showDeleteDialog = ref(false);
@@ -87,11 +118,30 @@ const totalDlSpeed = computed(() => allTorrents.value.reduce((acc, t) => acc + (
 // ── computed ───────────────────────────────────────────────────────────────
 const allTorrents = computed(() => Object.values(torrents.value).flat());
 
+const tableColumns = computed(() =>
+  toAntdColumns(fullTableHeader.value, {
+    sortBy: configStore.tableBehavior["MyClient"]?.sortBy,
+    multiSort: configStore.enableTableMultiSort,
+    visibleKeys: (configStore.tableBehavior["MyClient"] as any)?.columns,
+  }),
+);
+const tablePagination = computed(() =>
+  toPagination(configStore.tableBehavior["MyClient"]?.itemsPerPage ?? 25, (v) =>
+    configStore.updateTableBehavior("MyClient", "itemsPerPage", v),
+  ),
+);
+function onSelectionChange(_keys: (string | number)[], rows: CTorrent[]) {
+  tableSelected.value = rows;
+}
+function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
+  configStore.updateTableBehavior("MyClient", "sortBy", toSortBy(sorter as never));
+}
+
 const filteredTorrents = computed(() => {
   const active = activeDownloaderIds.value;
   const base = active.flatMap((id) => torrents.value[id] ?? []);
-  if (!searchText.value) return base;
-  const q = searchText.value.toLowerCase();
+  if (!searchTextDebounced.value) return base;
+  const q = searchTextDebounced.value.toLowerCase();
   return base.filter(
     (t) =>
       t.name.toLowerCase().includes(q) ||
@@ -127,34 +177,30 @@ async function loadVisibleClientMeta() {
 const fullTableHeader = computed(
   () =>
     [
-      { title: t("MyClient.table.client"), key: "clientId", align: "center", width: "120", props: { disabled: true } },
-      { title: t("MyClient.table.name"), key: "name", align: "start", minWidth: "20rem", props: { disabled: true } },
-      { title: t("MyClient.table.size"), key: "totalSize", align: "end", width: "110" },
-      { title: t("MyClient.table.progress"), key: "progress", align: "end", width: "90" },
-      { title: t("MyClient.table.status"), key: "state", align: "center", width: "110" },
-      { title: t("MyClient.table.upSpeed"), key: "uploadSpeed", align: "end", width: "100" },
-      { title: t("MyClient.table.dlSpeed"), key: "downloadSpeed", align: "end", width: "100" },
-      { title: t("MyClient.table.totalUploaded"), key: "totalUploaded", align: "end", width: "100" },
-      { title: t("MyClient.table.totalDownloaded"), key: "totalDownloaded", align: "end", width: "100" },
-      { title: t("MyClient.table.ratio"), key: "ratio", align: "end", width: "60" },
-      { title: t("MyClient.table.savePath"), key: "savePath", align: "start" },
-      { title: t("MyClient.table.addedAt"), key: "dateAdded", align: "center", width: "160" },
+      // 说明：数值列不再写死 width，交给 auto 布局按内容分配，只保留「客户端 / 添加时间 / 操作」
+      // 三个硬约束。13 列全部写死宽度时，叠加数值列 nowrap 的文本，表格最小宽度会超过
+      // 1152–1536 窗口下的可用宽度（见 docs/style-layout-audit.md 第 7 条），从而挤出横向滚动条。
+      { title: t("MyClient.table.client"), key: "clientId", align: "center", width: "90", props: { disabled: true } },
+      { title: t("MyClient.table.name"), key: "name", align: "start", maxWidth: "20rem", props: { disabled: true } },
+      { title: t("MyClient.table.size"), key: "totalSize", align: "end" },
+      { title: t("MyClient.table.progress"), key: "progress", align: "end", width: "72" },
+      { title: t("MyClient.table.status"), key: "state", align: "center" },
+      { title: t("MyClient.table.upSpeed"), key: "uploadSpeed", align: "end" },
+      { title: t("MyClient.table.dlSpeed"), key: "downloadSpeed", align: "end" },
+      { title: t("MyClient.table.totalUploaded"), key: "totalUploaded", align: "end" },
+      { title: t("MyClient.table.totalDownloaded"), key: "totalDownloaded", align: "end" },
+      { title: t("MyClient.table.ratio"), key: "ratio", align: "end" },
+      { title: t("MyClient.table.savePath"), key: "savePath", align: "start", maxWidth: "16rem" },
+      { title: t("MyClient.table.addedAt"), key: "dateAdded", align: "center", width: "110" },
       {
         title: t("common.action"),
         key: "action",
         align: "center",
         sortable: false,
-        width: "120",
+        width: "150",
         props: { disabled: true },
       },
     ] as (DataTableHeader & { props?: any })[],
-);
-
-const tableHeader = computed(
-  () =>
-    fullTableHeader.value.filter(
-      (item) => item?.props?.disabled || (configStore.tableBehavior["MyClient"] as any)?.columns?.includes(item.key),
-    ) as DataTableHeader[],
 );
 
 // ── data loading ──────────────────────────────────────────────────────────
@@ -179,13 +225,18 @@ async function loadTorrents() {
 onMounted(() => {
   // 支持从 SetDownloader 等页面通过 ?downloader=<id> 预选单个下载服务器
   const queryDownloaderId = route.query.downloader as string | undefined;
+  let hasQueryDownloader = false;
   if (queryDownloaderId && metadataStore.downloaders[queryDownloaderId]) {
+    hasQueryDownloader = true;
     selectedDownloaderIds.value = [queryDownloaderId];
     // 预选是一次性导航行为，清除 URL query 避免刷新页面后重复预选
     void router.replace({ path: "/my-client" });
-    loadTorrents();
-  } else if (configStore.download.initDownloaderTorrentOnEnter) {
-    loadTorrents();
+  }
+
+  startAutoRefresh();
+
+  if (hasQueryDownloader || configStore.download.initDownloaderTorrentOnEnter || autoRefreshRunning.value) {
+    void loadTorrents();
   }
 });
 
@@ -284,384 +335,346 @@ function clearDownloaderFilter() {
   selectedDownloaderIds.value = [];
   void loadTorrents();
 }
-
-function torrentKey(torrent: CTorrent) {
-  return `${torrent.clientId}:${String(torrent.id)}`;
-}
 </script>
 
 <template>
-  <v-alert :title="t('route.Overview.MyClient')" type="info">
-    <template #append>
-      <v-chip
-        v-if="selectedDownloaderIds.length === 1"
-        :prepend-avatar="clientIcon(selectedDownloaderIds[0])"
-        class="mr-2"
-        closable
-        color="primary"
-        label
-        size="small"
-        @click:close="clearDownloaderFilter"
-      >
-        {{ clientName(selectedDownloaderIds[0]) }}
-      </v-chip>
+  <a-card>
+    <a-typography-text strong>
+      <div class="my-client-toolbar">
+        <div class="my-client-toolbar__actions">
+          <a-button
+            :title="t('MyClient.pushToDownloader.navBtn')"
+            @click="showPushToDownloaderDialog = true"
+            type="link"
+            ><template #icon><CloudUploadOutlined /></template>{{ t("MyClient.pushToDownloader.navBtn") }}</a-button
+          >
 
-      <v-btn
-        :title="t('MyClient.clientStatusDialog.openBtn')"
-        class="mr-2 status-btn"
-        color="primary"
-        size="small"
-        @click="showClientStatusDialog = true"
-      >
-        <v-icon class="mr-1" icon="mdi-database-outline" size="x-small" />
-        {{ allTorrents.length }}
-        <v-icon class="mr-1" color="green-darken-4" icon="mdi-chevron-up" size="x-small" />
-        {{ formatSize(totalUpSpeed) }}/s
-        <v-icon class="mr-1" color="red-darken-4" icon="mdi-chevron-down" size="x-small" />
-        {{ formatSize(totalDlSpeed) }}/s
-      </v-btn>
-    </template>
-  </v-alert>
+          <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
-  <v-card>
-    <v-card-title>
-      <v-row gap="0" class="align-center ma-0">
-        <v-btn
-          :title="t('MyClient.pushToDownloader.navBtn')"
-          color="primary"
-          icon="mdi-cloud-upload"
-          variant="text"
-          @click="showPushToDownloaderDialog = true"
-        />
+          <a-button
+            :disabled="tableSelected.length === 0"
+            :title="t('MyClient.resumeSelected')"
+            @click="() => resumeTorrents(tableSelected)"
+            type="link"
+            ><template #icon><PlayCircleOutlined /></template>{{ t("MyClient.resumeSelected") }}</a-button
+          >
 
-        <v-divider vertical class="mx-2" />
+          <a-button
+            :disabled="tableSelected.length === 0"
+            :title="t('MyClient.pauseSelected')"
+            @click="() => pauseTorrents(tableSelected)"
+            type="text"
+            ><template #icon><PauseOutlined /></template>{{ t("MyClient.pauseSelected") }}</a-button
+          >
 
-        <v-btn
-          :disabled="tableSelected.length === 0"
-          :title="t('MyClient.resumeSelected')"
-          color="success"
-          icon="mdi-play"
-          variant="text"
-          @click="() => resumeTorrents(tableSelected)"
-        />
+          <a-button
+            :disabled="tableSelected.length === 0"
+            :title="t('MyClient.deleteSelected')"
+            @click="() => openDeleteDialog(tableSelected)"
+            type="text"
+            danger
+            ><template #icon><DeleteOutlined /></template>{{ t("MyClient.deleteSelected") }}</a-button
+          >
 
-        <v-btn
-          :disabled="tableSelected.length === 0"
-          :title="t('MyClient.pauseSelected')"
-          color="warning"
-          icon="mdi-pause"
-          variant="text"
-          @click="() => pauseTorrents(tableSelected)"
-        />
+          <a-button
+            :disabled="tableSelected.length === 0"
+            :title="t('MyClient.recheckSelected')"
+            @click="() => openRecheckDialog(tableSelected)"
+            type="text"
+            ><template #icon><ReloadOutlined /></template>{{ t("MyClient.recheckSelected") }}</a-button
+          >
 
-        <v-btn
-          :disabled="tableSelected.length === 0"
-          :title="t('MyClient.deleteSelected')"
-          color="error"
-          icon="mdi-delete"
-          variant="text"
-          @click="() => openDeleteDialog(tableSelected)"
-        />
+          <a-button
+            :disabled="tableSelected.length === 0"
+            :title="t('MyClient.speedLimit.batchBtn')"
+            @click="showSpeedLimitDialog = true"
+            type="text"
+            ><template #icon><DashboardOutlined /></template>{{ t("MyClient.speedLimit.batchBtn") }}</a-button
+          >
 
-        <v-btn
-          :disabled="tableSelected.length === 0"
-          :title="t('MyClient.recheckSelected')"
-          color="cyan"
-          icon="mdi-refresh"
-          variant="text"
-          @click="() => openRecheckDialog(tableSelected)"
-        />
+          <a-button
+            :disabled="tableSelected.length === 0"
+            :title="t('MyClient.label.batchBtn')"
+            @click="showLabelDialog = true"
+            type="text"
+            ><template #icon><TagOutlined /></template>{{ t("MyClient.label.batchBtn") }}</a-button
+          >
 
-        <v-btn
-          :disabled="tableSelected.length === 0"
-          :title="t('MyClient.speedLimit.batchBtn')"
-          color="amber"
-          icon="mdi-speedometer"
-          variant="text"
-          @click="showSpeedLimitDialog = true"
-        />
+          <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
-        <v-btn
-          :disabled="tableSelected.length === 0"
-          :title="t('MyClient.label.batchBtn')"
-          color="purple"
-          icon="mdi-label"
-          variant="text"
-          @click="showLabelDialog = true"
-        />
+          <a-button :title="t('MyClient.refresh')" @click="loadTorrents" type="link"
+            ><template #icon><SyncOutlined /></template>{{ t("MyClient.refresh") }}</a-button
+          >
 
-        <v-divider vertical class="mx-2" />
+          <!-- auto-refresh controls -->
+          <a-popover placement="bottom" trigger="click">
+            <a-button :title="t('MyClient.autoRefresh.btnTitle')" type="text" style="margin-left: 4px">
+              <template #icon>
+                <component :is="autoRefreshRunning ? FieldTimeOutlined : ClockCircleOutlined" />
+              </template>
+              {{ t("MyClient.autoRefresh.btnTitle") }}
+            </a-button>
+            <template #content>
+              <a-card style="min-width: 240px; padding: 8px">
+                <a-typography-text type="secondary" style="padding: 4px">
+                  {{ t("MyClient.autoRefresh.intervalLabel") }}
+                </a-typography-text>
+                <a-form-item :label="t('MyClient.autoRefresh.intervalUnit')">
+                  <a-input-number v-model:value="globalRefreshInterval" :min="0" :max="3600" style="margin: 4px" />
+                </a-form-item>
+                <div style="padding: 8px 4px 4px">
+                  <a-button
+                    :danger="autoRefreshRunning"
+                    :type="autoRefreshRunning ? 'default' : 'primary'"
+                    :disabled="!autoRefreshRunning && globalRefreshInterval <= 0"
+                    block
+                    @click="toggleAutoRefresh"
+                  >
+                    <component :is="autoRefreshRunning ? StopOutlined : PlayCircleOutlined" />
+                    {{ autoRefreshRunning ? t("MyClient.autoRefresh.stop") : t("MyClient.autoRefresh.start") }}
+                  </a-button>
+                </div>
+              </a-card>
+            </template>
+          </a-popover>
 
-        <v-btn :title="t('MyClient.refresh')" color="green" icon="mdi-cached" variant="text" @click="loadTorrents" />
+          <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
-        <!-- auto-refresh controls -->
-        <v-menu :close-on-content-click="false" location="bottom">
-          <template #activator="{ props: menuProps }">
-            <v-btn
-              v-bind="menuProps"
-              :color="autoRefreshRunning ? 'blue' : 'grey'"
-              :icon="autoRefreshRunning ? 'mdi-timer' : 'mdi-timer-off-outline'"
-              :title="t('MyClient.autoRefresh.btnTitle')"
-              class="ml-1"
-              variant="text"
-            />
-          </template>
-          <v-card min-width="240" class="pa-2">
-            <v-card-subtitle class="pa-1">{{ t("MyClient.autoRefresh.intervalLabel") }}</v-card-subtitle>
-            <v-number-input
-              v-model="globalRefreshInterval"
-              :label="t('MyClient.autoRefresh.intervalUnit')"
-              :min="0"
-              :max="3600"
-              control-variant="stacked"
-              hide-details
-              density="compact"
-              class="ma-1"
-            />
-            <v-card-actions class="pa-1 pt-2">
-              <v-btn
-                :color="autoRefreshRunning ? 'error' : 'success'"
-                :prepend-icon="autoRefreshRunning ? 'mdi-stop' : 'mdi-play'"
-                :disabled="!autoRefreshRunning && globalRefreshInterval <= 0"
-                block
-                variant="tonal"
-                @click="toggleAutoRefresh"
-              >
-                {{ autoRefreshRunning ? t("MyClient.autoRefresh.stop") : t("MyClient.autoRefresh.start") }}
-              </v-btn>
-            </v-card-actions>
-          </v-card>
-        </v-menu>
-
-        <v-divider vertical class="mx-2" />
-
-        <!-- column selector -->
-        <v-combobox
-          v-model="(configStore.tableBehavior['MyClient'] as any).columns"
-          :items="fullTableHeader"
-          :return-object="false"
-          chips
-          class="table-header-filter-clear ml-1"
-          density="compact"
-          hide-details
-          item-value="key"
-          max-width="200"
-          multiple
-          prepend-inner-icon="mdi-filter-cog"
-          :title="t('MyClient.columnSelector')"
-          @update:model-value="(v) => configStore.updateTableBehavior('MyClient', 'columns', v)"
-        >
-          <template #chip="{ item, index }">
-            <v-chip v-if="index === 0">
-              <span>{{ item.title }}</span>
-            </v-chip>
-            <span v-if="index === 1" class="text-grey text-body-small">
-              (+{{ (configStore.tableBehavior["MyClient"] as any).columns!.length - 1 }})
+          <!-- 客户端状态汇总（原「页面标题 alert」的 append 区，标题 alert 已移除，按钮移到工具条内保留入口） -->
+          <a-button
+            :title="t('MyClient.clientStatusDialog.openBtn')"
+            class="status-btn"
+            @click="showClientStatusDialog = true"
+            type="primary"
+            size="small"
+          >
+            <span class="status-btn__item"> {{ allTorrents.length }}<DatabaseOutlined class="ptd-icon-sm" /> </span>
+            <span class="status-btn__item">
+              {{ formatSize(totalUpSpeed) }}/s<UpOutlined class="ptd-icon-sm" style="color: var(--ptd-success)" />
             </span>
-          </template>
-        </v-combobox>
+            <span class="status-btn__item">
+              {{ formatSize(totalDlSpeed) }}/s<DownOutlined class="ptd-icon-sm" style="color: var(--ptd-danger)" />
+            </span>
+          </a-button>
+        </div>
 
-        <v-spacer />
+        <div class="my-client-toolbar__filters">
+          <a-tag v-if="selectedDownloaderIds.length === 1" closable color="#1677ff" @close="clearDownloaderFilter"
+            ><a-avatar :src="clientIcon(selectedDownloaderIds[0])" :size="20" style="margin-right: 4px" />
+            {{ clientName(selectedDownloaderIds[0]) }}
+          </a-tag>
 
-        <v-text-field
-          v-model="searchText"
-          append-icon="mdi-magnify"
-          clearable
-          density="compact"
-          hide-details
-          :label="t('MyClient.searchPlaceholder')"
-          max-width="400"
-          single-line
-        />
-      </v-row>
-    </v-card-title>
+          <a-input v-model:value="searchText" allow-clear :placeholder="t('MyClient.searchPlaceholder')"></a-input>
+        </div>
+      </div>
+    </a-typography-text>
 
-    <v-card-text>
-      <v-data-table
-        v-model="tableSelected"
-        :headers="tableHeader"
-        :items="filteredTorrents"
-        :items-per-page="configStore.tableBehavior['MyClient']?.itemsPerPage ?? 25"
-        :loading="loading"
-        :multi-sort="configStore.enableTableMultiSort"
-        :sort-by="configStore.tableBehavior['MyClient']?.sortBy"
-        class="table-stripe table-header-no-wrap table-td-p4"
-        hover
-        return-object
-        show-select
-        @update:itemsPerPage="(v) => configStore.updateTableBehavior('MyClient', 'itemsPerPage', v)"
-        @update:sortBy="(v) => configStore.updateTableBehavior('MyClient', 'sortBy', v)"
-      >
-        <!-- client column -->
-        <template #item.clientId="{ item }">
-          <div class="d-flex flex-column align-center">
-            <v-avatar :image="clientIcon(item.clientId)" size="22" />
-            <span class="text-body-small text-no-wrap mt-1">{{ clientName(item.clientId) }}</span>
+    <a-table
+      :columns="tableColumns"
+      :data-source="filteredTorrents"
+      :loading="loading"
+      :pagination="tablePagination"
+      :row-key="torrentKey"
+      :row-selection="{ selectedRowKeys: tableSelected.map(torrentKey), onChange: onSelectionChange }"
+      :scroll="{ x: 'max-content' }"
+      class="table-stripe"
+      @change="onTableChange"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'clientId'">
+          <div style="display: flex; flex-direction: column; align-items: center">
+            <a-avatar :src="clientIcon(record.clientId)" :size="22"></a-avatar>
+            <span style="font-size: 12px; white-space: nowrap; margin-top: 4px">{{ clientName(record.clientId) }}</span>
           </div>
         </template>
 
         <!-- name column -->
-        <template #item.name="{ item }">
+        <template v-else-if="column.key === 'name'">
           <div>
-            <span class="font-weight-medium">{{ item.name }}</span>
-            <div v-if="item.label" class="text-body-small text-grey">
-              <v-icon size="x-small" icon="mdi-label-outline" /> {{ item.label }}
+            <span
+              class="ptd-cell-ellipsis"
+              style="font-weight: 500; max-width: 20rem"
+              :title="String(record.name ?? '')"
+              >{{ record.name }}</span
+            >
+            <div
+              v-if="record.label"
+              class="ptd-cell-ellipsis"
+              style="font-size: 12px; color: var(--ptd-text-tertiary); max-width: 20rem"
+              :title="String(record.label)"
+            >
+              <TagOutlined class="ptd-icon-sm" /> {{ record.label }}
             </div>
           </div>
         </template>
 
         <!-- size column -->
-        <template #item.totalSize="{ item }">
-          <span class="text-no-wrap">{{ formatSize(item.totalSize) }}</span>
+        <template v-else-if="column.key === 'totalSize'">
+          <span style="white-space: nowrap">{{ formatSize(record.totalSize) }}</span>
         </template>
 
         <!-- progress column -->
-        <template #item.progress="{ item }">
-          <v-progress-circular
-            :model-value="item.progress"
-            :size="36"
-            :width="3"
-            :color="item.isCompleted ? 'green' : 'blue'"
-          >
-            <span class="text-body-small">{{ item.progress.toFixed(0) }}%</span>
-          </v-progress-circular>
+        <template v-else-if="column.key === 'progress'">
+          <!-- antd Progress 的文字来源是 `format` prop / `#format` 插槽，**默认插槽不是文字来源**
+               （见 ant-design-vue/es/progress/progress.js：`textFormatter = format || slots.format || (v => `${v}%`)`）。
+               早先这里把 `formatTorrentProgressLabel` 放在默认插槽里，于是该格式化**从未到达用户**——
+               用户看到的是 antd 默认的 `12.6%`，而 36px 的圆环里也放不下它。改用 `:format` 让归一化后的
+               `13%` 真正显示出来（这正是该函数存在的意义）。 -->
+          <a-progress
+            :format="() => formatTorrentProgressLabel(record.progress)"
+            :percent="normalizeTorrentProgress(record.progress)"
+            :stroke-width="3"
+            :width="36"
+            type="circle"
+          />
         </template>
 
         <!-- state column -->
-        <template #item.state="{ item }">
-          <TorrentStateTd :item="item" />
+        <template v-else-if="column.key === 'state'">
+          <TorrentStateTd :item="record" />
         </template>
 
         <!-- upload speed -->
-        <template #item.uploadSpeed="{ item }">
-          <span v-if="item.uploadSpeed > 0" class="text-no-wrap text-green-darken-2">
-            {{ formatSize(item.uploadSpeed) }}/s
+        <template v-else-if="column.key === 'uploadSpeed'">
+          <span v-if="record.uploadSpeed > 0" style="white-space: nowrap; color: var(--ptd-success)">
+            {{ formatSize(record.uploadSpeed) }}/s
           </span>
-          <span v-else class="text-grey">-</span>
+          <span v-else style="color: var(--ptd-text-tertiary)">-</span>
         </template>
 
         <!-- download speed -->
-        <template #item.downloadSpeed="{ item }">
-          <span v-if="item.downloadSpeed > 0" class="text-no-wrap text-blue-darken-2">
-            {{ formatSize(item.downloadSpeed) }}/s
+        <template v-else-if="column.key === 'downloadSpeed'">
+          <span v-if="record.downloadSpeed > 0" style="white-space: nowrap; color: var(--ptd-primary)">
+            {{ formatSize(record.downloadSpeed) }}/s
           </span>
-          <span v-else class="text-grey">-</span>
+          <span v-else style="color: var(--ptd-text-tertiary)">-</span>
         </template>
 
         <!-- total uploaded -->
-        <template #item.totalUploaded="{ item }">
-          <span class="text-no-wrap text-green-darken-2">{{ formatSize(item.totalUploaded) }}</span>
+        <template v-else-if="column.key === 'totalUploaded'">
+          <span style="white-space: nowrap; color: var(--ptd-success)">{{ formatSize(record.totalUploaded) }}</span>
         </template>
 
         <!-- total downloaded -->
-        <template #item.totalDownloaded="{ item }">
-          <span class="text-no-wrap text-blue-darken-2">{{ formatSize(item.totalDownloaded) }}</span>
+        <template v-else-if="column.key === 'totalDownloaded'">
+          <span style="white-space: nowrap; color: var(--ptd-primary)">{{ formatSize(record.totalDownloaded) }}</span>
         </template>
 
         <!-- ratio column -->
-        <template #item.ratio="{ item }">
-          <span :class="item.ratio >= 1 ? 'text-green' : 'text-red'">
-            {{ item.ratio.toFixed(2) }}
+        <template v-else-if="column.key === 'ratio'">
+          <!-- ITorrent 未声明 ratio，缺失时直接 .toFixed(2) 会抛 TypeError 并让整个表格渲染崩掉；
+               用共享的 formatRatio 兜底为 "-"，颜色也只在有限数时才着色。 -->
+          <span
+            :style="{
+              color: isRatioHealthy(record.ratio) ? 'var(--ptd-success)' : 'var(--ptd-danger)',
+            }"
+          >
+            {{ formatRatio(record.ratio) }}
           </span>
         </template>
 
         <!-- save path -->
-        <template #item.savePath="{ item }">
-          <span class="text-body-small text-no-wrap">{{ item.savePath }}</span>
+        <template v-else-if="column.key === 'savePath'">
+          <span
+            class="ptd-cell-ellipsis"
+            style="font-size: 12px; max-width: 16rem"
+            :title="String(record.savePath ?? '')"
+            >{{ record.savePath }}</span
+          >
         </template>
 
         <!-- date added -->
-        <template #item.dateAdded="{ item }">
-          <span class="text-no-wrap text-body-small">{{ formatDate(item.dateAdded * 1000) }}</span>
+        <template v-else-if="column.key === 'dateAdded'">
+          <span class="ptd-date-time" style="font-size: 12px">{{
+            formatDateTimeForTable(record.dateAdded * 1000)
+          }}</span>
         </template>
 
         <!-- actions -->
-        <template #item.action="{ item }">
-          <v-btn-group class="table-action" density="compact" variant="plain">
-            <v-btn
-              v-if="item.state === CTorrentState.downloading || item.state === CTorrentState.seeding"
+        <template v-else-if="column.key === 'action'">
+          <a-button-group class="table-action">
+            <a-button
+              v-if="record.state === CTorrentState.downloading || record.state === CTorrentState.seeding"
               :title="t('MyClient.action.pause')"
-              color="warning"
-              icon="mdi-pause"
+              @click="() => pauseTorrents([record])"
               size="small"
-              @click="() => pauseTorrents([item])"
-            />
-            <v-btn
-              v-else-if="item.state === CTorrentState.paused || item.state === CTorrentState.error"
+              ><template #icon><PauseOutlined /></template
+            ></a-button>
+            <a-button
+              v-else-if="record.state === CTorrentState.paused || record.state === CTorrentState.error"
               :title="t('MyClient.action.resume')"
-              color="success"
-              icon="mdi-play"
+              @click="() => resumeTorrents([record])"
+              type="primary"
               size="small"
-              @click="() => resumeTorrents([item])"
-            />
+              ><template #icon><PlayCircleOutlined /></template
+            ></a-button>
 
             <!-- 重新校验 -->
-            <v-btn
-              v-if="isFeatureAllowed(item.clientId, 'Recheck')"
+            <a-button
+              v-if="isFeatureAllowed(record.clientId, 'Recheck')"
               :title="t('MyClient.action.recheck')"
-              color="cyan"
-              icon="mdi-refresh"
+              @click="() => openRecheckDialog([record])"
               size="small"
-              @click="() => openRecheckDialog([item])"
-            />
+              ><template #icon><ReloadOutlined /></template
+            ></a-button>
 
             <!-- 队列调整 -->
-            <v-menu location="bottom">
-              <template #activator="{ props: menuProps }">
-                <v-btn
-                  v-if="isFeatureAllowed(item.clientId, 'Queue')"
-                  v-bind="menuProps"
-                  :title="t('MyClient.action.queue')"
-                  color="orange"
-                  icon="mdi-swap-vertical"
-                  size="small"
-                />
+            <a-dropdown placement="bottom" :trigger="['click']">
+              <a-button
+                v-if="isFeatureAllowed(record.clientId, 'Queue')"
+                :title="t('MyClient.action.queue')"
+                size="small"
+                ><template #icon><SwapOutlined /></template
+              ></a-button>
+              <template #overlay>
+                <a-menu
+                  @click="({ key }: any) => moveTorrentsInQueue([record], key as 'top' | 'up' | 'down' | 'bottom')"
+                >
+                  <a-menu-item key="top"
+                    ><DoubleLeftOutlined style="margin-right: 4px" />{{ t("MyClient.action.queueTop") }}</a-menu-item
+                  >
+                  <a-menu-item key="up"
+                    ><UpOutlined style="margin-right: 4px" />{{ t("MyClient.action.queueUp") }}</a-menu-item
+                  >
+                  <a-menu-item key="down"
+                    ><DownOutlined style="margin-right: 4px" />{{ t("MyClient.action.queueDown") }}</a-menu-item
+                  >
+                  <a-menu-item key="bottom"
+                    ><DoubleRightOutlined style="margin-right: 4px" />{{
+                      t("MyClient.action.queueBottom")
+                    }}</a-menu-item
+                  >
+                </a-menu>
               </template>
-              <v-list density="compact">
-                <v-list-item
-                  :title="t('MyClient.action.queueTop')"
-                  prepend-icon="mdi-chevron-double-up"
-                  @click="() => moveTorrentsInQueue([item], 'top')"
-                />
-                <v-list-item
-                  :title="t('MyClient.action.queueUp')"
-                  prepend-icon="mdi-chevron-up"
-                  @click="() => moveTorrentsInQueue([item], 'up')"
-                />
-                <v-list-item
-                  :title="t('MyClient.action.queueDown')"
-                  prepend-icon="mdi-chevron-down"
-                  @click="() => moveTorrentsInQueue([item], 'down')"
-                />
-                <v-list-item
-                  :title="t('MyClient.action.queueBottom')"
-                  prepend-icon="mdi-chevron-double-down"
-                  @click="() => moveTorrentsInQueue([item], 'bottom')"
-                />
-              </v-list>
-            </v-menu>
+            </a-dropdown>
 
             <!-- 详情 -->
-            <v-btn
-              :title="t('MyClient.action.detail')"
-              color="grey"
-              icon="mdi-file-eye-outline"
-              size="small"
-              @click="() => openDetailDialog(item)"
-            />
+            <a-button :title="t('MyClient.action.detail')" @click="() => openDetailDialog(record)" size="small"
+              ><template #icon><FileSearchOutlined /></template
+            ></a-button>
 
-            <v-btn
-              :title="t('MyClient.action.delete')"
-              color="error"
-              icon="mdi-delete"
-              size="small"
-              @click="() => openDeleteDialog([item])"
-            />
-          </v-btn-group>
+            <a-button :title="t('MyClient.action.delete')" @click="() => openDeleteDialog([record])" danger size="small"
+              ><template #icon><DeleteOutlined /></template
+            ></a-button>
+          </a-button-group>
         </template>
-      </v-data-table>
-    </v-card-text>
-  </v-card>
+      </template>
+
+      <template #emptyText>
+        <NoDataPlaceholder compact />
+      </template>
+      <template #title>
+        <div style="display: flex; justify-content: flex-end">
+          <ColumnSelector
+            :headers="fullTableHeader"
+            :visible-keys="(configStore.tableBehavior['MyClient'] as any)?.columns"
+            :title="t('common.columnSelector')"
+            @update:visible-keys="(keys: string[]) => configStore.updateTableBehavior('MyClient', 'columns', keys)"
+          />
+        </div>
+      </template>
+    </a-table>
+  </a-card>
 
   <DeleteDialog
     v-model="showDeleteDialog"
@@ -687,8 +700,45 @@ function torrentKey(torrent: CTorrent) {
   />
 </template>
 
-<style scoped lang="scss">
-.table-td-p4 :deep(.v-data-table__td) {
-  padding: 0 4px;
+<style scoped>
+.my-client-toolbar {
+  display: flex;
+  flex: 1 1 auto;
+  /* 桌面端按钮组与搜索框保持同一行（窄屏见下方 @media 回退） */
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.my-client-toolbar__actions,
+.my-client-toolbar__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.my-client-toolbar__actions {
+  flex: 0 1 auto;
+}
+
+.my-client-toolbar__filters {
+  flex: 1 1 320px;
+  justify-content: flex-end;
+}
+
+.my-client-toolbar__filters :deep(.ptd-field) {
+  flex: 1 1 260px;
+  min-width: min(100%, 240px);
+  max-width: 400px;
+}
+
+@media (max-width: 1279px) {
+  .my-client-toolbar {
+    flex-wrap: wrap;
+  }
 }
 </style>

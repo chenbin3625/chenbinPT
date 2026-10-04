@@ -136,7 +136,7 @@ Unit3D 覆写了 `getUserInfoResult`（564-612），行为与 `AbstractPrivateSi
 | `public getTorrentDownloadLink(torrent)` | 默认实现只把 `/torrents/{id}` 形式补成 `/torrents/download/{id}`；若站点需要先跳详情页再取真实链接，覆写并可按需直接调用 `AbstractBittorrentSite.prototype.getTorrentDownloadLink` 绕过 Unit3D 逻辑 | 657-665；范例 `definitions/monikadesign.ts:329-342` |
 | `public request(axiosConfig, checkLogin = true)`（基类方法） | 站点要求注入 `X-Api-Token` 等自定义请求头 | 范例 `definitions/huno.ts:525-537` |
 
-覆写时保持签名一致并加 `override` 关键字（`pnpm check` 会校验）。
+覆写时保持签名一致并加 `override` 关键字（`npm run check` 会校验）。
 
 ## 范例定义
 

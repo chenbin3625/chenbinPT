@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "躺平",
   description: "无论你是老鸟还是新手，在这里都可以安心“躺平”，享受高效、清爽的PT。",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["liuyaowen"],
 

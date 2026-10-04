@@ -31,22 +31,17 @@ onMounted(() => {
 </script>
 
 <template>
-  <v-list>
-    <v-list-item v-for="(searchEntry, entryKey) in item.metadata.searchEntry" :key="entryKey" :value="entryKey">
-      <v-list-item-title>
-        <v-switch
-          v-model="searchEntryEnabledStatus[entryKey]"
-          :label="searchEntry.name"
-          class="mx-3"
-          color="success"
-          hide-details
-          @update:model-value="
-            (v) => metadataStore.simplePatch('sites', item.id, `merge.searchEntry.${entryKey}.enabled`, v as boolean)
+  <a-list>
+    <a-list-item v-for="(searchEntry, entryKey) in item.metadata.searchEntry" :key="entryKey">
+      <a-flex align="center" :gap="8" style="margin-inline: 12px">
+        <a-switch
+          v-model:checked="searchEntryEnabledStatus[entryKey]"
+          @change="
+            (v: boolean) => metadataStore.simplePatch('sites', item.id, `merge.searchEntry.${entryKey}.enabled`, v)
           "
-        ></v-switch>
-      </v-list-item-title>
-    </v-list-item>
-  </v-list>
+        />
+        <a-typography-text>{{ searchEntry.name }}</a-typography-text>
+      </a-flex>
+    </a-list-item>
+  </a-list>
 </template>
-
-<style scoped lang="scss"></style>

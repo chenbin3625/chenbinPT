@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { buildInPtGenApi } from "@ptd/social";
+import { computed, ref } from "vue";
+import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons-vue";
 
 import { useConfigStore } from "@/options/stores/config.ts";
 
@@ -7,74 +9,105 @@ import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
 const configStore = useConfigStore();
+
+// B-31：Bangumi API Key 是可代表用户调用 API 的凭据，默认掩码显示（与 BackupWindow 的加密密钥一致）
+const showBangumiApiKey = ref<boolean>(false);
+
+const ptGenApiOptions = computed(() => buildInPtGenApi.map((item) => ({ label: item.provider, value: item.url })));
+
+function filterPtGenApi(input: string, option: { label?: string; value?: string }) {
+  const text = `${option?.label ?? ""} ${option?.value ?? ""}`.toUpperCase();
+  return text.includes(String(input).toUpperCase());
+}
 </script>
 
 <template>
-  <v-row>
-    <v-col md="10" lg="8">
-      <v-label>{{ t("socialConfig.basicConfig") }}</v-label>
-      <v-number-input
-        v-model="configStore.socialSiteInformation.cacheDay"
-        :label="t('socialConfig.cacheValidityDays')"
-        :min="3"
-        :messages="t('socialConfig.cacheShortWarning')"
-      />
-      <v-number-input
-        v-model="configStore.socialSiteInformation.timeout"
-        :label="t('socialConfig.requestTimeoutMs')"
-        hide-details
-      />
-    </v-col>
-  </v-row>
+  <div class="ptd-settings-grid">
+    <section class="ptd-settings-section">
+      <a-typography-text strong style="display: block; margin-bottom: 4px">
+        {{ t("socialConfig.basicConfig") }}
+      </a-typography-text>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("socialConfig.cacheValidityDays") }}</a-typography-text>
+        <a-input-number
+          v-model:value="configStore.socialSiteInformation.cacheDay"
+          :min="3"
+          style="width: min(100%, 420px)"
+        />
+      </div>
+      <div style="text-align: end">
+        <a-typography-text type="secondary">{{ t("socialConfig.cacheShortWarning") }}</a-typography-text>
+      </div>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("socialConfig.requestTimeoutMs") }}</a-typography-text>
+        <a-input-number v-model:value="configStore.socialSiteInformation.timeout" style="width: min(100%, 420px)" />
+      </div>
+    </section>
 
-  <v-row>
-    <v-col md="10" lg="8">
-      <v-label>{{ t("socialConfig.ptgenConfig") }}</v-label>
-      <v-switch
-        v-model="configStore.socialSiteInformation.preferPtGen"
-        :label="t('socialConfig.preferPtgenLabel')"
-        color="success"
-        hide-details
-      />
-      <v-combobox
-        v-if="configStore.socialSiteInformation.preferPtGen"
-        v-model="configStore.socialSiteInformation.ptGenEndpoint"
-        :items="buildInPtGenApi"
-        :return-object="false"
-        item-title="provider"
-        item-value="url"
-        :label="t('socialConfig.ptgenApiAddress')"
-        :messages="t('socialConfig.ptgenApiMessages')"
-      />
-    </v-col>
-  </v-row>
+    <section class="ptd-settings-section">
+      <a-typography-text strong style="display: block; margin-bottom: 4px">
+        {{ t("socialConfig.ptgenConfig") }}
+      </a-typography-text>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("socialConfig.preferPtgenLabel") }}</a-typography-text>
+        <a-switch v-model:checked="configStore.socialSiteInformation.preferPtGen" />
+      </div>
+      <template v-if="configStore.socialSiteInformation.preferPtGen">
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("socialConfig.ptgenApiAddress") }}</a-typography-text>
+          <a-auto-complete
+            v-model:value="configStore.socialSiteInformation.ptGenEndpoint"
+            :filter-option="filterPtGenApi"
+            :options="ptGenApiOptions"
+            style="width: min(100%, 420px)"
+          />
+        </div>
+        <div style="text-align: end">
+          <a-typography-text type="secondary">{{ t("socialConfig.ptgenApiMessages") }}</a-typography-text>
+        </div>
+      </template>
+    </section>
 
-  <v-row>
-    <v-col md="10" lg="8">
-      <v-label>{{ t("socialConfig.mediaRatingConfig") }}</v-label>
-      <v-text-field
-        v-model="configStore.socialSiteInformation.socialSite!.anidb.client"
-        :label="t('socialConfig.anidbClientId')"
-        clearable
-        :messages="t('socialConfig.anidbClientMessages')"
-      >
-        <template #prepend>
-          <v-avatar image="/icons/social/anidb.png" />
-        </template>
-      </v-text-field>
+    <section class="ptd-settings-section">
+      <a-typography-text strong style="display: block; margin-bottom: 4px">
+        {{ t("socialConfig.mediaRatingConfig") }}
+      </a-typography-text>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("socialConfig.anidbClientId") }}</a-typography-text>
+        <a-input
+          v-model:value="configStore.socialSiteInformation.socialSite!.anidb.client"
+          allow-clear
+          style="width: min(100%, 420px)"
+        >
+          <template #prefix>
+            <a-avatar :size="20" shape="square" src="/icons/social/anidb.png" />
+          </template>
+        </a-input>
+      </div>
+      <div style="text-align: end">
+        <a-typography-text type="secondary">{{ t("socialConfig.anidbClientMessages") }}</a-typography-text>
+      </div>
 
-      <v-text-field
-        v-model="configStore.socialSiteInformation.socialSite!.bangumi.apikey"
-        :label="t('socialConfig.bangumiApiKey')"
-        clearable
-        :messages="t('socialConfig.bangumiApiMessages')"
-      >
-        <template #prepend>
-          <v-avatar image="/icons/social/bangumi.png" />
-        </template>
-      </v-text-field>
-    </v-col>
-  </v-row>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("socialConfig.bangumiApiKey") }}</a-typography-text>
+        <a-input
+          v-model:value="configStore.socialSiteInformation.socialSite!.bangumi.apikey"
+          allow-clear
+          style="width: min(100%, 420px)"
+          :type="showBangumiApiKey ? 'text' : 'password'"
+        >
+          <template #prefix>
+            <a-avatar :size="20" shape="square" src="/icons/social/bangumi.png" />
+          </template>
+          <template #suffix>
+            <EyeOutlined v-if="showBangumiApiKey" style="cursor: pointer" @click="showBangumiApiKey = false" />
+            <EyeInvisibleOutlined v-else style="cursor: pointer" @click="showBangumiApiKey = true" />
+          </template>
+        </a-input>
+      </div>
+      <div style="text-align: end">
+        <a-typography-text type="secondary">{{ t("socialConfig.bangumiApiMessages") }}</a-typography-text>
+      </div>
+    </section>
+  </div>
 </template>
-
-<style scoped lang="scss"></style>

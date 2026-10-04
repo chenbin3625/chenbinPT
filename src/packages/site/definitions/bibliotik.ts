@@ -1,14 +1,14 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/master/resource/sites/bibliotik.me/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/master/resource/sites/bibliotik.me/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/bibliotik.yml
  */
 
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import { mergeWith } from "es-toolkit";
 
 import PrivateSite from "../schemas/AbstractPrivateSite";
 import { EResultParseStatus, type ISiteMetadata, type IUserInfo } from "../types";
-import { parseSizeString } from "../utils";
+import { parseSizeString, mapWithConcurrency } from "../utils";
 
 const categoryMap: Record<string, number> = {
   Applications: 1,
@@ -246,36 +246,63 @@ export default class Bibliotik extends PrivateSite {
   protected async parseUserInfoForSeedingStatus(flushUserInfo: Partial<IUserInfo>): Promise<IUserInfo> {
     const userId = flushUserInfo.id as number | string;
     const seedStatus = { seeding: 0, seedingSize: 0 };
-    let currentPage = 1;
-    let maxPage = 1;
+    const maxPages = 50; // 硬上限，防止分页信息异常时无限翻页
+    const concurrency = 4;
 
-    for (; currentPage <= maxPage; currentPage++) {
-      await this.sleepAction(this.metadata.userInfo?.requestDelay);
-      const { data: doc } = await this.request<Document>({
-        url: `/users/${userId}/seeding`,
-        params: currentPage > 1 ? { page: currentPage } : {},
-        responseType: "document",
-      });
+    // 保证并发请求之间仍然满足站点 requestDelay 的请求间隔
+    const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay);
 
-      // 首页解析最大页码，来源：/users/<id>/seeding 分页栏的 `Last >>` 链接
-      if (currentPage === 1) {
-        const lastLink = Sizzle(".pagination a[href*='?page']:contains('Last >>'):first", doc)[0];
-        const lastHref = lastLink?.getAttribute("href") ?? "";
-        const pageMatch = lastHref.match(/[?&]page=(\d+)/);
-        maxPage = pageMatch ? parseInt(pageMatch[1], 10) : 1;
-      }
-
-      const rows = Sizzle("table#torrents_table > tbody > tr:has(.title)", doc);
-      seedStatus.seeding += rows.length;
+    // 解析单页：返回行数与逐行体积（保持原有累加顺序需要按行收集）
+    const parsePage = (doc: Document): { rowCount: number; sizes: number[] } => {
+      const rows = selectElements("table#torrents_table > tbody > tr:has(.title)", doc);
+      const sizes: number[] = [];
       rows.forEach((row) => {
-        const sizeSpan = Sizzle(".t_files_size_added span[data-bytecount]", row as Element)[0];
+        const sizeSpan = selectElements(".t_files_size_added span[data-bytecount]", row as Element)[0];
         if (sizeSpan) {
-          seedStatus.seedingSize += parseInt(sizeSpan.getAttribute("data-bytecount") ?? "0", 10);
+          sizes.push(parseInt(sizeSpan.getAttribute("data-bytecount") ?? "0", 10));
         } else {
-          const sizeText = Sizzle(".t_files_size_added", row as Element)[0]?.textContent?.replace(/,/g, "");
-          seedStatus.seedingSize += parseSizeString(sizeText?.match(/([\d.]+ ?[ZEPTGMK]?i?B)/)?.[1] ?? "");
+          const sizeText = selectElements(".t_files_size_added", row as Element)[0]?.textContent?.replace(/,/g, "");
+          sizes.push(parseSizeString(sizeText?.match(/([\d.]+ ?[ZEPTGMK]?i?B)/)?.[1] ?? ""));
         }
       });
+      return { rowCount: rows.length, sizes };
+    };
+
+    // 首页解析最大页码，来源：/users/<id>/seeding 分页栏的 `Last >>` 链接
+    await throttle();
+    const { data: firstPageDocument } = await this.request<Document>({
+      url: `/users/${userId}/seeding`,
+      params: {},
+      responseType: "document",
+    });
+
+    const lastLink = selectElements(".pagination a[href*='?page']:contains('Last >>'):first", firstPageDocument)[0];
+    const lastHref = lastLink?.getAttribute("href") ?? "";
+    const pageMatch = lastHref.match(/[?&]page=(\d+)/);
+    const maxPage = Math.max(1, Math.min(pageMatch ? parseInt(pageMatch[1], 10) : 1, maxPages));
+
+    const pages: Array<{ rowCount: number; sizes: number[] }> = [parsePage(firstPageDocument)];
+    if (maxPage > 1) {
+      const restPages = Array.from({ length: maxPage - 1 }, (_, index) => index + 2);
+      pages.push(
+        ...(await mapWithConcurrency(restPages, concurrency, async (page) => {
+          await throttle();
+          const { data: doc } = await this.request<Document>({
+            url: `/users/${userId}/seeding`,
+            params: { page },
+            responseType: "document",
+          });
+          return parsePage(doc);
+        })),
+      );
+    }
+
+    // 按页序、行序累加，保证浮点累加顺序与串行实现一致
+    for (const { rowCount, sizes } of pages) {
+      seedStatus.seeding += rowCount;
+      for (const size of sizes) {
+        seedStatus.seedingSize += size;
+      }
     }
 
     return mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) =>

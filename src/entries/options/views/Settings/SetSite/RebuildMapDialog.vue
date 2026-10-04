@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -34,45 +34,31 @@ const canReBuild = computed<boolean>(() => Object.values(reBuildControlRef.value
 function dialogEnter() {
   resetReBuildControlRef();
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="600" scrollable @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetSite.ReBuildMapDialog.title") }}</v-toolbar-title>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-switch
-          v-model="reBuildControlRef.rebuildSiteHostMap"
-          :label="t('SetSite.ReBuildMapDialog.rebuildSiteHostMap')"
-          color="success"
-          hide-details
-        />
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-button-props="{ disabled: !canReBuild }"
+    :ok-text="t('SetSite.ReBuildMapDialog.doRebuildBtn')"
+    :title="t('SetSite.ReBuildMapDialog.title')"
+    :width="600"
+    @ok="doReBuild"
+  >
+    <a-flex align="center" :gap="8" style="margin-bottom: 8px">
+      <a-switch v-model:checked="reBuildControlRef.rebuildSiteHostMap" />
+      <a-typography-text>{{ t("SetSite.ReBuildMapDialog.rebuildSiteHostMap") }}</a-typography-text>
+    </a-flex>
 
-        <v-switch
-          v-model="reBuildControlRef.rebuildSiteNameMap"
-          :label="t('SetSite.ReBuildMapDialog.rebuildSiteNameMap')"
-          color="success"
-          hide-details
-        />
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-
-        <v-btn :disabled="!canReBuild" color="success" prepend-icon="mdi-import" variant="text" @click="doReBuild">
-          {{ t("SetSite.ReBuildMapDialog.doRebuildBtn") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <a-flex align="center" :gap="8">
+      <a-switch v-model:checked="reBuildControlRef.rebuildSiteNameMap" />
+      <a-typography-text>{{ t("SetSite.ReBuildMapDialog.rebuildSiteNameMap") }}</a-typography-text>
+    </a-flex>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

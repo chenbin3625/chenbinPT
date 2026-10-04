@@ -112,7 +112,7 @@ export default class Example extends GazelleJSONAPI {}
 | `protected async getSeedingSize(userId, sizeIndex = 0)`（基类） | 做种体积接口不同或想跳过翻页 | `schemas/Gazelle.ts:377-426` |
 | `protected async request<T>(axiosConfig, checkLogin = true)`（基类） | 需要注入自定义请求头（API key 等） | `schemas/AbstractBittorrentSite.ts:119-167` |
 
-覆写时保持签名一致并加 `override`（`pnpm check` 会校验）。
+覆写时保持签名一致并加 `override`（`npm run check` 会校验）。
 
 ## 范例定义
 

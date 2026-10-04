@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { BackupFields, TBackupFields } from "@/shared/types.ts";
@@ -17,42 +17,28 @@ async function doLocalExport() {
 function dialogEnter() {
   backupFields.value = [...BackupFields];
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="600" @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetBackup.LocalExportConfirmDialog.title") }}</v-toolbar-title>
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-row no-gutters>
-          <v-col v-for="backupField in BackupFields" :key="backupField" cols="12" md="6">
-            <v-switch
-              v-model="backupFields"
-              :label="t(`SetBackup.fields.${backupField}`)"
-              :value="backupField"
-              color="success"
-              hide-details
-            />
-          </v-col>
-        </v-row>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn color="success" prepend-icon="mdi-export" variant="text" @click="() => doLocalExport()">{{
-          t("common.export")
-        }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-text="t('common.export')"
+    :title="t('SetBackup.LocalExportConfirmDialog.title')"
+    :width="600"
+    @ok="() => doLocalExport()"
+  >
+    <a-checkbox-group v-model:value="backupFields" style="width: 100%">
+      <a-row :gutter="[0, 8]">
+        <a-col v-for="backupField in BackupFields" :key="backupField" :md="12" :xs="24">
+          <a-checkbox :value="backupField">{{ t(`SetBackup.fields.${backupField}`) }}</a-checkbox>
+        </a-col>
+      </a-row>
+    </a-checkbox-group>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

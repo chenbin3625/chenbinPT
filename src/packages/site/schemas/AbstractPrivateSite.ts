@@ -1,16 +1,13 @@
 // 所有PT站点的基类
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import { intersection, pascalCase, pick, toMerged, uniq } from "es-toolkit";
 import { get, has, set } from "es-toolkit/compat";
 
 import BittorrentSite from "./AbstractBittorrentSite";
-import { guessUserLevelId } from "../utils";
+import { classifySiteError, guessUserLevelId, logMessage, siteErrorLogData } from "../utils";
 import {
   EResultParseStatus,
-  CFBlockedError,
-  NeedLoginError,
-  NoUserInputError,
   type IElementQuery,
   type ISiteMetadata,
   type IUserInfo,
@@ -83,7 +80,7 @@ export default class PrivateSite extends BittorrentSite {
 
       const noLoginAssertMatchSelectors = this.metadata.noLoginAssert?.matchSelectors ?? [];
       if (noLoginAssertMatchSelectors.length > 0) {
-        const matchFn = res.data instanceof Document ? (d: any, m: string) => Sizzle(m, d).length > 0 : has;
+        const matchFn = res.data instanceof Document ? (d: any, m: string) => selectElements(m, d).length > 0 : has;
         for (const matchSelector of noLoginAssertMatchSelectors) {
           if (matchFn(res.data, matchSelector)) {
             return false;
@@ -197,21 +194,26 @@ export default class PrivateSite extends BittorrentSite {
         flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
       }
 
+      // 成功时清掉可能从 lastUserInfo 继承来的旧 statusMsg，避免 UI 展示过期错误
+      flushUserInfo.statusMsg = undefined;
       flushUserInfo.status = EResultParseStatus.success;
     } catch (error) {
-      if (import.meta.env.DEV) {
-        console.error(error);
-      }
+      // P1-3：区分「网络/超时/服务端错误（可重试）」与「真正的解析失败（重试无用）」，
+      // 并把 error.message 透传到 statusMsg；P1-2：生产环境同样记录日志。
+      const { status, statusMsg, retryable } = classifySiteError(error);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
 
-      flushUserInfo.status = EResultParseStatus.parseError;
-
-      if (error instanceof CFBlockedError) {
-        flushUserInfo.status = EResultParseStatus.CFBlocked;
-      } else if (error instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      } else if (error instanceof NoUserInputError) {
-        flushUserInfo.status = EResultParseStatus.noUserInput;
-      }
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        {
+          site: this.metadata.id,
+          status,
+          retryable,
+          error: siteErrorLogData(error),
+        },
+        retryable ? "warn" : "error",
+      );
     }
 
     return flushUserInfo;

@@ -29,7 +29,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "seedpool",
   aka: ["SP"],
   tags: ["综合"],
-  timezoneOffset: "+0000",
   collaborator: ["socketcat"],
 
   type: "private",

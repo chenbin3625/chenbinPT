@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { CTorrent } from "@ptd/downloader";
@@ -22,6 +22,11 @@ function dialogEnter() {
   const first = torrents[0];
   labelInput.value = first?.label ?? "";
 }
+
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时初始化自行监听 open。
+watch(showDialog, (open) => {
+  if (open) nextTick(dialogEnter);
+});
 
 async function confirmSetLabel() {
   const label = labelInput.value.trim();
@@ -48,35 +53,20 @@ async function confirmSetLabel() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="480" @after-enter="dialogEnter">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar :title="t('MyClient.label.title', { count: torrents.length })" color="blue-grey-darken-2">
-          <template #append>
-            <v-btn icon="mdi-close" :title="t('common.dialog.close')" @click="showDialog = false" />
-          </template>
-        </v-toolbar>
-      </v-card-title>
-
-      <v-divider />
-
-      <v-card-text>
-        <v-combobox v-model="labelInput" :items="suggestLabels ?? []" :label="t('MyClient.label.input')" clearable />
-      </v-card-text>
-
-      <v-divider />
-
-      <v-card-actions>
-        <v-spacer />
-        <v-btn color="info" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          <span class="ml-1">{{ t("common.dialog.cancel") }}</span>
-        </v-btn>
-        <v-btn color="success" prepend-icon="mdi-check-circle-outline" variant="text" @click="confirmSetLabel">
-          <span class="ml-1">{{ t("common.dialog.ok") }}</span>
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <a-modal
+    v-model:open="showDialog"
+    :cancel-text="t('common.dialog.cancel')"
+    :ok-text="t('common.dialog.ok')"
+    :title="t('MyClient.label.title', { count: torrents.length })"
+    :width="480"
+    @ok="confirmSetLabel"
+  >
+    <a-form-item :label="t('MyClient.label.input')">
+      <a-auto-complete
+        v-model:value="labelInput"
+        :options="(suggestLabels ?? []).map((label) => ({ value: label, label }))"
+        allow-clear
+      />
+    </a-form-item>
+  </a-modal>
 </template>
-
-<style scoped lang="scss"></style>

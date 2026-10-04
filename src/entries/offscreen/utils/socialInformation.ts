@@ -22,8 +22,12 @@ export async function getSocialInformation(
   sid: string,
   options: IGetSocialInformationOptions = {},
 ): Promise<ISocialInformation> {
-  const configStoreRaw = (await sendMessage("getExtStorage", "config")) as IConfigPiniaStorageSchema;
-  const socialInformationConfig = configStoreRaw.socialSiteInformation ?? {};
+  // 只取 socialSiteInformation 子表（见 docs/performance-audit.md P0-2）
+  const socialInformationConfig = ((await sendMessage("getExtStoragePath", {
+    key: "config",
+    path: "socialSiteInformation",
+    defaultValue: {},
+  })) ?? {}) as IConfigPiniaStorageSchema["socialSiteInformation"];
 
   const key = `${site}:${sid}`;
   let stored = await (await ptdIndexDb).get("social_information", key);
@@ -41,7 +45,9 @@ export async function getSocialInformation(
   const shouldMarkEnrichmentAttempted = isMissingRequiredSummary || isMissingRequiredMetadata;
 
   if (options.force || !stored || isExpired || shouldMarkEnrichmentAttempted) {
-    stored = await getSocialSiteInformation(site, sid, socialInformationConfig);
+    // 强制刷新必须一路透传到 social 包的进程内缓存：否则只绕过 IndexedDB，
+    // 仍可能命中 getSocialSiteInformation 的 10 分钟缓存，force 相当于无效。
+    stored = await getSocialSiteInformation(site, sid, { ...socialInformationConfig, force: options.force === true });
     if (shouldMarkEnrichmentAttempted) {
       enrichmentAttemptedKeys.add(key);
     }

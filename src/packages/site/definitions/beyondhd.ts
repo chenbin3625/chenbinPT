@@ -82,12 +82,13 @@ export const siteMetadata: ISiteMetadata = {
       ]),
       cross: { mode: "comma" },
     },
-    {
-      name: "Internal",
-      key: "types",
-      keyPath: "data",
-      options: [{ name: "Yes", value: "1" }],
-    },
+    // 原有一组 { name: "Internal", key: "internal", options: [{ name: "Yes", value: "1" }] }，已移除（审查 B-20a 的后续）。
+    // 理由：它发出的 data.internal=1 **不是** BeyondHD API 的参数。依据上游 Jackett 的 BeyondHDAPI.cs
+    // （本文件头部引用的来源）里 BHDParams 的**全量**枚举，与 internal 相关的只有 groups
+    // （"Any internal release groups separated by comma(s)"），没有布尔型 internal 参数；
+    // 而本节的其它组（Discount/SpecialDiscount/Special/Health）都用 cross: { mode: "append", key: "" }
+    // 把选项的 value 直接当参数名发出（freeleech/limited/promo25/refund/alive…，全部在参数表内），
+    // 唯独 Internal 没有对应参数——留着它只会让用户以为筛过了。想只看内部组请用上方 ReleaseGroup 组。
     {
       name: "Discount",
       key: "discount",

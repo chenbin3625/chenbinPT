@@ -16,7 +16,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["Dubhe"],
   description: "七星图，始于天枢",
   tags: ["综合", "影视"],
-  timezoneOffset: "+0800",
   favicon: "./dubhe.ico",
 
   type: "private",

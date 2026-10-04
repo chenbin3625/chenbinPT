@@ -1,10 +1,18 @@
-import Sizzle from "sizzle";
+import { matchesSelector, selectElements } from "../utils/selector";
 import { toMerged } from "es-toolkit";
 
 import PrivateSite from "./AbstractPrivateSite";
-import { parseValidTimeString, parseSizeString, parseTimeToLiveToDate } from "../utils";
+import {
+  parseValidTimeString,
+  parseSizeString,
+  parseTimeToLiveToDate,
+  mapWithConcurrency,
+  logMessage,
+  siteErrorLogData,
+} from "../utils";
 import {
   ETorrentStatus,
+  EResultParseStatus,
   NoTorrentsError,
   type ISiteMetadata,
   type ITorrent,
@@ -64,7 +72,11 @@ export const GazelleUtils = {
     return (row: HTMLElement): string => {
       // 匹配信息格
       const cell = row.querySelector(tdSelector);
-      const clone = cell!.cloneNode(true) as HTMLElement;
+      // E-10：站点模板（或非种子行）可能没有该单元格，缺失时按「本行没有标题」降级；
+      // 下一行的 torrentLink 同样有守卫，这里缺了守卫会在 cell!.cloneNode 直接抛 TypeError。
+      if (!cell) return "";
+
+      const clone = cell.cloneNode(true) as HTMLElement;
 
       // 对于 Gazelle，一般第一个种子页链接对应的 <a> 会包含标题
       const torrentLink = clone.querySelector("a[href*='torrents.php?id=']");
@@ -125,7 +137,12 @@ const baseTimeSelector = {
         }
         time = parseTimeToLiveToDate(time);
       }
-    } catch (e) {}
+    } catch (e) {
+      // P1-5：时间字段解析失败时回落为已获取的原始值（0 或原始文本），保持既有行为不抛出。
+      // 该函数对每一行种子都会执行，属于高频良性降级路径，因此刻意只用 console.debug，
+      // 不写入 logger 通道，避免一次搜索就刷满日志环形缓冲。
+      console.debug("[PTD] Gazelle parse row time failed, fallback to raw value:", time, e);
+    }
     return time;
   },
 };
@@ -272,9 +289,7 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
       {
         requestConfig: {
           url: "/user.php",
-          params: {
-            /* id: flushUserInfo.id */
-          },
+          params: {/* id: flushUserInfo.id */},
           responseType: "document",
         },
         assertion: { id: "params.id" },
@@ -373,50 +388,84 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
 };
 
 export class GazelleBase extends PrivateSite {
+  // 合成下载链接所需的用户级凭据（authkey/torrent_pass）的实例内缓存，见 getDownloadAuthParams
+  private _downloadAuthParams?: { authkey: string; torrentPass: string };
+
   // Gazelle 通用做种量获取方法，用于先前方法没获取到 seedingSize 的情况
   protected async getSeedingSize(userId: number, sizeIndex: number = 0): Promise<Partial<IUserInfo>> {
     const userSeedingTorrent: Partial<IUserInfo> = { seedingSize: 0 };
-    const pageInfo = { count: 1, current: 1 }; // 生成页面信息
-    for (; pageInfo.current <= pageInfo.count; pageInfo.current++) {
-      await this.sleepAction(this.metadata.userInfo?.requestDelay);
-      const TListDocument = await this.getUserTorrentList(userId, pageInfo.current);
-      // 更新最大页数
-      if (pageInfo.current === 1) {
-        pageInfo.count = this.getFieldData(TListDocument, {
-          // https://github.com/WhatCD/Gazelle/blob/63b337026d49b5cf63ce4be20fdabdc880112fa3/classes/format.class.php#L296
-          selector: ["a[href*='torrents.php?page=']:contains('Last'):first"],
-          attr: "href",
-          filters: [{ name: "querystring", args: ["page"] }, (query: string) => (query ? parseInt(query) : -1)],
-        });
-      }
+    const maxPages = 50; // 硬上限，防止分页信息异常时无限翻页
+    const concurrency = 4;
 
-      if (sizeIndex === 0) {
-        const targetTd: Element = this.getFieldData(TListDocument, {
-          selector: [
-            "tr.colhead > td > a:contains('Size')",
-            "tr.colhead > td > a[href*='Size']",
-            "tr.colhead > td > a[href*='size']", // OPS
-            "tr.colhead > td > a[href*='s4']", // JPS
-          ],
-          elementProcess: (el: Element) => el.parentNode,
-        });
-        if (targetTd && targetTd.parentNode) {
-          const allTds = Array.from(targetTd.parentNode.children);
-          sizeIndex = allTds.indexOf(targetTd as Element);
-        } else {
-          return userSeedingTorrent;
-        }
-      }
+    // 保证并发请求之间仍然满足站点 requestDelay 的请求间隔
+    const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay);
 
-      const torrentAnothers = Sizzle("tr.torrent", TListDocument);
+    // 首页：获取总页数，并解析 size 列下标
+    await throttle();
+    const firstPageDocument = await this.getUserTorrentList(userId, 1);
+
+    // 更新最大页数
+    const rawPageCount = this.getFieldData(firstPageDocument, {
+      // https://github.com/WhatCD/Gazelle/blob/63b337026d49b5cf63ce4be20fdabdc880112fa3/classes/format.class.php#L296
+      selector: ["a[href*='torrents.php?page=']:contains('Last'):first"],
+      attr: "href",
+      filters: [{ name: "querystring", args: ["page"] }, (query: string) => (query ? parseInt(query) : -1)],
+    });
+    // 原实现在拿不到 Last 链接时会退化为只解析首页
+    const pageCount =
+      typeof rawPageCount === "number" && Number.isFinite(rawPageCount)
+        ? Math.max(1, Math.min(rawPageCount, maxPages))
+        : 1;
+
+    if (sizeIndex === 0) {
+      const targetTd: Element = this.getFieldData(firstPageDocument, {
+        selector: [
+          "tr.colhead > td > a:contains('Size')",
+          "tr.colhead > td > a[href*='Size']",
+          "tr.colhead > td > a[href*='size']", // OPS
+          "tr.colhead > td > a[href*='s4']", // JPS
+        ],
+        elementProcess: (el: Element) => el.parentNode,
+      });
+      if (targetTd && targetTd.parentNode) {
+        const allTds = Array.from(targetTd.parentNode.children);
+        sizeIndex = allTds.indexOf(targetTd as Element);
+      } else {
+        return userSeedingTorrent;
+      }
+    }
+
+    // 按行收集每页的做种体积，最后按页序累加，保证浮点累加顺序与串行实现一致
+    const collectSeedingSizes = (TListDocument: Document): number[] => {
+      const sizes: number[] = [];
+      const torrentAnothers = selectElements("tr.torrent", TListDocument);
       torrentAnothers.forEach((element) => {
-        const sizeAnother = Sizzle(`td:nth-child(${sizeIndex + 1})`, element);
-        if (sizeAnother && sizeAnother.length >= 0) {
-          userSeedingTorrent.seedingSize! += parseSizeString(
-            (sizeAnother[0] as HTMLElement).innerText.trim().replace(/,/g, ""),
-          );
+        const sizeAnother = selectElements(`td:nth-child(${sizeIndex + 1})`, element);
+        // 该行没有对应列（colspan / 结构异常）时 Sizzle 返回空数组，
+        // 空数组的 length >= 0 恒为真会让 sizeAnother[0] 变成 undefined 并抛出 TypeError，
+        // 从而整次用户信息刷新失败，因此这里必须要求真正取到了元素。
+        if (sizeAnother && sizeAnother.length > 0) {
+          sizes.push(parseSizeString((sizeAnother[0] as HTMLElement).innerText.trim().replace(/,/g, "")));
         }
       });
+      return sizes;
+    };
+
+    const pageSizes: number[][] = [collectSeedingSizes(firstPageDocument)];
+    if (pageCount > 1) {
+      const restPages = Array.from({ length: pageCount - 1 }, (_, index) => index + 2);
+      pageSizes.push(
+        ...(await mapWithConcurrency(restPages, concurrency, async (page) => {
+          await throttle();
+          return collectSeedingSizes(await this.getUserTorrentList(userId, page));
+        })),
+      );
+    }
+
+    for (const sizes of pageSizes) {
+      for (const size of sizes) {
+        userSeedingTorrent.seedingSize! += size;
+      }
     }
 
     return userSeedingTorrent;
@@ -440,7 +489,7 @@ export class GazelleBase extends PrivateSite {
       if (!url) return raw;
 
       const params = url.searchParams;
-      if (params.get("action") === "download") return raw; // 已经是下载链接
+      if (params.get("action") === "download") return raw; // 已经是站点给出的真实下载链接（通常已带 authkey/torrent_pass）
 
       // 对 Gazelle 站点，如果前端拖拽功能发来的种子链接是 torrent.php?${torrentIdParam}=123 的形式，
       const torrentId = params.get(torrentIdParam);
@@ -450,8 +499,71 @@ export class GazelleBase extends PrivateSite {
       downloadURL.searchParams.set("action", "download");
       downloadURL.searchParams.set("id", torrentId);
 
-      return downloadURL.toString();
+      // E-8：合成链接必须带上用户级凭据 authkey/torrent_pass，
+      // 否则 Gazelle 会返回登录页 HTML，跟随重定向的下载器会把 HTML 当种子保存。
+      // 抓取凭据时用去掉用户后缀的页面 URL：后缀是给下载端点用的，页面请求不需要它。
+      const appendix = this.userConfig.downloadLinkAppendix ?? "";
+      const pageUrl = appendix && raw.endsWith(appendix) ? raw.slice(0, -appendix.length) : raw;
+
+      const { authkey, torrentPass } = await this.getDownloadAuthParams(pageUrl);
+      if (authkey) downloadURL.searchParams.set("authkey", authkey);
+      if (torrentPass) downloadURL.searchParams.set("torrent_pass", torrentPass);
+
+      if (!authkey && !torrentPass) {
+        logMessage(
+          `[Site] ${this.name} synthesized torrent download link without authkey/torrent_pass`,
+          { site: this.metadata.id, url: downloadURL.pathname },
+          "warn",
+        );
+      }
+
+      // 合成出来的是一个全新的 URL（base 已把用户后缀追加在了被丢弃的 raw 上），
+      // 这里必须补一次，否则用户配置的 downloadLinkAppendix 在合成路径上静默失效。
+      return appendix ? `${downloadURL.toString()}${appendix}` : downloadURL.toString();
     };
+  }
+
+  /**
+   * 获取合成下载链接所需的用户级凭据（authkey / torrent_pass）。
+   *
+   * Gazelle 的下载鉴权依赖这两个参数，站点上任意一条真实下载链接都带着它们，
+   * 因此优先从传入页面上真实存在的下载链接里提取；结果在实例内缓存，避免一次会话内重复请求。
+   * 取不到时返回空值，由调用方按「无凭据」处理（与修复前行为一致，不会因为抓取失败而抛错）。
+   */
+  protected async getDownloadAuthParams(pageUrl?: string): Promise<{ authkey: string; torrentPass: string }> {
+    if (this._downloadAuthParams) return this._downloadAuthParams;
+
+    const noAuthParams = { authkey: "", torrentPass: "" };
+    try {
+      const { data } = await this.request<Document>({
+        url: pageUrl ?? this.metadata.search?.requestConfig?.url ?? "/torrents.php",
+        responseType: "document",
+      });
+
+      const realLink = this.getFieldData(
+        data,
+        this.metadata.search?.selectors?.link ?? {
+          selector: ["a[href*='torrents.php?action=download']"],
+          attr: "href",
+        },
+      ) as string;
+
+      const realLinkParams = URL.parse(realLink ?? "")?.searchParams;
+      const authkey = realLinkParams?.get("authkey") ?? "";
+      const torrentPass = realLinkParams?.get("torrent_pass") ?? "";
+      if (authkey && torrentPass) {
+        this._downloadAuthParams = { authkey, torrentPass };
+        return this._downloadAuthParams;
+      }
+    } catch (e) {
+      logMessage(
+        `[Site] ${this.name} getDownloadAuthParams failed`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "debug",
+      );
+    }
+
+    return noAuthParams;
   }
 }
 
@@ -474,7 +586,14 @@ export default class Gazelle extends GazelleBase {
   }
 
   public override async transformSearchPage(doc: Document, searchConfig: ISearchInput): Promise<ITorrent[]> {
-    const { keywords, searchEntry, requestConfig } = searchConfig;
+    // 每次页面解析开始时重建行级选择器缓存
+    this.resetRowElementQueryCache();
+
+    let { keywords, searchEntry, requestConfig } = searchConfig;
+
+    // 自动生成的选择器写入局部副本，避免写回共享的 metadata.search.selectors (P2-15)
+    searchEntry = { ...searchEntry, selectors: { ...(searchEntry?.selectors ?? {}) } };
+
     // 如果配置文件没有传入 search 的选择器，则我们自己生成
     const legacyTableSelector = "table.torrent_table:last";
 
@@ -487,28 +606,40 @@ export default class Gazelle extends GazelleBase {
 
     // 对于 Gazelle ，一般来说，表的第一行应该是标题行，即 ` > tr:nth-child(1)`
     const headSelector = `${legacyTableSelector} tr:first > td`;
-    const headAnother = Sizzle(headSelector, doc) as HTMLTableCellElement[];
+    const headAnother = selectElements(headSelector, doc) as HTMLTableCellElement[];
     let colSpan = 0;
+
+    // 原实现外层循环缺少 break（last-match-wins），这里反序遍历、命中即跳出，结果等价且只需扫描一次
+    // guessSearchFieldIndexConfig() 提到循环外只调用一次
+    const guessSearchFieldIndexEntries = Object.entries(this.guessSearchFieldIndexConfig()).reverse();
+
     headAnother.forEach((element, elementIndex) => {
       // 比较好处理的一些元素，都是可以直接获取的
       let updateSelectorField: string | undefined;
       colSpan += Math.max(0, element.colSpan - 1); // 处理 colspan 的情况 (Gazelle-fork)
-      for (const [dectField, dectSelector] of Object.entries(this.guessSearchFieldIndexConfig())) {
+      for (const [dectField, dectSelector] of guessSearchFieldIndexEntries) {
+        let matched = false;
         for (const dectFieldElement of dectSelector) {
-          if (Sizzle(dectFieldElement, element).length > 0 || Sizzle.matchesSelector(element, dectFieldElement)) {
-            updateSelectorField = dectField;
+          if (selectElements(dectFieldElement, element).length > 0 || matchesSelector(element, dectFieldElement)) {
+            matched = true;
             break;
           }
+        }
+        if (matched) {
+          updateSelectorField = dectField;
+          break;
         }
       }
 
       if (updateSelectorField) {
-        // @ts-ignore
+        // @ts-expect-error
+        // 原因：updateSelectorField 是运行时推断出的动态字段名，selectors 的类型没有字符串索引签名
         searchEntry.selectors[updateSelectorField] = toMerged(
           {
             selector: [`> td:eq(${elementIndex + colSpan})`],
           },
-          // @ts-ignore
+          // @ts-expect-error
+          // 原因：同上，读取同一个动态字段（可能不存在，故用 ?? {} 兜底）
           searchEntry.selectors[updateSelectorField] ?? {},
         );
       }
@@ -600,7 +731,19 @@ export default class Gazelle extends GazelleBase {
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
     // 获取组信息
-    const partTorrent = this.getTorrentGroupInfo(group, searchConfig);
+    // E-10：组行与单种行的结构不同（部分站点自定义模板下可能取不到组信息），
+    // 这里与下面的逐行解析保持一致降级为「记日志 + 用空组信息继续」，
+    // 否则异常会逃出本方法，让整页搜索变成 parseError。
+    let partTorrent: Partial<ITorrent> = {};
+    try {
+      partTorrent = this.getTorrentGroupInfo(group, searchConfig);
+    } catch (e) {
+      logMessage(
+        `[Site] ${this.name} getTorrentGroupInfo failed`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
+    }
 
     /**
      * 适配添加了 rowspan 的情况 (Gazelle-fork)
@@ -684,10 +827,24 @@ export default class Gazelle extends GazelleBase {
   }
 
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
-    let flushUserInfo = await super.getUserInfoResult(lastUserInfo);
-    if (flushUserInfo.id && !flushUserInfo.seedingSize) {
-      flushUserInfo = toMerged(flushUserInfo, await this.getSeedingSize(flushUserInfo.id as number));
+    const flushUserInfo = await super.getUserInfoResult(lastUserInfo);
+
+    // E-2：按 NexusPHP 的既有模式加 status === success 守卫 + try/catch。
+    // 基础抓取失败（needLogin/网络/CF）时 id 仍会从 pickLast 保留，
+    // 若不判断状态就会对刚失败的站点再发 1-50 个请求，且这里抛错会逃出
+    // 「总返回 IUserInfo」的方法契约（调用方 offscreen/utils/userInfo.ts 无 try/catch）。
+    if (flushUserInfo.status === EResultParseStatus.success && flushUserInfo.id && !flushUserInfo.seedingSize) {
+      try {
+        return toMerged(flushUserInfo, await this.getSeedingSize(flushUserInfo.id as number));
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} getSeedingSize failed`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
+      }
     }
+
     return flushUserInfo;
   }
 }

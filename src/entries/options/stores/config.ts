@@ -7,14 +7,26 @@ import { usePreferredDark } from "@vueuse/core";
 
 import type { IConfigPiniaStorageSchema, supportThemeType } from "@/shared/types.ts";
 
-import { useMetadataStore } from "./metadata.ts";
+// 注意：不要在这里 import "./metadata.ts" —— 会与 metadata.ts → config.ts 形成运行时循环依赖。
+// metadata store 通过 metadataStoreBridge 惰性获取（对外 API getUserNames 保持不变）。
+import { getMetadataStoreLazily } from "./metadataStoreBridge.ts";
 
 const deprecatedConfigKeys = [
   "myDataTableControl.tableFontSize", // v0.0.4.961 废弃
   "myDataTableControl.joinTimeWeekOnly", // 已废弃，使用 joinTimeFormat 替代
+  "showReleaseNoteOnVersionChange", // 已废弃，发布说明/欢迎弹窗已移除
+  "version", // 已废弃，仅旧版本的发布说明弹窗使用
 ];
 
 export const defaultTimelineBackgroundColor = "#455A64";
+
+/**
+ * `usePreferredDark()` 每次调用都会新建一个 ref 并注册一个 matchMedia 监听，
+ * 之前它写在 `uiTheme` getter 里，而该 getter 会被多个 computed 反复求值
+ * （themeVars / themeConfig / 组件模板），导致 auto 主题下不断泄漏监听。
+ * 这里收成模块级单例：应用生命周期内只需要一个。
+ */
+const preferredDark = usePreferredDark();
 
 export const useConfigStore = defineStore("config", {
   persistWebExt: {
@@ -56,14 +68,12 @@ export const useConfigStore = defineStore("config", {
     },
   },
   state: (): IConfigPiniaStorageSchema => ({
-    version: "",
     lang: "zh_CN",
     theme: "light",
     isNavBarOpen: true,
     autoToggleNavBarOnDisplayChange: true,
 
     ignoreWrongPixelRatio: false,
-    showReleaseNoteOnVersionChange: true,
 
     saveTableBehavior: true,
     enableTableMultiSort: false,
@@ -160,7 +170,9 @@ export const useConfigStore = defineStore("config", {
         itemsPerPage: 10,
       },
       SetSite: {
-        itemsPerPage: -1,
+        // 默认分页而非 -1（全部）：站点数可达数百，一次渲染整表会明显卡顿
+        // （见 docs/performance-audit.md P2-5）；视图侧对历史遗留的非正数也做了兜底。
+        itemsPerPage: 25,
         sortBy: [{ key: "userConfig.sortIndex", order: "desc" }],
       },
     },
@@ -266,7 +278,7 @@ export const useConfigStore = defineStore("config", {
     download: {
       saveDownloadHistory: true,
       allowDownloaderFilterForSite: false,
-      initDownloaderTorrentOnEnter: false,
+      initDownloaderTorrentOnEnter: true,
       saveLastDownloader: false,
       allowDirectSendToClient: false,
       localDownloadMethod: "browser",
@@ -323,8 +335,7 @@ export const useConfigStore = defineStore("config", {
   getters: {
     uiTheme(): Exclude<supportThemeType, "auto"> {
       if (this.theme === "auto") {
-        const preferDark = usePreferredDark();
-        return preferDark.value ? "dark" : "light";
+        return preferredDark.value ? "dark" : "light";
       }
       return this.theme;
     },
@@ -342,14 +353,17 @@ export const useConfigStore = defineStore("config", {
     },
 
     getUserNames(state) {
-      const metadataStore = useMetadataStore();
+      // 这里只读 metadata store 的 lastUserInfo，通过 bridge 惰性获取以避免循环依赖。
+      // bridge 未注册（metadata.ts 从未被求值）时 lastUserInfo 必然为空，返回空结果即可，
+      // 与真实情况一致，因此对调用方而言 getUserNames 的语义/用法完全不变。
+      const metadataStore = getMetadataStoreLazily();
 
       const userNames = {
         perfName: "",
         names: {} as Record<string, number>,
       };
 
-      const allNames = Object.values(metadataStore.lastUserInfo)
+      const allNames = Object.values(metadataStore?.lastUserInfo ?? {})
         .map((userInfo) => userInfo.name)
         .filter(Boolean) as string[];
 
@@ -369,7 +383,7 @@ export const useConfigStore = defineStore("config", {
   },
   actions: {
     updateTableBehavior(table: string, key: string, data: any) {
-      // @ts-ignore
+      // @ts-expect-error table 为运行时动态表名，无法与 state.tableBehavior 的已知 key 对齐
       this.tableBehavior[table][key] = data;
       if (this.saveTableBehavior) {
         this.$save();

@@ -1,8 +1,7 @@
 import { stringify } from "urlencode";
 
-import { extStorage } from "@/storage.ts";
 import type { IMetadataPiniaStorageSchema } from "@/shared/types.ts";
-import { openOptionsPage } from "@/background/utils/base.ts";
+import { getExtStoragePathCached, openOptionsPage } from "@/background/utils/base.ts";
 
 const splitString = " → ";
 
@@ -17,8 +16,11 @@ const allSolution = {
 };
 
 async function getSearchSolution(getAll = false) {
-  const { defaultSolutionId = "default", solutions = {} } = ((await extStorage.getItem("metadata")) ??
-    {}) as IMetadataPiniaStorageSchema;
+  // 只取需要的两个字段（走 SW 读缓存），避免每次输入都反序列化整份 metadata（见 docs/performance-audit.md P0-2）
+  const solutions =
+    ((await getExtStoragePathCached("metadata", ["solutions"], {})) as IMetadataPiniaStorageSchema["solutions"]) ?? {};
+  const defaultSolutionId =
+    ((await getExtStoragePathCached("metadata", ["defaultSolutionId"], "default")) as string) ?? "default";
 
   let solutionsList: ISearchSolution[] = Object.values(solutions)
     .filter((x) => !!x.enabled) // 过滤掉未启用的搜索方案

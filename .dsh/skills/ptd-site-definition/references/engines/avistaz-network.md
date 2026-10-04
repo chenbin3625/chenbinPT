@@ -129,7 +129,7 @@ export const siteMetadata: ISiteMetadata = {
 | `public async getAuthToken(lastUserInfo = {})` | token 的缓存键或过期策略变化 | 763-813 |
 | `protected override parseTorrentRowForTags(torrent, row, searchConfig)` | 需要增加折扣外的站点标签；默认实现是**覆盖** `tags`（`:835`），子类必须先 `super` 再 push | 815-837；`definitions/avistaz.ts:140-168` |
 
-覆写时保持签名一致并加 `override` 关键字（`pnpm check` 会校验）。可用类型：`IAvzNetRawTorrent`（`:201-238`）。
+覆写时保持签名一致并加 `override` 关键字（`npm run check` 会校验）。可用类型：`IAvzNetRawTorrent`（`:201-238`）。
 
 ## 范例定义
 

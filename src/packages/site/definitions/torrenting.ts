@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/torrenting.yml
  * @JackettIssue https://github.com/Jackett/Jackett/pull/16904
  */
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 
 import type { ISiteMetadata } from "../types";
 import { parseTimeToLiveToDate } from "../utils";
@@ -120,7 +120,7 @@ export const siteMetadata: ISiteMetadata = {
       rows: {
         selector: "table.t1 > tbody > tr",
         filter: (rows: HTMLElement[] | null): HTMLElement[] | null =>
-          Array.isArray(rows) ? rows.filter((row) => Sizzle('a[href^="/t/"]', row).length > 0) : rows,
+          Array.isArray(rows) ? rows.filter((row) => selectElements('a[href^="/t/"]', row).length > 0) : rows,
       },
       id: {
         selector: 'a[href^="/t/"]',

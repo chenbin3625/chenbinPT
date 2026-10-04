@@ -24,7 +24,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "YUSCENE",
   aka: ["YS"],
   tags: ["综合"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",

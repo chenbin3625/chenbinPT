@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/haidan.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/haidan.video/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/haidan.video/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/haidan.json
  */
 import { type ISiteMetadata, ETorrentStatus } from "../types";
@@ -28,7 +28,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "海胆",
   aka: ["海胆之家", "HaiDan"],
   tags: ["电影", "电视剧", "影视", "综合"],
-  timezoneOffset: "+0800",
 
   collaborator: ["rsj", "zhuweitung"],
 

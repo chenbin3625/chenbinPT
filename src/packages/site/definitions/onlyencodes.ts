@@ -18,7 +18,6 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["OE"],
   description: "Encodes Live Here, Now with More!",
   tags: ["影视"],
-  timezoneOffset: "+0000",
 
   type: "private",
   schema: "Unit3D",
@@ -201,7 +200,7 @@ export const siteMetadata: ISiteMetadata = {
       ratio: 1,
       uploaded: "908.59TiB",
       seedingSize: "5TiB",
-      averageSeedingTime: "P2D7H33M20S",
+      averageSeedingTime: "P2DT7H33M20S",
       privilege: "无限下载槽 上传种子 发送邀请 免疫HR 站免 2x上传",
     },
   ],

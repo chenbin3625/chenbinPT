@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/ultrahd.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/ultrahd.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/ultrahd.net/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/ultrahd.json
  */
 import { type ISiteMetadata } from "../types";
@@ -14,7 +14,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "UltraHD",
   description: "专注韩语语种内容，包含韩影、韩剧、韩综、动漫以及纪录片",
   tags: ["电影", "电视剧", "综艺", "纪录片", "动漫"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",

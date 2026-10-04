@@ -1,4 +1,14 @@
 <script setup lang="ts">
+import {
+  ClockCircleOutlined,
+  ExclamationCircleOutlined,
+  PauseOutlined,
+  QuestionCircleOutlined,
+  SyncOutlined,
+  UploadOutlined,
+  DownloadOutlined,
+} from "@ant-design/icons-vue";
+import type { Component } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { type CTorrent, CTorrentState } from "@ptd/downloader";
@@ -10,26 +20,20 @@ const { item } = defineProps<{
 const { t } = useI18n();
 
 // ── state chip display map ────────────────────────────────────────────────
-const stateDisplay: Record<CTorrentState, { color: string; icon: string; label: string }> = {
-  [CTorrentState.downloading]: { color: "blue", icon: "mdi-download", label: "MyClient.state.downloading" },
-  [CTorrentState.seeding]: { color: "green", icon: "mdi-upload", label: "MyClient.state.seeding" },
-  [CTorrentState.paused]: { color: "grey", icon: "mdi-pause", label: "MyClient.state.paused" },
-  [CTorrentState.queued]: { color: "orange", icon: "mdi-clock-outline", label: "MyClient.state.queued" },
-  [CTorrentState.checking]: { color: "cyan", icon: "mdi-refresh", label: "MyClient.state.checking" },
-  [CTorrentState.error]: { color: "red", icon: "mdi-alert-circle", label: "MyClient.state.error" },
-  [CTorrentState.unknown]: { color: "grey", icon: "mdi-help-circle", label: "MyClient.state.unknown" },
+const stateDisplay: Record<CTorrentState, { color: string; icon: Component; label: string }> = {
+  [CTorrentState.downloading]: { color: "blue", icon: DownloadOutlined, label: "MyClient.state.downloading" },
+  [CTorrentState.seeding]: { color: "green", icon: UploadOutlined, label: "MyClient.state.seeding" },
+  [CTorrentState.paused]: { color: "grey", icon: PauseOutlined, label: "MyClient.state.paused" },
+  [CTorrentState.queued]: { color: "orange", icon: ClockCircleOutlined, label: "MyClient.state.queued" },
+  [CTorrentState.checking]: { color: "cyan", icon: SyncOutlined, label: "MyClient.state.checking" },
+  [CTorrentState.error]: { color: "red", icon: ExclamationCircleOutlined, label: "MyClient.state.error" },
+  [CTorrentState.unknown]: { color: "grey", icon: QuestionCircleOutlined, label: "MyClient.state.unknown" },
 };
 </script>
 
 <template>
-  <v-chip
-    :color="stateDisplay[item.state]?.color ?? 'grey'"
-    :prepend-icon="stateDisplay[item.state]?.icon"
-    size="small"
-    label
-  >
+  <a-tag
+    ><component :is="stateDisplay[item.state]?.icon" style="margin-right: 4px" />
     {{ t(stateDisplay[item.state]?.label ?? "MyClient.state.unknown") }}
-  </v-chip>
+  </a-tag>
 </template>
-
-<style scoped lang="scss"></style>

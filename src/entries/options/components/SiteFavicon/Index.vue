@@ -42,7 +42,5 @@ const binds = {
 </script>
 
 <template>
-  <v-img :height="size" :src="siteFavicon" :width="size" aspect-ratio="1/1" v-on="binds" />
+  <a-image :height="size" :preview="false" :src="siteFavicon" :width="size" v-on="binds" />
 </template>
-
-<style scoped lang="scss"></style>

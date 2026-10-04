@@ -56,7 +56,7 @@ title: { selector: "a.title", filters: [{ name: "dump" }] }
 
 ## 覆写类方法时的自检
 
-- 覆写必须带 `override` 关键字（`tsconfig.json` 开了 `noImplicitOverride`），`pnpm check` 会检查。
+- 覆写必须带 `override` 关键字（`tsconfig.json` 开了 `noImplicitOverride`），`npm run check` 会检查。
 - 覆写解析方法时，**先调用 super 再改**通常更安全（例如 `definitions/hdsky.ts:372-394` 先 `super.parseTorrentRowForTags(...)`）。
 - 覆写 `getTorrentDownloadLink` 时记得处理"链接已存在但可能过期"的情况，并在无法取得时回落到 `super`（`definitions/hdsky.ts:337-370`）。
 - 覆写 `guessUserLevelId` / `getUserInfoResult` 时注意它们与 `levelRequirements` 的既有约定（`AbstractPrivateSite.ts:194-220`）。

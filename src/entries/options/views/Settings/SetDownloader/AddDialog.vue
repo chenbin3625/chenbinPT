@@ -52,7 +52,6 @@ async function updateStoredDownloaderConfigByDefault(type: string) {
     advanceAddTorrentOptions: {},
     sortIndex: 100,
   };
-  console.log("storedDownloaderConfig", storedDownloaderConfig.value);
 }
 
 async function saveStoredDownloaderConfig() {
@@ -69,112 +68,84 @@ async function saveStoredDownloaderConfig() {
 </script>
 
 <template>
-  <v-dialog v-model="showDialog" max-width="800" scrollable @after-leave="resetDialog">
-    <v-card>
-      <v-card-title class="pa-0">
-        <v-toolbar color="blue-grey-darken-2">
-          <v-toolbar-title>{{ t("SetDownloader.add.title") }}</v-toolbar-title>
-          <v-spacer />
-          <v-btn
-            :title="t('layout.header.wiki')"
-            :href="`${REPO_URL}/wiki/config-download-client`"
-            color="success"
-            icon="mdi-help-circle"
+  <a-modal v-model:open="showDialog" :title="t('SetDownloader.add.title')" :width="800" :after-close="resetDialog">
+    <div v-if="currentStep === 0">
+      <!-- 选取可添加的客户端 -->
+      <a-select
+        v-model:value="selectedClientType"
+        :placeholder="t('SetDownloader.add.selectPlaceholder')"
+        option-label-prop="children"
+        show-search
+        style="width: 100%"
+        @update:value="(e: string) => updateStoredDownloaderConfigByDefault(e)"
+      >
+        <a-select-option
+          v-for="downloader in Object.values(allTorrentClientMetaData)"
+          :key="downloader.type"
+          :value="downloader.type"
+        >
+          <a-avatar :size="20" :src="getDownloaderIcon(downloader.type)" />
+          {{ downloader.type }}
+        </a-select-option>
+      </a-select>
+      <div style="margin-top: 4px">
+        <a-typography-text type="secondary">
+          {{ allTorrentClientMetaData[selectedClientType!]?.description ?? t("SetDownloader.add.NoneSelectNotice") }}
+        </a-typography-text>
+      </div>
+    </div>
+    <div v-if="currentStep === 1">
+      <Editor
+        v-if="storedDownloaderConfig.type"
+        v-model="storedDownloaderConfig as IDownloaderMetadata"
+        @update:config-valid="(v: any) => (isDownloaderConfigValid = v)"
+      />
+    </div>
+
+    <template #footer>
+      <a-flex align="center" justify="space-between">
+        <a-flex align="center" :gap="8">
+          <a-button
+            v-show="currentStep === 0"
+            :href="`${REPO_URL}/tree/master/src/packages/downloader`"
             rel="noopener noreferrer nofollow"
             target="_blank"
-          />
-        </v-toolbar>
-      </v-card-title>
-      <v-divider />
-      <v-card-text>
-        <v-window v-model="currentStep">
-          <!-- 选取可添加的客户端 -->
-          <v-window-item :value="0">
-            <v-autocomplete
-              v-model="selectedClientType"
-              :filter-keys="['raw.type']"
-              :hint="
-                allTorrentClientMetaData[selectedClientType!]?.description ?? t('SetDownloader.add.NoneSelectNotice')
-              "
-              :items="Object.values(allTorrentClientMetaData)"
-              :multiple="false"
-              :placeholder="t('SetDownloader.add.selectPlaceholder')"
-              item-title="type"
-              item-value="type"
-              persistent-hint
-              @update:model-value="(e) => updateStoredDownloaderConfigByDefault(e)"
-            >
-              <template #selection="{ item: downloader }">
-                <v-list-item :prepend-avatar="getDownloaderIcon(downloader.type)" :title="downloader.type" />
-              </template>
-              <template #item="{ props, item: downloader }">
-                <v-list-item
-                  v-bind="props"
-                  :prepend-avatar="getDownloaderIcon(downloader.type)"
-                  :title="downloader.type"
-                >
-                </v-list-item>
-              </template>
-            </v-autocomplete>
-          </v-window-item>
-          <v-window-item :value="1">
-            <Editor
-              v-if="storedDownloaderConfig.type"
-              v-model="storedDownloaderConfig as IDownloaderMetadata"
-              @update:config-valid="(v) => (isDownloaderConfigValid = v)"
-            />
-          </v-window-item>
-        </v-window>
-      </v-card-text>
-      <v-divider />
-      <v-card-actions>
-        <v-btn
-          v-show="currentStep === 0"
-          :href="`${REPO_URL}/tree/master/src/packages/downloader`"
-          color="grey-darken-1"
-          flat
-          rel="noopener noreferrer nofollow"
-          target="_blank"
-        >
-          <v-icon icon="mdi-help-circle" />
-          <span class="ml-1">{{ t("SetDownloader.add.newType") }}</span>
-        </v-btn>
-        <v-spacer />
-        <v-btn color="error" prepend-icon="mdi-close-circle" variant="text" @click="showDialog = false">
-          {{ t("common.dialog.cancel") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 1"
-          color="blue-darken-1"
-          prepend-icon="mdi-chevron-left"
-          variant="text"
-          @click="currentStep--"
-        >
-          {{ t("common.dialog.prev") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 0"
-          :disabled="selectedClientType == null"
-          append-icon="mdi-chevron-right"
-          color="blue-darken-1"
-          variant="text"
-          @click="currentStep++"
-        >
-          {{ t("common.dialog.next") }}
-        </v-btn>
-        <v-btn
-          v-if="currentStep === 1"
-          :disabled="!isDownloaderConfigValid"
-          color="success"
-          prepend-icon="mdi-check-circle-outline"
-          variant="text"
-          @click="saveStoredDownloaderConfig"
-        >
-          {{ t("common.dialog.ok") }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-</template>
+            type="link"
+          >
+            {{ t("SetDownloader.add.newType") }}
+          </a-button>
+          <a-button
+            :href="`${REPO_URL}/wiki/config-download-client`"
+            :title="t('layout.header.wiki')"
+            rel="noopener noreferrer nofollow"
+            target="_blank"
+            type="link"
+          >
+            {{ t("layout.header.wiki") }}
+          </a-button>
+        </a-flex>
 
-<style scoped lang="scss"></style>
+        <a-flex align="center" :gap="8">
+          <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+          <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+          <a-button
+            v-if="currentStep === 0"
+            :disabled="selectedClientType == null"
+            type="primary"
+            @click="currentStep++"
+          >
+            {{ t("common.dialog.next") }}
+          </a-button>
+          <a-button
+            v-if="currentStep === 1"
+            :disabled="!isDownloaderConfigValid"
+            type="primary"
+            @click="saveStoredDownloaderConfig"
+          >
+            {{ t("common.dialog.ok") }}
+          </a-button>
+        </a-flex>
+      </a-flex>
+    </template>
+  </a-modal>
+</template>

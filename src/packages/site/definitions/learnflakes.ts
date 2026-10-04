@@ -1,7 +1,7 @@
 /**
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/learnflakes.net/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/learnflakes.net/config.json
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/learnflakes.yml
- * @Issue https://github.com/pt-plugins/PT-depiler/issues/143
+ * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  *
  * 站点为 TSUE 2.2 系模板。Jackett 注释说明其登录页带 Cloudflare Turnstile，
  * 故 Jackett 采用 Cookie 方式登录；PTD 沿用浏览器 cookie 会话，无需额外处理。

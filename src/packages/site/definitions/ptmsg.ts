@@ -13,7 +13,7 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://pt.msg.vg/"],
 
-  // refs: https://github.com/pt-plugins/PT-Plugin-Plus/commit/7d821a0c57f4720604113960913211306ebc7952
+  // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/7d821a0c57f4720604113960913211306ebc7952
   isDead: true,
 
   levelRequirements: [

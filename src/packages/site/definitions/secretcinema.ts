@@ -9,7 +9,7 @@ import {
   extractContent,
   buildCategoryOptionsFromList,
 } from "../utils";
-import Sizzle from "sizzle";
+import { selectElements } from "../utils/selector";
 import GazelleJSONAPI, {
   SchemaMetadata,
   groupBrowseResult,
@@ -224,10 +224,10 @@ export default class SecretCinema extends GazelleJSONAPI {
       responseType: "document",
     });
     userSeedingTorrent.seedingBonus! = definedFilters.parseNumber(
-      Sizzle("li:contains('Seeding Points: ')", userPage)[0].textContent,
+      selectElements("li:contains('Seeding Points: ')", userPage)[0].textContent,
     );
     userSeedingTorrent.percentile! = definedFilters.parseNumber(
-      Sizzle("li:contains('Overall rank: ')", userPage)[0].textContent,
+      selectElements("li:contains('Overall rank: ')", userPage)[0].textContent,
     );
 
     return userSeedingTorrent;

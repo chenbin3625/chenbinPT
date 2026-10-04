@@ -19,7 +19,8 @@
 import axios, { AxiosRequestConfig } from "axios";
 import CryptoJS from "crypto-js";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { localSort, decryptData, encryptData } from "../utils.ts";
+import { getBackupRequestTimeout, localSort, decryptData, encryptData } from "../utils.ts";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 import {
   IBackupConfig,
   IBackupData,
@@ -55,6 +56,7 @@ export const serverMetaData: IBackupMetadata<GistConfig> = {
       name: "Access Token",
       key: "access_token",
       type: "string",
+      secret: true,
       description:
         "创建一个 Fine-grained personal access tokens ， Repository access 为 Public repositories 并在下方 Permissions - Account permissions 中找到 Gists 并将其设置为 Read And Write",
     },
@@ -82,6 +84,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       "X-GitHub-Api-Version": "2022-11-28",
     };
     return axios.request<T>({
+      timeout: getBackupRequestTimeout(this.userConfig),
       ...config,
       baseURL: `https://api.github.com/gists/${this.userConfig.gist_id}`,
       url,
@@ -226,7 +229,14 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     for (const key of decryptKeys) {
       try {
         return decryptData(data, key) as T;
-      } catch (e) {}
+      } catch (e) {
+        // P1-5：多密钥依次尝试属正常控制流，但记录每次失败原因，
+        // 便于区分「密钥不匹配」与「数据本身损坏」；全部失败时下方仍会抛出。
+        logMessage("[Gist] 使用候选密钥解密失败，尝试下一个密钥", {
+          gistId: this.userConfig.gist_id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
 
     throw new Error("Failed to decrypt data with provided keys.");

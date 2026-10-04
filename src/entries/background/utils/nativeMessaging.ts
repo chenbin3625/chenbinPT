@@ -8,6 +8,8 @@ const ENABLED_KEY = "ptd_native_bridge_enabled";
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+/** 长延迟重连改用 alarms：可跨 service worker 回收存活（见 docs/performance-audit.md P1-8） */
+const RECONNECT_ALARM_NAME = "nativeBridgeReconnect";
 
 /** Errors that indicate the native host is not installed — no point retrying. */
 const FATAL_ERRORS = [
@@ -61,6 +63,42 @@ let state: BridgeState = "no-permission";
 let lastError: string | undefined;
 let intentionalDisconnect = false;
 
+/**
+ * 桥接状态持久化（见 docs/performance-audit.md P1-8）。
+ *
+ * 早期实现把 reconnectAttempt/state/lastError 只放在模块内存里，
+ * 而 MV3 的 service worker 会被回收：退避链会断掉、状态回落到初始值，
+ * 导致 `nativeBridgeGetStatus` 结果在"回收前后"抖动。
+ * 这里把关键状态放进 chrome.storage.session（随浏览器会话存活、不落盘）。
+ */
+const BRIDGE_STATE_KEY = "nativeBridgeState";
+
+async function saveBridgeState(): Promise<void> {
+  try {
+    await chrome.storage?.session?.set({
+      [BRIDGE_STATE_KEY]: { reconnectAttempt, enabled, state, lastError },
+    });
+  } catch {
+    // session storage 不可用时不影响主流程
+  }
+}
+
+async function loadBridgeState(): Promise<void> {
+  try {
+    const stored = await chrome.storage?.session?.get(BRIDGE_STATE_KEY);
+    const value = stored?.[BRIDGE_STATE_KEY] as
+      { reconnectAttempt?: number; enabled?: boolean; state?: BridgeState; lastError?: string } | undefined;
+    if (value) {
+      reconnectAttempt = value.reconnectAttempt ?? reconnectAttempt;
+      enabled = value.enabled ?? enabled;
+      state = value.state ?? state;
+      lastError = value.lastError;
+    }
+  } catch {
+    // ignore
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 async function getOrCreateInstanceId(): Promise<string> {
@@ -106,7 +144,13 @@ function clearReconnectTimer() {
 function disconnect(intentional: boolean) {
   intentionalDisconnect = intentional;
   clearReconnectTimer();
+  try {
+    chrome.alarms?.clear(RECONNECT_ALARM_NAME);
+  } catch {
+    // ignore
+  }
   reconnectAttempt = 0;
+  void saveBridgeState();
 
   if (port) {
     try {
@@ -125,15 +169,29 @@ function scheduleReconnect() {
   if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
     state = "error";
     lastError = `Gave up after ${MAX_RECONNECT_ATTEMPTS} reconnect attempts`;
+    void saveBridgeState();
     console.debug("[PTD] Native bridge exceeded max reconnect attempts, giving up.");
     return;
   }
 
   const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
   state = "retrying";
+  void saveBridgeState();
   console.debug(
     `[PTD] Native bridge reconnecting in ${delay}ms (attempt ${reconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})...`,
   );
+
+  // 较长延迟用 chrome.alarms 排程：SW 被回收后仍能唤醒并重连
+  // （setTimeout 会随 SW 销毁而丢失，导致退避链断开）
+  if (delay >= RECONNECT_MAX_MS) {
+    try {
+      chrome.alarms?.create(RECONNECT_ALARM_NAME, { when: Date.now() + delay });
+      return;
+    } catch {
+      // alarms 不可用时退回 setTimeout
+    }
+  }
+
   reconnectTimer = setTimeout(connect, delay);
 }
 
@@ -142,10 +200,18 @@ function connect() {
     return;
   }
 
+  // 已存在连接时不再重复 connectNative（P1-8 修复的配套守卫）：
+  // 启动恢复与权限/开关变更会先后调用 init()，重复连接会留下一条无人引用的 native port
+  // （旧 port 的 onDisconnect 会因 port !== currentPort 被判定为 stale 而忽略，native 宿主进程无法回收）。
+  if (port) {
+    return;
+  }
+
   clearReconnectTimer();
   state = "connecting";
   lastError = undefined;
   intentionalDisconnect = false;
+  void saveBridgeState();
 
   let currentPort: chrome.runtime.Port;
   try {
@@ -269,6 +335,7 @@ async function init() {
     disconnect(true);
     state = "no-permission";
     lastError = undefined;
+    await saveBridgeState();
     return;
   }
 
@@ -282,17 +349,31 @@ async function init() {
   connect();
 }
 
-// ── Runtime permission listeners ─────────────────────────────────────
+// ── Startup & runtime listeners ──────────────────────────────────────
+
+/**
+ * alarms 触发的长延迟重连（见 docs/performance-audit.md P1-8）。
+ *
+ * P1-8 修复：这段注册必须在模块顶层执行。早期重构把它误嵌进了下面的 permissions.onAdded
+ * 回调里，于是 SW 每次冷启动都没有 alarm 监听者——30s 档的退避 alarm 到点无人处理，
+ * 退避链会永久停住；而且用户之后授予权限时会再次把「恢复状态 + init()」跑一遍，与顶层
+ * 启动流程并发连接。onAdded/onRemoved 恢复为只做 init()。
+ */
+chrome.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm.name === RECONNECT_ALARM_NAME) {
+    connect();
+  }
+});
 
 chrome.permissions.onAdded?.addListener((permissions) => {
   if (permissions.permissions?.includes("nativeMessaging")) {
-    init();
+    void init();
   }
 });
 
 chrome.permissions.onRemoved?.addListener((permissions) => {
   if (permissions.permissions?.includes("nativeMessaging")) {
-    init();
+    void init();
   }
 });
 
@@ -327,9 +408,20 @@ onMessage("nativeBridgeReconnect", async () => {
 
   disconnect(true);
   connect();
+  await saveBridgeState();
   return getStatus();
 });
 
 // ── Startup ──────────────────────────────────────────────────────────
 
-init();
+/**
+ * SW 冷启动：先恢复上次的状态（session），再按恢复出的 enabled / 退避次数建立连接。
+ *
+ * P1-8 修复：这段恢复逻辑必须在顶层只执行一次（否则 SW 每次启动都会丢掉保存的
+ * reconnectAttempt/state/enabled/lastError，退避与状态展示在回收前后抖动）。
+ * 权限变更仍由上面的 onAdded/onRemoved 监听器负责，connect() 对已有 port 幂等。
+ */
+void (async () => {
+  await loadBridgeState();
+  await init();
+})();

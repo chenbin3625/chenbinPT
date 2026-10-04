@@ -123,7 +123,7 @@ export const siteMetadata: ISiteMetadata = {
 | `protected async getUserTorrentList(userId, page = 1, type = "seeding")`（继承自 `GazelleBase`） | 同上 | `Gazelle.ts:427-434` |
 | `protected getTorrentDownloadLinkFactory(torrentIdParam)`（继承自 `GazelleBase`） | 不是覆写点，而是自定义 `getTorrentDownloadLink` 时的复用工具 | `Gazelle.ts:436-455` |
 
-覆写时保持签名一致并加 `override` 关键字（`pnpm check` 会校验）。
+覆写时保持签名一致并加 `override` 关键字（`npm run check` 会校验）。
 
 ## 范例定义
 

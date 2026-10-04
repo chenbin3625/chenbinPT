@@ -2,6 +2,7 @@ import urlJoin from "url-join";
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption, IBackupMetadata } from "../type";
 
 interface OWSSConfig extends IBackupConfig {
@@ -47,7 +48,7 @@ export const serverMetaData: IBackupMetadata<OWSSConfig> = {
   description: "Open Web Simple Storage（OWSS），一个基于 nodejs 简单的 Web 存储微服务，可用于私人配置文件集中存储。",
   requiredField: [
     { name: "地址", key: "address", type: "string" },
-    { name: "授权码", key: "authCode", type: "string", description: "OWSS首次部署时生成的授权码" },
+    { name: "授权码", key: "authCode", type: "string", description: "OWSS首次部署时生成的授权码", secret: true },
   ],
 };
 
@@ -82,7 +83,10 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
         url: "/list",
       });
       return Array.isArray(data.data);
-    } catch {}
+    } catch (e) {
+      // P1-5：ping 失败由返回值 false 表达，但保留失败原因便于排查（鉴权码、地址、网络等）
+      logMessage("[OWSS] ping 失败", { error: e instanceof Error ? e.message : String(e) });
+    }
     return false;
   }
 

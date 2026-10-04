@@ -23,6 +23,7 @@ import {
 import urlJoin from "url-join";
 import axios from "axios";
 import { getRemoteTorrentFile } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: DownloaderBaseConfig = {
   type: "Deluge",
@@ -173,13 +174,29 @@ type DelugeMethod =
   | "core.get_libtorrent_version"
   | "label.set_torrent";
 
+/**
+ * deluge-web 的错误体：develop（2.x）为 `{ message, code }`，部分旧版本/插件直接给字符串。
+ * code 1 = Not authenticated（见 deluge/ui/web/json_api.py 的 NotAuthorizedError 分支）。
+ */
+type DelugeError = string | { message?: unknown; code?: number };
+
 interface DelugeDefaultResponse<T = any> {
   /**
    * mostly usless id that increments with every request
    */
   id: number;
-  error: null | string;
+  error: null | DelugeError;
   result: T;
+}
+
+/** 归一化 deluge-web 的 error 字段，并标出「会话失效」这一可重登重试的情形 */
+function normalizeDelugeError(error: DelugeError): { message: string; notAuthenticated: boolean } {
+  if (typeof error === "string") {
+    return { message: error, notAuthenticated: /not authenticated/i.test(error) };
+  }
+
+  const message = error?.message == null ? "Unknown error" : String(error.message);
+  return { message, notAuthenticated: error?.code === 1 || /not authenticated/i.test(message) };
 }
 
 // Deluge 文件优先级: 0=Ignore, 1=Normal, 2=High, 5=Highest（无 low）
@@ -315,9 +332,42 @@ interface DelugeTorrentFilterRules extends CTorrentFilterRules {
   state?: string;
 }
 
+/**
+ * core.add_torrent_url / core.add_torrent_file 返回新种子的 hash 字符串（失败时为 null），
+ * 但部分 Deluge 版本会包一层数组（`[hash]` 或 `[[torrent_id, hash]]`），这里统一取出 hash。
+ */
+function extractAddedTorrentHash(result: any): string | undefined {
+  if (typeof result === "string") {
+    return result;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    return undefined;
+  }
+
+  const first = result[0];
+  if (typeof first === "string") {
+    return first;
+  }
+
+  if (Array.isArray(first) && typeof first[1] === "string") {
+    return first[1];
+  }
+
+  return undefined;
+}
+
 // noinspection JSUnusedGlobalSymbols
 export default class Deluge extends AbstractBittorrentClient {
   readonly version = "v0.1.0";
+
+  /**
+   * deluge-web 的认证依赖登录后下发的 `_session_id` Cookie（见 deluge/ui/web/auth.py），
+   * 必须复用同一个开启 withCredentials 的 axios 实例，否则登录成功后 Cookie 不会留存，
+   * 每个请求都会得到 `{ error: { code: 1, message: "Not authenticated" } }`。
+   * 扩展已声明全量 host permission，跨域携带 Cookie 不受 SameSite 限制。
+   */
+  private readonly sessionedAxios = axios.create({ withCredentials: true });
 
   private readonly address: string;
   private _msgId: number;
@@ -426,9 +476,19 @@ export default class Deluge extends AbstractBittorrentClient {
       const result = await this.request<any>(method, params);
       if (result !== null && options.label) {
         try {
-          const torrentHash = result[0][1];
+          const torrentHash = extractAddedTorrentHash(result);
+          if (!torrentHash) {
+            throw new Error("Deluge 未返回新种子的 hash，无法设置标签");
+          }
           await this.request("label.set_torrent", [torrentHash, options.label]);
-        } catch (e) {} // 即使失败了也没关系
+        } catch (e) {
+          // P1-5：Deluge 可能未启用 Label 插件，设置标签失败属预期内降级（种子已添加），
+          // 但记录原因，避免用户以为标签已生效。
+          logMessage("[Deluge] 设置标签失败（种子已添加）", {
+            label: options.label,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
 
       addResult.success = result !== null;
@@ -436,7 +496,11 @@ export default class Deluge extends AbstractBittorrentClient {
       if (!addResult.success) {
         addResult.message = result;
       }
-    } catch (e) {}
+    } catch (e) {
+      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败
+      addResult.message = e instanceof Error ? e.message : String(e);
+      logMessage("[Deluge] 添加种子失败", { url, error: addResult.message }, "error");
+    }
 
     return addResult;
   }
@@ -725,19 +789,18 @@ export default class Deluge extends AbstractBittorrentClient {
       this.isLogin = await this.request<boolean>("auth.login", [this.config.password]);
       return this.isLogin;
     } catch (e) {
+      this.isLogin = false;
       return false;
     }
   }
 
-  private async request<T>(method: DelugeMethod, params: any[] = []): Promise<T> {
-    // 防止循环调用
+  private async request<T>(method: DelugeMethod, params: any[] = [], skipAuthRetry = false): Promise<T> {
+    // 防止循环调用：请求前若未登录（或已被判定为会话失效）先登录
     if (!this.isLogin && method !== "auth.login") {
       await this.login();
     }
 
-    const {
-      data: { result },
-    } = await axios.post<DelugeDefaultResponse<T>>(
+    const response = await this.sessionedAxios.post<DelugeDefaultResponse<T>>(
       this.address,
       {
         id: this._msgId++,
@@ -749,6 +812,28 @@ export default class Deluge extends AbstractBittorrentClient {
         timeout: this.config.timeout,
       },
     );
-    return result;
+
+    const error = response.data?.error;
+
+    /**
+     * deluge-web 用 HTTP 200 + 响应体里的 `error` 报错，只看 `result` 会把失败当成成功
+     * （`result` 为 null 时，调用方 `Object.values(null)` 直接 TypeError、
+     * removeTorrent/pauseTorrent 返回 null 被当作成功），用户也看不到 "Not authenticated"。
+     */
+    if (error) {
+      const { message, notAuthenticated } = normalizeDelugeError(error);
+
+      // 会话 Cookie 失效（code 1 / Not authenticated）：重登一次再重试
+      if (notAuthenticated && !skipAuthRetry) {
+        this.isLogin = false;
+        if (await this.login()) {
+          return await this.request<T>(method, params, true);
+        }
+      }
+
+      throw new Error(`Deluge: ${message}`);
+    }
+
+    return response.data.result;
   }
 }

@@ -1,6 +1,6 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/blutopia-api.yml
- * @PTPPDefinitions https://github.com/pt-plugins/PT-Plugin-Plus/blob/dev/resource/sites/blutopia.cc/config.json
+ * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/blutopia.cc/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/blutopia.json
  */
 import { type ISiteMetadata } from "../types";
@@ -13,7 +13,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "Blutopia",
   aka: ["BLU"],
   tags: ["影视", "综合"],
-  timezoneOffset: "+0000",
   collaborator: ["bimzcy", "lengmianxia", "haowenwu"],
 
   type: "private",

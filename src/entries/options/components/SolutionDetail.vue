@@ -25,23 +25,23 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="solution" class="text-wrap">
+  <div v-if="solution">
     <template v-if="solution.name">{{ solution.name }}</template>
-    <template v-else-if="isEmpty(solution.selectedCategories)">{{ t('common.default') }}</template>
+    <template v-else-if="isEmpty(solution.selectedCategories)">{{ t("common.default") }}</template>
     <template v-else>
-      <span
+      <a-tooltip
         v-for="(value, category) in solution.selectedCategories"
         :key="category"
         :title="
           getCategoryName(siteMetaCategory, category) + ': ' + getCategoryOptionName(siteMetaCategory, category, value)
         "
       >
-        <b>{{ getCategoryName(siteMetaCategory, category) }}</b> :
-        {{ getCategoryOptionName(siteMetaCategory, category, value) }};&nbsp;
-      </span>
+        <span>
+          <strong>{{ getCategoryName(siteMetaCategory, category) }}</strong> :
+          {{ getCategoryOptionName(siteMetaCategory, category, value) }};&nbsp;
+        </span>
+      </a-tooltip>
     </template>
   </div>
   <template v-else>Unknown</template>
 </template>
-
-<style scoped lang="scss"></style>
