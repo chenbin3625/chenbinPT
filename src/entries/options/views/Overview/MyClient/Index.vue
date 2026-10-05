@@ -183,7 +183,7 @@ const fullTableHeader = computed(
       { title: t("MyClient.table.client"), key: "clientId", align: "center", width: "90", props: { disabled: true } },
       { title: t("MyClient.table.name"), key: "name", align: "start", maxWidth: "20rem", props: { disabled: true } },
       { title: t("MyClient.table.size"), key: "totalSize", align: "end" },
-      { title: t("MyClient.table.progress"), key: "progress", align: "end", width: "72" },
+      { title: t("MyClient.table.progress"), key: "progress", align: "end", width: "120" },
       { title: t("MyClient.table.status"), key: "state", align: "center" },
       { title: t("MyClient.table.upSpeed"), key: "uploadSpeed", align: "end" },
       { title: t("MyClient.table.dlSpeed"), key: "downloadSpeed", align: "end" },
@@ -515,17 +515,13 @@ function clearDownloaderFilter() {
 
         <!-- progress column -->
         <template v-else-if="column.key === 'progress'">
-          <!-- antd Progress 的文字来源是 `format` prop / `#format` 插槽，**默认插槽不是文字来源**
-               （见 ant-design-vue/es/progress/progress.js：`textFormatter = format || slots.format || (v => `${v}%`)`）。
-               早先这里把 `formatTorrentProgressLabel` 放在默认插槽里，于是该格式化**从未到达用户**——
-               用户看到的是 antd 默认的 `12.6%`，而 36px 的圆环里也放不下它。改用 `:format` 让归一化后的
-               `13%` 真正显示出来（这正是该函数存在的意义）。 -->
           <a-progress
             :format="() => formatTorrentProgressLabel(record.progress)"
             :percent="normalizeTorrentProgress(record.progress)"
-            :stroke-width="3"
-            :width="36"
-            type="circle"
+            class="my-client-progress"
+            :stroke-width="8"
+            size="small"
+            type="line"
           />
         </template>
 
@@ -734,6 +730,22 @@ function clearDownloaderFilter() {
   flex: 1 1 260px;
   min-width: min(100%, 240px);
   max-width: 400px;
+}
+
+.my-client-progress {
+  min-width: 108px;
+  margin: 0;
+}
+
+.my-client-progress :deep(.ant-progress-outer) {
+  margin-inline-end: 0;
+  padding-inline-end: 0;
+}
+
+.my-client-progress :deep(.ant-progress-text) {
+  min-width: 34px;
+  margin-inline-start: 6px;
+  font-size: 12px;
 }
 
 @media (max-width: 1279px) {
