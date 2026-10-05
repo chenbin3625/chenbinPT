@@ -1,6 +1,13 @@
+import CryptoJS from "crypto-js";
 import { describe, expect, it } from "vitest";
 
-import { decryptData, getBackupWarnings, setBackupWarnings, validateBackupPayload } from "@ptd/backupServer/utils.ts";
+import {
+  decryptData,
+  encryptData,
+  getBackupWarnings,
+  setBackupWarnings,
+  validateBackupPayload,
+} from "@ptd/backupServer/utils.ts";
 import type { IBackupData } from "@ptd/backupServer";
 
 /**
@@ -40,6 +47,33 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
     it("正常 JSON 不受影响", () => {
       expect(decryptData('{"a":{"b":[1,2,3]}}')).toEqual({ a: { b: [1, 2, 3] } });
     });
+  });
+
+  it("加密结果带认证标签，篡改密文时拒绝解密", () => {
+    const encrypted = encryptData({ secret: "value" }, "backup-key");
+    expect(encrypted.startsWith("PTD-AES-HMAC-v1:")).toBe(true);
+
+    const envelope = JSON.parse(encrypted.slice("PTD-AES-HMAC-v1:".length));
+    envelope.mac = envelope.mac.replace(/^./, envelope.mac.startsWith("0") ? "1" : "0");
+    const tampered = `PTD-AES-HMAC-v1:${JSON.stringify(envelope)}`;
+    expect(() => decryptData(tampered, "backup-key")).toThrow(/integrity|authentication/i);
+  });
+
+  it("新格式往返且错误口令拒绝；旧 OpenSSL 格式仍可读", () => {
+    const data = { config: { lang: "en" } };
+    const current = encryptData(data, "backup-key");
+    expect(decryptData(current, "backup-key")).toEqual(data);
+    expect(() => decryptData(current, "wrong-key")).toThrow(/integrity|authentication/i);
+
+    const legacyKey = CryptoJS.MD5("backup-key").toString().substring(0, 16);
+    const legacy = CryptoJS.AES.encrypt(JSON.stringify(data), legacyKey).toString();
+    expect(decryptData(legacy, "backup-key")).toEqual(data);
+  });
+
+  it("已认证的条目不能被重命名为另一个备份字段", () => {
+    const encrypted = encryptData({ lang: "en" }, "backup-key", "config");
+    expect(decryptData(encrypted, "backup-key", "config")).toEqual({ lang: "en" });
+    expect(() => decryptData(encrypted, "backup-key", "metadata")).toThrow(/integrity|authentication/i);
   });
 
   describe("结构校验：拒绝形状不符的条目", () => {

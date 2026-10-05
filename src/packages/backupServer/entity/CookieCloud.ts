@@ -18,7 +18,7 @@
 import CryptoJS from "crypto-js";
 import axios, { AxiosRequestConfig } from "axios";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { getBackupRequestTimeout } from "../utils";
+import { getBackupRequestTimeout, validateBackupPayload } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type {
   IBackupConfig,
@@ -84,6 +84,16 @@ interface ICookieCloudFile {
   local_storage_data: {};
   ptd_data: Omit<IBackupData, "manifest" | "cookies">;
   manifest: ICookieCloudManifest;
+  integrity?: string;
+  integritySalt?: string;
+}
+
+function cookieCloudIntegrityKey(password: string, salt: string): CryptoJS.lib.WordArray {
+  return CryptoJS.PBKDF2(password, CryptoJS.enc.Base64.parse(salt), {
+    keySize: 256 / 32,
+    iterations: 100_000,
+    hasher: CryptoJS.algo.SHA256,
+  });
 }
 
 export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig> {
@@ -167,6 +177,16 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
 
     // 按照 CookieCloud 的流程对数据进行加密
     const theKey = CryptoJS.MD5(`${this.userConfig.uuid}-${this.userConfig.password}`).toString().substring(0, 16);
+    fileData.integritySalt = CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Base64);
+    fileData.integrity = CryptoJS.HmacSHA256(
+      JSON.stringify({
+        cookie_data: fileData.cookie_data,
+        local_storage_data: fileData.local_storage_data,
+        ptd_data: fileData.ptd_data,
+        manifest: fileData.manifest,
+      }),
+      cookieCloudIntegrityKey(`${this.userConfig.uuid}-${this.userConfig.password}`, fileData.integritySalt),
+    ).toString();
     const encryptedFileData = CryptoJS.AES.encrypt(JSON.stringify(fileData), theKey).toString();
 
     try {
@@ -228,8 +248,37 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
     if (fileResp.data?.encrypted) {
       const theKey = CryptoJS.MD5(`${this.userConfig.uuid}-${this.userConfig.password}`).toString().substring(0, 16);
       const decrypted = CryptoJS.AES.decrypt(fileResp.data.encrypted, theKey).toString(CryptoJS.enc.Utf8);
-      const parsed = JSON.parse(decrypted) as ICookieCloudFile;
+      const parsed = JSON.parse(decrypted, (key, value) =>
+        key === "__proto__" ? undefined : value,
+      ) as ICookieCloudFile;
 
+      if (parsed.integrity) {
+        if (typeof parsed.integritySalt !== "string") {
+          throw new Error("CookieCloud backup integrity salt is missing");
+        }
+        const expectedIntegrity = CryptoJS.HmacSHA256(
+          JSON.stringify({
+            cookie_data: parsed.cookie_data,
+            local_storage_data: parsed.local_storage_data,
+            ptd_data: parsed.ptd_data,
+            manifest: parsed.manifest,
+          }),
+          cookieCloudIntegrityKey(`${this.userConfig.uuid}-${this.userConfig.password}`, parsed.integritySalt),
+        ).toString();
+        if (expectedIntegrity !== parsed.integrity) {
+          throw new Error("CookieCloud backup integrity check failed");
+        }
+      }
+
+      if (!parsed.ptd_data || typeof parsed.ptd_data !== "object" || Array.isArray(parsed.ptd_data)) {
+        throw new Error("Invalid CookieCloud backup payload");
+      }
+      for (const [key, value] of Object.entries(parsed.ptd_data)) {
+        const problem = validateBackupPayload(key, value);
+        if (problem) {
+          throw new Error(`Invalid CookieCloud backup field ${key}: ${problem}`);
+        }
+      }
       const retFile = parsed.ptd_data as IBackupData;
       retFile.cookies = parsed.cookie_data;
 

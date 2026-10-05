@@ -40,9 +40,12 @@ interface IVerifiedItem {
   torrent: ITorrentInfoForVerification | null;
   loading: boolean;
   verified: boolean;
-  status: string;
+  status: TVerificationStatus;
   error: boolean;
 }
+
+type TVerificationStatus =
+  "downloading" | "waiting" | "downloaded" | "success" | "failed" | "downloadFailed" | "missingFiles";
 
 const verifiedItems = ref<Map<string, IVerifiedItem>>(new Map());
 const verifiedItemsOrder = ref<string[]>([]); // 保持顺序
@@ -63,7 +66,7 @@ const canCreateTask = computed(() => {
 });
 
 // 状态文本
-const statusText = {
+const statusText = computed<Record<TVerificationStatus, string>>(() => ({
   downloading: t("SearchEntity.KeepUploadDialog.status.downloading"),
   waiting: t("SearchEntity.KeepUploadDialog.status.waiting"),
   downloaded: t("SearchEntity.KeepUploadDialog.status.downloaded"),
@@ -71,7 +74,7 @@ const statusText = {
   failed: t("SearchEntity.KeepUploadDialog.status.failed"),
   downloadFailed: t("SearchEntity.KeepUploadDialog.status.downloadFailed"),
   missingFiles: t("SearchEntity.KeepUploadDialog.status.missingFiles"),
-};
+}));
 
 // 打开对话框时初始化
 // 必须带 immediate：ActionTd 用 `v-if="showKeepUploadBtn && showKeepUploadDialog"` 按需挂载本组件，
@@ -115,7 +118,7 @@ function startVerification() {
       torrent: null,
       loading: true,
       verified: false,
-      status: statusText.downloading,
+      status: "downloading",
       error: false,
     });
     verifiedItemsOrder.value.push(id);
@@ -136,13 +139,13 @@ async function getTorrent(torrent: ITorrent, id: string): Promise<ITorrentInfoFo
     // 边界检查：确保项仍然存在
     const item = verifiedItems.value.get(id);
     if (!item) return null;
-    item.status = statusText.waiting;
+    item.status = "waiting";
     return result;
   } catch (e) {
     // 边界检查：确保项仍然存在
     const item = verifiedItems.value.get(id);
     if (item) {
-      item.status = statusText.downloadFailed;
+      item.status = "downloadFailed";
       item.error = true;
     }
     throw e;
@@ -165,11 +168,11 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
       if (torrent) {
         item.torrent = torrent;
         item.verified = true;
-        item.status = statusText.downloaded;
+        item.status = "downloaded";
         verifiedCount.value++;
       } else {
         item.verified = false;
-        item.status = statusText.failed;
+        item.status = "failed";
       }
     }
   } else {
@@ -185,7 +188,7 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
     };
 
     if (!baseItem?.verified) {
-      result.status = statusText.failed;
+      result.status = "failed";
     }
 
     if (!torrent || !baseItem?.verified) {
@@ -219,7 +222,7 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
             );
           });
           if (allFilesFound) {
-            result.status = statusText.missingFiles;
+            result.status = "missingFiles";
           }
         }
       }
@@ -231,7 +234,7 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
     }
 
     if (!result.status) {
-      result.status = result.verified ? statusText.success : statusText.failed;
+      result.status = result.verified ? "success" : "failed";
     }
 
     Object.assign(item, result);
@@ -262,7 +265,7 @@ function reDownload(id: string) {
   const item = verifiedItems.value.get(id);
   if (!item) return;
   item.loading = true;
-  item.status = statusText.downloading;
+  item.status = "downloading";
 
   getTorrent(item.data, id)
     .then((result) => {
@@ -313,7 +316,7 @@ async function createKeepUploadTask() {
     const task: IKeepUploadTask = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
       time: Date.now(),
-      title: verifiedList[0].data.title || "Unknown",
+      title: verifiedList[0].data.title || t("torrent.status.unknown"),
       size: verifiedList[0].data.size || 0,
       downloadOptions,
       items: verifiedList.map((item) => ({
@@ -383,7 +386,7 @@ async function createKeepUploadTask() {
             <template #description>
               {{ t("SearchEntity.KeepUploadDialog.size") }}{{ formatSize(verifiedItems.get(id)!.data.size ?? 0) }},
               {{ t("SearchEntity.KeepUploadDialog.fileCount") }}{{ getFileCount(verifiedItems.get(id)!) }},
-              {{ t("SearchEntity.KeepUploadDialog.status.label") }}{{ verifiedItems.get(id)!.status }}
+              {{ t("SearchEntity.KeepUploadDialog.status.label") }}{{ statusText[verifiedItems.get(id)!.status] }}
             </template>
           </a-list-item-meta>
 
@@ -416,7 +419,11 @@ async function createKeepUploadTask() {
               <SyncOutlined style="color: var(--ptd-success)" />
             </a-button>
 
-            <a-button :loading="verifiedItems.get(id)!.loading" :title="verifiedItems.get(id)!.status" type="text">
+            <a-button
+              :loading="verifiedItems.get(id)!.loading"
+              :title="statusText[verifiedItems.get(id)!.status]"
+              type="text"
+            >
               <CheckOutlined v-if="verifiedItems.get(id)!.verified" style="color: var(--ptd-success)" />
               <CloseOutlined
                 v-else

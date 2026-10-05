@@ -265,8 +265,8 @@ function getParsedRangeBounds(filter: TFilter, keyword: string, format: TFormat)
   const valueFormat = getValueFormat(keyword, format);
   const bounds = {
     format,
-    from: valueFormat.parse((filter[keyword] as any).from || -Infinity) as number,
-    to: valueFormat.parse((filter[keyword] as any).to || Infinity) as number,
+    from: valueFormat.parse((filter[keyword] as any).from ?? -Infinity) as number,
+    to: valueFormat.parse((filter[keyword] as any).to ?? Infinity) as number,
   };
   keywordCache.set(keyword, bounds);
   return bounds;
@@ -285,7 +285,7 @@ export function checkRangeValue(
     const value = valueFormat.parse(itemValue) as number;
     const { from, to } = getParsedRangeBounds(filter, keyword, format);
 
-    return Boolean(from && value >= from && to && value <= to);
+    return value >= from && value <= to;
   }
 }
 
@@ -438,13 +438,12 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
 
     ranges.forEach((key) => {
       const valueFormat = getValueFormat(key, format);
-      const range = (advanceItemPropsRef.value[key] as unknown as IRangedField).range;
       const value = (advanceFilterDictRef.value[key] as unknown as [number, number]).map(valueFormat.parse);
 
-      if ((value[0] && value[0] !== -Infinity) || (value[1] && value[1] !== Infinity)) {
+      if (Number.isFinite(value[0]) || Number.isFinite(value[1])) {
         filters[key] = {
-          from: valueFormat.build(Math.max(range[0], value[0], -Infinity)),
-          to: valueFormat.build(Math.min(range[1], value[1], Infinity)),
+          from: valueFormat.build(Number.isFinite(value[0]) ? value[0] : 0),
+          to: Number.isFinite(value[1]) ? valueFormat.build(value[1]) : undefined,
         };
       }
     });

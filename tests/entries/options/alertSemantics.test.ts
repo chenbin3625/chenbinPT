@@ -53,10 +53,9 @@ const BACKUP_WITH_IMPLANTED_SERVERS = {
   },
 };
 
-/** 只含非敏感字段的普通备份 */
+/** 未选择恢复任何敏感字段的空备份 */
 const BENIGN_BACKUP = {
-  manifest: { version: "chenbinPT (v1.0.0.0)", files: { downloadHistory: 1 } },
-  downloadHistory: [],
+  manifest: { version: "chenbinPT (v1.0.0.0)", files: {} },
 };
 
 /** 文档里出现的 alert 级别（antd 的 Modal / Popover 会 teleport 到 body） */
@@ -107,7 +106,7 @@ describe("S-1：恢复他人备份时的警示级别", () => {
     view.unmount();
   });
 
-  it("阴性对照：普通备份不弹任何警示（避免警示疲劳）", async () => {
+  it("阴性对照：无敏感字段的备份不弹警示", async () => {
     const view = await mountRestoreDialog(BENIGN_BACKUP);
 
     expect(alertTypesInDocument()).toEqual([]);

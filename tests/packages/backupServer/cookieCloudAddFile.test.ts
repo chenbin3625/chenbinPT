@@ -81,6 +81,8 @@ describe("CookieCloud.addFile：不修改传入的备份数据对象", () => {
     expect(uploaded.manifest.fileName).toBe(backupFilename);
     expect(uploaded.manifest.encryption).toBe(true);
     expect(uploaded.manifest.files).toEqual({});
+    expect(uploaded.integrity).toMatch(/^[a-f0-9]{64}$/);
+    expect(uploaded.integritySalt).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
   });
 
   it("上传失败：返回 false，且传入对象（可能是 getFile 的缓存对象）仍然完整", async () => {
@@ -105,5 +107,40 @@ describe("CookieCloud.addFile：不修改传入的备份数据对象", () => {
     await expect(server.addFile(backupFilename, makeBackupData())).resolves.toBe(true);
 
     expect((CookieCloud as any).fileCache.has(cacheKey)).toBe(false);
+  });
+});
+
+describe("CookieCloud 恢复不可信 JSON", () => {
+  it("解密时剥离嵌套 __proto__ 键", async () => {
+    const raw =
+      '{"cookie_data":{},"ptd_data":{"metadata":{"sites":{"__proto__":{"polluted":"yes"}}}},"manifest":{"files":{},"version":"1"}}';
+    const key = CryptoJS.MD5("test-uuid-test-password").toString().substring(0, 16);
+    vi.mocked(axios.request).mockResolvedValue({
+      data: { encrypted: CryptoJS.AES.encrypt(raw, key).toString() },
+      headers: {},
+    } as any);
+
+    const result = await createServer().getFile("");
+
+    expect(Object.hasOwn(result.metadata.sites, "__proto__")).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("新写入的 payload 经篡改后拒绝恢复", async () => {
+    const key = CryptoJS.MD5("test-uuid-test-password").toString().substring(0, 16);
+    vi.mocked(axios.request)
+      .mockResolvedValueOnce({ data: { action: "done" } } as any)
+      .mockImplementationOnce(async (_request) => {
+        const uploaded = decryptUploadedPayload();
+        uploaded.ptd_data.config.lang = "attacker";
+        return {
+          data: { encrypted: CryptoJS.AES.encrypt(JSON.stringify(uploaded), key).toString() },
+          headers: {},
+        } as any;
+      });
+
+    const server = createServer();
+    await server.addFile("name", makeBackupData());
+    await expect(server.getFile("")).rejects.toThrow(/integrity/i);
   });
 });

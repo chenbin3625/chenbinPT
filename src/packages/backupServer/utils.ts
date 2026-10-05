@@ -16,6 +16,8 @@ import { omit } from "es-toolkit";
 import { createZipBlob } from "./zipStream.ts";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const BACKUP_CIPHER_PREFIX = "PTD-AES-HMAC-v1:";
+const BACKUP_KDF_ITERATIONS = 100_000;
 
 /** 恢复备份时逐文件解密/校验的并发上限（有界并发，避免大备份串行阻塞、也避免一次读入全部文件） */
 const RESTORE_FILE_CONCURRENCY = 4;
@@ -180,27 +182,47 @@ export function pruneBackupFiles(
   return [deletedFiles, keptFiles];
 }
 
-/**
- * 注意，我们不直接使用用户提供的 secretKey 作为 AES 的密钥，因为可能无法提供足够强度的密钥
- */
-function deriveEncryptionKey(encryptionKey?: string): string | undefined {
-  if (!encryptionKey) {
-    return undefined;
-  }
-  return CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
+function deriveAuthenticatedKeys(encryptionKey: string, salt: CryptoJS.lib.WordArray) {
+  const material = CryptoJS.PBKDF2(encryptionKey, salt, {
+    keySize: 256 / 32,
+    iterations: BACKUP_KDF_ITERATIONS,
+    hasher: CryptoJS.algo.SHA256,
+  });
+  return {
+    cipherKey: CryptoJS.HmacSHA256("backup-encryption", material),
+    macKey: CryptoJS.HmacSHA256("backup-authentication", material),
+  };
 }
 
-/** 使用已经派生好的密钥加密（避免对同一个密钥重复做 CryptoJS.MD5） */
-function encryptDataWithKey(data: any, derivedKey?: string): string {
+function macMatches(actual: string, expected: string): boolean {
+  if (!/^[0-9a-f]{64}$/.test(expected)) return false;
+  let difference = 0;
+  for (let i = 0; i < expected.length; i++) {
+    difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return difference === 0;
+}
+
+/** AES-CBC + HMAC-SHA256 format; legacy AES/OpenSSL payloads remain readable. */
+function encryptDataWithKey(data: any, encryptionKey?: string, field = ""): string {
   const stringifyData = JSON.stringify(data);
-  if (!derivedKey) {
+  if (!encryptionKey) {
     return stringifyData;
   }
-  return CryptoJS.AES.encrypt(stringifyData, derivedKey).toString();
+
+  const salt = CryptoJS.lib.WordArray.random(16);
+  const iv = CryptoJS.lib.WordArray.random(16);
+  const { cipherKey, macKey } = deriveAuthenticatedKeys(encryptionKey, salt);
+  const ciphertext = CryptoJS.AES.encrypt(stringifyData, cipherKey, { iv }).ciphertext.toString(CryptoJS.enc.Base64);
+  const saltBase64 = salt.toString(CryptoJS.enc.Base64);
+  const ivBase64 = iv.toString(CryptoJS.enc.Base64);
+  const mac = CryptoJS.HmacSHA256(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, macKey).toString();
+
+  return `${BACKUP_CIPHER_PREFIX}${JSON.stringify({ salt: saltBase64, iv: ivBase64, ciphertext, mac })}`;
 }
 
-export function encryptData(data: any, encryptionKey?: string): string {
-  return encryptDataWithKey(data, deriveEncryptionKey(encryptionKey));
+export function encryptData(data: any, encryptionKey?: string, field = ""): string {
+  return encryptDataWithKey(data, encryptionKey, field);
 }
 
 /**
@@ -218,12 +240,56 @@ function stripProtoKeys(key: string, value: unknown): unknown {
   return value;
 }
 
-export function decryptData<T = any>(data: string, encryptionKey?: string): T {
-  const the_key = deriveEncryptionKey(encryptionKey);
-  if (!the_key) {
+export function decryptData<T = any>(data: string, encryptionKey?: string, field = ""): T {
+  if (data.startsWith(BACKUP_CIPHER_PREFIX)) {
+    if (!encryptionKey) {
+      throw new Error("Backup encryption key is required");
+    }
+
+    let envelope: { salt: string; iv: string; ciphertext: string; mac: string };
+    try {
+      envelope = JSON.parse(data.slice(BACKUP_CIPHER_PREFIX.length));
+    } catch {
+      throw new Error("Invalid encrypted backup envelope");
+    }
+
+    if (
+      !envelope ||
+      typeof envelope.salt !== "string" ||
+      typeof envelope.iv !== "string" ||
+      typeof envelope.ciphertext !== "string" ||
+      typeof envelope.mac !== "string"
+    ) {
+      throw new Error("Invalid encrypted backup envelope");
+    }
+    const salt = CryptoJS.enc.Base64.parse(envelope.salt);
+    const iv = CryptoJS.enc.Base64.parse(envelope.iv);
+    if (salt.sigBytes !== 16 || iv.sigBytes !== 16) {
+      throw new Error("Invalid encrypted backup envelope");
+    }
+    const { cipherKey, macKey } = deriveAuthenticatedKeys(encryptionKey, salt);
+    const actualMac = CryptoJS.HmacSHA256(
+      `${field}.${envelope.salt}.${envelope.iv}.${envelope.ciphertext}`,
+      macKey,
+    ).toString();
+    if (!macMatches(actualMac, envelope.mac)) {
+      throw new Error("Backup integrity/authentication check failed");
+    }
+
+    const decrypted = CryptoJS.AES.decrypt(
+      { ciphertext: CryptoJS.enc.Base64.parse(envelope.ciphertext) } as CryptoJS.lib.CipherParams,
+      cipherKey,
+      { iv },
+    ).toString(CryptoJS.enc.Utf8);
+    return JSON.parse(decrypted, stripProtoKeys) as T;
+  }
+
+  // Legacy AES/OpenSSL payloads remain readable for existing backups.
+  if (!encryptionKey) {
     return JSON.parse(data, stripProtoKeys);
   }
-  const decrypted = CryptoJS.AES.decrypt(data, the_key).toString(CryptoJS.enc.Utf8);
+  const legacyKey = CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
+  const decrypted = CryptoJS.AES.decrypt(data, legacyKey).toString(CryptoJS.enc.Utf8);
   return JSON.parse(decrypted, stripProtoKeys) as T;
 }
 
@@ -237,9 +303,6 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
     files: {},
   } as IBackupFileManifest;
 
-  // 密钥派生只做一次，避免每个备份文件都重复计算一次 CryptoJS.MD5
-  const derivedKey = deriveEncryptionKey(encryptionKey);
-
   delete data.manifest; // 确保 manifest 不会被重复添加到 zip 中
 
   /**
@@ -249,7 +312,7 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
   function* buildZipEntries(): Generator<{ name: string; content: string }> {
     for (const [key, value] of Object.entries(data)) {
       const fileName = `${key}.json`;
-      const fileContent = encryptDataWithKey(value, derivedKey);
+      const fileContent = encryptDataWithKey(value, encryptionKey, key);
       // 这里的 MD5 是备份格式的一部分（manifest.files[*].hash），恢复时会用于校验，因此必须计算一次
       manifest.files[key] = { name: fileName, hash: CryptoJS.MD5(fileContent).toString() };
       yield { name: fileName, content: fileContent };
@@ -389,7 +452,7 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
 
           let payload: unknown;
           try {
-            payload = decryptData(fileContent, encryptionKey);
+            payload = decryptData(fileContent, encryptionKey, fileKey);
           } catch (e) {
             throw new Error(`Failed to decrypt file: ${fileName}`);
           }

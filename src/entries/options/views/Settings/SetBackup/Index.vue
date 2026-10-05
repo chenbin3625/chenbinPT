@@ -220,7 +220,7 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
 
         <span style="flex: 1 1 auto" />
 
-        <a-input v-model:value="tableFilter" allow-clear placeholder="Search" style="max-width: 500px">
+        <a-input v-model:value="tableFilter" allow-clear :placeholder="t('common.search')" style="max-width: 500px">
           <template #suffix><SearchOutlined /></template>
         </a-input>
       </a-flex>

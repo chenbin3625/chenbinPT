@@ -422,6 +422,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
         baseURL: this.config.address,
         url: urlJoin("/api/v2", path),
         timeout: this.config.timeout,
+        withCredentials: !this.isApiKeyAuth,
         ...config,
       });
     } catch (e) {

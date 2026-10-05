@@ -6,6 +6,7 @@ import { getHostFromUrl, restoreSecureLink } from "@ptd/site/utils/html.ts";
 import type BittorrentSite from "@ptd/site/schemas/AbstractBittorrentSite.ts";
 
 import { sendMessage } from "@/messages.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
@@ -16,6 +17,11 @@ import SiteDetailPage from "./pages/SiteDetailPage.vue";
 import { useConfigStore } from "@/options/stores/config.ts";
 
 export const siteInstance = shallowRef<BittorrentSite>();
+let clipboardFallbackContainer: HTMLElement | undefined;
+
+export function setClipboardFallbackContainer(container?: HTMLElement): void {
+  clipboardFallbackContainer = container;
+}
 
 type TPageType = "unknown" | "social" | "list" | "detail";
 
@@ -169,7 +175,10 @@ export function installPageTypeUrlWatcher(ptdData: IPtdData = {}): () => void {
  * 需要二次确认时弹 shadow root 内的 antd Modal；`doubleConfirmAction` 关闭时不弹窗、直接放行。
  * （原来用的是浏览器原生对话框，样式与主题都与 overlay 脱节，见 audit §2.3。）
  */
-export async function wrapperConfirmFn(fn: () => unknown, message = "确定要执行此操作吗？"): Promise<void> {
+export async function wrapperConfirmFn(
+  fn: () => unknown,
+  message = i18n.t("contentScript.confirmAction"),
+): Promise<void> {
   const configStore = useConfigStore();
 
   if (!configStore.contentScript.doubleConfirmAction) {
@@ -185,7 +194,7 @@ export async function wrapperConfirmFn(fn: () => unknown, message = "确定要�
 export async function doKeywordSearch(keywords: string, plan = "default"): Promise<void> {
   if (!keywords) {
     // 原来用的是浏览器原生输入框；取消（null）等价于空关键词，走下面的报错分支
-    keywords = (await promptModal("未解析到搜索关键词，请输入：")) ?? "";
+    keywords = (await promptModal(i18n.t("contentScript.inputSearchKeywords"))) ?? "";
   }
 
   if (keywords) {
@@ -198,7 +207,7 @@ export async function doKeywordSearch(keywords: string, plan = "default"): Promi
     });
   } else {
     const runtimeStore = useRuntimeStore();
-    runtimeStore.showSnakebar("搜索关键词不能为空", { color: "error" });
+    runtimeStore.showSnakebar(i18n.t("contentScript.emptySearchKeyword"), { color: "error" });
   }
 }
 
@@ -216,25 +225,26 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     // ignore and fallback
   }
 
-  if (typeof document === "undefined") {
+  if (typeof document === "undefined" || !clipboardFallbackContainer?.isConnected) {
     return false;
   }
 
+  const textarea = document.createElement("textarea");
   try {
-    const textarea = document.createElement("textarea");
     textarea.value = text;
     textarea.setAttribute("readonly", "true");
     textarea.style.position = "fixed";
     textarea.style.top = "-9999px";
     textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
+    clipboardFallbackContainer.appendChild(textarea);
     textarea.focus();
     textarea.select();
     const successful = document.execCommand("copy");
-    document.body.removeChild(textarea);
     return successful;
   } catch (err) {
     return false;
+  } finally {
+    textarea.remove();
   }
 }
 
@@ -375,7 +385,9 @@ export function sanitizeParsedTorrents(torrents: ITorrent[], trustedHosts: Itera
   const rejectedCount = torrents.length - allowed.length;
 
   if (rejectedCount > 0) {
-    useRuntimeStore().showSnakebar(`已忽略 ${rejectedCount} 条不属于本站点的下载链接`, { color: "warning" });
+    useRuntimeStore().showSnakebar(i18n.t("contentScript.ignoredForeignLinks", { count: rejectedCount }), {
+      color: "warning",
+    });
   }
 
   return allowed;
@@ -387,7 +399,7 @@ export function sanitizeParsedTorrents(torrents: ITorrent[], trustedHosts: Itera
 export async function ensureTrustedTorrentLink(torrent: ITorrent | undefined, siteId?: string): Promise<boolean> {
   if (isTrustedTorrent(torrent, await getTrustedLinkHosts(siteId))) return true;
 
-  useRuntimeStore().showSnakebar("解析出的下载链接不属于该站点，已拒绝", { color: "error" });
+  useRuntimeStore().showSnakebar(i18n.t("contentScript.untrustedTorrentLink"), { color: "error" });
   return false;
 }
 
@@ -575,9 +587,9 @@ export function resolveDroppedTorrents(
   if (result.torrents.length === 0) {
     const runtimeStore = useRuntimeStore();
     if (result.payloadInvalid) {
-      runtimeStore.showSnakebar("拖拽内容不是有效的种子数据，已忽略", { color: "error" });
+      runtimeStore.showSnakebar(i18n.t("contentScript.invalidDropData"), { color: "error" });
     } else if (result.rejectedCount > 0) {
-      runtimeStore.showSnakebar("拖拽内容里的链接不受支持或不属于当前站点，已忽略", { color: "error" });
+      runtimeStore.showSnakebar(i18n.t("contentScript.unsupportedDropLinks"), { color: "error" });
     }
   }
 

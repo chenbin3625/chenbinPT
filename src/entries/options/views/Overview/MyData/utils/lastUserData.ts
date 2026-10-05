@@ -1,6 +1,7 @@
 import { ref, computed } from "vue";
 import { type ISiteUserConfig, type IUserInfo, TSiteID } from "@ptd/site";
 import { sendMessage } from "@/messages.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import { differenceInDays } from "date-fns";
@@ -115,7 +116,7 @@ export function flushSiteLastUserInfo(sites: TSiteID[]) {
         // 注意条件不能取反，否则真实失败会被静默吞掉（按钮点了没有任何反馈）。
         // 失败详情由下面的提示直接告知用户，不再往控制台重复打印（options 侧没有日志查看器，见审查报告 L-7）。
         if (runtimeStore.userInfo.flushPlan[site]) {
-          runtimeStore.showSnakebar(`获取站点 [${site}] 用户信息失败`, { color: "error" });
+          runtimeStore.showSnakebar(i18n.t("MyData.index.flushSiteFailed", { site }), { color: "error" });
         }
       })
       .finally(() => {
@@ -132,7 +133,7 @@ export async function cancelFlushSiteLastUserInfo() {
 
   await sendMessage("cancelUserInfoQueue", undefined);
 
-  runtimeStore.showSnakebar(`用户信息刷新队列已取消`, { color: "error" });
+  runtimeStore.showSnakebar(i18n.t("MyData.index.flushQueueCancelled"), { color: "error" });
 }
 
 export async function loadSiteHistoryData(siteId: TSiteID): Promise<Array<IUserInfo & { date: string }>> {

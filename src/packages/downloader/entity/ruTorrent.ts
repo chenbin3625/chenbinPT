@@ -550,7 +550,7 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
 
   async resumeTorrent(id: string): Promise<boolean> {
     const postData = new URLSearchParams({
-      mode: "post",
+      mode: "unpause",
       hash: id.toUpperCase(),
     });
     await this.requestHttpRpc(postData);
@@ -575,16 +575,16 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     const calls: Array<[string, string[]?]> = [];
 
     if (typeof limits.upload !== "undefined") {
-      calls.push(["d.set_upload_limit", [upId, String(limits.upload > 0 ? limits.upload : 0)]]);
+      calls.push(["d.set_upload_limit", [upId, String(limits.upload > 0 ? limits.upload * 1024 : 0)]]);
     }
 
     if (typeof limits.download !== "undefined") {
-      calls.push(["d.set_download_limit", [upId, String(limits.download > 0 ? limits.download : 0)]]);
+      calls.push(["d.set_download_limit", [upId, String(limits.download > 0 ? limits.download * 1024 : 0)]]);
     }
 
     const postData = buildRequestXML(calls);
-    await this.requestHttpRpc(postData);
-    return true;
+    const { data } = await this.requestHttpRpc<string>(postData);
+    return !isXmlRpcFaultResponse(data);
   }
 
   // 设置单个种子的标签（rTorrent: d.custom1.set）

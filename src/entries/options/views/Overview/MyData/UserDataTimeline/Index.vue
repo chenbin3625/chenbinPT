@@ -62,6 +62,13 @@ const router = useRouter();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 const control = configStore.userDataTimelineControl;
+const timelineTitle = computed({
+  get: () => timelineData.value.title,
+  set: (value: string) => {
+    timelineData.value.title = value;
+    control.title = value;
+  },
+});
 
 const isLoading = ref<boolean>(false);
 const { ref: timelineData, reset: resetTimelineData } = timelineDataRef;
@@ -645,7 +652,7 @@ function saveControl() {
             </a-col>
             <a-col :span="24">
               <a-form-item :label="t('UserDataTimeline.controls.timelineTitle')"
-                ><a-input v-model:value="timelineData.title" @update:value="(v: string) => (control.title = v)">
+                ><a-input v-model:value="timelineTitle">
                   <template #suffix>
                     <HistoryOutlined
                       style="cursor: pointer"
@@ -691,7 +698,7 @@ function saveControl() {
                 :step="1"
                 style="padding-right: 20px"
                 :tooltip-open="true"
-                @update:value="updateBlue"
+                @change="updateBlue"
               ></a-slider>
             </a-col>
           </a-row>

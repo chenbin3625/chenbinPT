@@ -138,7 +138,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     const writeFile = {} as Record<string, { content: string } | null>;
     for (const [key, value] of Object.entries(file)) {
       const writeFileName = `${key}.${manifest.encryption ? "txt" : "json"}`;
-      const fileContent = this.encryptData(value);
+      const fileContent = encryptData(value, `${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`, key);
       manifest.files[key] = { name: writeFileName, hash: CryptoJS.MD5(fileContent).toString() };
       writeFile[writeFileName] = { content: fileContent };
     }
@@ -201,7 +201,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
         }
 
         try {
-          result[key] = this.decryptData(fileRawContent);
+          result[key] = this.decryptData(fileRawContent, key);
         } catch (e) {
           throw new Error(`Failed to decrypt file.`);
         }
@@ -223,12 +223,12 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     return encryptData(data, encryptKey);
   }
 
-  protected override decryptData<T = any>(data: string): T {
+  protected override decryptData<T = any>(data: string, field = ""): T {
     const decryptKeys = [`${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`, this.encryptionKey];
 
     for (const key of decryptKeys) {
       try {
-        return decryptData(data, key) as T;
+        return decryptData(data, key, field) as T;
       } catch (e) {
         // P1-5：多密钥依次尝试属正常控制流，但记录每次失败原因，
         // 便于区分「密钥不匹配」与「数据本身损坏」；全部失败时下方仍会抛出。

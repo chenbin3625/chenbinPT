@@ -99,6 +99,7 @@ export default class PrivateSite extends BittorrentSite {
       }
     } catch (e) {
       console.debug(e);
+      return false;
     }
 
     return true;

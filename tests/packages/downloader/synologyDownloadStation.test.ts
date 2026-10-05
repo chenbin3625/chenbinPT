@@ -194,3 +194,23 @@ describe("Synology Download Station：登录使用 POST（D-8）", () => {
     expect((client as any)._sessionId).toBeUndefined();
   });
 });
+
+describe("Synology Download Station 删除参数", () => {
+  it("无法只删除任务时，未勾选删数据不得调用可能删除文件的接口", async () => {
+    const client = new SynologyDownloadStation({ address: "http://dsm.local:5000/" });
+    const request = vi.fn();
+    (client as any).requestEntryCGI = request;
+
+    await expect(client.removeTorrent("task-1", false)).rejects.toThrow(/cannot delete/i);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("明确勾选删除数据时可以删除任务与文件", async () => {
+    const client = new SynologyDownloadStation({ address: "http://dsm.local:5000/" });
+    const request = vi.fn(async () => ({ success: true }));
+    (client as any).requestEntryCGI = request;
+
+    await expect(client.removeTorrent("task-1", true)).resolves.toBe(true);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: "delete", id: "task-1" }));
+  });
+});

@@ -261,7 +261,7 @@ async function confirmDeleteDownloader(downloaderId: TDownloaderKey) {
         <a-input
           v-model:value="tableWaitFilterRef"
           allow-clear
-          placeholder="Search"
+          :placeholder="t('common.search')"
           style="max-width: 500px"
           @change="(e: any) => !e.target.value && buildFilterDictFn('')"
         >

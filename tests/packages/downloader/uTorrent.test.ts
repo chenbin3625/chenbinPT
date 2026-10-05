@@ -7,10 +7,16 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+const axiosMock = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+}));
+
 vi.mock("@ptd/downloader/utils.ts", () => ({
   getRemoteTorrentFile: vi.fn(),
   extractMagnetHash: vi.fn(),
 }));
+vi.mock("axios", () => ({ default: axiosMock }));
 
 import UTorrent from "@ptd/downloader/entity/uTorrent.ts";
 
@@ -56,5 +62,36 @@ describe("uTorrent：progress 千分比换算成 0-100", () => {
     expect(torrent.progress).toBe(100);
     expect(torrent.isCompleted).toBe(true);
     expect(torrent.state).toBe("seeding");
+  });
+});
+
+describe("uTorrent：认证与删除默认值", () => {
+  it("通用请求携带 Basic Auth 与 credentials", async () => {
+    const client = new UTorrent({
+      address: "http://127.0.0.1:8080/gui/",
+      username: "admin",
+      password: "secret",
+    });
+    (client as any)._sid = "sid";
+    axiosMock.get.mockResolvedValue({ data: { build: "1" } });
+
+    await client.request("getsettings");
+
+    expect(axiosMock.get).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/gui/",
+      expect.objectContaining({
+        auth: { username: "admin", password: "secret" },
+        withCredentials: true,
+      }),
+    );
+  });
+
+  it("直接调用 removeTorrent 默认只移除任务，不删除数据", async () => {
+    const client = new UTorrent({ address: "http://127.0.0.1:8080/gui/" });
+    (client as any).request = vi.fn().mockResolvedValue({ build: "1" });
+
+    await client.removeTorrent("hash");
+
+    expect((client as any).request).toHaveBeenCalledWith("removetorrent", { hash: "hash" });
   });
 });

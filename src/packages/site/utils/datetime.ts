@@ -133,9 +133,13 @@ export function parseTimeToLiveToDate(ttl: string): number | string {
 
 export function parseValidTimeString(query: string, formatString: string[] = []): number | string {
   for (const f of [...formatString, "yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSS"]) {
-    let time = parse(query, f, new Date());
-    if (isValid(time)) {
-      return +time;
+    try {
+      const time = parse(query, f, new Date());
+      if (isValid(time)) {
+        return +time;
+      }
+    } catch {
+      // A bad site-defined format must not prevent the remaining formats from being tried.
     }
   }
 
@@ -146,6 +150,25 @@ export function parseValidTimeString(query: string, formatString: string[] = [])
   }
 
   return query;
+}
+
+const explicitTimeZonePattern = /[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+const wallTimePattern = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(?::(\d{2})(\.\d+)?)?)?$/;
+
+export function parseValidTimeStringInZone(
+  query: string,
+  formatString: string[],
+  offset: timezoneOffset,
+): number | string {
+  if (/^\d+$/.test(query)) return parseTimeWithZone(query, offset);
+  if (wallTimePattern.test(query)) return parseTimeWithZone(query, offset);
+
+  const parsed = parseValidTimeString(query, formatString);
+  if (typeof parsed !== "number" || explicitTimeZonePattern.test(query)) return parsed;
+
+  // date-fns parsed an unzoned wall time in the host zone. Reuse its calendar fields,
+  // then apply the site's zone exactly once.
+  return parseTimeWithZone(format(parsed, "yyyy-MM-dd'T'HH:mm:ss.SSS"), offset);
 }
 
 /**
@@ -215,11 +238,24 @@ export function parseTimeWithZone(
     return String(Math.trunc(timestamp)).length <= 10 ? timestamp * 1000 : timestamp;
   }
 
+  if (explicitTimeZonePattern.test(time)) {
+    const absoluteTime = Date.parse(time);
+    return Number.isNaN(absoluteTime) ? 0 : absoluteTime;
+  }
+
   // 字符串形式为站点本地的墙上时间，显式按其偏移构造，避免依赖运行主机的本地时区
   const offset = parseTimezoneOffset(timezoneOffset);
   if (offset === null) {
     // 偏移无法识别时明确失败（返回安全值），而不是落到 `+new Date(time)` 上按宿主机时区算
     return 0;
+  }
+
+  const wallTime = wallTimePattern.exec(time);
+  if (wallTime) {
+    const timestamp = +new Date(
+      `${wallTime[1]}T${wallTime[2] ?? "00:00"}:${wallTime[3] ?? "00"}${wallTime[4] ?? ""}${offset}`,
+    );
+    return Number.isNaN(timestamp) ? 0 : timestamp;
   }
 
   const date = new Date(time);
@@ -229,7 +265,7 @@ export function parseTimeWithZone(
   }
 
   // 时间格式按 ISO 8601 标准设置，如：2020-01-01T00:00:01+08:00
-  return +new Date(`${format(date, "yyyy-MM-dd'T'HH:mm:ss")}${offset}`);
+  return +new Date(`${format(date, "yyyy-MM-dd'T'HH:mm:ss.SSS")}${offset}`);
 }
 
 export function convertIsoDurationToDate(duration: isoDuration, timestamp: number): number {

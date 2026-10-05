@@ -1,6 +1,6 @@
 import { intersection, isEqual, toMerged } from "es-toolkit";
 import { formatDate } from "date-fns";
-import { entityList, getBackupServer, IBackupData, IBackupFileInfo } from "@ptd/backupServer";
+import { entityList, getBackupServer, getBackupServerMetaData, IBackupData, IBackupFileInfo } from "@ptd/backupServer";
 import {
   backupDataToJSZipBlob,
   getBackupFilename,
@@ -217,20 +217,6 @@ onMessage("exportBackupData", async ({ data: { backupServerId, backupFields } })
 });
 
 /**
- * 「恢复进来的备份服务器」允许**自动上传**的字段白名单（安全子集，见 S-1）。
- *
- * 被排除的字段都会携带凭据或密钥：
- * - `cookies`：站点会话
- * - `config`：含备份加密密钥（泄露它等于泄露服务器上所有历史备份）
- * - `metadata`：含下载器密码、站点 userConfig 里的 passkey/token、媒体服务器凭据
- * - `userInfo`：站点个人数据
- * - `downloadHistory`：含下载请求配置（headers 里的 Cookie、带 passkey 的下载链接）
- * 这些字段不允许由备份文件单方面决定自动上传；用户若确实需要，应在恢复后到「设置 → 备份」里手工重新勾选
- * —— 那一刻的意图来自用户，而不是备份文件。
- */
-const AUTO_BACKUP_SAFE_FIELDS: readonly TBackupFields[] = ["searchResultSnapshot", "keepUploadTask"];
-
-/**
  * 恢复结果报告（见 S-1 / L-10）：哪些字段写入成功、哪些被跳过/被安全化。
  *
  * 类型定义在 `@/shared/types.ts` —— 报告要跨上下文回传给 UI（`restoreBackupData` 消息的返回类型
@@ -294,8 +280,8 @@ function validateMetadataShape(metadata: unknown): string | null {
  * 1. `backupServers` 默认不恢复，且**始终保留本机已有条目**——metadata 是整份写入，
  *    若直接用恢复数据里的 `backupServers`，本机配置会被静默删除（这也是「剥离该 key」不能写成 delete 的原因）。
  * 2. `type` 未注册的服务器条目直接丢弃（其构造会失败，且无法判断它是否可信）。
- * 3. 显式允许恢复时，按「type + config」去重复用本机 id（保留 issue #1024 的原有语义），
- *    并把 `backupFields` 收敛为 `安全子集 ∩ 本次恢复的字段集合`；收敛后为空则停用该服务器的自动备份。
+ * 3. 显式允许恢复时只导入不含凭据的配置，不覆盖本机现有服务器；
+ *    恢复的服务器一律停用且没有自动上传字段。
  *
  * 说明：这里与任务描述有一处收敛——条目级问题（非法 type）按「安全化」处理而不是跳过整个 metadata 字段。
  * 理由是条目级问题只影响那一条服务器，不应让用户的站点/搜索方案/下载器整份恢复失败；
@@ -303,9 +289,9 @@ function validateMetadataShape(metadata: unknown): string | null {
  */
 async function sanitizeRestoredMetadata(
   restoredMetadata: IMetadataPiniaStorageSchema,
-  options: { restoreBackupServers: boolean; restoreFields: TBackupFields[]; report: IRestoreReport },
+  options: { restoreBackupServers: boolean; report: IRestoreReport },
 ): Promise<IMetadataPiniaStorageSchema> {
-  const { restoreBackupServers, restoreFields, report } = options;
+  const { restoreBackupServers, report } = options;
 
   const existingMetadata = ((await sendMessage("getExtStorage", "metadata")) ?? {}) as IMetadataPiniaStorageSchema;
   const existingServers = existingMetadata.backupServers ?? {};
@@ -337,6 +323,12 @@ async function sanitizeRestoredMetadata(
       continue;
     }
 
+    // 不可信备份不能通过同 ID 覆盖本机服务器（尤其不能覆盖本机密钥和已确认的自动备份设置）。
+    if (Object.hasOwn(mergedServers, restoredId)) {
+      report.sanitized.push(`backupServers["${restoredId}"]: 已跳过（与本机服务器 ID 冲突）`);
+      continue;
+    }
+
     // 复用本机相同「type + config」条目的 ID，避免同一台服务器出现重复条目（refs: issue #1024）
     const duplicatedEntry = Object.entries(existingServers).find(
       ([existingId, existingServer]) =>
@@ -345,28 +337,43 @@ async function sanitizeRestoredMetadata(
         isEqual(existingServer.config, restoredServer.config),
     );
     const targetId = duplicatedEntry?.[0] ?? restoredId;
-
-    // 上传字段不得来自恢复数据（S-1）：先按协议字段名把不可信输入收窄，再取安全子集 ∩ 本次恢复字段集合
-    const requestedFields = (Array.isArray(restoredServer.backupFields) ? restoredServer.backupFields : []).filter(
-      isBackupField,
-    );
-    const safeBackupFields = requestedFields.filter(
-      (field) => AUTO_BACKUP_SAFE_FIELDS.includes(field) && restoreFields.includes(field),
-    );
-    if (safeBackupFields.length !== requestedFields.length) {
-      report.sanitized.push(
-        `backupServers["${targetId}"].backupFields: ${JSON.stringify(requestedFields)} → ${JSON.stringify(safeBackupFields)}（含凭据/密钥的字段不允许由备份文件决定自动上传）`,
-      );
+    if (duplicatedEntry) {
+      report.sanitized.push(`backupServers["${restoredId}"]: 已跳过（本机已有相同的服务器）`);
+      continue;
     }
 
-    const sanitizedServer = { ...restoredServer, id: targetId, backupFields: safeBackupFields };
-    if (safeBackupFields.length === 0) {
-      sanitizedServer.enabled = false;
-      delete sanitizedServer.backupInterval;
-      report.sanitized.push(
-        `backupServers["${targetId}"]: 已停用自动备份（没有可安全自动上传的字段），如需启用请到「设置 → 备份」手工确认`,
-      );
+    let serverMetaData: Awaited<ReturnType<typeof getBackupServerMetaData>>;
+    try {
+      serverMetaData = await getBackupServerMetaData(serverType);
+    } catch {
+      report.sanitized.push(`backupServers["${restoredId}"]: 已丢弃（无法验证备份服务器字段）`);
+      continue;
     }
+    const config = isPlainObject(restoredServer.config) ? restoredServer.config : {};
+    const safeConfig: Record<string, string | number | boolean> = {};
+    for (const field of serverMetaData.requiredField) {
+      const key = String(field.key);
+      const value = config[key];
+      if (
+        !field.secret &&
+        !/pass(word|wd|key)?|secret|token|auth|credential/i.test(key) &&
+        (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+      ) {
+        safeConfig[key] = value;
+      }
+    }
+
+    const sanitizedServer = {
+      id: targetId,
+      name: typeof restoredServer.name === "string" ? restoredServer.name : serverType,
+      type: serverType,
+      config: safeConfig,
+      backupFields: [] as TBackupFields[],
+      enabled: false,
+    };
+    report.sanitized.push(
+      `backupServers["${targetId}"].backupFields: 已清空；凭据已剥离且自动备份已停用，请手工重新配置`,
+    );
 
     mergedServers[targetId] = sanitizedServer;
   }
@@ -475,7 +482,6 @@ export async function restoreBackupData(
       }
       fieldData = (await sanitizeRestoredMetadata(fieldData as IMetadataPiniaStorageSchema, {
         restoreBackupServers,
-        restoreFields,
         report,
       })) as IExtensionStorageSchema[typeof field];
     }

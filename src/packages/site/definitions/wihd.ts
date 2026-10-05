@@ -148,7 +148,7 @@ export const siteMetadata: ISiteMetadata = {
           levelName: { selector: "span.class" },
           joinTime: {
             selector: "div.user-block-content:first",
-            filters: [{ name: "parseTime", args: ["DD/MM/YYYY"] }],
+            filters: [{ name: "parseTime", args: ["dd/MM/yyyy"] }],
           },
         },
       },

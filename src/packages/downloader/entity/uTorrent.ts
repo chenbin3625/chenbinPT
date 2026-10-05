@@ -203,6 +203,7 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
         username: this.config.username,
         password: this.config.password,
       },
+      withCredentials: true,
       timeout: this.config.timeout,
     });
 
@@ -253,6 +254,11 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
           t: Date.now().toString(),
           ...params,
         },
+        auth: {
+          username: this.config.username,
+          password: this.config.password,
+        },
+        withCredentials: true,
         responseType: "json",
         timeout: this.config.timeout,
       })
@@ -298,6 +304,7 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
         username: this.config.username,
         password: this.config.password,
       },
+      withCredentials: true,
       timeout: this.config.timeout,
     });
 
@@ -401,7 +408,7 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
     return true;
   }
 
-  async removeTorrent(id: string, removeData: boolean = true): Promise<boolean> {
+  async removeTorrent(id: string, removeData: boolean = false): Promise<boolean> {
     const action = removeData ? "removedatatorrent" : "removetorrent";
     await this.request<BaseUtorrentResponse>(action, { hash: id });
     return true;

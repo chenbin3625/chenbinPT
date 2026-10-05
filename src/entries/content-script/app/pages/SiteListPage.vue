@@ -73,7 +73,7 @@ async function handleLocalDownloadMulti() {
     // 失败也没有任何提示。offscreen 侧有 DOWNLOAD_CONCURRENCY 队列与下载间隔预留，并发投递是设计内行为。
     await Promise.all(torrents.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })));
   } catch (e) {
-    runtimeStore.showSnakebar("本地下载失败，请到下载历史中查看失败原因", { color: "error" });
+    runtimeStore.showSnakebar(t("contentScript.localDownloadFailed"), { color: "error" });
   } finally {
     localDownloadMultiStatus.value = false;
   }

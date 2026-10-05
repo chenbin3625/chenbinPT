@@ -313,7 +313,12 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
         />
 
         <div style="flex: 1 1 auto; min-width: 8px" />
-        <a-input v-model:value="tableWaitFilterRef" allow-clear placeholder="Search" style="max-width: 500px">
+        <a-input
+          v-model:value="tableWaitFilterRef"
+          allow-clear
+          :placeholder="t('common.search')"
+          style="max-width: 500px"
+        >
           <template #prefix>
             <a-popover v-model:open="filterMenuOpen" :trigger="['click']" placement="bottomLeft">
               <template #content>

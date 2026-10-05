@@ -124,18 +124,31 @@ onMessage("getDownloaderStatus", async ({ data: downloaderId }) => {
 
 export async function getTorrentDownloadLink(torrent: ITorrent) {
   const site = await getSiteInstance<"public">(torrent.site);
-  return await site.getTorrentDownloadLink(torrent);
+  if (
+    (torrent.link && !site.isTrustedDownloadLink(torrent.link)) ||
+    (torrent.url && !site.isTrustedDownloadLink(torrent.url))
+  ) {
+    throw new Error(`Rejected torrent URL outside site host allowlist for ${torrent.site}`);
+  }
+  const link = await site.getTorrentDownloadLink(torrent);
+  if (!site.isTrustedDownloadLink(link)) {
+    throw new Error(`Rejected download link outside site host allowlist for ${torrent.site}`);
+  }
+  return link;
 }
 
 onMessage("getTorrentDownloadLink", async ({ data: torrent }) => await getTorrentDownloadLink(torrent));
 
 export async function getTorrentInfoForVerification(torrent: ITorrent) {
-  const downloadUrl = await getTorrentDownloadLink(torrent);
   const siteInstance = await getSiteInstance<"public">(torrent.site);
+  const downloadUrl = await getTorrentDownloadLink(torrent);
 
   const downloadRequestConfig = await siteInstance.getTorrentDownloadRequestConfig(torrent);
   downloadRequestConfig.url = downloadUrl;
   downloadRequestConfig.responseType = "arraybuffer";
+  if (!siteInstance.isTrustedDownloadLink(axios.getUri(downloadRequestConfig))) {
+    throw new Error(`Rejected download request outside site host allowlist for ${torrent.site}`);
+  }
 
   const parsedTorrent = await getRemoteTorrentFile(downloadRequestConfig);
 
@@ -553,26 +566,38 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
   let downloadRequestConfig: AxiosRequestConfig = { url: torrent.link, method: "GET", timeout: 30e3 };
   let siteInstance: Awaited<ReturnType<typeof getSiteInstance<"public">>> | null = null;
 
-  if (torrent.site) {
-    // 生成站点；站点下载间隔的检查已在入队前的 prepareDownloadTorrent 中完成
-    siteInstance = await getSiteInstance<"public">(torrent.site);
-
-    // 添加站点配置的上传速度限制
-    if (!isDownloadToLocalFile && (siteInstance.userConfig?.uploadSpeedLimit ?? 0) > 0) {
-      addTorrentOptions.uploadSpeedLimit = siteInstance.userConfig.uploadSpeedLimit;
-    }
-
-    downloadRequestConfig = toMerged(
-      downloadRequestConfig,
-      await siteInstance.getTorrentDownloadRequestConfig(torrent as ITorrent),
-    );
-  }
-  await patchDownloadHistory(downloadId!, { downloadRequestConfig }).catch((e) =>
-    // 存储下载请求配置，方便后续调试；失败不影响下载主流程，但不再静默
-    logger({ msg: "Failed to store download request config", level: "error", data: getErrorMessage(e) }),
-  );
-
   try {
+    if (!torrent.site && !torrent.link?.startsWith("magnet:")) {
+      throw new Error("Rejected download URL without a trusted site");
+    }
+    if (torrent.site) {
+      // 生成站点；站点下载间隔的检查已在入队前的 prepareDownloadTorrent 中完成
+      siteInstance = await getSiteInstance<"public">(torrent.site);
+      if (
+        (torrent.link && !siteInstance.isTrustedDownloadLink(torrent.link)) ||
+        (torrent.url && !siteInstance.isTrustedDownloadLink(torrent.url))
+      ) {
+        throw new Error(`Rejected torrent URL outside site host allowlist for ${torrent.site}`);
+      }
+
+      // 添加站点配置的上传速度限制
+      if (!isDownloadToLocalFile && (siteInstance.userConfig?.uploadSpeedLimit ?? 0) > 0) {
+        addTorrentOptions.uploadSpeedLimit = siteInstance.userConfig.uploadSpeedLimit;
+      }
+
+      downloadRequestConfig = toMerged(
+        downloadRequestConfig,
+        await siteInstance.getTorrentDownloadRequestConfig(torrent as ITorrent),
+      );
+    }
+    if (siteInstance && !siteInstance.isTrustedDownloadLink(axios.getUri(downloadRequestConfig))) {
+      throw new Error(`Rejected download request outside site host allowlist for ${torrent.site}`);
+    }
+    await patchDownloadHistory(downloadId!, { downloadRequestConfig }).catch((e) =>
+      // 存储下载请求配置，方便后续调试；失败不影响下载主流程，但不再静默
+      logger({ msg: "Failed to store download request config", level: "error", data: getErrorMessage(e) }),
+    );
+
     downloadStatus = await setDownloadStatus(downloadId, "downloading");
     if (isDownloadToLocalFile) {
       // 本地下载

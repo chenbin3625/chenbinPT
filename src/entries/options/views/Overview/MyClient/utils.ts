@@ -100,6 +100,16 @@ export function createTorrentLoadGuard(isDialogOpen: () => boolean, getTorrent: 
   return { currentKey, isLoaded, begin, isStale, commit, reset };
 }
 
+export function finishTorrentLoad(
+  guard: Pick<ReturnType<typeof createTorrentLoadGuard>, "isStale">,
+  requestKey: string | null,
+  setLoading: () => void,
+): void {
+  if (!guard.isStale(requestKey)) {
+    setLoading();
+  }
+}
+
 export function normalizeTorrentProgress(value: unknown): number {
   const progress = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(progress)) return 0;

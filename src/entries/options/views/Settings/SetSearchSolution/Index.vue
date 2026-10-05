@@ -186,18 +186,24 @@ function isPlainRecord(value: unknown): value is Record<string, any> {
  * @returns 错误原因，undefined 表示通过校验
  */
 function validateImportedSolution(item: unknown): string | undefined {
-  if (!isPlainRecord(item)) return "not an object";
-  if (typeof item.name !== "string" || item.name.trim() === "") return "missing name";
-  if (!Array.isArray(item.solutions) || item.solutions.length === 0) return "empty solutions";
+  if (!isPlainRecord(item)) return t("SetSearchSolution.import.reason.notObject");
+  if (typeof item.name !== "string" || item.name.trim() === "") return t("SetSearchSolution.import.reason.missingName");
+  if (!Array.isArray(item.solutions) || item.solutions.length === 0) {
+    return t("SetSearchSolution.import.reason.emptySolutions");
+  }
 
   for (const [index, solutionItem] of item.solutions.entries()) {
-    if (!isPlainRecord(solutionItem)) return `solutions[${index}] is not an object`;
-    if (typeof solutionItem.siteId !== "string" || solutionItem.siteId === "") {
-      return `solutions[${index}] missing siteId`;
+    if (!isPlainRecord(solutionItem)) {
+      return t("SetSearchSolution.import.reason.solutionNotObject", { index });
     }
-    if (!isPlainRecord(solutionItem.searchEntries)) return `solutions[${index}] missing searchEntries`;
+    if (typeof solutionItem.siteId !== "string" || solutionItem.siteId === "") {
+      return t("SetSearchSolution.import.reason.missingSiteId", { index });
+    }
+    if (!isPlainRecord(solutionItem.searchEntries)) {
+      return t("SetSearchSolution.import.reason.missingSearchEntries", { index });
+    }
     if (typeof solutionItem.selectedCategories !== "undefined" && !isPlainRecord(solutionItem.selectedCategories)) {
-      return `solutions[${index}] invalid selectedCategories`;
+      return t("SetSearchSolution.import.reason.invalidSelectedCategories", { index });
     }
   }
 
@@ -210,7 +216,7 @@ const IMPORT_FAILURE_REPORT_LIMIT = 3;
 function handleImportFileText(text: string) {
   const parsed = JSON.parse(text) as unknown;
   if (!Array.isArray(parsed)) {
-    runtimeStore.showSnakebar("Invalid search solution file: expected an array of solutions", { color: "error" });
+    runtimeStore.showSnakebar(t("SetSearchSolution.import.invalidFile"), { color: "error" });
     return;
   }
 
@@ -219,7 +225,8 @@ function handleImportFileText(text: string) {
   const missingSiteIds = new Set<string>(); // 引用了本机未添加站点的条目（仍会导入，但那些站点不会参与搜索）
 
   for (const item of parsed) {
-    const itemName = isPlainRecord(item) && typeof item.name === "string" ? item.name : "(unnamed)";
+    const itemName =
+      isPlainRecord(item) && typeof item.name === "string" ? item.name : t("SetSearchSolution.import.unnamed");
     const invalidReason = validateImportedSolution(item);
     if (invalidReason) {
       failures.push(`${itemName}: ${invalidReason}`);
@@ -244,23 +251,24 @@ function handleImportFileText(text: string) {
   }
 
   if (importedCount > 0) {
-    runtimeStore.showSnakebar(`Imported ${importedCount} search solution(s)`, { color: "success" });
+    runtimeStore.showSnakebar(t("SetSearchSolution.import.success", { count: importedCount }), { color: "success" });
   }
 
   if (failures.length > 0) {
     const detail = failures.slice(0, IMPORT_FAILURE_REPORT_LIMIT).join("; ");
     const rest =
-      failures.length > IMPORT_FAILURE_REPORT_LIMIT ? ` (+${failures.length - IMPORT_FAILURE_REPORT_LIMIT} more)` : "";
-    runtimeStore.showSnakebar(`Skipped ${failures.length} invalid search solution(s): ${detail}${rest}`, {
+      failures.length > IMPORT_FAILURE_REPORT_LIMIT
+        ? t("SetSearchSolution.import.moreFailures", { count: failures.length - IMPORT_FAILURE_REPORT_LIMIT })
+        : "";
+    runtimeStore.showSnakebar(t("SetSearchSolution.import.skipped", { count: failures.length, detail, rest }), {
       color: importedCount > 0 ? "warning" : "error",
     });
   }
 
   if (missingSiteIds.size > 0) {
-    runtimeStore.showSnakebar(
-      `Imported solutions reference ${missingSiteIds.size} site(s) that are not added yet; add them before searching`,
-      { color: "warning" },
-    );
+    runtimeStore.showSnakebar(t("SetSearchSolution.import.missingSites", { count: missingSiteIds.size }), {
+      color: "warning",
+    });
   }
 }
 
@@ -271,11 +279,11 @@ function beforeImportUpload(file: any) {
     try {
       handleImportFileText(e.target.result);
     } catch (error) {
-      runtimeStore.showSnakebar("Invalid JSON format when import search solution", { color: "error" });
+      runtimeStore.showSnakebar(t("SetSearchSolution.import.invalidJson"), { color: "error" });
     }
   };
   r.onerror = () => {
-    runtimeStore.showSnakebar("Invalid JSON format when load import file", { color: "error" });
+    runtimeStore.showSnakebar(t("SetSearchSolution.import.readFailed"), { color: "error" });
   };
   r.readAsText(file as Blob);
 
@@ -294,7 +302,7 @@ function exportSearchSolutions(solutionIds: TSolutionKey[]) {
     const exportedSolutionBlob = new Blob([JSON.stringify(exportedSolutions)], { type: "application/json" });
     saveAs(exportedSolutionBlob, `search-solutions-export-${formatDate(new Date(), "yyyyMMdd'T'HHmm")}.json`); // FIXME filename
   } else {
-    runtimeStore.showSnakebar("No solutions to export", { color: "error" });
+    runtimeStore.showSnakebar(t("SetSearchSolution.import.noSolutions"), { color: "error" });
   }
 }
 

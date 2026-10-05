@@ -16,9 +16,16 @@
       "errorMessage": "失败原因"
     },
     "filterPlaceholder": "过滤下载记录",
+    "pollingError": "刷新下载状态失败，部分任务的状态可能不会自动更新",
     "reDownload": "重新下载",
     "refresh": "刷新下载记录列表",
     "searchTorrent": "全站搜索此种子",
+    "status": {
+      "completed": "已完成",
+      "downloading": "下载中",
+      "failed": "错误",
+      "pending": "等待中"
+    },
     "table": {
       "downloadAt": "下载时间",
       "downloader": "下载服务器",
@@ -39,6 +46,7 @@
     "deleteError": "删除失败",
     "deleteSelectedConfirm": "确认删除选中的 {count} 个辅种任务吗？",
     "deleteSuccess": "删除成功",
+    "downloaderNotFound": "下载器不存在",
     "editSavePath": "修改保存路径",
     "emptyNotice": "暂无辅种任务，请在搜索结果页面选择种子后点击辅种检测按钮",
     "leechers": "下载：",
@@ -253,6 +261,9 @@
     "UserLevelRequirementsTd": {
       "levelList": "用户等级列表"
     },
+    "UserDataTimeline": {
+      "defaultTitle": "这些年走过的路"
+    },
     "exportDialog": {
       "exportAll": "导出全部 {count} 个站点的用户信息",
       "exportSelected": "导出已选中的 {count} 个站点的用户信息",
@@ -279,6 +290,8 @@
         "unreadMessage": "未读信息"
       },
       "flushCancel": "取消刷新",
+      "flushSiteFailed": "获取站点 [{site}] 用户信息失败",
+      "flushQueueCancelled": "用户信息刷新队列已取消",
       "flushSelectSite": "刷新数据",
       "joinTimeFormat": "入站时间显示",
       "joinTimeFormatOptions": {
@@ -309,6 +322,7 @@
       "viewStatistic": "数据图表",
       "viewTimeline": "时间轴"
     },
+    "siteMetadataLoadFailed": "加载站点元数据失败：{sites}{more}，已跳过这些站点",
     "table": {
       "action": {
         "flushData": "刷新数据",
@@ -428,6 +442,28 @@
       },
       "clearSelection": "取消选择",
       "filterLabel": "过滤搜索结果",
+      "filters": {
+        "atLeast": "至少 {0}",
+        "clear": "清除",
+        "completed": "完成人数",
+        "dates": {
+          "last7": "近 7 天",
+          "month": "本月",
+          "today": "今天",
+          "week": "本周",
+          "year": "今年"
+        },
+        "exclude": "排除词",
+        "excludedValue": "排除 {0}",
+        "leechers": "下载人数",
+        "seeders": "上传人数",
+        "site": "站点",
+        "size": "种子大小",
+        "status": "种子状态",
+        "tags": "标签",
+        "text": "关键词",
+        "time": "日期"
+      },
       "noData": "暂无搜索结果，请在上方输入关键词或选择搜索方案后开始搜索",
       "highlightSameSizeTorrent": "按大小排序时标记相同大小的种子",
       "limitTorrentTitleTdWidth": "限制种子标题宽度",
@@ -452,7 +488,10 @@
     },
     "siteFilter": {
       "all": "全部站点"
-    }
+    },
+    "noSearchPlanToRetry": "没有需要重试的搜索计划",
+    "noSiteToSearch": "请至少添加一个站点进行搜索",
+    "searchSolutionNotFound": "搜索方案 [{0}] 不存在"
   },
   "SearchResultSnapshot": {
     "EditNameDialog": {
@@ -470,9 +509,14 @@
         "name": "快照名称",
         "recordCount": "种子数"
       }
-    }
+    },
+    "notFound": "未找到该搜索快照",
+    "updateNotSaved": "未找到 {schema}「{id}」，修改未保存",
+    "cannotSaveWhileSearching": "不能在搜索进行中创建搜索快照"
   },
   "SentToDownloaderDialog": {
+    "dynamicReplaceCancelled": "因取消输入 {0} 中的 <...> 的内容而停止推送",
+    "dynamicReplaceTitle": "请输入替换 {0} 中的 <...> 的内容：",
     "isSending": "正在向下载器 {name} [{address}] 发送种子，请稍候...",
     "label": "种子标签",
     "labelHint": "（如果该下载服务器支持）",
@@ -485,6 +529,11 @@
     "savePathHint": "不设置则为该下载服务器的默认路径",
     "selectDownloader": "选择下载器",
     "selectDownloaderFirst": "请先选择下载器",
+    "sendFailed": "[{title}] 发送到下载器失败！错误信息：{error}",
+    "sendSummary": "成功发送 {success} 个任务到下载器{pending}{failed}",
+    "sendSummaryPending": "（{count} 个任务在下载队列中）",
+    "sendSummaryFailed": "，有 {count} 个任务发送失败",
+    "noTasks": "似乎并没有任务发送到下载器",
     "title": "为 {0} 个种子选择下载器"
   },
   "SetBackup": {
@@ -800,6 +849,8 @@
     "editor": {
       "addressTip": "完整的服务器地址（含端口），如：http://192.168.1.1:5000/",
       "autoStart": "发送种子时自动开始下载",
+      "bypassCSRF": "绕过 CSRF 保护",
+      "bypassCSRFHelp": "移除请求的 Origin 头以绕过 qBittorrent 的跨站请求伪造（CSRF）校验，开启后无需在 qBittorrent 中关闭 CSRF 保护",
       "nameTip": "取一个好听又好分辨的名称",
       "password": "密码",
       "timeout": "超时时长（秒）",
@@ -896,6 +947,26 @@
       "title": "自定义 @:SetSearchSolution.solution"
     },
     "newSolutionNamePrompt": "请输入新搜索方案名称",
+    "import": {
+      "invalidFile": "搜索方案文件无效：预期内容为方案数组",
+      "success": "已导入 {count} 个搜索方案",
+      "skipped": "已跳过 {count} 个无效搜索方案：{detail}{rest}",
+      "missingSites": "导入的方案引用了 {count} 个尚未添加的站点，请先添加后再搜索",
+      "invalidJson": "导入搜索方案时 JSON 格式无效",
+      "readFailed": "读取导入的搜索方案文件失败",
+      "noSolutions": "没有可导出的搜索方案",
+      "unnamed": "（未命名）",
+      "moreFailures": "（另有 {count} 个）",
+      "reason": {
+        "notObject": "不是对象",
+        "missingName": "缺少名称",
+        "emptySolutions": "方案为空",
+        "solutionNotObject": "solutions[{index}] 不是对象",
+        "missingSiteId": "solutions[{index}] 缺少 siteId",
+        "missingSearchEntries": "solutions[{index}] 缺少 searchEntries",
+        "invalidSelectedCategories": "solutions[{index}] 的 selectedCategories 无效"
+      }
+    },
     "solution": "搜索方案",
     "spDialog": {
       "action": {
@@ -1135,6 +1206,7 @@
     "language": "语言",
     "loading": "加载中…",
     "name": "名称",
+    "moreSites": " 等 {count} 个站点",
     "noData": "暂无数据",
     "project": "chenbinPT",
     "remove": "删除",
@@ -1187,13 +1259,21 @@
     "copyLink": "复制链接",
     "copyLinkFailed": "复制下载链接失败",
     "copyLinkSuccess": "下载链接已复制到剪贴板",
+    "confirmAction": "确定要执行此操作吗？",
+    "emptySearchKeyword": "搜索关键词不能为空",
+    "ignoredForeignLinks": "已忽略 {count} 条不属于本站点的下载链接",
+    "inputSearchKeywords": "未解析到搜索关键词，请输入：",
+    "invalidDropData": "拖拽内容不是有效的种子数据，已忽略",
+    "localDownloadFailed": "本地下载失败，请到下载历史中查看失败原因",
     "noTorrentParsed": "未解析到当前页面种子",
     "openPTD": "打开PTD",
     "parsePageFailed": "页面解析失败",
     "parseResultEmpty": "未能解析出结果",
     "pushTo": "推送到...",
     "pushToDefault": "推送到默认下载器",
-    "quickSearch": "快捷搜索"
+    "quickSearch": "快捷搜索",
+    "untrustedTorrentLink": "解析出的下载链接不属于该站点，已拒绝",
+    "unsupportedDropLinks": "拖拽内容里的链接不受支持或不属于当前站点，已忽略"
   },
   "downloaderLabel": {
     "localDownload": "本地下载"

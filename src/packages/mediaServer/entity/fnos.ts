@@ -10,6 +10,7 @@ import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import { EResultParseStatus } from "@ptd/site";
 import { toMerged } from "es-toolkit";
 import urlJoin from "url-join";
+import { blobToDataUrl } from "../utils.ts";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "飞牛影视 / FNOS 媒体服务器，使用 FNOS 的 Emby-compatible API 搜索媒体库",
@@ -359,14 +360,14 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     try {
       const session = await this.login();
 
-      // 与 emby / jellyfin / plex 的实现保持一致：直接给出图片 URL，由 <img> 自行加载，
-      // 不再为每一条搜索结果下载整张海报 blob（一页 50 条会产生 50 个并发图片请求 + 常驻 blob URL）。
-      // FNOS 沿用 Emby 兼容 API 的 api_key 查询参数鉴权（同时带上 X-Emby-Token 以兼容不同实现）。
-      const query = `tag=${encodeURIComponent(primaryTag)}&api_key=${encodeURIComponent(session.apikey)}&X-Emby-Token=${encodeURIComponent(session.apikey)}`;
-      const posterUrl = urlJoin(this.apiBaseUrl, `/Items/${item.Id}/Images/Primary?${query}`);
+      const response = await this.request<Blob>(`/Items/${item.Id}/Images/Primary`, {
+        params: { tag: primaryTag },
+        responseType: "blob",
+      });
+      const posterDataUrl = await blobToDataUrl(response.data);
 
-      this.setPosterCache(cacheKey, posterUrl);
-      return posterUrl;
+      this.setPosterCache(cacheKey, posterDataUrl);
+      return posterDataUrl;
     } catch (e) {
       return "";
     }

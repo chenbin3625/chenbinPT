@@ -131,6 +131,16 @@ describe("parseTimeWithZone", () => {
     expect(parseTimeWithZone("2024-03-01 10:00:00", "UTC-0500")).toBe(+new Date("2024-03-01T10:00:00-05:00"));
   });
 
+  it("显式带 Z 或偏移的时间已经是绝对时间，不叠加站点偏移", () => {
+    expect(parseTimeWithZone("2024-03-01T10:00:00Z", "-0500")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+    expect(parseTimeWithZone("2024-03-01T10:00:00-05:00", "+0000")).toBe(Date.parse("2024-03-01T10:00:00-05:00"));
+  });
+
+  it("仅含日期的墙上时间按站点零点解释", () => {
+    expect(parseTimeWithZone("2024-03-01", "+0800")).toBe(Date.parse("2024-03-01T00:00:00+08:00"));
+    expect(parseTimeWithZone("2024-13-01", "+0800")).toBe(0);
+  });
+
   it("默认偏移为 +0000", () => {
     expect(parseTimeWithZone("2024-03-01 10:00:00")).toBe(+new Date("2024-03-01T10:00:00Z"));
   });
@@ -227,6 +237,9 @@ describe("convertIsoDurationToDate", () => {
 });
 
 describe("parseValidTimeString", () => {
+  it("不合法的站点格式串不阻断其它格式与原生日期兜底", () => {
+    expect(parseValidTimeString("2024-03-01 10:00:00", ["DD-MM-YYYY HH:mm"])).toBe(+new Date("2024-03-01 10:00:00"));
+  });
   it("带时区的 ISO 字符串解析为确定的时间戳", () => {
     expect(parseValidTimeString("2024-03-01T10:00:00.000Z")).toBe(+new Date("2024-03-01T10:00:00.000Z"));
     expect(parseValidTimeString("2024-03-01T10:00:00+08:00")).toBe(+new Date("2024-03-01T10:00:00+08:00"));

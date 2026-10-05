@@ -1113,9 +1113,13 @@ export default class NexusPHP extends PrivateSite {
     // 如果没有 link 属性，则尝试以 (url->)id->link 的方式生成
     if (!torrent.link) {
       if (!torrent.id && torrent.url) {
-        const urlMatch = torrent.url.match(/[?&]id=(\d+)/);
-        if (urlMatch && urlMatch.length >= 2) {
-          torrent.id ??= urlMatch[1];
+        try {
+          const urlMatch = new URL(torrent.url, this.url).searchParams.get("id");
+          if (urlMatch) {
+            torrent.id ??= urlMatch;
+          }
+        } catch {
+          // Invalid detail URLs fall through to the existing URL-based identity fallback.
         }
       }
 

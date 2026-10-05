@@ -104,7 +104,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
 
   const downloader = metadataStore.downloaders[task.downloadOptions.downloaderId];
   if (!downloader) {
-    runtimeStore.showSnakebar("下载器不存在", { color: "error" });
+    runtimeStore.showSnakebar(t("KeepUploadTask.downloaderNotFound"), { color: "error" });
     return;
   }
 

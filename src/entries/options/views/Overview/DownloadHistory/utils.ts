@@ -2,6 +2,7 @@ import { throttle } from "es-toolkit";
 import { computed, reactive, ref, shallowRef, type Component } from "vue";
 import { CheckOutlined, ClockCircleOutlined, DownloadOutlined, WarningOutlined } from "@ant-design/icons-vue";
 import { sendMessage } from "@/messages.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
 
@@ -43,7 +44,7 @@ function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey) {
       delete watchingMap[downloadHistoryId];
       if (!hasWarnedPollFailure) {
         hasWarnedPollFailure = true;
-        useRuntimeStore().showSnakebar("刷新下载状态失败，部分任务的状态可能不会自动更新", { color: "error" });
+        useRuntimeStore().showSnakebar(i18n.t("DownloadHistory.pollingError"), { color: "error" });
       }
       return;
     }
@@ -109,12 +110,11 @@ async function loadDownloadHistory() {
 
 export const throttleLoadDownloadHistory = throttle(loadDownloadHistory, 1e3);
 
-export const downloadStatusMap: Record<
-  ITorrentDownloadMetadata["downloadStatus"],
-  { title: string; icon: Component; color: string }
-> = {
-  downloading: { title: "下载中", icon: DownloadOutlined, color: "blue" },
-  pending: { title: "等待中", icon: ClockCircleOutlined, color: "orange" },
-  completed: { title: "已完成", icon: CheckOutlined, color: "green" },
-  failed: { title: "错误", icon: WarningOutlined, color: "red" },
-};
+export const downloadStatusMap = computed<
+  Record<ITorrentDownloadMetadata["downloadStatus"], { title: string; icon: Component; color: string }>
+>(() => ({
+  downloading: { title: i18n.t("DownloadHistory.status.downloading"), icon: DownloadOutlined, color: "blue" },
+  pending: { title: i18n.t("DownloadHistory.status.pending"), icon: ClockCircleOutlined, color: "orange" },
+  completed: { title: i18n.t("DownloadHistory.status.completed"), icon: CheckOutlined, color: "green" },
+  failed: { title: i18n.t("DownloadHistory.status.failed"), icon: WarningOutlined, color: "red" },
+}));

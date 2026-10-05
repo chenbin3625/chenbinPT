@@ -81,7 +81,7 @@ export const siteMetadata: ISiteMetadata = {
           const match = (element.textContent ?? "").match(/\d{1,2}\/\d{2}\/\d{2}/);
           return match ? match[0] : undefined;
         },
-        filters: [{ name: "parseTime", args: ["MM/DD/YY"] }],
+        filters: [{ name: "parseTime", args: ["MM/dd/yy"] }],
       },
       tags: [{ name: "Free", selector: "img[title='Golden torrent']", color: "blue" }],
     },

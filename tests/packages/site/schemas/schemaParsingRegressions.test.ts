@@ -9,7 +9,7 @@
  * - E-5：Luminance 时魔按 "<br/>" split 永不生效，且丢掉扣款行的负号。
  * 另附 E-3（Gazelle JSON API 把 status: failure 当成功）与 E-10（Gazelle 标题单元格缺失）两条守卫。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // 站点 schema 会连带引入平台适配层（messages.ts 用到 __BROWSER__ 与 chrome API）
 (globalThis as any).__BROWSER__ = "chrome";
@@ -33,11 +33,16 @@ import { describe, expect, it } from "vitest";
 };
 
 const { SchemaMetadata: NexusPHPSchema } = await import("@ptd/site/schemas/NexusPHP.ts");
+const { default: NexusPHP } = await import("@ptd/site/schemas/NexusPHP.ts");
 const { SchemaMetadata: LuminanceSchema } = await import("@ptd/site/schemas/Luminance.ts");
 const { SchemaMetadata: GazelleSchema, GazelleBase } = await import("@ptd/site/schemas/Gazelle.ts");
 const { listTorrentPageMetadata, listHistoryPageMetadata } = await import("@ptd/site/schemas/AvistazNetwork.ts");
 const { default: BittorrentSite } = await import("@ptd/site/schemas/AbstractBittorrentSite.ts");
 const { default: GazelleJSONAPI } = await import("@ptd/site/schemas/GazelleJSONAPI.ts");
+const { siteMetadata: learnflakes } = await import("@ptd/site/definitions/learnflakes.ts");
+const { siteMetadata: losslessclub } = await import("@ptd/site/definitions/losslessclub.ts");
+const { siteMetadata: teamhd } = await import("@ptd/site/definitions/teamhd.ts");
+const { siteMetadata: wihd } = await import("@ptd/site/definitions/wihd.ts");
 
 function makeDoc(html: string, url: string = "https://example.com/torrents.php"): Document {
   const doc = new DOMParser().parseFromString(`<html><body>${html}</body></html>`, "text/html");
@@ -162,6 +167,100 @@ describe("E-1：data.* 关键词回退使用 keywordParams 而不是字面量 da
     const result = await newSite("params.keywords").runTransformListPage(doc);
     expect(result.keywords).toBe("arrival");
   });
+});
+
+describe("offscreen 下载链接：最终 URL 必须属于当前站点", () => {
+  it("拒绝跨站绝对链接，允许当前站点及其子域", async () => {
+    const site = new BittorrentSite({
+      id: "host-check",
+      name: "Host Check",
+      type: "public",
+      urls: ["https://pt.example.com/"],
+      legacyUrls: ["https://legacy.example.com/"],
+    } as any);
+
+    expect(site.isTrustedDownloadLink("https://pt.example.com/download?id=1")).toBe(true);
+    expect(site.isTrustedDownloadLink("https://cdn.pt.example.com/download?id=1")).toBe(true);
+    expect(site.isTrustedDownloadLink("https://legacy.example.com/download?id=1")).toBe(true);
+    expect(site.isTrustedDownloadLink("https://evil.example/download?id=1")).toBe(false);
+    expect(site.isTrustedDownloadLink("https://pt.example.com.evil.test/download?id=1")).toBe(false);
+    expect(site.isTrustedDownloadLink("javascript:alert(1)")).toBe(false);
+  });
+
+  it("下载链接缺失时，跨站详情 URL 在发请求之前被拒绝", async () => {
+    const site = new BittorrentSite({
+      id: "host-check",
+      name: "Host Check",
+      type: "public",
+      urls: ["https://pt.example.com/"],
+      detail: { selectors: { link: { selector: "a.download", attr: "href" } } },
+    } as any);
+    const request = vi.spyOn(site, "request");
+
+    await expect(
+      site.getTorrentDownloadLink({ site: "host-check", url: "https://evil.example/details?id=1" } as any),
+    ).rejects.toThrow(/host/i);
+    expect(request).not.toHaveBeenCalled();
+  });
+});
+
+describe("站点时间过滤器", () => {
+  class TimeSite extends BittorrentSite {
+    parseTime(value: string, format?: string) {
+      return this.runQueryFilters<number>(value, [{ name: "parseTime", args: format ? [format] : [] }]);
+    }
+
+    parseFuzzyTime(value: string, format: string) {
+      return this.runQueryFilters<number>(value, [{ name: "parseFuzzyTime", args: [format] }]);
+    }
+  }
+
+  it("无时区墙上时间按站点偏移解析，而不是按浏览器本地时区", () => {
+    const site = new TimeSite({
+      id: "time-site",
+      name: "Time Site",
+      type: "public",
+      urls: ["https://example.com/"],
+      timezoneOffset: "-0500",
+    } as any);
+
+    expect(site.parseTime("2024-03-01 10:00:00")).toBe(Date.parse("2024-03-01T10:00:00-05:00"));
+    expect(site.parseFuzzyTime("01/03/2024 10:00", "dd/MM/yyyy HH:mm")).toBe(Date.parse("2024-03-01T10:00:00-05:00"));
+    expect(site.parseTime("2024-03-01T10:00:00Z")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+    expect(site.parseTime("2024-03-01")).toBe(Date.parse("2024-03-01T00:00:00-05:00"));
+    expect(site.parseTime("2024-03-10 02:30:00")).toBe(Date.parse("2024-03-10T02:30:00-05:00"));
+  });
+
+  it("四站格式串分别能解析搜索或用户信息日期", () => {
+    const cases = [
+      [learnflakes, "01-03-2024 10:00", "search"],
+      [losslessclub, "03/01/24", "search"],
+      [teamhd, "1 March 2024", "userInfo"],
+      [wihd, "01/03/2024", "userInfo"],
+    ] as const;
+
+    for (const [metadata, input, section] of cases) {
+      const selector =
+        section === "search"
+          ? metadata.search!.selectors!.time!
+          : metadata.userInfo!.process!.find((process) => process.selectors?.joinTime)!.selectors!.joinTime!;
+      const filter = selector.filters!.find((item) => typeof item !== "function" && item.name?.startsWith("parse"))!;
+      const site = new TimeSite(metadata);
+      expect(() => site.parseTime(input, (filter as { args: string[] }).args[0]), metadata.id).not.toThrow();
+    }
+  });
+});
+
+it("NexusPHP 从 URLSearchParams 精确读取 id，不被相邻参数值干扰", async () => {
+  const site = new NexusPHP({
+    id: "nexus-id",
+    name: "Nexus",
+    type: "private",
+    urls: ["https://pt.example.com/"],
+  } as any);
+  const torrent = { site: "nexus-id", url: "https://pt.example.com/details.php?foo=1&id=12" } as any;
+
+  expect(await site.getTorrentDownloadLink(torrent)).toBe("https://pt.example.com/download.php?id=12");
 });
 
 describe("E-5：Luminance 时魔按行解析并保留扣款符号", () => {

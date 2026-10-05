@@ -85,6 +85,7 @@ function makeSiteInstance(downloadInterval = 0) {
   return {
     downloadInterval,
     userConfig: { uploadSpeedLimit: 0 },
+    isTrustedDownloadLink: vi.fn(() => true),
     getTorrentDownloadRequestConfig: vi.fn(async () => ({})),
   };
 }

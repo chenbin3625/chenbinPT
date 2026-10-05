@@ -3,6 +3,7 @@ import { shallowReactive } from "vue";
 import { definitionList, ISiteMetadata, NO_IMAGE, TSiteID } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { getCachedSiteMetadata } from "./siteMetadataCache.ts";
@@ -80,8 +81,10 @@ export async function loadAllAddedSiteMetadata(sites?: string[]): Promise<TOptio
   if (newFailedSiteIds.length > 0) {
     newFailedSiteIds.forEach((siteId) => reportedFailedSiteIds.add(siteId));
     const showSites = newFailedSiteIds.slice(0, 5).join("、");
-    const moreText = newFailedSiteIds.length > 5 ? ` 等 ${newFailedSiteIds.length} 个站点` : "";
-    useRuntimeStore().showSnakebar(`加载站点元数据失败：${showSites}${moreText}，已跳过这些站点`, { color: "error" });
+    const moreText = newFailedSiteIds.length > 5 ? i18n.t("common.moreSites", { count: newFailedSiteIds.length }) : "";
+    useRuntimeStore().showSnakebar(i18n.t("MyData.siteMetadataLoadFailed", { sites: showSites, more: moreText }), {
+      color: "error",
+    });
   }
 
   return allAddedSiteMetadata;

@@ -29,6 +29,10 @@ export default defineConfig({
     // 只收 tests/ 下的 vitest 用例；tests/unit.test.mts 是 tsx 直跑的旧用例集（npm run test:legacy），
     // 它带 process.exit 且没有 test() 块，不能被 vitest 收集。
     include: ["tests/**/*.test.ts"],
+    // 测试会模拟扩展全局 API（chrome.storage、消息监听器等）；文件间共享这些宿主桩时，
+    // Vitest 默认并行执行会互相覆盖模块状态，导致整套测试随机超时。显式串行化文件，
+    // 保证 `npm test` 与单文件运行一致。
+    fileParallelism: false,
     // 显式 import { describe, it, expect } from "vitest"，不注入全局，避免污染 src 的类型
     globals: false,
     experimental: {

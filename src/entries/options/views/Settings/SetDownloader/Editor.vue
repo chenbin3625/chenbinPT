@@ -163,13 +163,10 @@ async function checkConnect() {
         <!-- 连接行为开关（非种子添加参数），按 clientMeta.feature.BypassCSRF 声明显式开启（目前仅 qBittorrent） -->
         <a-row>
           <a-col v-if="clientMeta?.feature?.BypassCSRF?.allowed" :span="24">
-            <a-form-item
-              help="移除请求的 Origin 头以绕过 qBittorrent 的跨站请求伪造(CSRF)校验，开启后无需在 qBittorrent 中关闭 CSRF 保护"
-              style="margin-left: 16px"
-            >
+            <a-form-item :help="t('SetDownloader.editor.bypassCSRFHelp')" style="margin-left: 16px">
               <a-flex align="center" :gap="8">
                 <a-switch v-model:checked="clientConfig.feature!.BypassCSRF" />
-                <a-typography-text>绕过 CSRF 保护</a-typography-text>
+                <a-typography-text>{{ t("SetDownloader.editor.bypassCSRF") }}</a-typography-text>
               </a-flex>
             </a-form-item>
           </a-col>

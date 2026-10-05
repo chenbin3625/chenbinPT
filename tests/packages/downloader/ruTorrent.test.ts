@@ -178,6 +178,30 @@ describe("ruTorrent：system.multicall 多剥一层（B-6）", () => {
   });
 });
 
+describe("ruTorrent：恢复动作使用 unpause", () => {
+  it("resumeTorrent 不发送不存在的 mode=post", async () => {
+    const { client, requestHttpRpc } = createClient(intResultXml());
+
+    await client.resumeTorrent("HASH");
+
+    expect(requestHttpRpc).toHaveBeenCalledWith(expect.any(URLSearchParams));
+    const body = requestHttpRpc.mock.calls[0][0] as URLSearchParams;
+    expect(body.get("mode")).toBe("unpause");
+  });
+});
+
+describe("ruTorrent：限速单位", () => {
+  it("KiB/s 换算成 rTorrent 的 bytes/s", async () => {
+    const { client, requestHttpRpc } = createClient(intResultXml());
+
+    await expect(client.setTorrentSpeedLimit("hash", { upload: 1024, download: 128 })).resolves.toBe(true);
+
+    const xml = String(requestHttpRpc.mock.calls[0][0]);
+    expect(xml).toContain("1048576");
+    expect(xml).toContain("131072");
+  });
+});
+
 describe("ruTorrent：label / 状态消息下标（B-7）", () => {
   /** 34 项元组，下标含义见 ruTorrent.ts 的 torrentData 声明 */
   function makeRawTorrent(overrides: Record<number, string> = {}): string[] {

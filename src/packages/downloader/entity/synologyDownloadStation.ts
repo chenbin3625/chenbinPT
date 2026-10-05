@@ -808,12 +808,16 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
   }
 
   /**
-   * 注意，因为DSM的原因（不支持 只删除种子不删除文件），removeData配置项不会起作用，
+   * DSM 不支持只删除任务而保留文件，未明确勾选删除数据时拒绝操作，
+   * 避免用户按“保留文件”操作却实际删除了文件。
    *
    * @param id
    * @param removeData
    */
   async removeTorrent(id: any, removeData: boolean | undefined): Promise<boolean> {
+    if (!removeData) {
+      throw new Error("Synology Download Station cannot delete a task without deleting its data");
+    }
     return (
       await this.requestEntryCGI({
         id: id,

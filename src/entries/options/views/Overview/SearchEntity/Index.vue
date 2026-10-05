@@ -4,7 +4,6 @@ import {
   CheckOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
-  FilterOutlined,
   PauseOutlined,
   PlayCircleOutlined,
   SettingOutlined,
@@ -46,15 +45,21 @@ import {
 
 import ActionTd from "./ActionTd.vue";
 import TorrentProcessTd from "./TorrentProcessTd.vue";
-import QuickFilterNotice from "./QuickFilterNotice.vue";
+import SearchFilterBar from "./SearchFilterBar.vue";
 import SelectionBar from "./SelectionBar.vue";
 import SearchStatusDialog from "./SearchStatusDialog.vue";
 import SaveSnapshotDialog from "./SaveSnapshotDialog.vue";
-import AdvanceFilterGenerateDialog from "./AdvanceFilterGenerateDialog.vue";
 
 // 主要助手方法
 import { tableCustomFilter } from "./utils/filter";
-import { doSearch, invalidateSearchTasks, retrySearch, searchPlanStatus, searchQueue } from "./utils/search";
+import {
+  cancelSearchQueue,
+  doSearch,
+  invalidateSearchTasks,
+  retrySearch,
+  searchPlanStatus,
+  searchQueue,
+} from "./utils/search";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -63,7 +68,6 @@ const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
 const display = useDisplay();
 
-const showAdvanceFilterGenerateDialog = ref<boolean>(false);
 const showSearchStatusDialog = ref<boolean>(false);
 const showSaveSnapshotDialog = ref<boolean>(false);
 
@@ -104,8 +108,7 @@ const fullTableHeader = computed(
     ] as (DataTableHeader & { props?: any })[],
 );
 
-const { tableFilterRef, tableWaitFilterRef, tableFilterFn, buildAdvanceItemPropsFn, buildFilterDictFn } =
-  tableCustomFilter;
+const { tableFilterRef, tableFilterFn, buildAdvanceItemPropsFn } = tableCustomFilter;
 
 // 使用 shallowRef 优化：种子对象数组不需要深度响应式，提升性能
 const tableColumns = computed(() =>
@@ -159,10 +162,7 @@ watch(
         if (route.query.snapshot !== snapshotId) return;
 
         runtimeStore.search = { ...data, snapshot: snapshotId };
-        // 如果启用了快速站点筛选，则重置一下筛选器，以防止快速站点筛选中无站点数据
-        if (configStore.searchEntity.quickSiteFilter) {
-          buildAdvanceItemPropsFn();
-        }
+        buildAdvanceItemPropsFn();
       });
     } else {
       // 离开快照视图：让在途的快照响应失效
@@ -202,23 +202,6 @@ function startSearchQueue() {
   console.log("startSearchQueue", searchQueue);
   searchQueue.start();
   isSearchingParsed.value = false;
-}
-
-function cancelSearchQueue() {
-  console.log("cancelSearchQueue", searchQueue);
-  searchQueue.clear(); // 清空搜索队列
-  // 将搜索队列中状态设置为跳过
-  for (const key of Object.keys(runtimeStore.search.searchPlan)) {
-    // @ts-ignore
-    if (runtimeStore.search.searchPlan[key]!.status === EResultParseStatus.waiting) {
-      // @ts-ignore
-      runtimeStore.search.searchPlan[key]!.status = EResultParseStatus.passParse;
-      // @ts-ignore
-      runtimeStore.search.searchPlan[key]!.statusMsg = "i18n.userCancel";
-    }
-  }
-
-  runtimeStore.search.isSearching = false;
 }
 
 const tableNonBooleanControlKey = ["maxTagCountBeforeGroup", "hiddenTagNames"];
@@ -462,26 +445,11 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
             </a-list>
           </template>
         </a-popover>
-
-        <div style="flex: 1 1 auto"></div>
-        <a-input
-          v-model:value="tableWaitFilterRef"
-          @update:value="(val: any) => buildFilterDictFn(val)"
-          allow-clear
-          :placeholder="t('SearchEntity.index.filterLabel')"
-        >
-          <!-- 高级筛选生成入口：迁移前挂在 prepend-inner-icon 的 @click:prepend-inner 上，
-               antd 的 Input 没有该事件，需用 #prefix 插槽自己承接，否则对话框永远打不开 -->
-          <template #prefix>
-            <FilterOutlined style="cursor: pointer" @click="showAdvanceFilterGenerateDialog = true" />
-          </template>
-        </a-input>
       </a-flex>
     </a-typography-text>
 
     <div style="padding-top: 8px; padding-bottom: 0px">
-      <!-- 快速站点筛选 -->
-      <QuickFilterNotice />
+      <SearchFilterBar />
 
       <a-table
         id="ptd-search-entity-table"
@@ -589,7 +557,6 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
     </div>
   </a-card>
 
-  <AdvanceFilterGenerateDialog v-model="showAdvanceFilterGenerateDialog" />
   <SearchStatusDialog v-model="showSearchStatusDialog" />
   <SaveSnapshotDialog v-model="showSaveSnapshotDialog" />
 

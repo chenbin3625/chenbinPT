@@ -16,9 +16,16 @@
       "errorMessage": "Error Message"
     },
     "filterPlaceholder": "Filter download history",
+    "pollingError": "Failed to refresh download status. Some tasks may not update automatically.",
     "reDownload": "Re-download",
     "refresh": "Refresh download history list",
     "searchTorrent": "Search this torrent across all sites",
+    "status": {
+      "completed": "Completed",
+      "downloading": "Downloading",
+      "failed": "Error",
+      "pending": "Pending"
+    },
     "table": {
       "downloadAt": "Download Time",
       "downloader": "Downloader",
@@ -39,6 +46,7 @@
     "deleteError": "Delete failed",
     "deleteSelectedConfirm": "Confirm deleting {count} selected reseed tasks?",
     "deleteSuccess": "Deleted successfully",
+    "downloaderNotFound": "Downloader not found",
     "editSavePath": "Edit save path",
     "emptyNotice": "No reseed tasks yet. Select torrents from search results and click reseed check button.",
     "leechers": "Leechers: ",
@@ -253,6 +261,9 @@
     "UserLevelRequirementsTd": {
       "levelList": "User Level List"
     },
+    "UserDataTimeline": {
+      "defaultTitle": "The Road Traveled Over the Years"
+    },
     "exportDialog": {
       "exportAll": "Export User Info From {count} sites",
       "exportSelected": "Export User Info from selected {count} sites",
@@ -279,6 +290,8 @@
         "unreadMessage": "Unread messages"
       },
       "flushCancel": "Refresh canceled",
+      "flushSiteFailed": "Failed to refresh user info for site [{site}]",
+      "flushQueueCancelled": "The user info refresh queue was cancelled",
       "flushSelectSite": "Refresh selected",
       "joinTimeFormat": "Display join time",
       "joinTimeFormatOptions": {
@@ -309,6 +322,7 @@
       "viewStatistic": "Data Chart",
       "viewTimeline": "Timeline"
     },
+    "siteMetadataLoadFailed": "Failed to load site metadata: {sites}{more}. These sites were skipped.",
     "table": {
       "action": {
         "flushData": "Refresh Data",
@@ -428,6 +442,28 @@
       },
       "clearSelection": "Clear Selection",
       "filterLabel": "Filter search results",
+      "filters": {
+        "atLeast": "At least {0}",
+        "clear": "Clear",
+        "completed": "Completed",
+        "dates": {
+          "last7": "Last 7 days",
+          "month": "This month",
+          "today": "Today",
+          "week": "This week",
+          "year": "This year"
+        },
+        "exclude": "Exclude",
+        "excludedValue": "Exclude {0}",
+        "leechers": "Leechers",
+        "seeders": "Seeders",
+        "site": "Site",
+        "size": "Size",
+        "status": "Status",
+        "tags": "Tags",
+        "text": "Keyword",
+        "time": "Date"
+      },
       "noData": "No search results yet. Enter a keyword or pick a search plan above to start.",
       "highlightSameSizeTorrent": "Mark same-size torrents when sorted by size",
       "limitTorrentTitleTdWidth": "Limit torrent title column width",
@@ -452,7 +488,10 @@
     },
     "siteFilter": {
       "all": "All Site"
-    }
+    },
+    "noSearchPlanToRetry": "There are no search plans to retry",
+    "noSiteToSearch": "Please add at least one site before searching",
+    "searchSolutionNotFound": "Search plan [{0}] does not exist"
   },
   "SearchResultSnapshot": {
     "EditNameDialog": {
@@ -470,9 +509,14 @@
         "name": "Snapshot Name",
         "recordCount": "Torrent Count"
       }
-    }
+    },
+    "notFound": "Search snapshot not found",
+    "updateNotSaved": "{schema} [{id}] was not found, changes were not saved",
+    "cannotSaveWhileSearching": "A search snapshot cannot be created while a search is in progress"
   },
   "SentToDownloaderDialog": {
+    "dynamicReplaceCancelled": "Push cancelled because input for {0} was cancelled",
+    "dynamicReplaceTitle": "Enter the replacement value for <...> in {0}",
     "isSending": "Sending torrents to downloader {name} [{address}], please wait...",
     "label": "Torrent Label",
     "labelHint": "(If supported by the downloader)",
@@ -485,6 +529,11 @@
     "savePathHint": "Leave empty to use the downloader's default path",
     "selectDownloader": "Select Downloader",
     "selectDownloaderFirst": "Please select a downloader first",
+    "sendFailed": "[{title}] failed to send to downloader. Error: {error}",
+    "sendSummary": "{success} sent successfully{pending}{failed}",
+    "sendSummaryPending": " ({count} pending in queue)",
+    "sendSummaryFailed": ", {count} failed",
+    "noTasks": "No tasks were sent to the downloader",
     "title": "Select downloader for {0} torrents"
   },
   "SetBackup": {
@@ -800,6 +849,8 @@
     "editor": {
       "addressTip": "Full Server Address (may include port or path), Like: http://192.168.1.1:5000/",
       "autoStart": "Automatically start downloading when sending a torrent",
+      "bypassCSRF": "Bypass CSRF protection",
+      "bypassCSRFHelp": "Remove the Origin header to bypass qBittorrent's cross-site request forgery (CSRF) check. When enabled, CSRF protection does not need to be disabled in qBittorrent.",
       "nameTip": "Pick a nice and recognizable name for this Download Server",
       "password": "Password",
       "timeout": "Timeout (seconds)",
@@ -896,6 +947,26 @@
       "title": "Customize @:SetSearchSolution.solution"
     },
     "newSolutionNamePrompt": "Please enter the new search plan name",
+    "import": {
+      "invalidFile": "Invalid search solution file: expected an array of solutions",
+      "success": "Imported {count} search solution(s)",
+      "skipped": "Skipped {count} invalid search solution(s): {detail}{rest}",
+      "missingSites": "Imported solutions reference {count} site(s) that are not added yet; add them before searching",
+      "invalidJson": "Invalid JSON format when importing search solutions",
+      "readFailed": "Failed to read the imported search solution file",
+      "noSolutions": "No solutions to export",
+      "unnamed": "(unnamed)",
+      "moreFailures": " (+{count} more)",
+      "reason": {
+        "notObject": "not an object",
+        "missingName": "missing name",
+        "emptySolutions": "empty solutions",
+        "solutionNotObject": "solutions[{index}] is not an object",
+        "missingSiteId": "solutions[{index}] missing siteId",
+        "missingSearchEntries": "solutions[{index}] missing searchEntries",
+        "invalidSelectedCategories": "solutions[{index}] invalid selectedCategories"
+      }
+    },
     "solution": "Search Solution",
     "spDialog": {
       "action": {
@@ -1138,6 +1209,7 @@
     "language": "Language",
     "loading": "Loading…",
     "name": "Name",
+    "moreSites": " and {count} more site(s)",
     "noData": "No data",
     "project": "chenbinPT",
     "remove": "Delete",
@@ -1190,13 +1262,21 @@
     "copyLink": "Copy Link",
     "copyLinkFailed": "Failed to copy download link",
     "copyLinkSuccess": "Download link copied to clipboard",
+    "confirmAction": "Are you sure you want to perform this action?",
+    "emptySearchKeyword": "Search keyword cannot be empty",
+    "ignoredForeignLinks": "Ignored {count} download link(s) that do not belong to this site",
+    "inputSearchKeywords": "No search keyword was parsed. Please enter one:",
+    "invalidDropData": "The dropped content is not valid torrent data and was ignored",
+    "localDownloadFailed": "Local download failed. Check Download History for details.",
     "noTorrentParsed": "No torrents found on this page",
     "openPTD": "Open PTD",
     "parsePageFailed": "Page parsing failed",
     "parseResultEmpty": "Failed to parse results",
     "pushTo": "Push to...",
     "pushToDefault": "Push to Default Downloader",
-    "quickSearch": "Quick Search"
+    "quickSearch": "Quick Search",
+    "untrustedTorrentLink": "The parsed download link does not belong to this site and was rejected",
+    "unsupportedDropLinks": "The dropped links are unsupported or do not belong to this site and were ignored"
   },
   "downloaderLabel": {
     "localDownload": "Local Download"

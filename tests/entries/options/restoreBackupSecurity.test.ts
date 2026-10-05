@@ -67,10 +67,10 @@ describe("S-1：含 backupServers 的备份", () => {
 });
 
 describe("S-1：不含 backupServers 的普通备份", () => {
-  it("只恢复非敏感字段（下载历史等）时完全不出警示，流程与改动前一致", () => {
+  it("未选择恢复字段时不展示敏感数据警示", () => {
     const summary = analyzeRestoreSecurity(
       { manifest: { version: "chenbinPT (v1.0.0.0)", files: { downloadHistory: 1 } }, downloadHistory: [] } as any,
-      optionsOf(["downloadHistory"]),
+      optionsOf([]),
     );
 
     expect(summary.hasBackupServers).toBe(false);
@@ -79,7 +79,7 @@ describe("S-1：不含 backupServers 的普通备份", () => {
     expect(summary.sensitiveFields).toEqual([]);
     expect(summary.showSecurityWarning).toBe(false);
     // 未勾选开关时必须原样传 false（不会被透传成 true）
-    expect(optionsOf(["downloadHistory"]).restoreBackupServers).toBe(false);
+    expect(optionsOf([]).restoreBackupServers).toBe(false);
   });
 
   it("备份里没有服务器配置时，警示只来自「本次将恢复敏感字段」，不含服务器配置那一行", () => {
@@ -89,6 +89,23 @@ describe("S-1：不含 backupServers 的普通备份", () => {
     expect(summary.sensitiveFields).toEqual(["cookies", "metadata"]);
     expect(summary.showSecurityWarning).toBe(true);
     expect(summary.skippedBackupServerCount).toBe(0);
+  });
+
+  it("快照与辅种任务含下载链接，应在恢复时归类为敏感数据", () => {
+    const summary = analyzeRestoreSecurity(
+      { manifest: { files: { searchResultSnapshot: 1, keepUploadTask: 1 } } } as any,
+      optionsOf(["searchResultSnapshot", "keepUploadTask"]),
+    );
+    expect(summary.sensitiveFields).toEqual(["searchResultSnapshot", "keepUploadTask"]);
+    expect(summary.showSecurityWarning).toBe(true);
+  });
+
+  it("下载历史含下载请求配置，也属于敏感数据", () => {
+    const summary = analyzeRestoreSecurity(
+      { manifest: { files: { downloadHistory: 1 } } } as any,
+      optionsOf(["downloadHistory"]),
+    );
+    expect(summary.sensitiveFields).toEqual(["downloadHistory"]);
   });
 });
 

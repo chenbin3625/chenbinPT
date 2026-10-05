@@ -268,6 +268,17 @@ describe("Aria2：system.multicall 解包 / 进度单位 / 上传限速 GID", ()
   });
 });
 
+describe("Aria2 删除文件参数", () => {
+  it("API 不支持删文件时明确拒绝，而不是假报成功", async () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const { client, ws } = await createClient();
+
+    await expect(client.removeTorrent("gid-1", true)).rejects.toThrow(/does not support/i);
+    expect(ws.sent).toHaveLength(0);
+  });
+});
+
 describe("Aria2：连接状态自愈（D-1）", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];

@@ -84,6 +84,72 @@ describe("跨上下文消息：offscreen 就绪与断线恢复", () => {
   });
 });
 
+describe("敏感消息的发送方限制", () => {
+  beforeEach(() => {
+    originalOnMessage.mockReset();
+    vi.stubGlobal("chrome", {
+      runtime: {
+        id: "extension-id",
+        getURL: (path: string) => `chrome-extension://extension-id/${path}`,
+      },
+    });
+  });
+
+  it("普通网页标签的内容脚本不能调用 Cookie 写入接口", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn();
+    onMessage("setCookie", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    expect(() =>
+      wrapped({
+        data: { name: "session", value: "secret" },
+        sender: { id: "extension-id", url: "https://pt.example.com/details.php", tab: { id: 1 } },
+      }),
+    ).toThrow(/sender|permission/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("扩展页面与内容脚本的普通下载消息仍可达", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const cookieHandler = vi.fn(async () => [] as chrome.cookies.Cookie[]);
+    onMessage("getAllCookies", cookieHandler);
+    const wrappedCookie = originalOnMessage.mock.calls.at(-1)![1];
+
+    await expect(
+      wrappedCookie({
+        data: { domain: "pt.example.com" },
+        sender: { id: "extension-id", url: "chrome-extension://extension-id/offscreen.html" },
+      }),
+    ).resolves.toEqual([]);
+
+    const downloadHandler = vi.fn(async () => ({ downloadId: 1, downloadStatus: "completed" as const }));
+    onMessage("downloadTorrent", downloadHandler);
+    const wrappedDownload = originalOnMessage.mock.calls.at(-1)![1];
+    await expect(
+      wrappedDownload({
+        data: { torrent: { link: "https://pt.example.com/download" } },
+        sender: { id: "extension-id", url: "https://pt.example.com/details.php", tab: { id: 1 } },
+      }),
+    ).resolves.toEqual({ downloadId: 1, downloadStatus: "completed" });
+  });
+
+  it("内容脚本不能安装影响普通网页请求的 DNR 规则", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn();
+    onMessage("updateDNRSessionRules", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    expect(() =>
+      wrapped({
+        data: { rule: { id: 1 }, extOnly: false },
+        sender: { id: "extension-id", url: "https://pt.example.com/details.php", tab: { id: 1 } },
+      }),
+    ).toThrow(/permission/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
 describe("跨上下文消息：只读消息才允许自动重试（B-9）", () => {
   beforeEach(() => {
     originalSendMessage.mockReset();

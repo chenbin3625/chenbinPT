@@ -655,6 +655,9 @@ export default class Aria2 extends AbstractBittorrentClient {
   }
 
   async removeTorrent(id: string, removeData?: boolean): Promise<boolean> {
+    if (removeData) {
+      throw new Error("Aria2 does not support deleting torrent data through this API");
+    }
     await this.methodSend<string>("aria2.remove", [id]);
     await this.methodSend<"OK">("aria2.removeDownloadResult", [id]);
     return true;

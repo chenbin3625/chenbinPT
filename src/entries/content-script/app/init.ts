@@ -9,6 +9,7 @@ import { message } from "ant-design-vue";
 import App from "./App.vue";
 import { createRemountGuard } from "./remountGuard.ts";
 import { syncThemeVarsToHost } from "./themeVars.ts";
+import { setClipboardFallbackContainer } from "./utils.ts";
 import { piniaInstance as pinia } from "@/options/plugins/pinia.ts";
 import { i18nInstance as i18n } from "@/options/plugins/i18n.ts";
 import { antdInstance as antd, useAntdConfig } from "@/options/plugins/antd.ts";
@@ -49,6 +50,7 @@ export function mountApp(document: Document, data: any = {}) {
   appMountElement.id = "ptd-content-script-app";
   appMountElement.className = "ptd-content-script-app";
   shadowRoot.appendChild(appMountElement);
+  setClipboardFallbackContainer(appMountElement);
 
   const popupHostElement = document.createElement("div");
   popupHostElement.id = "ptd-content-script-popup-host";
@@ -115,6 +117,7 @@ export function mountApp(document: Document, data: any = {}) {
       return;
     }
     mutationObserver.disconnect();
+    setClipboardFallbackContainer(undefined);
     app.unmount();
     mountApp(document, data);
   });

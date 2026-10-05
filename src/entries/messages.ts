@@ -323,6 +323,27 @@ const offscreenMessageTypes = new Set<keyof ProtocolMap>([
 // 全局消息处理函数映射
 const messageMaps: Partial<ProtocolMap> = {};
 
+// Content scripts must retain search/download access, but must not call administrative
+// endpoints that expose whole storage, cookies, or backup and browser rule controls.
+const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
+  "getExtStorage",
+  "setExtStorage",
+  "getAllCookies",
+  "getCookie",
+  "setCookie",
+  "removeCookie",
+  "restoreBackupData",
+  "exportBackupData",
+  "getRemoteBackupData",
+  "deleteBackupHistory",
+  "removeDNRSessionRuleById",
+]);
+
+function isExtensionPageSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+  const extensionBase = chrome.runtime.getURL("");
+  return sender?.id === chrome.runtime.id && typeof sender.url === "string" && sender.url.startsWith(extensionBase);
+}
+
 /**
  * 允许在「连接类错误」后自动重试的**只读**消息白名单（缺陷清单 B-9）。
  *
@@ -409,6 +430,7 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     type: K,
     handler: (message: {
       data: Parameters<TMessageCallable<PM[K]>>[0];
+      sender?: chrome.runtime.MessageSender;
     }) => void | Promise<ReturnType<TMessageCallable<PM[K]>>>,
   ) => void;
 }) {
@@ -451,11 +473,22 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     type: K,
     handler: (message: {
       data: Parameters<TMessageCallable<PM[K]>>[0];
+      sender?: chrome.runtime.MessageSender;
     }) => void | Promise<ReturnType<TMessageCallable<PM[K]>>>,
   ) => {
     // @ts-expect-error
     messageMaps[type] = handler;
-    original.onMessage(type, handler);
+    original.onMessage(type, (message) => {
+      if (
+        (extensionPageOnlyMessages.has(type as keyof ProtocolMap) ||
+          (type === "updateDNRSessionRules" &&
+            (message.data as { extOnly?: boolean } | undefined)?.extOnly === false)) &&
+        !isExtensionPageSender(message.sender)
+      ) {
+        throw new Error(`Permission denied for message sender: ${String(type)}`);
+      }
+      return handler(message);
+    });
   };
 
   // 包装后的 sendMessage：优先使用 messageMaps 中的异步处理函数
@@ -523,6 +556,6 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
 
 export const { sendMessage, onMessage } = createMessageWrapper(
   defineExtensionMessaging<ProtocolMap>({
-    logger: __BROWSER__ == "firefox" || isDebug ? console : undefined,
+    logger: isDebug ? console : undefined,
   }),
 );

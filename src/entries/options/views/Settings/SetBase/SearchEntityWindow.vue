@@ -87,11 +87,6 @@ const hiddenTagNamesText = computed({
           <a-typography-text>{{ t("SetBase.searchEntity.forceImdbIdMatchFilter") }}</a-typography-text>
           <a-switch v-model:checked="configStore.searchEntity.forceImdbIdMatchFilter" />
         </div>
-
-        <div class="ptd-settings-row">
-          <a-typography-text>{{ t("SetBase.searchEntity.quickSiteFilter") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.searchEntity.quickSiteFilter" />
-        </div>
       </div>
 
       <div class="ptd-setting-group">

@@ -199,3 +199,46 @@ describe("B-16 正则字面量缓存", () => {
     expect(matched).toEqual([true, true, true, true]);
   });
 });
+
+describe("范围筛选的零值边界", () => {
+  it("size:0-5GB 保留零下界，匹配范围内的种子", async () => {
+    const filter = useTableCustomFilter<Record<string, any>>({
+      parseOptions: { ranges: ["size"] },
+      titleFields: ["title"],
+      format: { size: "size" },
+    });
+    await applyFilterText(filter, "size:0-5GB");
+
+    expect(runFilter(filter, { title: "small", size: 2 * 1024 ** 3 })).toBe(true);
+    expect(runFilter(filter, { title: "large", size: 6 * 1024 ** 3 })).toBe(false);
+  });
+
+  it("零下界经快捷筛选的字典生成与解析后仍生效", async () => {
+    const filter = useTableCustomFilter<Record<string, any>>({
+      parseOptions: { ranges: ["updateAt"] },
+      titleFields: ["site"],
+      format: { updateAt: { parse: Number, build: String } },
+    });
+    const startOfToday = new Date(2026, 9, 5).getTime();
+    filter.advanceFilterDictRef.value.updateAt = [0, startOfToday - 1];
+    await applyFilterText(filter, filter.stringifyFilterDictFn());
+
+    expect(runFilter(filter, { site: "old", updateAt: startOfToday - 1000 })).toBe(true);
+    expect(runFilter(filter, { site: "today", updateAt: startOfToday + 1000 })).toBe(false);
+    expect(runFilter(filter, { site: "never", updateAt: 0 })).toBe(true);
+  });
+});
+
+describe("搜索结果预设范围", () => {
+  it("阈值超过当前结果最大值时保持阈值，不错误地命中最大值", async () => {
+    const filter = useTableCustomFilter({
+      parseOptions: { ranges: ["seeders"] },
+      titleFields: ["title"],
+      initialItems: [{ title: "one", seeders: 3 }],
+    });
+    filter.advanceFilterDictRef.value.seeders = [10, Infinity];
+    await applyFilterText(filter, filter.stringifyFilterDictFn());
+    expect(runFilter(filter, { title: "one", seeders: 3 })).toBe(false);
+    expect(runFilter(filter, { title: "two", seeders: 11 })).toBe(true);
+  });
+});

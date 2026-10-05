@@ -51,6 +51,7 @@ vi.stubGlobal("chrome", {
 });
 
 const { default: BittorrentSite } = await import("@ptd/site/schemas/AbstractBittorrentSite.ts");
+const { default: PrivateSite } = await import("@ptd/site/schemas/AbstractPrivateSite.ts");
 const { CFBlockedError, EResultParseStatus } = await import("@ptd/site/types.ts");
 const { NetworkError, ServerError } = await import("@ptd/site/utils/error.ts");
 
@@ -157,5 +158,32 @@ describe("AbstractBittorrentSite.request 重试", () => {
     const classified = classifySiteError(new ServerError("Network Error: 429"));
     expect(classified.status).toBe(EResultParseStatus.unknownError);
     expect(classified.retryable).toBe(true);
+  });
+});
+
+describe("站点登录检查和 Cloudflare 邮箱解码", () => {
+  it("登录断言遇到不可读响应时拒绝将其视为已登录", () => {
+    class CheckSite extends PrivateSite {
+      check(response: any) {
+        return this.loggedCheck(response);
+      }
+    }
+    const site = new CheckSite(metadata);
+    const request = {
+      get responseURL() {
+        throw new Error("invalid response");
+      },
+    };
+    expect(site.check({ status: 200, request, headers: {}, data: "ok" })).toBe(false);
+  });
+
+  it("没有 Cloudflare 邮箱标记的文档不做 DOM 邮箱查询", async () => {
+    const doc = document.implementation.createHTMLDocument("normal");
+    const query = vi.spyOn(doc, "querySelectorAll");
+    mocks.request.mockResolvedValue({ status: 200, headers: {}, data: doc, request: {} });
+
+    await newSite().request({ url: "/", responseType: "document" }, false);
+
+    expect(query).not.toHaveBeenCalled();
   });
 });

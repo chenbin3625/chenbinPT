@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import { defineStore } from "pinia";
 import { isEmpty, set } from "es-toolkit/compat";
+import { i18n } from "@/options/plugins/i18n.ts";
 import {
   getHostFromUrl,
   getDefinedSiteMetadata,
@@ -396,7 +397,7 @@ export const useMetadataStore = defineStore("metadata", {
           return await sendMessage("getSearchResultSnapshotData", id);
         } else {
           const runtimeStorage = useRuntimeStore();
-          runtimeStorage.showSnakebar("未找到该搜索快照...", { color: "error" });
+          runtimeStorage.showSnakebar(i18n.t("SearchResultSnapshot.notFound"), { color: "error" });
           return;
         }
       };
@@ -470,7 +471,13 @@ export const useMetadataStore = defineStore("metadata", {
       // 这里提前判断并告知用户，不再落盘。
       const target = this[schemaKey][id];
       if (!target) {
-        useRuntimeStore().showSnakebar(`未找到 ${String(schemaKey)}「${String(id)}」，修改未保存`, { color: "error" });
+        useRuntimeStore().showSnakebar(
+          i18n.t("SearchResultSnapshot.updateNotSaved", {
+            schema: String(schemaKey),
+            id: String(id),
+          }),
+          { color: "error" },
+        );
         return;
       }
 
@@ -615,7 +622,7 @@ export const useMetadataStore = defineStore("metadata", {
       const searchSnapshotData = runtimeStorage.search;
 
       if (searchSnapshotData.isSearching) {
-        runtimeStorage.showSnakebar("你不能创建一个正在搜索中的快照...", { color: "error" });
+        runtimeStorage.showSnakebar(i18n.t("SearchResultSnapshot.cannotSaveWhileSearching"), { color: "error" });
         return;
       }
 

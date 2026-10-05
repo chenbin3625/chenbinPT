@@ -9,6 +9,7 @@ import {
 } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -41,6 +42,40 @@ let searchTaskEpoch = 0;
 /** 让当前所有在途/排队的搜索任务失效（调用方通常还会 `searchQueue.clear()` 清掉尚未开始的任务） */
 export function invalidateSearchTasks() {
   searchTaskEpoch++;
+}
+
+export function captureSearchTaskEpoch(): number {
+  return searchTaskEpoch;
+}
+
+export function isSearchTaskCurrent(taskEpoch: number): boolean {
+  return taskEpoch === searchTaskEpoch;
+}
+
+export function cancelSearchQueue(): void {
+  invalidateSearchTasks();
+  searchQueue.clear();
+
+  for (const plan of Object.values(runtimeStore.search.searchPlan)) {
+    if (plan?.status === EResultParseStatus.waiting) {
+      plan.status = EResultParseStatus.passParse;
+      plan.statusMsg = "i18n.userCancel";
+    }
+  }
+
+  runtimeStore.search.isSearching = false;
+}
+
+export function summarizeSearchResultForLog(
+  searchResult: unknown,
+  status: EResultParseStatus,
+  statusMsg?: string,
+): { status: EResultParseStatus; statusMsg?: string; count: number } {
+  return {
+    status,
+    statusMsg,
+    count: Array.isArray(searchResult) ? searchResult.length : 0,
+  };
 }
 
 searchQueue.on("active", () => {
@@ -178,8 +213,8 @@ export async function doSearchEntity(
       if (taskEpoch !== searchTaskEpoch) return;
 
       console.log(
-        `success get search ${solutionKey} result, with code ${searchStatus}: ${searchStatusMsg ?? ""}`,
-        searchResult,
+        `success get search ${solutionKey} result`,
+        summarizeSearchResultForLog(searchResult, searchStatus, searchStatusMsg),
       );
       runtimeStore.search.searchPlan[solutionKey].status = searchStatus;
       searchStatusMsg && (runtimeStore.search.searchPlan[solutionKey].statusMsg = searchStatusMsg);
@@ -254,7 +289,7 @@ export async function doSearch(search: string, plan?: string, flush: boolean = t
   const searchSolution = await metadataStore.getSearchSolution(runtimeStore.search.searchPlanKey);
 
   if (!searchSolution) {
-    runtimeStore.showSnakebar(`搜索方案 [${searchPlanKey}] 不存在`, { color: "error" });
+    runtimeStore.showSnakebar(i18n.t("SearchEntity.searchSolutionNotFound", [searchPlanKey]), { color: "error" });
     return;
   }
 
@@ -262,7 +297,7 @@ export async function doSearch(search: string, plan?: string, flush: boolean = t
   console.log(`Expanded Search Plan for ${searchPlanKey}: `, searchSolution);
 
   if (searchSolution.solutions.length === 0) {
-    runtimeStore.showSnakebar("请至少添加一个站点进行搜索", { color: "error" });
+    runtimeStore.showSnakebar(i18n.t("SearchEntity.noSiteToSearch"), { color: "error" });
     return;
   }
 
@@ -281,7 +316,7 @@ export async function retrySearch(retryStatus: EResultParseStatus[] = defaultErr
     retryStatus.includes(plan.status),
   );
   if (shouldRetrySearchPlan.length === 0) {
-    runtimeStore.showSnakebar("没有需要重试的搜索计划", { color: "info" });
+    runtimeStore.showSnakebar(i18n.t("SearchEntity.noSearchPlanToRetry"), { color: "info" });
     return;
   }
   console.log("Retrying search plans: ", shouldRetrySearchPlan);

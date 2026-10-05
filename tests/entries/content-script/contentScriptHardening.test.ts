@@ -34,7 +34,7 @@ vi.mock("@/options/stores/metadata.ts", () => ({
 
 (globalThis as any).__BROWSER__ = "chrome";
 
-const { installPageTypeUrlWatcher, pageType, siteInstance, copyTextToClipboard } =
+const { installPageTypeUrlWatcher, pageType, siteInstance, copyTextToClipboard, setClipboardFallbackContainer } =
   await import("@/content-script/app/utils.ts");
 
 const SITE_ID = "testsite";
@@ -180,6 +180,67 @@ describe("A-9 · 复制/下载动作", () => {
     await expect(copyTextToClipboard("x")).resolves.toBe(false);
 
     await expect(copyTextToClipboard("")).resolves.toBe(false);
+  });
+
+  it("剪贴板回退节点挂在内容脚本容器内，不落到宿主 document.body", async () => {
+    const shadowHost = document.createElement("div");
+    const fallbackContainer = document.createElement("div");
+    shadowHost.attachShadow({ mode: "closed" }).appendChild(fallbackContainer);
+    document.body.appendChild(shadowHost);
+
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("clipboard unavailable")) },
+      configurable: true,
+    });
+    let seenInFallbackContainer = false;
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => {
+        seenInFallbackContainer = fallbackContainer.querySelector("textarea")?.value === "secret-download-link";
+        expect(document.body.querySelector("textarea")).toBeNull();
+        return true;
+      }),
+    });
+    setClipboardFallbackContainer(fallbackContainer);
+
+    await expect(copyTextToClipboard("secret-download-link")).resolves.toBe(true);
+    expect(seenInFallbackContainer).toBe(true);
+    expect(fallbackContainer.querySelector("textarea")).toBeNull();
+
+    setClipboardFallbackContainer(undefined);
+    shadowHost.remove();
+  });
+
+  it("execCommand 抛错时也清理影子树中的敏感文本", async () => {
+    const shadowHost = document.createElement("div");
+    const fallbackContainer = document.createElement("div");
+    shadowHost.attachShadow({ mode: "closed" }).appendChild(fallbackContainer);
+    document.body.appendChild(shadowHost);
+    setClipboardFallbackContainer(fallbackContainer);
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => {
+        throw new Error("copy denied");
+      }),
+    });
+
+    await expect(copyTextToClipboard("secret-download-link")).resolves.toBe(false);
+    expect(fallbackContainer.querySelector("textarea")).toBeNull();
+
+    setClipboardFallbackContainer(undefined);
+    shadowHost.remove();
+  });
+
+  it("影子容器不可用时不把下载凭据插入宿主页面", async () => {
+    setClipboardFallbackContainer(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand });
+
+    await expect(copyTextToClipboard("https://pt.example/download?passkey=secret")).resolves.toBe(false);
+    expect(execCommand).not.toHaveBeenCalled();
+    expect(document.body.querySelector("textarea")).toBeNull();
   });
 
   it("批量动作的 loading 复位在 finally 内、发送被 await（源码结构断言：SFC 无法在 vitest 内挂载）", () => {

@@ -140,6 +140,7 @@ const {
   titleFields: ["site", "siteName", "name"],
   format: {
     status: "number",
+    updateAt: { parse: Number, build: String },
   },
 });
 
@@ -364,7 +365,7 @@ const showExportDialog = ref(false);
                     style="cursor: pointer"
                     @click.stop="
                       () => {
-                        advanceFilterDictRef.updateAt = ['', formatDate(currentDate, 'yyyyMMdd')];
+                        advanceFilterDictRef.updateAt = [0, new Date().setHours(0, 0, 0, 0) - 1];
                         updateTableFilterValueFn();
                       }
                     "

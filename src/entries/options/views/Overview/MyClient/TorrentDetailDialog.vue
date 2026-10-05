@@ -38,7 +38,7 @@ import { formatRatio, formatSize, formatDate, isRatioHealthy } from "@/options/u
 
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import TorrentStateTd from "./TorrentStateTd.vue";
-import { createTorrentLoadGuard } from "./utils.ts";
+import { createTorrentLoadGuard, finishTorrentLoad } from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
 const { torrent } = defineProps<{
@@ -112,7 +112,9 @@ async function loadMetaData() {
     metaData.value = meta;
     metaDataForClient.value = clientId;
   } catch {
-    metaData.value = null;
+    if (showDialog.value === true && clientId === torrent?.clientId) {
+      metaData.value = null;
+    }
   }
 }
 
@@ -126,7 +128,7 @@ async function loadFiles() {
   } catch {
     filesGuard.commit(requestKey, () => (files.value = []), false);
   } finally {
-    filesLoading.value = false;
+    finishTorrentLoad(filesGuard, requestKey, () => (filesLoading.value = false));
   }
 }
 
@@ -165,7 +167,7 @@ async function loadPeers() {
   } catch {
     peersGuard.commit(requestKey, () => (peers.value = []), false);
   } finally {
-    peersLoading.value = false;
+    finishTorrentLoad(peersGuard, requestKey, () => (peersLoading.value = false));
   }
 }
 
@@ -182,7 +184,7 @@ async function loadTrackers() {
   } catch {
     trackersGuard.commit(requestKey, () => (trackers.value = []), false);
   } finally {
-    trackersLoading.value = false;
+    finishTorrentLoad(trackersGuard, requestKey, () => (trackersLoading.value = false));
   }
 }
 

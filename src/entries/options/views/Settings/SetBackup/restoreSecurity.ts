@@ -14,7 +14,15 @@ import type { IRestoreOptions, TBackupFields } from "@/shared/types.ts";
  * 解析侧（packages/backupServer/utils.ts）与写入侧（offscreen/utils/backup.ts）的校验由各自的改动负责。
  */
 /** 会被恢复的字段中属于「敏感」的那些：含凭据、cookies 或站点/下载器配置 */
-export const SENSITIVE_BACKUP_FIELDS: TBackupFields[] = ["cookies", "config", "metadata", "userInfo"];
+export const SENSITIVE_BACKUP_FIELDS: TBackupFields[] = [
+  "cookies",
+  "config",
+  "metadata",
+  "userInfo",
+  "searchResultSnapshot",
+  "keepUploadTask",
+  "downloadHistory",
+];
 
 /** 备份服务器配置的简要信息（只取展示所需字段，避免把凭据带进 UI 摘要） */
 export interface IBackupServerBrief {

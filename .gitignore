@@ -22,6 +22,7 @@ dist
 dist-*
 *.local
 public/_locales
+.vitest/
 
 # Logs
 logs

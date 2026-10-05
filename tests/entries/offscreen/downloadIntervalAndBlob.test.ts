@@ -126,6 +126,7 @@ function makeSiteInstance(downloadInterval = 0) {
   return {
     downloadInterval,
     userConfig: { uploadSpeedLimit: 0 },
+    isTrustedDownloadLink: vi.fn((url: string) => new URL(url, "https://example.com").hostname === "example.com"),
     getTorrentDownloadRequestConfig: vi.fn(async () => ({})),
   };
 }
@@ -139,6 +140,30 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
     mocks.revokeObjectURL.mockClear();
     mocks.windowOpen.mockReset();
     mocks.windowOpen.mockReturnValue({ closed: false });
+  });
+
+  it("下载配置覆盖到异站 URL 时拒绝请求", async () => {
+    const handler = await loadDownloadModule();
+    const site = makeSiteInstance(0);
+    site.getTorrentDownloadRequestConfig.mockResolvedValue({ url: "https://evil.example/collect" });
+    mocks.getSiteInstance.mockResolvedValue(site);
+
+    const result = await handler({ data: makeOption() });
+
+    expect(result.downloadStatus).toBe("failed");
+    expect(mocks.windowOpen).not.toHaveBeenCalled();
+    expect(mocks.getRemoteTorrentFile).not.toHaveBeenCalled();
+  });
+
+  it("右键菜单传入未识别站点的 HTTP 链接时拒绝特权下载", async () => {
+    const handler = await loadDownloadModule();
+    const result = await handler({
+      data: makeOption({ site: undefined, link: "http://127.0.0.1/private" }),
+    });
+
+    expect(result.downloadStatus).toBe("failed");
+    expect(mocks.windowOpen).not.toHaveBeenCalled();
+    expect(mocks.getRemoteTorrentFile).not.toHaveBeenCalled();
   });
 
   it("L-1：offscreen 重建后，站点下载间隔仍然生效（时间戳持久化到 session storage）", async () => {

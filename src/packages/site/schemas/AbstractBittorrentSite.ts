@@ -35,6 +35,7 @@ import {
   cfDecodeEmail,
   parseSizeString,
   parseTimeWithZone,
+  parseValidTimeStringInZone,
   tryToNumber,
   hasNonLatinCharacters,
   classifySiteError,
@@ -94,6 +95,17 @@ const allowedLinkProtocols = ["http:", "https:", "magnet:"];
 /** 显式 scheme 的正则：没有 scheme 的输入是相对路径，会由 fixLink 按站点基址解析 */
 const explicitSchemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
+function normalizeSiteHost(host: string): string {
+  const value = host.trim().toLowerCase();
+  return value.startsWith("www.") ? value.slice(4) : value;
+}
+
+function siteHostMatches(host: string, trustedHost: string): boolean {
+  const target = normalizeSiteHost(host);
+  const trusted = normalizeSiteHost(trustedHost);
+  return target === trusted || (target.includes(".") && trusted.includes(".") && target.endsWith(`.${trusted}`));
+}
+
 /**
  * 判断链接的协议是否在白名单内。
  * 没有显式 scheme 的相对路径（`./x`、`x`、`/x`）直接放行——它们最终会落到站点的 http(s) 基址上。
@@ -139,6 +151,40 @@ export default class BittorrentSite {
 
   get url(): TSiteUrl {
     return this.userConfig.url ?? this.metadata.urls[0];
+  }
+
+  /**
+   * Final defense for every privileged download path.
+   * Content-script validation is not enough because options/offscreen can call the same
+   * downloader handlers with data that did not originate from the content script.
+   */
+  public isTrustedDownloadLink(link: string): boolean {
+    if (link.startsWith("magnet:")) {
+      return true;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(link, this.url);
+    } catch {
+      return false;
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+
+    const trustedHosts = [this.url, ...(this.metadata.urls ?? []), ...(this.metadata.legacyUrls ?? [])]
+      .map((url) => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean);
+
+    return trustedHosts.some((trustedHost) => siteHostMatches(parsed.hostname, trustedHost));
   }
 
   get isOnline(): boolean {
@@ -209,7 +255,7 @@ export default class BittorrentSite {
           const doc = req.data;
 
           // 进行简单的检查，防止无意义的替换
-          if (doc instanceof Document && doc.documentElement.outerHTML.search("__cf_email__")) {
+          if (doc instanceof Document && doc.documentElement.outerHTML.includes("__cf_email__")) {
             const cfProtectSpan = selectElements(".__cf_email__", doc);
 
             cfProtectSpan.forEach((element) => {
@@ -656,7 +702,16 @@ export default class BittorrentSite {
       } else if (realFilter?.name) {
         const { name, args = [] } = realFilter;
         if (filterNames.includes(name)) {
-          query = definedFilters[name](query, args);
+          if (
+            this.metadata.timezoneOffset &&
+            typeof query === "string" &&
+            (name === "parseTime" || name === "parseFuzzyTime")
+          ) {
+            const parsed = parseValidTimeStringInZone(query, args, this.metadata.timezoneOffset);
+            query = name === "parseFuzzyTime" && parsed === query ? definedFilters.parseTTL(query) : parsed;
+          } else {
+            query = definedFilters[name](query, args);
+          }
         }
       }
     }
@@ -1046,6 +1101,9 @@ export default class BittorrentSite {
    */
   public async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     if (!torrent.link && this.metadata?.detail?.selectors?.link) {
+      if (!torrent.url || !this.isTrustedDownloadLink(torrent.url)) {
+        throw new Error(`Rejected detail URL outside site host allowlist for ${this.metadata.id}`);
+      }
       const { data } = await this.request<any>(
         toMerged({ responseType: "document", url: torrent.url }, this.metadata.detail?.requestConfig ?? {}),
       );

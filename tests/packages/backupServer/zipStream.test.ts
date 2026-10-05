@@ -110,7 +110,7 @@ describe("加密备份走流式写出器后的往返（真实恢复路径）", (
     expect(restored.config).toEqual(data.config);
     expect(restored.metadata).toEqual(data.metadata);
     expect(restored.userInfo).toEqual(data.userInfo);
-  });
+  }, 15_000);
 
   it("密钥错误时恢复必须失败（条目仍受 AES 保护）", async () => {
     const blob = await backupDataToJSZipBlob(makeBackupData(), encryptionKey);

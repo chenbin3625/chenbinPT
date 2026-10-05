@@ -109,7 +109,10 @@ async function initSiteData(siteId: TSiteID, flush = false) {
   // fix: customSiteUrl not show in Editor (#726)
   if (!siteMetaData.value.urls.includes(siteUserConfig.value.url)) {
     customSiteUrl.value = siteUserConfig.value.url;
+  } else {
+    customSiteUrl.value = "";
   }
+  revealedInputSettings.value = new Set();
 }
 
 onMounted(() => {

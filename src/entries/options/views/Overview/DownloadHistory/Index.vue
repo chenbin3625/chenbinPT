@@ -148,7 +148,7 @@ function viewDownloadDetail(history: ITorrentDownloadMetadata) {
 }
 
 function downloadStatusMeta(status: ITorrentDownloadMetadata["downloadStatus"]) {
-  return downloadStatusMap[status];
+  return downloadStatusMap.value[status];
 }
 
 onMounted(() => {

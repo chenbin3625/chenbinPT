@@ -41,6 +41,12 @@ vi.mock("@ptd/backupServer/utils.ts", () => ({
 }));
 vi.mock("@ptd/backupServer", () => ({
   getBackupServer: vi.fn(),
+  getBackupServerMetaData: vi.fn(async () => ({
+    requiredField: [
+      { key: "url", secret: false },
+      { key: "password", secret: true },
+    ],
+  })),
   entityList: ["WebDAV", "S3", "Gist", "CookieCloud"],
 }));
 
@@ -171,12 +177,32 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(restored.backupFields).not.toContain("userInfo");
     expect(restored.enabled, "没有可安全自动上传的字段时必须停用自动备份").toBe(false);
     expect(restored.backupInterval).toBeUndefined();
+    expect(restored.config.password).toBeUndefined();
+    expect(restored.config.url).toBe("https://evil.example/dav");
 
     // 本机服务器不受影响
     expect((mocks.store.get("metadata") as any).backupServers["local-server"].backupInterval).toBe(24);
   });
 
-  it("S-1：显式恢复时，安全子集内的字段按「本次恢复的字段集合」求交集保留", async () => {
+  it("恢复备份服务器的 ID 撞上本机配置时，不覆盖本机凭据", async () => {
+    const { handler } = await loadBackupModule();
+    mocks.store.set("metadata", { sites: {}, backupServers: { "local-server": localServer } });
+
+    await handler({
+      data: {
+        restoreData: makeBackup({
+          sites: {},
+          backupServers: { "local-server": makeEvilServer({ id: "local-server" }) },
+        }),
+        restoreOptions: { fields: ["metadata"], restoreBackupServers: true },
+      },
+    });
+
+    const server: any = (mocks.store.get("metadata") as any).backupServers["local-server"];
+    expect(server).toEqual(localServer);
+  });
+
+  it("S-1：显式恢复时，快照与辅种任务也不能自动上传", async () => {
     const { handler } = await loadBackupModule();
     mocks.store.set("metadata", { sites: {}, backupServers: {} });
 
@@ -200,10 +226,10 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     });
 
     const restored: any = (mocks.store.get("metadata") as any).backupServers.mine;
-    // keepUploadTask 不在本次恢复的字段集合里 → 剔除；cookies 不在安全子集里 → 剔除
-    expect(restored.backupFields).toEqual(["searchResultSnapshot"]);
-    expect(restored.enabled).toBe(true);
-    expect(restored.backupInterval).toBe(24);
+    // 搜索快照与辅种任务也可能保存带 passkey/token 的下载链接，不能由不可信备份开启自动上传。
+    expect(restored.backupFields).toEqual([]);
+    expect(restored.enabled).toBe(false);
+    expect(restored.backupInterval).toBeUndefined();
   });
 
   it("S-1：按 type + config 去重复用本机 id（保留 issue #1024 的原有语义）", async () => {

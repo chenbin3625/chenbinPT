@@ -206,7 +206,7 @@ export const siteMetadata: ISiteMetadata = {
               }
               return text || undefined;
             },
-            filters: [{ name: "parseTime", args: ["D MMMM YYYY"] }],
+            filters: [{ name: "parseTime", args: ["d MMMM yyyy"] }],
           },
           levelName: {
             selector: "#profile_left > table > tbody > tr > td:nth-child(2) > p:nth-child(1) > u > span",

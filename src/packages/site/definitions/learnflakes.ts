@@ -107,7 +107,7 @@ export const siteMetadata: ISiteMetadata = {
           const match = (element.textContent ?? "").match(/Uploaded\s+(.+?)\s+by/);
           return match ? match[1] : undefined;
         },
-        filters: [{ name: "parseFuzzyTime", args: ["DD-MM-YYYY HH:mm"] }],
+        filters: [{ name: "parseFuzzyTime", args: ["dd-MM-yyyy HH:mm"] }],
       },
       tags: [{ name: "Free", selector: "img[src$='/torrent_free.png']", color: "blue" }],
     },
@@ -167,7 +167,7 @@ export const siteMetadata: ISiteMetadata = {
                 .filter(Boolean);
               return lines[0] || undefined;
             },
-            filters: [{ name: "parseTime", args: ["DD-MM-YYYY HH:mm"] }],
+            filters: [{ name: "parseTime", args: ["dd-MM-yyyy HH:mm"] }],
           },
         },
       },

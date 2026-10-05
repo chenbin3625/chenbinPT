@@ -3,6 +3,7 @@ import { toMerged } from "es-toolkit";
 
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import { EResultParseStatus } from "@ptd/site";
+import { mapWithConcurrency } from "@ptd/site/utils/helper.ts";
 import {
   AbstractMediaServer,
   IMediaServerBaseConfig,
@@ -11,6 +12,7 @@ import {
   IMediaServerSearchOptions,
   IMediaServerSearchResult,
 } from "@ptd/mediaServer";
+import { blobToDataUrl } from "../utils.ts";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "Plex 是一款流行的媒体服务器软件，支持多种设备和平台，提供丰富的媒体管理和播放功能",
@@ -138,12 +140,24 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
     config.timeout ??= this.config.timeout; // 未额外传入 timeout 时，使用默认的 timeout
     config.method ??= "GET"; // 默认使用 GET 方法
 
-    // 处理认证方式
-    config.params ??= {};
-    config.params["X-Plex-Token"] = this.config.auth.apikey;
+    // 令牌不能出现在 URL（含海报请求），否则会进入代理访问日志。
+    config.headers = {
+      ...(config.headers ?? {}),
+      "X-Plex-Token": this.config.auth.apikey,
+    };
 
-    config.responseType = "json";
+    config.responseType ??= "json";
     return axios.request<T>(config);
+  }
+
+  private async getPoster(thumb?: string): Promise<string> {
+    if (!thumb) return "";
+    try {
+      const response = await this.request<Blob>(thumb, { responseType: "blob" });
+      return await blobToDataUrl(response.data);
+    } catch {
+      return "";
+    }
   }
 
   private async getServerIdentity(): Promise<string | undefined> {
@@ -187,7 +201,7 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
       const resp = await this.request<IPlexJsonResponse<IPlexSearchData>>(url, requestConfig);
 
       const items = resp?.data?.MediaContainer?.Metadata ?? [];
-      for (const item of items) {
+      result.items = await mapWithConcurrency(items, 5, async (item) => {
         const mediaItem: IMediaServerItem<IPlexSearchItem | IPlexRecentlyAddedItem> = {
           server: this.config.id!,
           // @ts-expect-error
@@ -199,15 +213,15 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
           format: item.Media?.[0]?.container ?? "",
           size: item.Media?.[0]?.Part?.[0].size ?? 0,
           duration: item.duration ?? 0,
-          poster: item.thumb ? urlJoin(this.apiBaseUrl, `${item.thumb}?X-Plex-Token=${this.config.auth.apikey}`) : "",
+          poster: await this.getPoster(item.thumb),
           tags: item.Genre?.map((tag) => ({ name: tag.tag, url: "" })) ?? [],
           rating: item.audienceRating ?? "-", // Plex may not provide rating in search results
           streams: [], // Plex does not provide streams in search results
           user: { IsFavorite: false, IsPlayed: false }, // Plex does not provide user favorite status in search results
           raw: item, // Store the raw data for reference
         };
-        result.items.push(mediaItem);
-      }
+        return mediaItem;
+      });
       result.options = config;
       result.status = EResultParseStatus.success;
     } catch (e) {

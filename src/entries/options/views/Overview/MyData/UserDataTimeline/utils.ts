@@ -7,6 +7,7 @@ import { formatSize, simplifyNumber } from "@/options/utils.ts";
 import { useResetableRef } from "@/options/directives/useResetableRef.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import type { IStoredUserInfo, TUserInfoStorageSchema } from "@/shared/types.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 
 import { fixUserInfo, realFormatRatio } from "../utils/format.ts";
 import { allAddedSiteMetadata, TOptionSiteMetadatas } from "../utils/siteMetadata.ts";
@@ -120,7 +121,7 @@ export const timelineDataRef = useResetableRef<ITimelineData>(
     const currentDate = new Date();
     const result: ITimelineData = {
       createAt: currentDate,
-      title: "这些年走过的路", // FIXME i18n
+      title: i18n.t("MyData.UserDataTimeline.defaultTitle"),
       joinTimeInfo: { site: {} as IStoredUserInfo, time: Infinity, years: "0" },
       siteInfo: [],
       topInfo: {
