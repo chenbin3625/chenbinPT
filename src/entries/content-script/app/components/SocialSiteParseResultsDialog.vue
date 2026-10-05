@@ -3,6 +3,7 @@ import { ISocialSitePageInformation } from "@ptd/social";
 import { type IPtdData } from "../utils.ts";
 import { computed, inject } from "vue";
 import { useI18n } from "vue-i18n";
+import { EMPTY_PLACEHOLDER_IMAGE } from "@/options/plugins/antd.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
 import ParseResultListItem from "./ParseResultListItem.vue";
@@ -163,7 +164,11 @@ function shouldShowSeriesTitle(result: ISocialSitePageInformation, index: number
       </template>
 
       <!-- 解析结果可能为空数组（解析器对当前页面没有产出），此时列表区域会完全空白，补明确占位 -->
-      <a-empty v-if="parseResults.length === 0" :description="t('contentScript.parseResultEmpty')" />
+      <a-empty
+        v-if="parseResults.length === 0"
+        :image="EMPTY_PLACEHOLDER_IMAGE"
+        :description="t('contentScript.parseResultEmpty')"
+      />
     </a-list>
   </a-modal>
 </template>

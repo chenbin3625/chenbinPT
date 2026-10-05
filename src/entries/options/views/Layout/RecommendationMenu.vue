@@ -6,6 +6,7 @@ import { FireOutlined, ReloadOutlined, StarFilled } from "@ant-design/icons-vue"
 import type { ISocialRecommendationItem, TSocialRecommendationCategory } from "@ptd/social";
 
 import { sendMessage } from "@/messages.ts";
+import { EMPTY_PLACEHOLDER_IMAGE } from "@/options/plugins/antd.ts";
 import { resolveColor } from "@/shared/colors.ts";
 
 const { disabled } = defineProps<{
@@ -264,6 +265,7 @@ watch(isRecommendationMenuOpen, (isOpen) => {
 
         <a-empty
           v-else-if="recommendationItems.length === 0"
+          :image="EMPTY_PLACEHOLDER_IMAGE"
           :description="t('layout.header.hotRecommendations.empty')"
         />
 

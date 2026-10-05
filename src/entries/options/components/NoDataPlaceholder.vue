@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 
+import { EMPTY_PLACEHOLDER_IMAGE } from "@/options/plugins/antd.ts";
+
 /**
  * 统一的「无数据」占位组件（antd Empty 的薄封装）。
  *
+ * - 插画统一取 `EMPTY_PLACEHOLDER_IMAGE`（antd 简洁线稿），全项目空状态观感一致；
  * - 默认描述取 `common.noData`，页面有更具体的文案时通过 `description` 传入；
  * - `compact` 用于表格 `#no-data` 插槽等纵向空间受限的场景，收窄上下留白；
  * - 默认插槽可用于放置「去添加 / 去搜索」之类的引导按钮。
@@ -20,6 +23,7 @@ const { compact = false, description } = defineProps<{
 
 <template>
   <a-empty
+    :image="EMPTY_PLACEHOLDER_IMAGE"
     :description="description ?? t('common.noData')"
     :style="compact ? { padding: '8px 0' } : { padding: '32px 0' }"
   >

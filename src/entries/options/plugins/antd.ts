@@ -1,4 +1,4 @@
-import type { App } from "vue";
+import type { App, VNode } from "vue";
 import { computed, watch } from "vue";
 import {
   Alert,
@@ -15,6 +15,7 @@ import {
   Divider,
   Dropdown,
   Empty,
+  type EmptyProps,
   Flex,
   FloatButton,
   Form,
@@ -153,6 +154,24 @@ export const antdInstance = {
     app.use(StyleProvider as any);
   },
 };
+
+/**
+ * 全项目统一的空状态插画：antd 内置的「简洁线稿」（即 `Empty.PRESENTED_IMAGE_SIMPLE`）。
+ *
+ * 为什么要统一：`<a-empty>` 不传 `image` 时会渲染那张 184×152 的大灰图，而 antd 自己的内部
+ * 空状态（`ConfigProvider` 的 `defaultRenderEmpty`，见 es/config-provider/renderEmpty.js）
+ * 用的就是这张 simple 线稿 —— 于是「表格没传 #emptyText 时的空态」与「我们自己写的 `<a-empty>`」
+ * 观感不一致。所有空状态（`NoDataPlaceholder`、直接写 `<a-empty>` 的地方）都从这里取图。
+ *
+ * 为什么要断言：ant-design-vue 4.2.6 把 `PRESENTED_IMAGE_SIMPLE` 只挂在**运行时**对象上
+ * （es/empty/index.js），d.ts 里没有声明（只有 `Result` 声明了 PRESENTED_IMAGE_*）；
+ * 而 `image` prop 声明的 `VueNode` 也不含函数类型 —— 运行时却专门支持函数形式
+ * （es/empty/index.js 会调用它，并据此给根节点加上 `ant-empty-normal` 紧凑样式）。
+ * 两个类型缺口在这里一次性收口成 prop 本身的类型，调用点直接
+ * `:image="EMPTY_PLACEHOLDER_IMAGE"` 即可，不必各自 `as any`。
+ */
+export const EMPTY_PLACEHOLDER_IMAGE = (Empty as unknown as { PRESENTED_IMAGE_SIMPLE: () => VNode })
+  .PRESENTED_IMAGE_SIMPLE as unknown as EmptyProps["image"];
 
 const antdLocaleMap: Record<TLangCode, { locale: ConfigProviderProps["locale"]; dayjs: string }> = {
   en: { locale: enUS, dayjs: "en" },
