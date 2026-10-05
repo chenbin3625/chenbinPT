@@ -190,7 +190,7 @@ export const siteMetadata: ISiteMetadata = {
         attr: "style",
         filters: [
           (query: string) => {
-            const progressMatch = query.match(/width:.?(\d.+)%/);
+            const progressMatch = query.match(/width:.?(\d+(?:\.\d+)?)%/);
             return progressMatch && progressMatch.length >= 2 ? parseFloat(progressMatch[1]) : 0;
           },
         ],
@@ -200,7 +200,7 @@ export const siteMetadata: ISiteMetadata = {
         attr: "title",
         filters: [
           (query: string) => {
-            const progressStatusMatch = query.match(/(\d.+)% (进行中|未开始)/);
+            const progressStatusMatch = query.match(/(\d+(?:\.\d+)?)% (进行中|未开始)/);
             if (progressStatusMatch && progressStatusMatch.length >= 3) {
               const progress = parseFloat(progressStatusMatch[1]);
               const status = progressStatusMatch[2];

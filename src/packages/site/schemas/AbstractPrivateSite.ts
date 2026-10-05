@@ -145,7 +145,7 @@ export default class PrivateSite extends BittorrentSite {
         );
         if (thisUserInfoProcess.assertion) {
           for (const [requiredField, pathKey] of Object.entries(thisUserInfoProcess.assertion)) {
-            if (flushUserInfo[requiredField]) {
+            if (flushUserInfo[requiredField] != null) {
               if (has(requestConfig, pathKey as string)) {
                 let oldData = get(requestConfig, pathKey as string);
                 if (oldData && typeof oldData === "string") {

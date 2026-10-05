@@ -875,7 +875,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     return true;
   }
 
-  async request<T>(method: TransmissionRequestMethod, args: any = {}): Promise<AxiosResponse<T>> {
+  async request<T>(method: TransmissionRequestMethod, args: any = {}, retries = 1): Promise<AxiosResponse<T>> {
     try {
       return await axios.post<T>(
         this.address,
@@ -896,8 +896,9 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       );
     } catch (error: any) {
       if (isAxiosError(error) && error?.response?.status === 409) {
+        if (retries <= 0) throw error;
         this.sessionId = error.response.headers["x-transmission-session-id"]; // lower cased header in axios
-        return await this.request<T>(method, args);
+        return await this.request<T>(method, args, retries - 1);
       } else {
         throw error;
       }

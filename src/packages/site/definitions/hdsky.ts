@@ -357,7 +357,7 @@ export default class Hdsky extends NexusPHP {
       const linkCreatedTime = this.runQueryFilters(torrent.link, [{ name: "querystring", args: ["t"] }]) as string;
 
       const currentTimestamp = Date.now() / 1000;
-      const expiredTimestamp = parseInt(linkCreatedTime || "0") + 10 * 60; // 这里假定下载链接有效期10分钟（具体不明）
+      const expiredTimestamp = parseInt(linkCreatedTime || "0", 10) + 10 * 60; // 这里假定下载链接有效期10分钟（具体不明）
 
       if (currentTimestamp < expiredTimestamp) {
         return torrent.link;

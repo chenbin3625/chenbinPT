@@ -116,7 +116,7 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
       id: {
         selector: ["a.view-torrent", "a.torrent-search--list__name"],
         attr: "href",
-        filters: [(query: string) => query.match(/\/torrents\/(\d+)/)![1]],
+        filters: [(query: string) => query.match(/\/torrents\/(\d+)/)?.[1]],
       },
       title: {
         selector: ["a.view-torrent", "a.torrent-search--list__name"],
@@ -299,7 +299,7 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         id: {
           selector: ["a[href*='/torrents/']:not([href*='/download'])"],
           attr: "href",
-          filters: [(query: string) => query.match(/\/torrents\/(\d+)/)![1]],
+          filters: [(query: string) => query.match(/\/torrents\/(\d+)/)?.[1]],
         },
         title: {
           selector: ["a[href*='/torrents/']:not([href*='/download'])"],

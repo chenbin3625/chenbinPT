@@ -283,7 +283,9 @@ export const siteMetadata: ISiteMetadata = {
               const trAnothers = selectElements("tr:not(:eq(0))", element);
               trAnothers.forEach((trAnother) => {
                 const sizeAnother = selectElements("td:eq(3)", trAnother)[0];
-                seedingSize += parseSizeString((sizeAnother as HTMLElement).innerText.trim());
+                if (sizeAnother) {
+                  seedingSize += parseSizeString((sizeAnother as HTMLElement).innerText.trim());
+                }
               });
               return seedingSize;
             },

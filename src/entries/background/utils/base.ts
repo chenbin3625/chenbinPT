@@ -129,6 +129,9 @@ function cloneAlongPath<T>(source: T, keys: Array<string | number>): T {
       break; // 中间层缺失/不是容器：交给 setValueByPath 自行补建
     }
     const childClone = Array.isArray(child) ? [...child] : { ...child };
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new Error("Prototype pollution attempt detected");
+    }
     cloneCursor[key] = childClone;
     sourceCursor = child;
     cloneCursor = childClone;

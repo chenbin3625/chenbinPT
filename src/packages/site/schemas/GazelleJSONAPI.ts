@@ -544,10 +544,10 @@ export default class GazelleJSONAPI extends GazelleBase {
 
   protected cleanupUserInfo(flushUserInfo: IUserInfo): IUserInfo {
     if (!flushUserInfo.bonus) {
-      flushUserInfo.bonus = "N/A";
+      delete flushUserInfo.bonus;
     }
     if (!flushUserInfo.bonusPerHour) {
-      flushUserInfo.bonusPerHour = "N/A";
+      delete flushUserInfo.bonusPerHour;
     }
     if (!flushUserInfo.perfectFlacs) {
       delete flushUserInfo["perfectFlacs"];

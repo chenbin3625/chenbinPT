@@ -13,7 +13,7 @@ import {
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { useIntersectionObserver } from "@vueuse/core";
+import { useIntersectionObserver, useThrottleFn } from "@vueuse/core";
 import { isEmpty } from "es-toolkit/compat";
 import { getMediaServerIcon, type IMediaServerItem } from "@ptd/mediaServer";
 
@@ -88,7 +88,9 @@ function showItemInformation(item: IMediaServerItem) {
   showItemInformationDialog.value = true;
 }
 
-function onScroll(event: Event) {
+const isFetchingMore = ref(false);
+
+const onScroll = useThrottleFn((event: Event) => {
   const target = event.currentTarget;
   const isElementScroll = target instanceof HTMLElement;
   const atBottom = isElementScroll
@@ -99,10 +101,25 @@ function onScroll(event: Event) {
     configStore.mediaServerEntity.autoSearchMoreWhenScroll &&
     atBottom &&
     !runtimeStore.mediaServerSearch.isSearching &&
+    !isFetchingMore.value &&
     hasMore.value
   ) {
+    isFetchingMore.value = true;
     doSearch({ searchKey: search.value, loadMore: true });
+    setTimeout(() => {
+      isFetchingMore.value = false;
+    }, 100);
   }
+}, 200);
+
+function updateAllSearchMediaServerIds(checked: unknown) {
+  searchMediaServerIds.value = checked ? [...enabledMediaServerIds.value] : [];
+}
+
+function updateSearchMediaServerId(id: string, checked: boolean) {
+  searchMediaServerIds.value = checked
+    ? Array.from(new Set([...searchMediaServerIds.value, id]))
+    : searchMediaServerIds.value.filter((x) => x !== id);
 }
 
 onMounted(async () => {
@@ -136,11 +153,7 @@ onMounted(async () => {
                       :checked="isAllMediaServerChecked"
                       :indeterminate="isMediaServerSelectionIndeterminate"
                       @click.stop
-                      @update:checked="
-                        (v: unknown) => {
-                          searchMediaServerIds = v ? [...enabledMediaServerIds] : [];
-                        }
-                      "
+                      @update:checked="updateAllSearchMediaServerIds"
                       >{{ t("common.checkbox.all") }}</a-checkbox
                     >
                   </a-list-item>
@@ -152,13 +165,7 @@ onMounted(async () => {
                       :checked="searchMediaServerIds.includes(item.id)"
                       :disabled="item.enabled === false"
                       @click.stop
-                      @update:checked="
-                        (checked: boolean) => {
-                          searchMediaServerIds = checked
-                            ? Array.from(new Set([...searchMediaServerIds, item.id]))
-                            : searchMediaServerIds.filter((x) => x !== item.id);
-                        }
-                      "
+                      @update:checked="(checked: boolean) => updateSearchMediaServerId(item.id, checked)"
                     >
                       {{ item.name }}
                       <a-avatar

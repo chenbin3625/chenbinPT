@@ -166,7 +166,7 @@ export const siteMetadata: ISiteMetadata = {
             return 0;
           }
           const percentMatch = text.match(/(\d+)%/);
-          return percentMatch ? parseInt(percentMatch[1]) : 0;
+          return percentMatch ? parseInt(percentMatch[1], 10) : 0;
         },
       },
       status: {
@@ -186,7 +186,7 @@ export const siteMetadata: ISiteMetadata = {
             return ETorrentStatus.unknown;
           }
 
-          const percentage = parseInt(percentMatch[1]);
+          const percentage = parseInt(percentMatch[1], 10);
           if (style) {
             if (percentage === 100) {
               return ETorrentStatus.seeding;
@@ -213,7 +213,7 @@ export const siteMetadata: ISiteMetadata = {
         selector: ["#info_block a[href*='hnr.php']"],
         elementProcess: (e: HTMLElement) => {
           const text = e.nextSibling?.textContent?.trim();
-          return text ? parseInt(text) : 0;
+          return text ? parseInt(text, 10) : 0;
         },
       },
     },

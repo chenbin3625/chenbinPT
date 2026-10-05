@@ -419,7 +419,7 @@ export const siteMetadata: ISiteMetadata = {
       mergeSearchSelectors: false,
       selectors: {
         ...commonListSelectors,
-        rows: { selector: "tbody.bg-\\[\\#bccad6\\] > tr" },
+        rows: { selector: "tbody > tr" },
         subTitle: { selector: "a[href*='/detail/'] + br + div > span" },
 
         time: {
@@ -773,7 +773,10 @@ export default class MTeam extends PrivateSite {
     }
 
     // 收集所有种子ID用于批量查询
-    const tids = torrents.map((torrent) => String(torrent.id)).filter(Boolean);
+    const tids = torrents
+      .map((torrent) => torrent.id)
+      .filter(Boolean)
+      .map(String);
 
     if (tids.length === 0) {
       return torrents;

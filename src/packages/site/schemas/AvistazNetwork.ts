@@ -399,7 +399,7 @@ export const SchemaMetadata: Pick<
         selector: ":self",
         elementProcess: (t) => {
           const e = t.URL,
-            r = e.match(/\/detail\/(\d+)/);
+            r = e.match(/\/torrent\/(\d+)/);
           return r ? r[1] : e;
         },
       },

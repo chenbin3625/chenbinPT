@@ -65,11 +65,11 @@ function fixConfig(axiosInstance: AxiosInstance | AxiosStatic, config: AxiosRequ
   }
 }
 
-function removeCustomCloudflareCookie(response: AxiosResponse | undefined) {
-  if ((response?.config as any)?.cfCookie) {
+function removeCustomCloudflareCookie(config: AxiosRequestConfig | undefined) {
+  if ((config as any)?.cfCookie) {
     // 如果请求中有 cf_clearance 的 set cookie detail，说明是重试请求，删除我们设置的 cf_clearance cookie
     // 删除失败不改变控制流（下次请求会重新设置），但保留可诊断日志
-    sendMessage("removeCookie", (response!.config as any)!.cfCookie).catch((e) =>
+    sendMessage("removeCookie", (config as any)!.cfCookie).catch((e) =>
       console.warn("[PTD] failed to remove custom cf_clearance cookie:", e),
     );
   }
@@ -87,7 +87,7 @@ export function setupRetryWhenCloudflareBlock(axios: AxiosInstance): AxiosRetryW
   // 请求完成后，自动删除 我们设置的 cf_clearance cookie （这不会影响具有 partitionKey 属性的原 cookie ）
   axiosRetryWhenCloudflareBlockInstance.interceptors.response.use(
     async (response) => {
-      removeCustomCloudflareCookie(response);
+      removeCustomCloudflareCookie(response.config);
 
       return response;
     },
@@ -95,7 +95,7 @@ export function setupRetryWhenCloudflareBlock(axios: AxiosInstance): AxiosRetryW
       const isCFBlocked = isCloudflareBlocked(error.response!);
 
       // 无论此时是否被 Cloudflare 阻止，都需要删除我们设置的 cf_clearance cookie （如果有），以便后面根据需要再设置
-      removeCustomCloudflareCookie(error?.response);
+      removeCustomCloudflareCookie(error.config);
 
       const { config } = error;
 
@@ -108,7 +108,7 @@ export function setupRetryWhenCloudflareBlock(axios: AxiosInstance): AxiosRetryW
       if (isCFBlocked && (config as any)?.isCfBlockedRetry !== true) {
         // 尝试获取到 cf_clearance
         const fullRequestUrl = axiosRetryWhenCloudflareBlockInstance.getUri(config);
-        const parsedUrl = new URL(fullRequestUrl);
+        const parsedUrl = new URL(fullRequestUrl, "http://localhost");
         const partitionSiteKey = `${parsedUrl.protocol}//${parsedUrl.hostname}`;
 
         const cfCookie = await sendMessage("getAllCookies", {

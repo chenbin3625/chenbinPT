@@ -108,7 +108,7 @@ export const siteMetadata: ISiteMetadata = {
       id: {
         selector: ["a[href*='/view/']:not([href*='#'])"],
         attr: "href",
-        filters: [(query: string) => query.match(/\/view\/(\d+)/)![1]],
+        filters: [(query: string) => query.match(/\/view\/(\d+)/)?.[1] ?? ""],
       },
       title: { selector: ["a[href*='/view/']:not([href*='#'])"] },
       subTitle: {

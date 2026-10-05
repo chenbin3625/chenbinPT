@@ -95,7 +95,7 @@ export const siteMetadata: ISiteMetadata = {
             case /seedhlc_/.test(element.className):
               return 100;
             case /leechhlc_/.test(element.className):
-              return parseFloat((element.innerText.match(/[\d.]+%/)! || ["0"])[0]);
+              return parseFloat((element.innerText.match(/[\d.]+%/) || ["0"])[0]);
             case /snatchhlc_finish/.test(element.className):
               return 100;
             default:

@@ -600,7 +600,7 @@ export default class BittorrentSite {
               query = another.getAttribute(elementQuery.attr) ?? query;
             } else {
               // 优先使用 innerText，如果没有，则使用 textContent
-              query = (another.innerText ?? another.textContent).replace(/\n/gi, " ") || query;
+              query = (another.innerText || another.textContent).replace(/\n/gi, " ") || query;
             }
           }
         } else {

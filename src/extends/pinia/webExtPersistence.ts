@@ -153,6 +153,7 @@ function collectPathChanges(base: any, next: any, path: string[], out: IPathChan
 /** 把 `collectPathChanges` 的结果写进一个**可安全就地修改**的目标对象（落盘前合并用） */
 function applyPathChanges(target: Record<string, any>, changes: IPathChange[]): void {
   for (const change of changes) {
+    if (change.path.some((s) => s === "__proto__" || s === "constructor" || s === "prototype")) continue;
     let cursor: any = target;
     for (let i = 0; i < change.path.length - 1; i++) {
       const segment = change.path[i];

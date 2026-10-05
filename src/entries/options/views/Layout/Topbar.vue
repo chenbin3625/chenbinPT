@@ -45,7 +45,9 @@ const searchPlans = computed(() =>
  */
 const singleSearchSiteIds = ref<string[]>([]);
 
+let watchVersion = 0;
 async function refreshSingleSearchSiteIds() {
+  const currentVersion = ++watchVersion;
   const siteIds = await Promise.all(
     metadataStore.getSortedAddedSites
       .filter((siteUserConfig) => (siteUserConfig.allowSearch ?? false) && !siteUserConfig.isOffline)
@@ -55,6 +57,7 @@ async function refreshSingleSearchSiteIds() {
         return siteMetadata.isDead ? undefined : siteUserConfig.id;
       }),
   );
+  if (currentVersion !== watchVersion) return; // stale, discard
   singleSearchSiteIds.value = siteIds.filter((id) => id !== undefined);
 }
 

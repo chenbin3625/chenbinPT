@@ -27,7 +27,7 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         // 将站点的大量标签做为副标题
         selector: ["div.tags"],
         elementProcess: (element: any) => {
-          if (!element) return 0;
+          if (!element) return "";
           // 查找所有a元素
           const a_elements = element.querySelectorAll("a[href]");
           // 提取所有a元素中的文本内容
