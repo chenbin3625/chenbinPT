@@ -8,15 +8,16 @@
  * 2) 依赖第三方打包库（crx/crx3）会把几十个包塞进 devDependencies，
  *    而 CRX3 的头结构本身只有约 60 行代码（magic + protobuf 头 + zip 载荷 + RSA-SHA256 签名）。
  *    实测：对同一个 zip + 同一把私钥，本文件的输出与 Chrome 自带 `--pack-extension`、
- *    以及 CI 使用的 webext-buildtools-chrome-crx-builder@1.0.18（内部 crx3）**逐字节相同**
+ *    以及 webext-buildtools-chrome-crx-builder@1.0.18（内部 crx3）**逐字节相同**
  *    （sha256 52e26a27…），并通过 openssl `dgst -verify` 的独立验签。
  *
  * 用法：
  *   npm run pack:crx                # 用现有 dist-chrome 打包到 build/extension.crx
  *   npm run pack:crx:build          # 先 vite build 再打包
- *   node scripts/pack-crx.mjs --zip build/extension-chrome.zip   # 直接签名已有 zip（对齐 CI 口径）
+ *   node scripts/pack-crx.mjs --zip build/extension-chrome.zip   # 直接签名已有 zip（与构建目录打包同口径）
  *   node scripts/pack-crx.mjs --help
  *
+ * 发布流程（仓库不再有 CI 工作流，全部本地完成）：见 README「版本号规则」。
  * 私钥解析顺序：--key <path> → 环境变量 CRX_PRIVATE_KEY_FILE → 环境变量 CRX_PRIVATE_KEY
  * （PEM 内容或 base64 后的 PEM）→ 默认 build/chrome-extension-signing-key.pem。
  * 生成密钥对（PKCS#8，Chrome 打包要求 PKCS#8）：
@@ -194,7 +195,7 @@ function listFiles(dir, base = dir) {
   return out;
 }
 
-/** 把构建目录打成 zip（保持相对路径、用文件 mtime，等价于 CI 的口径） */
+/** 把构建目录打成 zip（保持相对路径、用文件 mtime；与旧 CI 的打包口径一致） */
 async function zipDir(dir) {
   const abs = path.resolve(ROOT, dir);
   if (!fs.existsSync(path.join(abs, "manifest.json"))) {
@@ -364,7 +365,7 @@ async function verifyCrx(crxBuffer, keyMaterial, zipFileCount) {
  */
 const STALE_SCAN_IGNORED = [path.join("public", "_locales")];
 
-/** 源码比产物新时给出提醒（不阻断：DIST 可能由 CI 产出） */
+/** 源码比产物新时给出提醒（不阻断：产物可能来自其它步骤或机器） */
 function warnIfStale(dir) {
   const marker = path.join(path.resolve(ROOT, dir), "manifest.json");
   if (!fs.existsSync(marker)) return null;
@@ -455,8 +456,8 @@ async function main() {
   console.log(`  公钥指纹  ${sha256(keyMaterial.publicKeyDer).toString("hex")}`);
   console.log(`  crx sha256 ${sha256(crxBuffer).toString("hex")}`);
   console.log("");
-  console.log("  发布到 GitHub Secret（CI 的 crx 步骤读它）：");
-  console.log("    gh secret set CHROME_SELF_SIGN_CRX_PRIVATE_KEY < build/chrome-extension-signing-key.pem");
+  console.log("  注意：私钥决定扩展 ID（已在上面打印），换私钥 = 换一个扩展，老用户无法升级。");
+  console.log("  请自行备份 build/chrome-extension-signing-key.pem（仓库不跟踪、也不要提交）。");
 }
 
 main().catch((e) => {

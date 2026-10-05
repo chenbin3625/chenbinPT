@@ -63,7 +63,7 @@ chenbinPT 是一个浏览器扩展，把散落在几十个 PT 站点上的日常
 
 **Firefox**：打开 `about:debugging#/runtime/this-firefox` → 「临时载入附加组件」→ 选择解压目录里的 `manifest.json`。
 
-> 注：Firefox 的临时载入在浏览器重启后失效。需要长期使用请用开发者版签名，或参考 CI 的发布流程提交到 AMO。
+> 注：Firefox 的临时载入在浏览器重启后失效。需要长期使用请用开发者版签名后自行提交到 AMO（仓库不包含发布工作流）。
 
 ### 方式二：从源码构建
 
@@ -103,7 +103,6 @@ npm run pack:crx              # → build/extension.crx（自实现 CRX3 并自�
 | `npm test` | Vitest 单元/组件测试 |
 | `npm run check:antd` | antd 迁移验收（禁止 Vuetify 残留、`<Ptd*` 兼容组件、原生控件等 12 项） |
 | `npm run check:bundle` | 构建产物完整性 + 体积预算（`--target=firefox` 校验 firefox） |
-| `npm run check:pins` | 校验 CI 里的 action 全部固定在 commit SHA |
 | `npm run test:e2e` | Playwright + 真实 Chromium 加载构建产物做冒烟测试 |
 | `npm run build:watch` | 开发态增量构建（不压缩） |
 
@@ -131,7 +130,7 @@ src/
 └── locales/                 # i18n（en / zh_CN）
 
 tests/                       # Vitest（单元 / 组件 / 契约 / Sizzle 差分 oracle）
-scripts/                     # 构建与门禁脚本（打包 CRX、包体预算、antd 验收、action 固定校验…）
+scripts/                     # 构建与门禁脚本（打包 CRX、包体预算、antd 验收、E2E 冒烟…）
 ```
 
 **架构要点**：消息拓扑为 `content-script / options ⇄ background ⇄ offscreen`。所有需要凭据的跨站请求、去重与队列、以及 IndexedDB 读写都集中在 offscreen 文档里，站点解析逻辑主体在 `packages/site`。Firefox 下 offscreen 的 handler 会被注册进 background 本身（本地消息快路径）。
@@ -147,14 +146,33 @@ scripts/                     # 构建与门禁脚本（打包 CRX、包体预算
 
 ## 版本号规则
 
-构建时自动派生，无需手工维护：
+`manifest.json` 的 `version` 直接取 `package.json` 的三位版本号（如 `0.0.8`），**每次发布前手动抬版本号**：
 
 ```
-<package.json version>.<git rev-list --all --count>[+<short sha>]
-例：0.0.6.1954+1a2b3c4d
+<package.json version>               # manifest.version（Chrome / Firefox / 商店都要求纯数字点分）
+<package.json version>+<short sha>   # chrome 的 version_name 与 __EXT_VERSION__，用于定位"用户装的是哪一次构建"
 ```
 
-`manifest.json` 的 `version` 用前三段（Chrome 要求纯数字点分），`version_name` 额外带 commit，便于排查"用户装的是哪一次构建"。
+为什么不再把提交计数拼进版本号：旧实现用 `git rev-list --all --count`，该数字取决于**本机引用**
+（包含远端已删除分支遗留的陈旧 remote-tracking 引用），换机器或 `git fetch --prune` 后会变小，
+于是产出比已发布版本更低的号 —— Chrome 会拒绝降级安装，商店也会拒绝更低版本的包。
+
+发布流程（仓库不含 CI 工作流，全部在本地完成）：
+
+```bash
+# 1) 抬 package.json 的 version（必须大于已发布版本）
+# 2) 构建 + 打包
+npm run build:dist && npm run build:dist-firefox
+(cd dist-chrome  && zip -qr ../build/extension-chrome.zip .)
+(cd dist-firefox && zip -qr ../build/extension-firefox.zip .)
+npm run pack:crx        # → build/extension.crx（自实现 CRX3 并自校验，用 build/chrome-extension-signing-key.pem 签名）
+# 3) 发布（tag 用 v<version>）
+gh release create "v$(node -p "require('./package.json').version")" \
+  build/extension-chrome.zip build/extension-firefox.zip build/extension.crx \
+  --generate-notes --prerelease
+```
+
+> `build/chrome-extension-signing-key.pem` 决定扩展 ID（`.gitignore` 已忽略 `*.pem`）：**必须自行备份、永不提交**。换私钥等于换一个新扩展，老用户无法升级。
 
 ## 相关文档
 

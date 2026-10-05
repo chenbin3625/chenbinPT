@@ -1,7 +1,7 @@
 {
   "name": "chenbinpt",
   "private": true,
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "PT 站点辅助工具：多站搜索、用户信息汇总、推送到下载器、辅种与备份（浏览器扩展）",
   "license": "MIT",
   "repository": {
@@ -54,8 +54,7 @@
     "pack:crx:build": "node scripts/pack-crx.mjs --build",
     "action:upload_telegram": "tsx vite/sendToTgChannel.ts",
     "prepare": "husky",
-    "postinstall": "patch-package",
-    "check:pins": "node scripts/check-action-pins.mjs"
+    "postinstall": "patch-package"
   },
   "engines": {
     "node": ">=24",

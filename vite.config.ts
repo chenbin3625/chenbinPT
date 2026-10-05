@@ -37,7 +37,22 @@ const optionalPermissions = ["nativeMessaging"];
 
 // @ts-ignore
 const git_count = git.count("HEAD");
-const base_version = `${pkg.version}.${git_count}`;
+
+/**
+ * manifest 的版本号 = `package.json` 的三位版本（如 `0.0.8`），**不再拼接 git 提交计数**。
+ *
+ * 旧实现是 `${pkg.version}.${git.count()}`，而 `git-rev-sync` 的 count() 实际执行
+ * `git rev-list --all --count` —— 把本机所有引用（包括远端已删除分支的陈旧 remote-tracking
+ * 引用）都算进去。后果有两个：
+ * 1. 版本号不稳定：同一份代码在换机器 / `git fetch --prune` 后算出的数字会变；
+ * 2. 会产出**比已发布版本更小**的号（本机 1956 → 干净克隆 1951），而 Chrome 拒绝降级安装、
+ *    商店也拒绝更低的版本号上传。
+ *
+ * 因此改为显式维护版本：**每次发布前手动抬 `package.json` 的版本号**。
+ * 构建信息（commit sha / 提交数 / 分支）仍保留在 chrome 的 `version_name`、`__EXT_VERSION__`
+ * 与 `__GIT_VERSION__` 中，排查线上问题时依然能定位到具体提交。
+ */
+const base_version = pkg.version;
 const commit_version = `${base_version}+${git.short(import.meta.dirname)}`;
 
 // https://vitejs.dev/config/

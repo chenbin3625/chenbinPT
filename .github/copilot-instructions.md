@@ -1,7 +1,7 @@
 # chenbinPT AI Coding Agent Instructions
 
 ## Project Overview
-chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT) site usability. Built with Vue 3 + TypeScript + Vuetify, it provides multi-site search, torrent management, and downloader integration.
+chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT) site usability. Built with Vue 3 + TypeScript + ant-design-vue (antd), it provides multi-site search, torrent management, and downloader integration.
 
 ## Architecture & Key Components
 
@@ -45,7 +45,7 @@ chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT
 ### Vue 3 Composition API
 - Use `<script setup>` syntax consistently
 - Prefer `ref()`/`reactive()` over Options API
-- Vuetify 4 components with CSS utility classes
+- ant-design-vue 4 components (`a-*`); `npm run check:antd` 是迁移验收门禁（禁止 Vuetify 残留、原生控件等）
 
 ## Build & Development
 
@@ -63,8 +63,15 @@ Packing notes: `scripts/pack-crx.mjs` implements CRX3 itself (no Chrome binary, 
 `jszip`) and re-parses the written file to verify structure, embedded public key, `crx_id` and the
 RSA-SHA256 signature before reporting success — a failing check exits non-zero. It reads the private key
 from `--key`, `CRX_PRIVATE_KEY_FILE`/`CRX_PRIVATE_KEY`, or `build/chrome-extension-signing-key.pem`
-(PKCS#8; `openssl genrsa -out build/chrome-extension-signing-key.pem 2048`). The same key must be set as
-the `CHROME_SELF_SIGN_CRX_PRIVATE_KEY` GitHub secret for the release workflow's CRX step.
+(PKCS#8; `openssl genrsa -out build/chrome-extension-signing-key.pem 2048`). That key determines the
+extension ID and must be backed up by the maintainer (it is git-ignored, never commit it).
+
+Releases are cut locally (the repo has no CI workflows): bump the three-part `package.json` version,
+build both targets, zip `dist-chrome`/`dist-firefox` into `build/`, run `npm run pack:crx`, then
+`gh release create v<version> build/extension-chrome.zip build/extension-firefox.zip build/extension.crx`.
+The manifest `version` is exactly the `package.json` version — never derive it from git state, because
+`git rev-list --all --count` depends on local refs and can produce a lower version than what is already
+published (Chrome refuses downgrades, the stores refuse lower versions).
 
 ### Browser Targets
 - Chrome: Uses service worker background script
@@ -106,7 +113,7 @@ the `CHROME_SELF_SIGN_CRX_PRIVATE_KEY` GitHub secret for the release workflow's 
 - Background job scheduling with `@webext-core/job-scheduler`
 
 ## Key Dependencies
-- **Vue Ecosystem**: Vue 3, Vuetify 4, Vue Router, Pinia, Vue I18n
+- **Vue Ecosystem**: Vue 3, ant-design-vue 4, Vue Router, Pinia, Vue I18n
 - **Extension Framework**: `@webext-core/*` for cross-browser compatibility
 - **Build Tools**: Vite, TypeScript
 - **Utilities**: axios, date-fns, es-toolkit, jszip, crypto-js
