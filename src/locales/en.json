@@ -84,6 +84,11 @@
       "type": "Type: "
     },
     "detail": "Details",
+    "error": {
+      "checkAuth": "Please check the authentication information",
+      "unknown": "Unknown error",
+      "updateFailed": "Media server {name} [{address}] failed to update: {reason}"
+    },
     "loadMore": "Load More",
     "noItems": "No Items, use Search Input or Load More Button to Load",
     "searchPlaceholder": "Search term"
@@ -1129,6 +1134,7 @@
     "exportImage": "Export Image",
     "howToUse": "How To Use",
     "import": "Import",
+    "insecureAddressWarning": "This address is not HTTPS. The API key / password will be sent in plaintext and may be intercepted. Use an https:// or wss:// address instead.",
     "language": "Language",
     "loading": "Loading…",
     "name": "Name",

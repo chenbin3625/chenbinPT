@@ -7,7 +7,7 @@ import { useI18n } from "vue-i18n";
 import { type IDownloaderMetadata } from "@/shared/types.ts";
 
 import { getDownloader, getDownloaderMetaData, TorrentClientMetaData } from "@ptd/downloader";
-import { formatDate, formValidateRules } from "@/options/utils.ts";
+import { formatDate, formValidateRules, isInsecureAddress } from "@/options/utils.ts";
 
 import ConnectCheckButton from "@/options/components/ConnectCheckButton.vue";
 
@@ -103,6 +103,14 @@ async function checkConnect() {
             <a-form-item :help="addressError" :label="t('SetDownloader.common.address')" required>
               <a-input v-model:value="clientConfig.address" :status="addressError ? 'error' : undefined" />
             </a-form-item>
+            <!-- M-10：http:// / ws:// 地址下密码与 token 会明文传输，明确提示而不是静默拦截 -->
+            <a-alert
+              v-if="isInsecureAddress(clientConfig.address)"
+              :message="t('common.insecureAddressWarning')"
+              show-icon
+              style="margin-bottom: 16px"
+              type="warning"
+            />
           </a-col>
         </a-row>
         <a-row v-if="typeof clientConfig.username !== 'undefined'">

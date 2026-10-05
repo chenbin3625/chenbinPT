@@ -6,7 +6,7 @@ import { useI18n } from "vue-i18n";
 import { getMediaServer, getMediaServerMetaData, IMediaServerMetadata } from "@ptd/mediaServer";
 
 import type { IMediaServerMetadata as IMediaServerConfig } from "@/shared/types.ts";
-import { formatDate, formValidateRules } from "@/options/utils.ts";
+import { formatDate, formValidateRules, isInsecureAddress } from "@/options/utils.ts";
 
 import ConnectCheckButton from "@/options/components/ConnectCheckButton.vue";
 
@@ -124,6 +124,14 @@ async function checkConnect() {
             <a-form-item :help="addressError" :label="t('SetDownloader.common.address')" required>
               <a-input v-model:value="clientConfig.address" :status="addressError ? 'error' : undefined" />
             </a-form-item>
+            <!-- M-10：http:// 地址下 apikey / password 会明文传输，明确提示而不是静默拦截 -->
+            <a-alert
+              v-if="isInsecureAddress(clientConfig.address)"
+              :message="t('common.insecureAddressWarning')"
+              show-icon
+              style="margin-bottom: 16px"
+              type="warning"
+            />
           </a-col>
         </a-row>
 

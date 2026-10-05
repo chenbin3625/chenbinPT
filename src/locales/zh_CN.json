@@ -84,6 +84,11 @@
       "type": "类型："
     },
     "detail": "详情",
+    "error": {
+      "checkAuth": "请检查认证信息",
+      "unknown": "未知错误",
+      "updateFailed": "媒体服务器 {name} [{address}] 更新失败：{reason}"
+    },
     "loadMore": "加载更多",
     "noItems": "暂无内容，请使用搜索框或点击加载更多按钮",
     "searchPlaceholder": "搜索词"
@@ -1126,6 +1131,7 @@
     "exportImage": "导出图片",
     "howToUse": "如何使用？",
     "import": "导入",
+    "insecureAddressWarning": "当前地址不是 HTTPS，API 密钥 / 密码会以明文传输，可能被中间人窃取。建议改用 https:// 或 wss:// 地址。",
     "language": "语言",
     "loading": "加载中…",
     "name": "名称",

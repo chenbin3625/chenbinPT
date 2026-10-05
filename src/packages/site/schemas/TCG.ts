@@ -24,6 +24,11 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         selector:
           "table[border='0'] > tbody > tr.ttable:has(a[href^='browse.php?cat=']):not(:has(font[color='blue'])):not(:contains('*TCG*'))",
       },
+      id: {
+        selector: "a[href^='details.php?id=']",
+        attr: "href",
+        filters: [{ name: "querystring", args: ["id"] }],
+      },
       title: { selector: "a[href^='details.php?id=']", attr: "title" },
       url: { selector: "a[href^='details.php?id=']", attr: "href" },
       link: { selector: "a[href^='download.php/']", attr: "href" },
@@ -50,6 +55,18 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
   detail: {
     urlPattern: ["/details.php"],
     selectors: {
+      id: {
+        selector: ":self",
+        /**
+         * `:self` 在详情页传下来的是 Document，必须先取出 URL 字符串再交给 querystring：
+         * 若只写 filters，引擎会走「无 attr / elementProcess」的兜底分支读 `innerText ?? textContent`，
+         * 而 `Document.textContent` 按 DOM 规范是 `null` ⇒ 真实浏览器里 `(null).replace(...)` 抛
+         * TypeError，详情页解析整体失败（happy-dom 返回 `""`，单测无法暴露这一点）。
+         * 取值与引擎「未解析出 id 时从 URL 的 id/tid 参数兜底」同源。
+         */
+        elementProcess: (document: Document) => document.URL,
+        filters: [{ name: "querystring", args: ["id"] }],
+      },
       title: { selector: "div > h1" },
       link: { selector: "a[href^='download.php/']", attr: "href" },
     },

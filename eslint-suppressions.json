@@ -53,11 +53,6 @@
       "count": 1
     }
   },
-  "src/entries/content-script/app/init.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "src/entries/content-script/app/pages/SiteListPage.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 2

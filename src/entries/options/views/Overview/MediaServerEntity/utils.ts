@@ -9,6 +9,7 @@ import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import type { TMediaServerKey } from "@/shared/types.ts";
 import { EResultParseStatus } from "@ptd/site";
+import { i18n } from "@/options/plugins/i18n.ts";
 const runtimeStore = useRuntimeStore();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
@@ -95,10 +96,14 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean 
         // 只有认证类失败才提示检查认证信息，其余（超时/网络不可达/解析异常）展示真实原因（#1396）
         const failReason =
           searchResult.status === EResultParseStatus.needLogin
-            ? "请检查认证信息"
-            : (searchResult.errorMessage ?? "未知错误");
+            ? i18n.t("MediaServerEntity.error.checkAuth")
+            : (searchResult.errorMessage ?? i18n.t("MediaServerEntity.error.unknown"));
         runtimeStore.showSnakebar(
-          `媒体服务器 ${mediaServerDetail.name} [${mediaServerDetail.address}] 更新失败：${failReason}`,
+          i18n.t("MediaServerEntity.error.updateFailed", {
+            name: mediaServerDetail.name,
+            address: mediaServerDetail.address,
+            reason: failReason,
+          }),
           {
             color: "error",
           },
