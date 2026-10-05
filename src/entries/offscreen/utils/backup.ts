@@ -250,6 +250,10 @@ function isBackupField(field: string): field is TBackupFields {
   return BACKUP_FIELD_SET.has(field);
 }
 
+function isRestorableCookies(value: unknown): value is Required<IBackupData>["cookies"] {
+  return isPlainObject(value) && Object.values(value).every((cookies) => Array.isArray(cookies));
+}
+
 /**
  * metadata 的最小形状校验（见 S-1）。
  *
@@ -399,6 +403,18 @@ export async function restoreBackupData(
   }
 
   const restoreFields: TBackupFields[] = intersection(fields, restoreDataExistFields).filter(isBackupField);
+  let cookiesToRestore: Required<IBackupData>["cookies"] | undefined;
+  if (restoreFields.includes("cookies")) {
+    if (isRestorableCookies(restoreData.cookies)) {
+      cookiesToRestore = restoreData.cookies;
+    } else {
+      report.skipped.push({ field: "cookies", reason: "invalid data in backup, local cookies kept" });
+      logger({
+        msg: `Skip restoring cookies: invalid data in backup (expected a record of cookie arrays, got ${typeof restoreData.cookies})`,
+        level: "warn",
+      });
+    }
+  }
 
   // 恢复下载历史（独立于 storage key 的写入事务：IndexedDB 侧已有原子替换）
   if (restoreFields.includes("downloadHistory")) {
@@ -564,10 +580,10 @@ export async function restoreBackupData(
   }
 
   // 恢复已添加站点的Cookie
-  if (restoreFields.includes("cookies")) {
+  if (cookiesToRestore) {
     const now = new Date().getTime() / 1000;
 
-    const allCookies = Object.values(restoreData.cookies!).flatMap((cookieData) => cookieData);
+    const allCookies = Object.values(cookiesToRestore).flatMap((cookieData) => cookieData);
     const COOKIE_RESTORE_CONCURRENCY = 8;
     for (let i = 0; i < allCookies.length; i += COOKIE_RESTORE_CONCURRENCY) {
       await Promise.all(

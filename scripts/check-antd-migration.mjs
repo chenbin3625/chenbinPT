@@ -232,6 +232,43 @@ for (const f of [join(SRC, "entries/options/index.html"), join(SRC, "entries/con
 }
 check("no-mdi-font", "不再注入 MDI webfont", mdiHits);
 
+// ── 13. `.stop` 修饰符不得用在「click 载荷不是 Event」的组件上 ───────────────
+// `.stop` 编译为 withModifiers(fn, ['stop'])，其守卫是 (e) => e.stopPropagation()，消费组件 emit 的
+// **第一个**参数。antd 的 a-switch 是 emit('click', newChecked, e)，于是守卫拿到布尔值 →
+// `TypeError: e.stopPropagation is not a function`（报错栈只会落在 Switch 内部的 AntdIcon 上，
+// 看不出是 `.stop` 引起的）。这类点改用 `@click="stopEventPropagation"`（src/entries/options/utils.ts）。
+//
+// 这里逐个核对过 ant-design-vue@4.2.6 里 emit('click', ...) 的签名（node_modules/ant-design-vue/es/**）：
+//   第一个参数就是原生 Event 的：button / vc-checkbox / tag / vc-image / menu-item / breadcrumb-item /
+//   transButton / vc-steps Step / form-item-label / anchor / float-button BackTop；
+//   第一个参数**不是** Event、禁止使用 `.stop` 的：a-switch（newChecked 布尔）、
+//   a-pagination（页码数字）、a-transfer 的列表项（item）、a-menu 根组件（info 对象）、a-rate 的星（index）。
+const STOP_FIRST_ARG_IS_EVENT = new Set(["a-button", "a-checkbox", "a-radio", "a-tag", "a-anchor"]);
+// 非 antd 组件一律放行：本地组件与 @ant-design/icons-vue 的图标都是 inheritAttrs 透传，
+// 原生 click 事件即第一个参数（图标内部只把它挂到 <svg> 上，不重新 emit）。
+const STOP_SAFE_TAGS = new Set([...STOP_FIRST_ARG_IS_EVENT, "a-radio-group", "a-list", "a-list-item"]);
+// 扫描所有「标签 + 属性」片段，要求属性区不含 `>`（跨过普通属性后停在标签结束符上），
+// 这样嵌套组件与自闭合标签都能覆盖到，且不会把下一行的标签误吞进来。
+const stopTagRe = /<([A-Za-z][\w.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)@[a-zA-Z:]+\.stop(?=[\s=/>.])/g;
+const stopHits = [];
+for (const f of vueFiles) {
+  const text = vueText.get(f);
+  // 只扫模板：`<script>` 里的正则/字符串（例如本文件的说明文字）不是模板语法
+  const template = text.slice(text.indexOf("<template"), text.indexOf("</template>") + 11);
+  for (const m of template.matchAll(stopTagRe)) {
+    const tag = m[1];
+    if (!/^[a-z]/.test(tag)) continue; // 原生小写标签（button/div/span…）的 click 一定是原生事件，放行
+    if (!tag.startsWith("a-")) continue; // 本地组件 / 第三方组件已在实现里核对
+    if (STOP_SAFE_TAGS.has(tag)) continue;
+    stopHits.push({
+      file: rel(f),
+      line: text.slice(0, text.indexOf("<template") + m.index).split("\n").length,
+      text: `<${tag} … @… .stop>`,
+    });
+  }
+}
+check("no-stop-on-non-event-emitter", "`.stop` 未用在 click 载荷非 Event 的组件上", stopHits);
+
 // ── 输出 ───────────────────────────────────────────────────────────────────
 if (json) {
   console.log(JSON.stringify({ results, antRuleCount, undefinedClasses: undefinedClasses.length }, null, 2));

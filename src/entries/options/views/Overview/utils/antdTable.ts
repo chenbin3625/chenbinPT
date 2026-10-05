@@ -149,6 +149,23 @@ function isRequiredHeader(header: DataTableHeader): boolean {
   return Boolean((header.props as Record<string, unknown> | undefined)?.disabled);
 }
 
+/**
+ * 种子「标题」单元格的宽度上限（`undefined` = 不限宽）。
+ *
+ * 标题列是搜索 / 下载历史表的**弹性列**：其余列的最小宽度由表头文案与单元格内容决定
+ * （自动表格布局下取 max-content），剩余宽度按比例分给内容需求最大的那列 —— 也就是标题列。
+ *
+ * 为什么桌面端不再限宽：`table-layout: auto` 会先把标题列撑到远超内容需要，而单元格上的
+ * `max-width` 只约束内容、不约束列宽。于是取消部分列展示（剩余宽度变多）后，标题列继续变宽、
+ * 可见文字却停在 24vw，右侧留下大片空白（1920px 视口下实测约 800px，2560px 下超过 1300px）。
+ * 放开上限后标题列真正吃满剩余宽度，列内不再有空白 —— 这是 #1556 的复发形态。
+ *
+ * 移动端（`smAndDown`）保留 32vw：窄屏本来就要横向滚动，限宽避免标题把可视宽度全占掉。
+ */
+export function titleColumnMaxWidth(mobile: boolean): string | undefined {
+  return mobile ? "32vw" : undefined;
+}
+
 type AntdSorter = { columnKey?: string; field?: string; order?: "ascend" | "descend" | null };
 
 /** antd `@change` 的 sorter → 兼容层原先 emit 的 `sortBy` 结构 */

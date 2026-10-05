@@ -32,6 +32,23 @@ export function deepToRaw<T extends Record<string, any>>(sourceObj: T): T {
   return objectIterator(sourceObj);
 }
 
+/**
+ * 在模板里替代 Vue 的 `.stop` 事件修饰符，用于那些「第一个 emit 参数不是 Event」的 antd 组件。
+ *
+ * `.stop` 会编译成 `withModifiers(fn, ["stop"])`，而它的 stop 守卫是 `(e) => e.stopPropagation()`，
+ * 拿到的是组件 emit 的**第一个**参数。antd 的 `a-switch` 是 `emit('click', newChecked, e)`，
+ * 于是守卫收到布尔值 newChecked → `TypeError: e.stopPropagation is not a function`
+ * （报错栈落在 Switch 内部的 AntdIcon 上，见 MyData / SearchEntity 的显示偏好 popover）。
+ *
+ * Vue 在调用组件事件处理函数时会把「事件载荷 + 原始事件」整体透传，`.stop` 守卫先执行并**提前 return**，
+ * 因此由它改成的事件处理函数拿到的是**最后一个**参数才是原始事件（这里是 `e`）。
+ * 只做「存在即调用」的防御：万一将来某个组件不再透传事件，也只是少挡一次冒泡，不会抛错。
+ */
+export const stopEventPropagation = (...args: unknown[]) => {
+  const event = args[args.length - 1] as { stopPropagation?: () => void } | undefined;
+  event?.stopPropagation?.();
+};
+
 export const formValidateRules: Record<string, (args?: any) => (v: any) => boolean | string> = {
   require: (args: string = "Item is required") => {
     return (v: any) => !!v || args;
@@ -40,6 +57,27 @@ export const formValidateRules: Record<string, (args?: any) => (v: any) => boole
     return (v: any) => /^(https?):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;[\]]+[-A-Za-z0-9+&@#/%=~_|]$/.test(v) || args;
   },
 };
+
+/**
+ * 判断「下载服务器 / 媒体服务器」地址是否会以明文发送凭据（M-10）。
+ *
+ * `http://` 与 Aria2 的 `ws://` 都是明文：apikey / password / token 会在链路上裸奔。
+ * 这里只做「能解析出协议且协议不加密」的判定：
+ * - 空值、用户还没填完（`example.com`、`http:/` 等 `new URL` 抛错的形态）一律返回 false，
+ *   把「格式不对」留给 `formValidateRules.url` 提示，避免一个输入框同时报两种错；
+ * - 判定不改变任何行为，只驱动设置页的警告展示（不做静默拦截，用户仍可保存）。
+ */
+export function isInsecureAddress(address?: string | null): boolean {
+  if (!address) {
+    return false;
+  }
+  try {
+    const { protocol } = new URL(address);
+    return protocol === "http:" || protocol === "ws:";
+  } catch {
+    return false;
+  }
+}
 
 export const formatSize = (size: number | string, options?: FilesizeOptions) => {
   try {

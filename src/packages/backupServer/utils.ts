@@ -464,30 +464,34 @@ export async function replaceDownloadHistory(
 }
 
 export function localSort(files: IBackupFileInfo[], options: IBackupFileListOption): IBackupFileInfo[] {
-  if (files.length > 0 && Object.keys(options).length > 0) {
+  if (files.length > 0) {
     const orderMode: EListOrderMode = options.orderMode ?? EListOrderMode.desc;
     const orderBy: EListOrderBy = options.orderBy ?? EListOrderBy.time;
 
     files.sort((a, b) => {
-      let v1, v2;
+      let compareRep = 0;
       switch (orderBy) {
         case EListOrderBy.name:
-          v1 = a.filename;
-          v2 = b.filename;
+          compareRep = a.filename.localeCompare(b.filename);
           break;
         case EListOrderBy.size:
-          v1 = a.size;
-          v2 = b.size;
+          if (a.size === "N/A" && b.size === "N/A") {
+            compareRep = 0;
+          } else if (a.size === "N/A") {
+            return 1;
+          } else if (b.size === "N/A") {
+            return -1;
+          } else {
+            compareRep = a.size - b.size;
+          }
           break;
 
         case EListOrderBy.time:
         default:
-          v1 = a.time;
-          v2 = b.time;
+          compareRep = a.time - b.time;
           break;
       }
 
-      const compareRep = v1.toString().localeCompare(v2.toString());
       return orderMode === EListOrderMode.desc ? -compareRep : compareRep;
     });
   }

@@ -325,6 +325,26 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(mocks.store.get("userInfo")).toEqual({ mteam: { "2026-10-09": { ratio: 9 } } });
   });
 
+  it("L-10：manifest 声明 cookies 但条目缺失时跳过 Cookie 恢复，不在 storage 写入后抛错", async () => {
+    const { handler } = await loadBackupModule();
+    mocks.store.set("config", { lang: "zh_CN" });
+
+    const report = (await handler({
+      data: {
+        restoreData: {
+          config: { lang: "en" },
+          manifest: { time: Date.now(), version: "test", files: { config: "h", cookies: "h" } },
+        },
+        restoreOptions: { fields: ["config", "cookies"] },
+      },
+    })) as any;
+
+    expect(report.success).toBe(true);
+    expect(report.restored).toEqual(["config"]);
+    expect(report.skipped).toEqual([{ field: "cookies", reason: "invalid data in backup, local cookies kept" }]);
+    expect(mocks.store.get("config")).toEqual({ lang: "en" });
+  });
+
   it("报告可以跨消息回传：toSerializable + JSON 往返后结构完整（UI 依赖它展示安全提示）", async () => {
     const { handler } = await loadBackupModule();
     mocks.store.set("metadata", { sites: {}, backupServers: { "local-server": localServer } });

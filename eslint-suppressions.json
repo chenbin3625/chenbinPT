@@ -46,9 +46,6 @@
   "src/entries/content-script/app/App.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 3
-    },
-    "no-console": {
-      "count": 2
     }
   },
   "src/entries/content-script/app/components/AdvanceListModuleDialog.vue": {

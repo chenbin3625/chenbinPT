@@ -32,12 +32,14 @@ const scrollHandlers = new WeakMap<HTMLElement, EventListener>();
 app.directive("scroll", {
   mounted(el, binding) {
     const handler = binding.value as EventListener;
+    if (typeof handler !== "function") return;
     scrollHandlers.set(el, handler);
     window.addEventListener("scroll", handler, { passive: true });
   },
   updated(el, binding) {
     const previous = scrollHandlers.get(el);
     const handler = binding.value as EventListener;
+    if (typeof handler !== "function") return;
     if (previous === handler) return; // 回调未变化，避免重复注册
     if (previous) {
       window.removeEventListener("scroll", previous);

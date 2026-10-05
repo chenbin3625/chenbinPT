@@ -171,7 +171,7 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
     expect(result.torrents).toEqual([{ link, site: SITE_ID, id: "42", title: "被页面决定的标题" }]);
   });
 
-  it("合法载荷（真实站点链接、magnet）行为与修复前一致（不误伤）", () => {
+  it("合法载荷（真实站点链接、magnet）行为与修复前一致（不误伤）", async () => {
     const siteLink = "https://pt.example.com/download.php?id=7&passkey=abc";
     const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=some.release";
     const payload = JSON.stringify([
@@ -179,7 +179,11 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
       { link: magnet, site: SITE_ID, id: "", title: "B" },
     ]);
 
-    const result = resolveDroppedTorrents(makeDataTransfer(CUSTOM_DRAG_MIME, payload), SITE_ID);
+    const result = resolveDroppedTorrents(
+      makeDataTransfer(CUSTOM_DRAG_MIME, payload),
+      SITE_ID,
+      await getTrustedLinkHosts(SITE_ID),
+    );
 
     expect(result.torrents).toHaveLength(2);
     expect(result.rejectedCount).toBe(0);
@@ -188,14 +192,18 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
     expect(showSnakebar).not.toHaveBeenCalled();
   });
 
-  it("非自定义 MIME 分支：原有的协议校验保留（http/https/magnet 通过）", () => {
+  it("非自定义 MIME 分支：原有的协议校验保留（http/https/magnet 通过）", async () => {
     const html = [
       '<a href="https://pt.example.com/a.torrent">a</a>',
       '<a href="http://mirror.example.net/b.torrent">b</a>',
       '<a href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567">m</a>',
     ].join("");
 
-    const result = resolveDroppedTorrents(makeDataTransfer("text/html", html), SITE_ID);
+    const result = resolveDroppedTorrents(
+      makeDataTransfer("text/html", html),
+      SITE_ID,
+      await getTrustedLinkHosts(SITE_ID),
+    );
 
     expect(result.torrents.map((x: ITorrent) => x.link)).toEqual([
       "https://pt.example.com/a.torrent",
@@ -204,6 +212,38 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
     ]);
     // site 同样被强制为当前站点（页面无从决定）
     expect(result.torrents.every((x: ITorrent) => x.site === SITE_ID)).toBe(true);
+  });
+
+  it("非自定义 MIME 分支：异站 http(s) 链接不能只凭协议白名单进入推送流程", async () => {
+    const html = [
+      '<a href="https://evil.tld/a.torrent">evil</a>',
+      '<a href="https://pt.example.com/a.torrent">ok</a>',
+    ].join("");
+
+    const result = resolveDroppedTorrents(
+      makeDataTransfer("text/html", html),
+      SITE_ID,
+      await getTrustedLinkHosts(SITE_ID),
+    );
+
+    expect(result.torrents.map((x: ITorrent) => x.link)).toEqual(["https://pt.example.com/a.torrent"]);
+    expect(result.rejectedCount).toBe(1);
+  });
+
+  it("自定义 MIME 分支：页面伪造的异站链接同样不能进入推送流程", async () => {
+    const payload = JSON.stringify([
+      { link: "https://evil.tld/a.torrent", site: SITE_ID, id: "1", title: "evil" },
+      { link: "https://pt.example.com/a.torrent", site: SITE_ID, id: "2", title: "ok" },
+    ]);
+
+    const result = resolveDroppedTorrents(
+      makeDataTransfer(CUSTOM_DRAG_MIME, payload),
+      SITE_ID,
+      await getTrustedLinkHosts(SITE_ID),
+    );
+
+    expect(result.torrents.map((x: ITorrent) => x.link)).toEqual(["https://pt.example.com/a.torrent"]);
+    expect(result.rejectedCount).toBe(1);
   });
 
   it("没有 dataTransfer 时返回空结果且不弹提示", () => {
@@ -246,7 +286,9 @@ describe("S-2 · 站点已知 host 集合", () => {
 
     // 站点常把下载放在 CDN / 下载子域上，逐字相等会误伤真实场景
     expect(isTrustedHost("cdn.pt.example.com", trusted)).toBe(true);
-    expect(isTrustedHost("example.com", trusted)).toBe(true);
+    expect(isTrustedHost("example.com", trusted)).toBe(false);
+    expect(isTrustedHost("example.com", ["www.example.com"])).toBe(true);
+    expect(isTrustedHost("cdn.example.com", ["www.example.com"])).toBe(true);
 
     expect(isTrustedHost("evil.tld", trusted)).toBe(false);
     expect(isTrustedHost("pt.example.com.evil.tld", trusted)).toBe(false);

@@ -170,12 +170,15 @@ describe("视图级宽度 / loading 规则（源码级，需源码配合才能�
     );
   });
 
-  it("搜索结果页与下载历史页：标题列宽度在窄屏收紧到 32vw、宽屏 24vw，并传给标题单元格", () => {
+  it("搜索结果页与下载历史页：标题列桌面端不限宽（吃满剩余宽度），仅移动端保留 32vw 上限", () => {
     const searchEntity = readSource("src/entries/options/views/Overview/SearchEntity/Index.vue");
     const downloadHistory = readSource("src/entries/options/views/Overview/DownloadHistory/Index.vue");
 
     for (const source of [searchEntity, downloadHistory]) {
-      expect(source).toMatch(/display\.smAndDown\.value[\s\S]*?"32vw"[\s\S]*?"24vw"/);
+      // 两页都改用共享的判定函数（规则本身由 antdTable.test 行为化断言）
+      expect(source).toContain("titleColumnMaxWidthFor(display.smAndDown.value)");
+      // 桌面端不再写死 24vw：那正是「取消列展示后标题右侧留下大片空白」的成因
+      expect(source, "视图内不应再出现桌面端的 24vw 上限").not.toContain("24vw");
     }
     expect(downloadHistory).toContain(':max-width="titleColumnMaxWidth"');
   });

@@ -281,16 +281,18 @@ function normalizeHost(host: string): string {
 export function isTrustedHost(host: string, trustedHosts: Iterable<string>): boolean {
   const target = normalizeHost(host);
   if (!target) return false;
+  const canonicalTarget = target.startsWith("www.") ? target.slice(4) : target;
 
   for (const rawHost of trustedHosts) {
     const trusted = normalizeHost(rawHost);
     if (!trusted) continue;
-    if (target === trusted) return true;
+    const canonicalTrusted = trusted.startsWith("www.") ? trusted.slice(4) : trusted;
+    if (canonicalTarget === canonicalTrusted) return true;
 
     const sameDomain =
-      target.includes(".") &&
-      trusted.includes(".") &&
-      (target.endsWith(`.${trusted}`) || trusted.endsWith(`.${target}`));
+      canonicalTarget.includes(".") &&
+      canonicalTrusted.includes(".") &&
+      canonicalTarget.endsWith(`.${canonicalTrusted}`);
     if (sameDomain) return true;
   }
 
@@ -537,24 +539,45 @@ function parseManualDropPayload(dataTransfer: DataTransfer, siteId: string): IDr
   return { torrents, rejectedCount, payloadInvalid: false };
 }
 
+function filterDroppedTorrentsByTrustedHosts(
+  result: IDropResolution,
+  trustedHosts?: Iterable<string>,
+): IDropResolution {
+  if (!trustedHosts || result.torrents.length === 0) {
+    return result;
+  }
+
+  const torrents = result.torrents.filter((torrent) => isTrustedTorrent(torrent, trustedHosts));
+  return {
+    ...result,
+    torrents,
+    rejectedCount: result.rejectedCount + (result.torrents.length - torrents.length),
+  };
+}
+
 /**
  * 把 drop 事件的数据解析成可信种子列表；校验失败时给出可诊断的提示
  * （静默丢弃只会让用户以为拖拽失灵）。
  */
-export function resolveDroppedTorrents(dataTransfer: DataTransfer | null, siteId = ""): IDropResolution {
+export function resolveDroppedTorrents(
+  dataTransfer: DataTransfer | null,
+  siteId = "",
+  trustedHosts?: Iterable<string>,
+): IDropResolution {
   if (!dataTransfer) return { torrents: [], rejectedCount: 0, payloadInvalid: false };
 
   // perfer types: custom > manual
-  const result = Array.from(dataTransfer.types).includes(CUSTOM_DRAG_MIME)
+  const parsedResult = Array.from(dataTransfer.types).includes(CUSTOM_DRAG_MIME)
     ? parseCustomDragPayload(dataTransfer.getData(CUSTOM_DRAG_MIME), siteId)
     : parseManualDropPayload(dataTransfer, siteId);
+  const result = filterDroppedTorrentsByTrustedHosts(parsedResult, trustedHosts);
 
   if (result.torrents.length === 0) {
     const runtimeStore = useRuntimeStore();
     if (result.payloadInvalid) {
       runtimeStore.showSnakebar("拖拽内容不是有效的种子数据，已忽略", { color: "error" });
     } else if (result.rejectedCount > 0) {
-      runtimeStore.showSnakebar("拖拽内容里的链接不受支持（仅支持 http/https/magnet），已忽略", { color: "error" });
+      runtimeStore.showSnakebar("拖拽内容里的链接不受支持或不属于当前站点，已忽略", { color: "error" });
     }
   }
 

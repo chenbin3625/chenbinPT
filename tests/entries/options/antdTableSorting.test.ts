@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toAntdColumns } from "@/options/views/Overview/utils/antdTable.ts";
+import { titleColumnMaxWidth, toAntdColumns } from "@/options/views/Overview/utils/antdTable.ts";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 describe("antd table sorting adapter", () => {
@@ -29,6 +29,13 @@ describe("antd table sorting adapter", () => {
     const [column] = toAntdColumns([{ title: "Download at", key: "downloadAt", minWidth: "10rem" }]);
 
     expect(column).toMatchObject({ minWidth: "10rem" });
+  });
+
+  it("标题列在桌面端不限宽，让标题列吃满被隐藏列让出的宽度", () => {
+    // 桌面端返回 undefined 时不会生成 maxWidth，标题单元格不再被卡在 24vw
+    expect(titleColumnMaxWidth(false)).toBeUndefined();
+    // 移动端保留 32vw 上限（窄屏要横向滚动，避免标题独占可视宽度）
+    expect(titleColumnMaxWidth(true)).toBe("32vw");
   });
 
   it("uses value as the column key when key is omitted", () => {

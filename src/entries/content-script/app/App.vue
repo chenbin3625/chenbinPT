@@ -15,6 +15,7 @@ import type { IRemoteDownloadDialogData } from "./types.ts";
 import {
   CUSTOM_DRAG_MIME,
   currentView,
+  getTrustedLinkHosts,
   getIDFromURL,
   installPageTypeUrlWatcher,
   pageType,
@@ -142,25 +143,29 @@ onUnmounted(() => {
   stopUrlWatcher?.(); // A-8：移除 URL 变化订阅（含 history 上的补丁）
 });
 
-function onDrop(event: DragEvent) {
+async function onDrop(event: DragEvent) {
   const dataTransfer = event.dataTransfer;
   if (!dataTransfer) {
     isDragging.value = false;
     return;
   }
 
-  // S-2：拖拽内容完全由页面提供，必须在这里做形状 + 协议白名单校验，
-  // 并强制把 site 改写为当前站点（校验失败时 resolveDroppedTorrents 会给出提示）
-  const { torrents } = resolveDroppedTorrents(dataTransfer, ptdData.siteId || "");
+  try {
+    const siteId = ptdData.siteId || "";
+    const trustedHosts = await getTrustedLinkHosts(siteId);
+    // S-2：拖拽内容完全由页面提供，必须在这里做形状 + 协议白名单 + 当前站点 host 校验，
+    // 并强制把 site 改写为当前站点（校验失败时 resolveDroppedTorrents 会给出提示）
+    const { torrents } = resolveDroppedTorrents(dataTransfer, siteId, trustedHosts);
 
-  if (torrents.length > 0) {
-    console.debug("[PTD] Dropped data:", torrents);
-    remoteDownloadDialogData.torrents = torrents;
-    remoteDownloadDialogData.show = true;
-  } else {
-    console.warn("[PTD] No valid torrent data found in the dropped content.");
+    if (torrents.length > 0) {
+      remoteDownloadDialogData.torrents = torrents;
+      remoteDownloadDialogData.show = true;
+    }
+  } catch {
+    runtimeStore.showSnakebar(t("contentScript.noTorrentParsed"), { color: "error" });
+  } finally {
+    isDragging.value = false; // 重置拖拽状态
   }
-  isDragging.value = false; // 重置拖拽状态
 }
 
 const dropAction = computed(() => {

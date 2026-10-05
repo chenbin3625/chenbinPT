@@ -29,7 +29,13 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
-import { formatDate, formatDateTimeForTable, formatSize, formatTimeAgo } from "@/options/utils.ts";
+import {
+  formatDate,
+  formatDateTimeForTable,
+  formatSize,
+  formatTimeAgo,
+  stopEventPropagation,
+} from "@/options/utils.ts";
 
 import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
@@ -326,9 +332,10 @@ const showExportDialog = ref(false);
               <a-list-item v-for="index in filteredTableBooleanControlKeys" :key="index" class="my-data-setting-item">
                 <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->
                 <span class="my-data-setting-label">{{ t("MyData.index." + index) }}</span>
+                <!-- a-switch 的 click 载荷是 (newChecked, event)，不能用 `.stop` 修饰符（见 stopEventPropagation） -->
                 <a-switch
                   v-model:checked="configStore.myDataTableControl[index]"
-                  @click.stop
+                  @click="stopEventPropagation"
                   @change="() => configStore.$save()"
                 />
               </a-list-item>

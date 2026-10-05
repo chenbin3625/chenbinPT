@@ -22,7 +22,13 @@ import { EResultParseStatus, ETorrentStatus } from "@ptd/site";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
-import { formatDate, formatDateTimeForTable, formatSize, formatTimeAgo } from "@/options/utils.ts";
+import {
+  formatDate,
+  formatDateTimeForTable,
+  formatSize,
+  formatTimeAgo,
+  stopEventPropagation,
+} from "@/options/utils.ts";
 import type { ISearchResultTorrent } from "@/shared/types.ts";
 
 import SiteName from "@/options/components/SiteName.vue";
@@ -31,7 +37,12 @@ import TorrentTitleTd from "@/options/components/TorrentTitleTd.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 import ColumnSelector from "../components/ColumnSelector.vue";
-import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  titleColumnMaxWidth as titleColumnMaxWidthFor,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+} from "../utils/antdTable.ts";
 
 import ActionTd from "./ActionTd.vue";
 import TorrentProcessTd from "./TorrentProcessTd.vue";
@@ -56,13 +67,12 @@ const showAdvanceFilterGenerateDialog = ref<boolean>(false);
 const showSearchStatusDialog = ref<boolean>(false);
 const showSaveSnapshotDialog = ref<boolean>(false);
 
-const titleColumnMaxWidth = computed(() =>
-  configStore.searchEntifyControl.limitTorrentTitleTdWidth || display.smAndDown.value
-    ? display.smAndDown.value
-      ? "32vw"
-      : "24vw"
-    : undefined,
-);
+/**
+ * 标题单元格的宽度上限（`undefined` = 不限宽，让标题列吃满剩余宽度）。
+ *
+ * 规则、理由与实测数据见 `utils/antdTable.ts` 的 `titleColumnMaxWidth`。
+ */
+const titleColumnMaxWidth = computed(() => titleColumnMaxWidthFor(display.smAndDown.value));
 
 const fullTableHeader = computed(
   () =>
@@ -436,9 +446,10 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
                 >
                   <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->
                   <span>{{ t("SearchEntity.index." + item) }}</span>
+                  <!-- a-switch 的 click 载荷是 (newChecked, event)，不能用 `.stop` 修饰符（见 stopEventPropagation） -->
                   <a-switch
                     v-model:checked="configStore.searchEntifyControl[item]"
-                    @click.stop
+                    @click="stopEventPropagation"
                     @update:checked="() => configStore.$save()"
                   />
                 </div>

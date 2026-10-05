@@ -9,7 +9,12 @@ import {
 } from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
 import { onMounted, onUnmounted, ref, shallowRef, computed } from "vue";
-import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  titleColumnMaxWidth as titleColumnMaxWidthFor,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+} from "../utils/antdTable.ts";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
@@ -44,13 +49,9 @@ const display = useDisplay();
 
 const { tableFilterRef, tableWaitFilterRef, tableFilterFn } = tableCustomFilter;
 
-const titleColumnMaxWidth = computed(() =>
-  configStore.searchEntifyControl.limitTorrentTitleTdWidth || display.smAndDown.value
-    ? display.smAndDown.value
-      ? "32vw"
-      : "24vw"
-    : undefined,
-);
+// 标题单元格的宽度上限（`undefined` = 不限宽，让标题列吃满剩余宽度）：
+// 规则、理由与实测数据见 utils/antdTable.ts 的 titleColumnMaxWidth。
+const titleColumnMaxWidth = computed(() => titleColumnMaxWidthFor(display.smAndDown.value));
 
 // 列宽跟随容器收缩（见 style.css「数据表统一排版」），但下载历史表只有「种子」列声明了
 // 最小宽度，站点 / 下载服务器 / 下载时间 / 下载状态会被压得过窄：时间被拆成多行、
