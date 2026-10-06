@@ -166,9 +166,17 @@ export function levelRequirementUnMet(
         const maxAllowedDownload = requiredUploaded / minRequireRatio;
 
         // 如果当前下载量已经超过这个允许值，那么需要增加上传量
+        // 只有真的缺上传时才登记：原先在上传已足够时也会写入 `uploaded: 0`（max(0, 负数)），
+        // 而一个值为 0 的未满足项同样让 isLevelRequirementMet 判为未达标 —— 下载量大的用户因此被整体低判
         if (baseDownloaded > maxAllowedDownload) {
           const neededUpload = baseDownloaded * minRequireRatio;
-          set(unmetRequirement, uploadedKey, Math.max(unmetRequirement[uploadedKey] || 0, neededUpload - baseUploaded));
+          if (neededUpload > baseUploaded) {
+            set(
+              unmetRequirement,
+              uploadedKey,
+              Math.max(unmetRequirement[uploadedKey] || 0, neededUpload - baseUploaded),
+            );
+          }
         }
       } else {
         // 使用当前下载量和要求下载量中的较大值作为基准

@@ -59,6 +59,21 @@ describe("等级阶梯必须按门槛单调（D-13）", () => {
       downloaded: 1024 ** 4,
       uploads: 260,
     } as any;
+    expect(levelRequirementUnMet({ ...user }, siteMetadata.levelRequirements![1])).toEqual({});
     expect(guessUserLevelId(user, siteMetadata.levelRequirements!)).toBe(6);
+  });
+});
+
+describe("分享率 + 上传量门槛：上传已足够时不得登记 uploaded: 0（本轮新发现）", () => {
+  it("下载量大但上传量也足够时判为已满足", () => {
+    const requirement = { id: 2, name: "Perv", uploaded: "10GB", ratio: 0.6 } as any;
+    const user = { uploaded: 11 * 1024 ** 4, downloaded: 1024 ** 4 } as any;
+    expect(levelRequirementUnMet(user, requirement)).toEqual({});
+  });
+
+  it("上传确实不足以覆盖分享率时仍登记差额", () => {
+    const requirement = { id: 2, name: "Perv", uploaded: "10GB", ratio: 0.6 } as any;
+    const user = { uploaded: 100 * 1024 ** 3, downloaded: 1024 ** 4 } as any;
+    expect(levelRequirementUnMet(user, requirement).uploaded).toBeCloseTo(0.6 * 1024 ** 4 - 100 * 1024 ** 3, -3);
   });
 });
