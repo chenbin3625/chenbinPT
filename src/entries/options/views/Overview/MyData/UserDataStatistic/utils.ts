@@ -30,26 +30,24 @@ function calculateDailyIncremental(
 ): { incremental: Record<keyof IStoredUserInfo, number>; updatedPrevData: IStoredUserInfo } {
   const incremental: Record<keyof IStoredUserInfo, number> = {} as Record<keyof IStoredUserInfo, number>;
 
-  for (const field of numericFields) {
-    const currentValue = dateData[field];
-    if (typeof currentValue === "number" && !isNaN(currentValue)) {
-      if (isFirstDataPoint) {
-        // 站点第一次有数据时，增量为0
-        incremental[field] = 0;
-      } else if (prevDateData) {
-        const prevValue = prevDateData[field];
-        if (typeof prevValue === "number" && !isNaN(prevValue)) {
-          // 计算增量：当前值 - 前一个有效值
-          incremental[field] = currentValue - prevValue;
-        } else {
-          // 前一个数据字段无效时，增量为0
-          incremental[field] = 0;
-        }
-      } else {
-        // 前一个数据不存在时，增量为0
-        incremental[field] = 0;
-      }
+  // M-23：存储值可能是数字字符串（A-15 的 `0 + ""`、issue #48、旧版本历史）。累计图已用 toNumber 兼容，
+  // 增量这里只认 typeof number 的话 6 张「增量」图恒为 0，与同一份数据画出的累计图自相矛盾。
+  const asNumber = (value: unknown): number | undefined => {
+    if (typeof value === "number") return Number.isNaN(value) ? undefined : value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      return Number.isNaN(parsed) ? undefined : parsed;
     }
+    return undefined;
+  };
+
+  for (const field of numericFields) {
+    const currentValue = asNumber(dateData[field]);
+    if (typeof currentValue === "undefined") continue;
+
+    const prevValue = prevDateData ? asNumber(prevDateData[field]) : undefined;
+    // 站点第一次有数据、前一个数据不存在或字段无效时，增量为 0；否则为「当前值 - 前一个有效值」
+    incremental[field] = isFirstDataPoint || typeof prevValue === "undefined" ? 0 : currentValue - prevValue;
   }
 
   return { incremental, updatedPrevData: dateData };

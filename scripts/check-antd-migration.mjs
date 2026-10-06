@@ -249,7 +249,9 @@ const STOP_FIRST_ARG_IS_EVENT = new Set(["a-button", "a-checkbox", "a-radio", "a
 const STOP_SAFE_TAGS = new Set([...STOP_FIRST_ARG_IS_EVENT, "a-radio-group", "a-list", "a-list-item"]);
 // 扫描所有「标签 + 属性」片段，要求属性区不含 `>`（跨过普通属性后停在标签结束符上），
 // 这样嵌套组件与自闭合标签都能覆盖到，且不会把下一行的标签误吞进来。
-const stopTagRe = /<([A-Za-z][\w.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)@[a-zA-Z:]+\.stop(?=[\s=/>.])/g;
+// L-10：`.stop` 可以出现在修饰符链的任意位置（`@click.prevent.stop` / `@click.once.stop`），
+// 不能要求它紧跟在事件名后面 —— 那样只能匹配 `@click.stop` 一种写法。
+const stopTagRe = /<([A-Za-z][\w.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)@[a-zA-Z:]+(?:\.[a-zA-Z]+)*\.stop(?=[\s=/>.])/g;
 const stopHits = [];
 for (const f of vueFiles) {
   const text = vueText.get(f);

@@ -154,15 +154,6 @@ export const siteMetadata: ISiteMetadata = {
     },
     {
       id: 4,
-      name: "Better Perv",
-      interval: "P5Y",
-      uploaded: "25TB",
-      ratio: 1.05,
-      privilege:
-        "can see staff list on Staff page; can send invites (if you have any); can create an additional personal collage (3 total); can set forum signature (up to 512 characters)",
-    },
-    {
-      id: 5,
       name: "Great Perv",
       interval: "P8W",
       uploaded: "100GB",
@@ -172,7 +163,7 @@ export const siteMetadata: ISiteMetadata = {
         "can see staff list on Staff page;  can access the Invite forum;  can send invites (if you have any);  can create an additional personal collage (3 total);  can set forum signature (up to 512 characters)",
     },
     {
-      id: 6,
+      id: 5,
       name: "Sextreme Perv",
       interval: "P13W",
       uploaded: "1TB",
@@ -182,7 +173,7 @@ export const siteMetadata: ISiteMetadata = {
         "can see staff list on Staff page; can create 2 additional personal collages (5 total); can set forum signature (up to 1024 characters)",
     },
     {
-      id: 7,
+      id: 6,
       name: "Smut Peddler",
       interval: "P26W",
       uploaded: "10TB",
@@ -190,6 +181,17 @@ export const siteMetadata: ISiteMetadata = {
       ratio: 1.05,
       privilege:
         "can create 5 additional personal collages (10 total); can set forum signature (up to 2048 characters)",
+    },
+    // D-13：Better Perv 的门槛（5 年 / 25TB）远高于 Great Perv（8 周 / 100GB），原先放在 id4 会让
+    // 「首个未满足即停」在这里短路 —— 已达 5/6/7 级的用户最高只被判 id3。按门槛单调排列到最高级。
+    {
+      id: 7,
+      name: "Better Perv",
+      interval: "P5Y",
+      uploaded: "25TB",
+      ratio: 1.05,
+      privilege:
+        "can see staff list on Staff page; can send invites (if you have any); can create an additional personal collage (3 total); can set forum signature (up to 512 characters)",
     },
   ],
 };

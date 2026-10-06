@@ -13,7 +13,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
+import { computedStyle, loadScopedStyles, mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
@@ -63,6 +63,46 @@ async function mountTimeline() {
 }
 
 describe("时间轴显示内容控件", () => {
+  it("样式设置按分组排列，长开关文案独占一行且字段可自适应换列", async () => {
+    loadScopedStyles("src/entries/options/views/Overview/MyData/UserDataTimeline/Index.vue");
+    const { view, configStore, t } = await mountTimeline();
+
+    const settings = view.$(".ptd-timeline-settings")!;
+    expect(settings, "样式设置应有独立的布局容器").not.toBeNull();
+
+    const groups = Array.from(settings.querySelectorAll<HTMLElement>(".ptd-timeline-settings__group"));
+    expect(groups.map((group) => group.querySelector(".ptd-timeline-settings__label")?.textContent?.trim())).toEqual([
+      t("UserDataTimeline.controls.usernameAndTitle"),
+      t("UserDataTimeline.controls.components"),
+      t("UserDataTimeline.controls.siteDisplay"),
+      t("UserDataTimeline.controls.displayContent"),
+      t("UserDataTimeline.controls.timeDisplay"),
+    ]);
+
+    const toggles = settings.querySelectorAll<HTMLElement>(".ptd-timeline-settings__toggle");
+    expect(toggles).toHaveLength(2);
+    expect(computedStyle(toggles[0]!, "display")).toBe("flex");
+    expect(computedStyle(toggles[0]!, "align-items")).toBe("center");
+    expect(toggles[0]!.querySelector(".ant-switch")).not.toBeNull();
+    expect(toggles[0]!.textContent).toContain(t("UserDataTimeline.controls.showTopSites"));
+    expect(toggles[1]!.textContent).toContain(t("UserDataTimeline.controls.showTimeline"));
+
+    const fields = settings.querySelectorAll<HTMLElement>(".ptd-timeline-settings__field-grid");
+    expect(fields).toHaveLength(2);
+    expect(computedStyle(fields[0]!, "display")).toBe("grid");
+    expect(fields[0]!.querySelectorAll(".ant-checkbox-wrapper")).toHaveLength(
+      Object.keys(configStore.userDataTimelineControl.showField).length,
+    );
+
+    const sliderRow = settings.querySelector<HTMLElement>(".ptd-timeline-settings__slider-row")!;
+    expect(sliderRow.textContent).toContain(t("UserDataTimeline.controls.faviconBlur"));
+    expect(sliderRow.querySelector(".ant-slider")).not.toBeNull();
+    expect(computedStyle(sliderRow, "grid-template-columns")).toBe("minmax(0, 1fr) auto");
+    expect(computedStyle(sliderRow.firstElementChild!, "grid-column")).toBe("1 / -1");
+
+    view.unmount();
+  });
+
   it("时间轴输入控件不产生非法的 onUpdate:value prop 警告", async () => {
     const warnings: unknown[][] = [];
     const warn = console.warn;

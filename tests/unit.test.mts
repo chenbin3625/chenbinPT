@@ -82,7 +82,14 @@ equal("toSerializable: ref unwrapped to value", toSerializable(ref({ id: 1 })), 
 
 const special = { d: new Date("2024-01-02T03:04:05Z"), m: new Map([["a", 1]]), s: new Set([1]) };
 const specialOut = toSerializable(special) as any;
-check("toSerializable: Date/Map/Set preserved", specialOut.d instanceof Date && specialOut.m instanceof Map && specialOut.s instanceof Set);
+// A-1 之后的契约：Date/Map/Set 显式转成 JSON 可往返的形状（跨上下文消息与 chrome.storage 都只有 JSON 语义），
+// 而不是原样保留（原样保留在 JSON 往返后会变成 {}）。详细契约见 tests/entries/shared/messagesSerializable.test.ts。
+check(
+  "toSerializable: Date/Map/Set → JSON-safe",
+  specialOut.d === Date.parse("2024-01-02T03:04:05Z") &&
+    JSON.stringify(specialOut.m) === JSON.stringify([["a", 1]]) &&
+    JSON.stringify(specialOut.s) === JSON.stringify([1]),
+);
 
 const cyclic: any = { name: "c" };
 cyclic.self = cyclic;

@@ -109,3 +109,46 @@ describe("Transmission：torrent-duplicate 视为成功（D-5）", () => {
     expect(requestMock.mock.calls[2][1]).toEqual({ ids: 9, labels: ["movies"] });
   });
 });
+
+describe("Transmission：各版本的重复种子响应（L-12）", () => {
+  /** session-get 返回版本信息，torrent-add 返回被测响应 */
+  function clientWithAddResponse(addResponse: any, rpcVersion = 14) {
+    const { client, requestMock } = createClient();
+    requestMock.mockImplementation(async (method: string) =>
+      method === "session-get"
+        ? { data: { result: "success", arguments: { version: "2.77", "rpc-version": rpcVersion } } }
+        : addResponse,
+    );
+    return { client, requestMock };
+  }
+
+  it('2.77（rpc14）只回 result: "duplicate torrent"、无 arguments：判成功', async () => {
+    const { client } = clientWithAddResponse({ data: { result: "duplicate torrent" } });
+
+    const result = await client.addTorrent(MAGNET, { addAtPaused: false });
+    expect(result.success).toBe(true);
+  });
+
+  it("2.80（rpc15）带 torrent-duplicate 但 result 非 success：判成功并带回 id", async () => {
+    const { client } = clientWithAddResponse(
+      {
+        data: {
+          result: "duplicate torrent",
+          arguments: { "torrent-duplicate": { id: 3, hashString: "aa", name: "dup" } },
+        },
+      },
+      15,
+    );
+
+    const result = await client.addTorrent(MAGNET, { addAtPaused: false });
+    expect(result.success).toBe(true);
+    expect(result.id).toBe("3");
+  });
+
+  it("真正的失败（如 invalid or corrupt torrent file）仍判失败", async () => {
+    const { client } = clientWithAddResponse({ data: { result: "invalid or corrupt torrent file" } });
+
+    const result = await client.addTorrent(MAGNET, { addAtPaused: false });
+    expect(result.success).toBe(false);
+  });
+});

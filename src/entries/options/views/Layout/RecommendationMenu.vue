@@ -280,7 +280,14 @@ watch(isRecommendationMenuOpen, (isOpen) => {
             </div>
             <a-list v-else :data-source="group.items" bordered class="hot-recommendation-list" size="small">
               <template #renderItem="{ item }">
-                <a-list-item class="hot-recommendation-item" @click="() => searchRecommendation(item)">
+                <a-list-item
+                  class="hot-recommendation-item"
+                  role="button"
+                  tabindex="0"
+                  @click="() => searchRecommendation(item)"
+                  @keydown.enter.prevent="() => searchRecommendation(item)"
+                  @keydown.space.prevent="() => searchRecommendation(item)"
+                >
                   <a-image
                     :preview="false"
                     :src="getRecommendationPosterSrc(item)"

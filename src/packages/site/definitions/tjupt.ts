@@ -77,7 +77,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "移动视频", value: 412 },
         { name: "其他", value: 410 },
       ],
-      cross: { mode: "brackets" },
+      cross: { mode: "append" }, // D-6：NexusPHP 只读 cat<id>=1（与 chdbits/ptchina 等同约定站点一致），不认 cat[]
     },
     CategoryIncldead,
     {

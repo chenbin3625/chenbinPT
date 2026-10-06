@@ -51,10 +51,14 @@ const showSaveButton = computed(() => {
 
 async function save() {
   const tab = currentTabInstance();
-  await tab?.beforeSave?.(); // 如果对应的 tab 有 beforeSave 方法，则调用
-  await configStore.$save();
-  runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
-  await tab?.afterSave?.(); // 如果对应的 tab 有 afterSave 方法，则调用
+  try {
+    await tab?.beforeSave?.();
+    await configStore.$save();
+    await tab?.afterSave?.();
+    runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 </script>
 

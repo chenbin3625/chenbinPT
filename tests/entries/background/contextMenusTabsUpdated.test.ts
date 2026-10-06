@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   removeAllCount: 0,
   onActivatedListeners: [] as Array<() => void>,
   onUpdatedListeners: [] as Array<(tabId: number, changeInfo: any, tab: any) => void>,
+  onFocusChangedListeners: [] as Array<(windowId: number) => void>,
+  storageChangedListeners: [] as Array<(changes: Record<string, unknown>, areaName: string) => void>,
   currentTab: { url: "https://mteam.example/browse" } as { url: string },
 }));
 
@@ -50,7 +52,19 @@ vi.stubGlobal("chrome", {
     },
     query: vi.fn(() => Promise.resolve([{ ...mocks.currentTab }])),
   },
-  storage: { onChanged: { addListener: vi.fn() } },
+  windows: {
+    WINDOW_ID_NONE: -1,
+    onFocusChanged: {
+      addListener: vi.fn((fn: (windowId: number) => void) => mocks.onFocusChangedListeners.push(fn)),
+    },
+  },
+  storage: {
+    onChanged: {
+      addListener: vi.fn((fn: (changes: Record<string, unknown>, areaName: string) => void) =>
+        mocks.storageChangedListeners.push(fn),
+      ),
+    },
+  },
   i18n: { getMessage: vi.fn((key: string) => key) },
 });
 
@@ -136,5 +150,48 @@ describe("右键菜单：同标签页导航后重建（L-2）", () => {
     const titles = menuTitles(menusBeforeRebuild);
     expect(titles).toContain("-> /downloads/btsite");
     expect(titles, "重建后的菜单不应再使用 A 的站点上下文").not.toContain("-> /downloads/mteam");
+  });
+});
+
+describe("右键菜单：切换窗口后重建（M-16）", () => {
+  it("windows.onFocusChanged 按新窗口的活动标签页重建；焦点移出浏览器（WINDOW_ID_NONE）不重建", async () => {
+    await flushBuild();
+    expect(mocks.onFocusChangedListeners.length, "必须注册 windows.onFocusChanged 监听").toBe(1);
+
+    // 窗口 1 停在 B（上一个用例结束时的状态），切到停在 A 的窗口 2
+    mocks.currentTab.url = "https://mteam.example/browse";
+    const before = mocks.removeAllCount;
+    const menusBefore = mocks.createdMenus.length;
+    mocks.onFocusChangedListeners[0]!(2);
+    await flushBuild();
+
+    expect(mocks.removeAllCount).toBe(before + 1);
+    expect(menuTitles(menusBefore)).toContain("-> /downloads/mteam");
+
+    mocks.onFocusChangedListeners[0]!(-1);
+    await flushBuild();
+    expect(mocks.removeAllCount).toBe(before + 1);
+  });
+});
+
+describe("右键菜单：与菜单无关的 metadata 写入不触发重建（L-6）", () => {
+  it("只改了 lastUserInfo 时摘要不变，1s 防抖后也不 removeAll", async () => {
+    await flushBuild();
+    expect(mocks.storageChangedListeners.length).toBe(1);
+    const before = mocks.removeAllCount;
+
+    vi.useFakeTimers();
+    try {
+      // 自动刷新用户信息：每个站点各写一次 metadata（lastUserInfo 不在菜单摘要里）
+      for (let i = 0; i < 3; i++) {
+        mocks.storageChangedListeners[0]!({ metadata: { newValue: {} } }, "local");
+      }
+      await vi.advanceTimersByTimeAsync(1500);
+    } finally {
+      vi.useRealTimers();
+    }
+    await flushBuild();
+
+    expect(mocks.removeAllCount, "菜单摘要未变化时不应 removeAll + 全量重建").toBe(before);
   });
 });

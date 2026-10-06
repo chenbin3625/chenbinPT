@@ -17,7 +17,11 @@ export function tryToNumber(value: any): number {
 
 type TQueryFilterFn = (query: any, args?: any[]) => any;
 
-export const definedFilters: Record<string, TQueryFilterFn> = {
+/**
+ * T-1：用 `satisfies` 而不是 `: Record<string, …>` 标注 —— 后者把 `keyof typeof definedFilters` 宽化成 `string`，
+ * 于是定义里 `{ name: "divide" }` 这类不存在的过滤器名能通过类型检查，运行时又被静默跳过（M-12 的根因）。
+ */
+export const definedFilters = {
   /**
    * Extract values from URL arguments.
    * If more than one arg is provided, the first one that matches will be returned.
@@ -208,7 +212,7 @@ export const definedFilters: Record<string, TQueryFilterFn> = {
     console?.log(query);
     return query;
   },
-};
+} satisfies Record<string, TQueryFilterFn>;
 
 export const filterNames = Object.keys(definedFilters);
 

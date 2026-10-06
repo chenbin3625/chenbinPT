@@ -97,20 +97,25 @@ export default class Emby extends AbstractMediaServer<IEmbyConfig> {
    * 修正baseUrl，如果用户传入的地址为 https://127.0.0.1:8096/web/index.html 或者 https://127.0.0.1:8096/
    * 则将其修正为 JSON API 入口 https://127.0.0.1:8096/emby/
    */
-  get apiBaseUrl() {
-    let serverAddress = this.config.address;
-    if (!serverAddress.includes("/emby/")) {
-      serverAddress = serverAddress.replace(/\/web\/index.html#.+/, "");
-      serverAddress = urlJoin(serverAddress, "/emby/");
-    }
+  /**
+   * 服务根地址：去掉前端路由（`#...`）、`/web/...` 前端入口与 `/emby` API 前缀。
+   * M-18：旧实现用 `includes("/emby/")` 判断，用户填 `…/emby`（无尾斜杠）时会再拼一次，得到 `…/emby/emby/`。
+   */
+  private get serverRoot() {
+    return this.config.address
+      .trim()
+      .replace(/#.*$/, "")
+      .replace(/\/+$/, "")
+      .replace(/\/web(?:\/.*)?$/i, "")
+      .replace(/\/emby(?:\/.*)?$/i, "");
+  }
 
-    return serverAddress;
+  get apiBaseUrl() {
+    return urlJoin(this.serverRoot, "/emby/");
   }
 
   get webBaseUrl() {
-    let serverAddress = this.config.address;
-    serverAddress = serverAddress.replace(/\/web\/index.html#.+/, "");
-    return urlJoin(serverAddress, "/web/index.html");
+    return urlJoin(this.serverRoot, "/web/index.html");
   }
 
   protected async request<T = any, D = any>(

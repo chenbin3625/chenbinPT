@@ -208,7 +208,22 @@ type TPendingReDownloadTorrent = {
   fireAt: number;
 };
 
+/**
+ * H-11：已被取走执行的任务留下的墓碑。
+ *
+ * 冷启动时 SW 往往正是被这个 alarm 唤醒的：onAlarm 触发时 `alarms.get` 已查不到它，而参数还没被取走，
+ * 于是 rescheduleLostOnceJobAlarms 会把它当成「丢失的 alarm」重建一次。原 alarm 的处理随即取走并完成任务，
+ * 约 1 秒后重建的同名 alarm 再触发，`!job` 分支便把**已经成功**的重新下载写成 failed。
+ * 墓碑让「参数已被消费」与「参数从未存在」可区分：前者重复触发是 no-op。
+ */
+type TConsumedOnceJob = {
+  kind: "consumed";
+  /** 取走时刻，用于墓碑本身的超期清理 */
+  fireAt: number;
+};
+
 type TPendingOnceJob = TPendingFlushUserInfoRetry | TPendingReDownloadTorrent;
+type TStoredOnceJob = TPendingOnceJob | TConsumedOnceJob;
 
 const RE_DOWNLOAD_ALARM_PREFIX = `${EJobType.ReDownloadTorrent}-`;
 const FLUSH_USER_INFO_RETRY_ALARM_PREFIX = `${EJobType.FlushUserInfo}-Retry-`;
@@ -239,12 +254,12 @@ function enqueuePendingJobWrite<T>(task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function loadPendingJobs(): Promise<Record<string, TPendingOnceJob>> {
+async function loadPendingJobs(): Promise<Record<string, TStoredOnceJob>> {
   const stored = await chrome.storage.local.get(PENDING_ONCE_JOB_KEY);
-  return (stored?.[PENDING_ONCE_JOB_KEY] as Record<string, TPendingOnceJob> | undefined) ?? {};
+  return (stored?.[PENDING_ONCE_JOB_KEY] as Record<string, TStoredOnceJob> | undefined) ?? {};
 }
 
-function pruneExpiredPendingJobs(jobs: Record<string, TPendingOnceJob>, now = Date.now()): void {
+function pruneExpiredPendingJobs(jobs: Record<string, TStoredOnceJob>, now = Date.now()): void {
   for (const [alarmName, job] of Object.entries(jobs)) {
     if (now - (job?.fireAt ?? 0) > PENDING_ONCE_JOB_TTL) {
       delete jobs[alarmName];
@@ -273,14 +288,19 @@ async function removePendingJob(alarmName: string): Promise<void> {
 }
 
 /** 取出并删除：先清理存储再执行，保证任务不会因执行失败/重复触发而重复运行 */
-async function takePendingJob(alarmName: string): Promise<TPendingOnceJob | undefined> {
+async function takePendingJob(alarmName: string): Promise<TPendingOnceJob | "consumed" | undefined> {
   return enqueuePendingJobWrite(async () => {
     const jobs = await loadPendingJobs();
     const job = jobs[alarmName];
     if (!job) {
       return undefined;
     }
-    delete jobs[alarmName];
+    if (job.kind === "consumed") {
+      return "consumed";
+    }
+    // 留墓碑而不是直接删除（见 TConsumedOnceJob）；墓碑按 PENDING_ONCE_JOB_TTL 在下次排程时清理，
+    // 同名任务重新排程（addPendingJob）会直接覆盖它。
+    jobs[alarmName] = { kind: "consumed", fireAt: Date.now() };
     await chrome.storage.local.set({ [PENDING_ONCE_JOB_KEY]: jobs });
     return job;
   });
@@ -382,7 +402,7 @@ function autoFlushUserInfo(retryIndex: number = 0) {
       >;
 
       for (const [siteId, siteConfig] of Object.entries(sites)) {
-        if (!siteConfig.isOffline && siteConfig.allowQueryUserInfo) {
+        if (!siteConfig.isOffline && siteConfig.allowQueryUserInfo !== false) {
           try {
             // 检查当天的记录是否存在（直接读本地缓存，省掉一次 offscreen 往返与整份 userInfo 传输）
             // 注意：这里必须用 `== null` 而不是 `typeof === "undefined"`。`getExtStoragePathCached` 的
@@ -583,6 +603,10 @@ async function executePendingOnceJob(job: TPendingOnceJob): Promise<void> {
 async function runPendingOnceJob(alarmName: string): Promise<void> {
   const job = await takePendingJob(alarmName);
 
+  if (job === "consumed") {
+    return; // 同一任务的重复触发（冷启动扫描重建过 alarm），已执行过，不再判失败
+  }
+
   if (!job) {
     // 参数丢失（升级前由 job-scheduler 建的旧 alarm、或 local storage 被清理）：
     // 重新下载只能判定为失败，否则下载历史会永远停在 pending（正是本次要修的静默丢失）。
@@ -668,6 +692,9 @@ async function rescheduleLostOnceJobAlarms(): Promise<void> {
   const now = Date.now();
 
   for (const [alarmName, job] of Object.entries(jobs)) {
+    if (job?.kind === "consumed") {
+      continue; // 墓碑：任务已执行，不能复活
+    }
     const fireAt = job?.fireAt ?? 0;
     if (now - fireAt > PENDING_ONCE_JOB_TTL) {
       continue; // 超期条目由 pruneExpiredPendingJobs 统一清理，不再复活

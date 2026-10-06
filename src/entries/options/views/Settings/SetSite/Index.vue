@@ -377,7 +377,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'userConfig.sortIndex'">
           <div style="display: flex">
-            <SiteFavicon :site-id="record.id" />
+            <SiteFavicon :site-id="record.id" :size="20" />
           </div>
         </template>
 

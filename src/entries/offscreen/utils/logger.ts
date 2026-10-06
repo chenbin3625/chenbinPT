@@ -45,14 +45,29 @@ const URL_WITH_QUERY_PATTERN = /(?:https?:\/\/|\/)[^\s"'<>\\]+/g;
 /** 自然语言标点不属于 URL：匹配后把它们留在原位，避免改写日志文本本身 */
 const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?)\]}'"]+$/;
 
-/** 抹掉单个 URL 的 query 值，保留 path、query 键名与 hash */
+/**
+ * 路径里的凭据段：部分站点把 passkey/rsskey 直接放在路径里（如 Rartracker 的
+ * `/api/v1/torrents/download/{id}/{passkey}`），只抹 query 值会让它原样进日志。
+ * 判据刻意收窄为「≥20 位、只含字母数字、同时含字母与数字」的整段 —— 典型的 32 位十六进制 passkey
+ * 会命中，而数字 id、普通单词、带扩展名的文件名（含 `.`）不会。
+ */
+const CREDENTIAL_LIKE_PATH_SEGMENT = /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,}$/;
+
+function redactUrlPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => (CREDENTIAL_LIKE_PATH_SEGMENT.test(segment) ? "***" : segment))
+    .join("/");
+}
+
+/** 抹掉单个 URL 的 query 值与路径中的凭据段，保留 path 结构、query 键名与 hash */
 function redactUrlQuery(url: string): string {
   const queryIndex = url.indexOf("?");
   if (queryIndex < 0) {
-    return url;
+    return redactUrlPath(url);
   }
 
-  const path = url.slice(0, queryIndex);
+  const path = redactUrlPath(url.slice(0, queryIndex));
   const rawQuery = url.slice(queryIndex + 1);
   const hashIndex = rawQuery.indexOf("#");
   const hash = hashIndex >= 0 ? rawQuery.slice(hashIndex) : "";

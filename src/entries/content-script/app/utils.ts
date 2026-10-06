@@ -91,6 +91,8 @@ export async function updatePageType(ptdData: IPtdData = {}) {
  * 先前补丁当成"原函数"还原（或被先取消的那个留在链上），卸载后仍会触发已经失效的回调。
  */
 const urlChangeHandlers = new Set<() => void>();
+/** 不支持 Navigation API 时轮询 location.href 的间隔（见 subscribeUrlChange 的 H-3 说明） */
+export const URL_POLL_INTERVAL = 500;
 let uninstallUrlChangeListener: (() => void) | undefined;
 
 function dispatchUrlChange() {
@@ -129,7 +131,30 @@ export function subscribeUrlChange(handler: () => void): () => void {
     window.addEventListener("popstate", dispatchUrlChange);
     window.addEventListener("hashchange", dispatchUrlChange);
 
+    // H-3：上面的 history 补丁只对「与内容脚本同一 JS world 的调用方」生效。真实浏览器里内容脚本跑在
+    // 隔离世界（Chrome isolated world / Firefox Xray），页面自己的 pushState 走的是页面 world 的
+    // History 对象，根本不经过这层补丁 —— 而 SPA 站点（Unit3D/Livewire）的列表→详情正是页面在调用。
+    // 跨 world 能观察到的只有：DOM 事件（popstate/hashchange，已订阅）与 URL 本身。
+    // 因此再加跨 world 通路：Navigation API 的 currententrychange（浏览器派发的 DOM 事件，页面 world 的
+    // pushState 也会触发，延迟最低）+ 轮询 location.href（只比较字符串，成本可忽略）。
+    let lastSeenHref = location.href;
+    const checkHrefChanged = () => {
+      if (location.href === lastSeenHref) return;
+      lastSeenHref = location.href;
+      dispatchUrlChange();
+    };
+    // 轮询始终保留作兜底（Firefox 旧版本无 Navigation API；两条通路共用 lastSeenHref 去重，不会重复派发）。
+    const navigationApi = (window as Window & { navigation?: EventTarget }).navigation;
+    const hasNavigationApi = !!navigationApi && typeof navigationApi.addEventListener === "function";
+    if (hasNavigationApi) navigationApi.addEventListener("currententrychange", checkHrefChanged);
+    const pollTimer = setInterval(checkHrefChanged, URL_POLL_INTERVAL);
+    const stopCrossWorldWatch = () => {
+      clearInterval(pollTimer);
+      if (hasNavigationApi) navigationApi.removeEventListener("currententrychange", checkHrefChanged);
+    };
+
     uninstallUrlChangeListener = () => {
+      stopCrossWorldWatch();
       // 只在补丁仍是自己装上去的时候还原：页面脚本/其它扩展可能在我们之后又包了一层，
       // 直接赋回原函数会把它们的补丁抹掉。
       if (history.pushState === patchedPushState) history.pushState = rawPushState;

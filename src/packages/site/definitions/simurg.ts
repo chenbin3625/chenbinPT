@@ -2,6 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/Simurg.cs
  */
 import type { ISiteMetadata } from "../types";
+import type { TQueryFilter } from "../utils/filter.ts";
 import { SchemaMetadata } from "../schemas/Gazelle.ts";
 
 const categoryMap: Record<string, string> = {
@@ -13,7 +14,7 @@ const statisticsItemSelector = (label: string) =>
   `div.head:contains('Statistics') + ul.stats > li:contains('${label}')`;
 const communityItemSelector = (label: string) => `div.head:contains('Community') + ul.stats > li:contains('${label}')`;
 
-const relativeTimeFilters = [
+const relativeTimeFilters: TQueryFilter[] = [
   (query: string) => (query.trim().toLowerCase() === "just now" ? "0 seconds" : query),
   { name: "parseTTL" },
 ];

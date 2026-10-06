@@ -605,6 +605,7 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
       const localResult = await downloadTorrentToLocalFile(
         downloadOption as TLocalDownloadOption,
         downloadRequestConfig,
+        prepared.siteDownloadReservation,
       );
       downloadStatus = localResult.downloadStatus;
       errorMessage = localResult.errorMessage;
@@ -627,8 +628,10 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
     errorMessage = getErrorMessage(e);
   }
 
-  await setDownloadStatus(downloadId, downloadStatus);
-  if (prepared.siteDownloadReservation && downloadStatus !== "completed") {
+  if (downloadStatus !== "pending") {
+    await setDownloadStatus(downloadId, downloadStatus);
+  }
+  if (prepared.siteDownloadReservation && downloadStatus === "failed") {
     // 下载未成功：回滚入队前预留的站点下载时间戳（见 L-1），失败不应消耗该站点的下载间隔
     const { site, at, previous } = prepared.siteDownloadReservation;
     await rollbackSiteDownloadInterval(site, at, previous);
@@ -656,6 +659,7 @@ onMessage("downloadTorrent", async ({ data: downloadOption }) => {
 async function downloadTorrentToLocalFile(
   downloadOption: TLocalDownloadOption,
   downloadRequestConfig: AxiosRequestConfig,
+  siteDownloadReservation?: IPreparedDownload["siteDownloadReservation"],
 ): Promise<Pick<IDownloadTorrentResult, "downloadStatus" | "errorMessage">> {
   let { torrent, localDownloadMethod = "web", downloadId } = downloadOption;
   let downloadStatus: TTorrentDownloadStatus = "downloading";
@@ -708,8 +712,10 @@ async function downloadTorrentToLocalFile(
       }
 
       logger({ msg: `Download torrent file with browser method: ${downloadUri}` });
-      await sendMessage("downloadFile", downloadOptions);
-      return { downloadStatus: await setDownloadStatus(downloadId, "completed"), errorMessage };
+      const chromeDownloadId = await sendMessage("downloadFile", downloadOptions);
+      await setDownloadStatus(downloadId, "pending");
+      trackLocalDownload(chromeDownloadId, downloadId, siteDownloadReservation);
+      return { downloadStatus: "pending", errorMessage };
     } catch (e) {
       localDownloadMethod = "extension"; // 如果下载失败，直接使用 extension 方法（怎么可能？）
     }
@@ -740,9 +746,10 @@ async function downloadTorrentToLocalFile(
       });
       // 交给释放器：`downloads.download()` resolve 只是「下载已被接受」，此时 revoke 会让下载读到一半失败；
       // 这里等 chrome.downloads 报告该下载进入终态（complete/interrupted）后再释放，并有宽裕超时兜底。
-      releaseBlobUrlWhenDownloadSettled(blobUrl, chromeDownloadId);
+      await setDownloadStatus(downloadId, "pending");
+      trackLocalDownload(chromeDownloadId, downloadId, siteDownloadReservation, blobUrl);
       blobUrl = undefined;
-      downloadStatus = await setDownloadStatus(downloadId, "completed");
+      downloadStatus = "pending";
     } catch (e) {
       downloadStatus = await setDownloadStatus(downloadId, "failed");
       errorMessage = getErrorMessage(e);
@@ -816,26 +823,23 @@ function getErrorMessage(error: unknown): string {
 /** blob: URL 释放的兜底超时：拿不到下载 id / 环境没有 downloads.onChanged 时，也必须释放（见 L-5） */
 const BLOB_URL_RELEASE_TIMEOUT = 10 * 60 * 1000;
 
-/**
- * 在下载真正读完后再释放 blob: URL（见 L-5）。
- *
- * `sendMessage("downloadFile")` → `chrome.downloads.download()` 的 resolve 只表示「下载已被接受」，
- * 此时立即 `revokeObjectURL` 会让浏览器在读取 blob 时失败；因此这里监听 `chrome.downloads.onChanged`，
- * 等该下载进入终态（complete / interrupted）后释放。
- * 同时保留一个宽裕的超时兜底：若事件永远不到达（拿不到 downloadId、环境缺少该 API），
- * 到点也必须释放，否则就退化成修复前的泄漏。
- *
- * 供本模块（torrent 文件）与 backup.ts（备份 zip）共用。
- */
-export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloadId?: number): void {
-  let released = false;
+type TDownloadTerminalState = "complete" | "interrupted";
+
+function watchDownloadSettled(
+  chromeDownloadId: number | undefined,
+  blobUrl?: string,
+  onSettled?: (state: TDownloadTerminalState) => Promise<void>,
+): void {
+  let settled = false;
+  let blobReleased = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const release = () => {
-    if (released) {
-      return;
-    }
-    released = true;
+  const releaseBlob = () => {
+    if (!blobUrl || blobReleased) return;
+    blobReleased = true;
+    URL.revokeObjectURL(blobUrl);
+  };
+  const cleanup = () => {
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
@@ -845,7 +849,15 @@ export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloa
     } catch (e) {
       logger({ msg: "Failed to remove download state listener", level: "debug", data: getErrorMessage(e) });
     }
-    URL.revokeObjectURL(blobUrl);
+    releaseBlob();
+  };
+  const finish = (state: TDownloadTerminalState) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    void onSettled?.(state).catch((e) =>
+      logger({ msg: "Failed to record browser download state", level: "error", data: getErrorMessage(e) }),
+    );
   };
 
   const onDownloadChanged = (delta: chrome.downloads.DownloadDelta) => {
@@ -854,13 +866,49 @@ export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloa
     }
     const currentState = delta.state?.current;
     if (currentState === "complete" || currentState === "interrupted") {
-      release();
+      finish(currentState);
     }
   };
 
-  timer = setTimeout(release, BLOB_URL_RELEASE_TIMEOUT);
-  // Node/happy-dom 的定时器对象带 unref：不要让释放兜底拖住进程退出（浏览器下是数字，可选调用）
-  (timer as unknown as { unref?: () => void })?.unref?.();
+  const checkCurrentState = (afterTimeout: boolean) => {
+    const downloads = getChromeApi()?.downloads;
+    if (!downloads?.search || typeof chromeDownloadId !== "number") {
+      if (afterTimeout) finish("interrupted");
+      return;
+    }
+    void downloads.search({ id: chromeDownloadId }).then(
+      (items) => {
+        if (settled) return;
+        const state = items?.[0]?.state;
+        if (state === "complete" || state === "interrupted") {
+          finish(state);
+        } else if (afterTimeout) {
+          if (state === "in_progress") {
+            armTimeout();
+          } else {
+            finish("interrupted");
+          }
+        }
+      },
+      (e) => {
+        logger({ msg: "Failed to check browser download state", level: "warn", data: getErrorMessage(e) });
+        if (afterTimeout) finish("interrupted");
+      },
+    );
+  };
+  const armTimeout = () => {
+    timer = setTimeout(() => {
+      releaseBlob();
+      if (!onSettled || typeof chromeDownloadId !== "number") {
+        cleanup();
+        return;
+      }
+      // 终态事件丢失时主动查询；仍在下载则继续等待，不能把慢下载误报为失败。
+      checkCurrentState(true);
+    }, BLOB_URL_RELEASE_TIMEOUT);
+    (timer as unknown as { unref?: () => void })?.unref?.();
+  };
+  armTimeout();
 
   if (typeof chromeDownloadId !== "number") {
     return; // 拿不到下载 id，只能靠超时兜底
@@ -868,9 +916,32 @@ export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloa
 
   try {
     getChromeApi()?.downloads?.onChanged?.addListener(onDownloadChanged);
+    if (onSettled) checkCurrentState(false);
   } catch (e) {
-    logger({ msg: "Failed to watch download state for blob url release", level: "warn", data: getErrorMessage(e) });
+    logger({ msg: "Failed to watch browser download state", level: "warn", data: getErrorMessage(e) });
   }
+}
+
+function trackLocalDownload(
+  chromeDownloadId: number,
+  downloadId: TTorrentDownloadKey,
+  reservation?: IPreparedDownload["siteDownloadReservation"],
+  blobUrl?: string,
+): void {
+  watchDownloadSettled(chromeDownloadId, blobUrl, async (state) => {
+    await setDownloadStatus(downloadId, state === "complete" ? "completed" : "failed");
+    if (state === "interrupted") {
+      await patchDownloadHistory(downloadId, { errorMessage: "Browser download interrupted" });
+      if (reservation) {
+        await rollbackSiteDownloadInterval(reservation.site, reservation.at, reservation.previous);
+      }
+    }
+  });
+}
+
+/** 本地备份也必须等浏览器读完 Blob 才能释放 URL。 */
+export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloadId?: number): void {
+  watchDownloadSettled(chromeDownloadId, blobUrl);
 }
 
 export async function getDownloadHistory() {

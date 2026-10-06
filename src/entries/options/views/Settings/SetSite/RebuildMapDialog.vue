@@ -3,6 +3,7 @@ import { computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useResetableRef } from "@/options/directives/useResetableRef.ts";
 
 const showDialog = defineModel<boolean>();
@@ -16,17 +17,18 @@ const { ref: reBuildControlRef, reset: resetReBuildControlRef } = useResetableRe
 
 async function doReBuild() {
   const metadataStore = useMetadataStore();
-
-  if (reBuildControlRef.value.rebuildSiteHostMap) {
-    await metadataStore.buildSiteHostMap();
+  try {
+    if (reBuildControlRef.value.rebuildSiteHostMap) {
+      await metadataStore.buildSiteHostMap();
+    }
+    if (reBuildControlRef.value.rebuildSiteNameMap) {
+      await metadataStore.buildSiteNameMap();
+    }
+    await metadataStore.$save();
+    showDialog.value = false;
+  } catch {
+    useRuntimeStore().showSnakebar(t("common.saveFailed"), { color: "error" });
   }
-
-  if (reBuildControlRef.value.rebuildSiteNameMap) {
-    await metadataStore.buildSiteNameMap();
-  }
-
-  await metadataStore.$save();
-  showDialog.value = false;
 }
 
 const canReBuild = computed<boolean>(() => Object.values(reBuildControlRef.value).some(Boolean));

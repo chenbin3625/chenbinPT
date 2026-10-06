@@ -123,10 +123,8 @@ export async function applyBackupRetention(
   const list = (await backupServerInstance.list()) ?? [];
 
   const backupFiles = list.filter((item) => isBackupFilename(item.filename)).sort((a, b) => b.time - a.time); // 按备份时间从新到旧排序
-  const [deletedFiles] = pruneBackupFiles(
-    backupFiles.filter((item) => item.filename !== keepFilename),
-    retention,
-  );
+  const [candidates] = pruneBackupFiles(backupFiles, retention);
+  const deletedFiles = candidates.filter((item) => item.filename !== keepFilename);
 
   const actuallyDeletedFiles: IBackupFileInfo[] = [];
   for (const file of deletedFiles) {
@@ -423,25 +421,6 @@ export async function restoreBackupData(
     }
   }
 
-  // 恢复下载历史（独立于 storage key 的写入事务：IndexedDB 侧已有原子替换）
-  if (restoreFields.includes("downloadHistory")) {
-    const db = await ptdIndexDb;
-    // 统一放在一个事务里「先清空再批量写入」，由 replaceDownloadHistory 保证原子性；
-    // 备份数据非法（zip 中缺少 downloadHistory.json 时该 key 会被跳过）时直接放弃，绝不清空本机已有历史。
-    const restored = await replaceDownloadHistory(
-      () => db.transaction("download_history", "readwrite"),
-      restoreData.downloadHistory,
-    );
-    if (restored) {
-      report.restored.push("downloadHistory");
-    } else {
-      report.skipped.push({ field: "downloadHistory", reason: "invalid data in backup, local history kept" });
-      logger({
-        msg: `Skip restoring download history: invalid data in backup (expected an array, got ${typeof restoreData.downloadHistory})`,
-      });
-    }
-  }
-
   /**
    * 阶段 1：全部校验/构造到内存，**不写任何 key**（见 L-10）。
    *
@@ -471,6 +450,23 @@ export async function restoreBackupData(
     if (field === "userInfo" && keepExistUserInfo) {
       const userInfoStore = ((await sendMessage("getExtStorage", "userInfo")) ?? {}) as TUserInfoStorageSchema;
       fieldData = toMerged(fieldData, userInfoStore);
+    }
+
+    if (field === "config") {
+      // M-19：备份加密密钥一律沿用本机的，不接受备份文件里的值。
+      // 恢复他人分享的备份时，若把 config.backup.encryptionKey 换成对方已知的值，之后所有自动备份
+      // 都会用这把密钥加密 —— 配合任何一条上传通道，对方就能解开本机凭据。本机未设置时保持未设置。
+      const localConfig = (await sendMessage("getExtStorage", "config")) as IConfigPiniaStorageSchema | undefined;
+      const restoredConfig = fieldData as IConfigPiniaStorageSchema;
+      const backupKey = restoredConfig?.backup?.encryptionKey;
+      const localKey = localConfig?.backup?.encryptionKey;
+      if (isPlainObject(restoredConfig?.backup) && backupKey !== localKey) {
+        fieldData = {
+          ...restoredConfig,
+          backup: { ...restoredConfig.backup, encryptionKey: localKey ?? "" },
+        } as IExtensionStorageSchema[typeof field];
+        report.sanitized.push("config.backup.encryptionKey：沿用本机的备份加密密钥，未采用备份文件中的值");
+      }
     }
 
     if (field === "metadata") {
@@ -548,6 +544,23 @@ export async function restoreBackupData(
       written.push({ key, snapshot: snapshots.get(key)!, field });
       report.restored.push(field);
     }
+
+    // 最后替换 IndexedDB 历史：该操作自身是原子事务，失败时上面的 storage 写入仍可回滚。
+    if (restoreFields.includes("downloadHistory")) {
+      const db = await ptdIndexDb;
+      const restored = await replaceDownloadHistory(
+        () => db.transaction("download_history", "readwrite"),
+        restoreData.downloadHistory,
+      );
+      if (restored) {
+        report.restored.push("downloadHistory");
+      } else {
+        report.skipped.push({ field: "downloadHistory", reason: "invalid data in backup, local history kept" });
+        logger({
+          msg: `Skip restoring download history: invalid data in backup (expected an array, got ${typeof restoreData.downloadHistory})`,
+        });
+      }
+    }
     report.success = true;
   } catch (e) {
     logger({
@@ -557,11 +570,13 @@ export async function restoreBackupData(
     });
 
     let rollbackOk = true;
+    const failedRollbackFields: string[] = [];
     for (const { key, snapshot, field } of written.toReversed()) {
       try {
         await sendMessage("setExtStorage", { key, value: snapshot });
       } catch (rollbackError) {
         rollbackOk = false;
+        failedRollbackFields.push(field);
         logger({
           msg: `Failed to roll back ${field} after a failed restore`,
           level: "error",
@@ -570,6 +585,7 @@ export async function restoreBackupData(
       }
     }
     report.rolledBack = rollbackOk;
+    report.restored = failedRollbackFields;
     report.success = false;
   }
 

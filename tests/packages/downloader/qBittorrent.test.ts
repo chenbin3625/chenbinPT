@@ -148,3 +148,44 @@ describe("qBittorrent：用户名密码请求必须携带 Cookie", () => {
     expect(axiosMock.request.mock.calls[0][0].withCredentials).toBe(true);
   });
 });
+
+describe("qBittorrent ≥5.2：/torrents/add 的 JSON 响应（M-27）", () => {
+  beforeEach(() => {
+    axiosMock.request.mockReset();
+    axiosMock.post.mockReset();
+    axiosMock.post.mockResolvedValue({ data: "Ok.", status: 200 });
+  });
+
+  it("链接直发返回 202 + pending_count>0（已异步入队）时判成功，而不是 failed", async () => {
+    axiosMock.request.mockResolvedValue({
+      status: 202,
+      data: { success_count: 0, pending_count: 1, failure_count: 0, added_torrent_ids: [] },
+    });
+    const client = createClient();
+
+    const result = await client.addTorrent("https://pt.example/download.php?id=1", { localDownload: false });
+    expect(result.success).toBe(true);
+  });
+
+  it("有 failure_count 时仍判失败", async () => {
+    axiosMock.request.mockResolvedValue({
+      status: 200,
+      data: { success_count: 0, pending_count: 1, failure_count: 1, added_torrent_ids: [] },
+    });
+    const client = createClient();
+
+    const result = await client.addTorrent("https://pt.example/download.php?id=1", { localDownload: false });
+    expect(result.success).toBe(false);
+  });
+
+  it("什么都没接受（全 0）时判失败", async () => {
+    axiosMock.request.mockResolvedValue({
+      status: 200,
+      data: { success_count: 0, pending_count: 0, failure_count: 0, added_torrent_ids: [] },
+    });
+    const client = createClient();
+
+    const result = await client.addTorrent("https://pt.example/download.php?id=1", { localDownload: false });
+    expect(result.success).toBe(false);
+  });
+});

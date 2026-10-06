@@ -392,6 +392,25 @@ export class GazelleBase extends PrivateSite {
   private _downloadAuthParams?: { authkey: string; torrentPass: string };
 
   // Gazelle 通用做种量获取方法，用于先前方法没获取到 seedingSize 的情况
+  /**
+   * 做种体积是「可选兜底」：失败只记日志，返回原对象，绝不让整次用户信息刷新判失败。
+   *
+   * L-4：Gazelle / GazelleJSONAPI / Luminance 三处原本各写各的守卫（M-8 / M-10 就是其中两处漏写的结果），
+   * 收敛到这一个方法，后续新增 schema 直接复用，避免第四次漂移。
+   */
+  protected async mergeSeedingSizeSafely<T extends Partial<IUserInfo>>(userInfo: T): Promise<T> {
+    try {
+      return toMerged(userInfo, await this.getSeedingSize(userInfo.id as number)) as T;
+    } catch (e) {
+      logMessage(
+        `[Site] ${this.name} getSeedingSize failed, keep other user info`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
+      return userInfo;
+    }
+  }
+
   protected async getSeedingSize(userId: number, sizeIndex: number = 0): Promise<Partial<IUserInfo>> {
     const userSeedingTorrent: Partial<IUserInfo> = { seedingSize: 0 };
     const maxPages = 50; // 硬上限，防止分页信息异常时无限翻页
@@ -548,7 +567,9 @@ export class GazelleBase extends PrivateSite {
         },
       ) as string;
 
-      const realLinkParams = URL.parse(realLink ?? "")?.searchParams;
+      // M-9：上游 browse.php 输出的是相对链接（`torrents.php?action=download&...`），
+      // 不给 base 时 URL.parse 返回 null，凭据恒为空 —— 必须按站点地址解析
+      const realLinkParams = URL.parse(realLink ?? "", this.url)?.searchParams;
       const authkey = realLinkParams?.get("authkey") ?? "";
       const torrentPass = realLinkParams?.get("torrent_pass") ?? "";
       if (authkey && torrentPass) {
@@ -834,15 +855,7 @@ export default class Gazelle extends GazelleBase {
     // 若不判断状态就会对刚失败的站点再发 1-50 个请求，且这里抛错会逃出
     // 「总返回 IUserInfo」的方法契约（调用方 offscreen/utils/userInfo.ts 无 try/catch）。
     if (flushUserInfo.status === EResultParseStatus.success && flushUserInfo.id && !flushUserInfo.seedingSize) {
-      try {
-        return toMerged(flushUserInfo, await this.getSeedingSize(flushUserInfo.id as number));
-      } catch (e) {
-        logMessage(
-          `[Site] ${this.name} getSeedingSize failed`,
-          { site: this.metadata.id, error: siteErrorLogData(e) },
-          "warn",
-        );
-      }
+      return await this.mergeSeedingSizeSafely(flushUserInfo);
     }
 
     return flushUserInfo;

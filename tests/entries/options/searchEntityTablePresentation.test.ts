@@ -20,7 +20,8 @@ import { computedStyle, mountOptionsView, prepareOptionsPinia } from "../../help
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
-const TAGS = [{ name: "中字" }, { name: "HDR" }, { name: "完结" }] as any;
+// 前两个带颜色（与 tags.ts 预定义 / 站点页面抓到的底色同形），最后一个没有颜色
+const TAGS = [{ name: "中字", color: "pink-darken-1" }, { name: "Free", color: "#1976D2" }, { name: "完结" }] as any;
 
 let TorrentTitleTd: any;
 
@@ -46,7 +47,8 @@ describe("搜索结果表格展示", () => {
 });
 
 describe("种子标题单元格（渲染行为）", () => {
-  it("标签渲染成中性色的 a-tag，且不提供删除入口", async () => {
+  it("标签按自带颜色渲染（M-30），无颜色的标签用中性色，且不提供删除入口", async () => {
+    const { resolveColor } = await import("@/shared/colors.ts");
     const view = mountOptionsView(TorrentTitleTd, {
       props: { item: { title: "种子标题", tags: TAGS } },
       pinia: prepareOptionsPinia(),
@@ -60,15 +62,21 @@ describe("种子标题单元格（渲染行为）", () => {
     for (const tag of tags) {
       // 没有关闭按钮（旧实现带 closable + @close，用户能临时隐藏标签却无法恢复）
       expect(tag.querySelector(".ant-tag-close-icon")).toBeNull();
-      // 中性色：color="default" 的实际效果是渲染 .ant-tag-default（而 color="green" 之类
-      // 会渲染 .ant-tag-green）；旧实现用 resolveColor(tag.color) 算出动态色，会写内联 background/color
-      expect(tag.classList.contains("ant-tag-default"), '标签应使用中性色（antd 的 color="default"）').toBe(true);
-      const presetColorClasses = Array.from(tag.classList).filter(
-        (name) => name.startsWith("ant-tag-") && name !== "ant-tag-default",
-      );
-      expect(presetColorClasses, `标签不应带预设色类：${presetColorClasses.join(",")}`).toEqual([]);
-      expect(tag.getAttribute("style") ?? "").not.toMatch(/background|(^|;)\s*color/);
     }
+
+    // 带颜色的标签：antd 对非预设色写内联背景色，颜色来自 resolveColor（与 tags.ts 的色名体系一致）
+    const toRgb = (hex: string) => {
+      const n = parseInt(hex.slice(1), 16);
+      return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+    };
+    for (const index of [0, 1]) {
+      const expected = resolveColor(TAGS[index].color)!;
+      const background = (tags[index] as HTMLElement).style.backgroundColor;
+      expect([expected.toLowerCase(), toRgb(expected)]).toContain(background.toLowerCase());
+      expect(tags[index]!.classList.contains("ant-tag-default")).toBe(false);
+    }
+    // 无颜色的标签保持中性色
+    expect(tags[2]!.classList.contains("ant-tag-default")).toBe(true);
 
     view.unmount();
   });

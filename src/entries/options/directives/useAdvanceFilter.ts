@@ -96,11 +96,12 @@ type TFormat = Record<string, TAdvanceFilterFormat | IValueFormat>;
  */
 function escapeQueryValue(value: unknown): unknown {
   if (typeof value !== "string") return value;
-  // encodeURIComponent 不处理 !'()*~，这里一并编码，避免引号参与库的引号解析
-  return encodeURIComponent(value).replace(
-    /[!'()*~]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
-  );
+  // encodeURIComponent 不处理 !'()*~，这里一并编码，避免引号参与库的引号解析；
+  // M-21：值首字符的 `-` 同样要编码 —— search-query-parser 把 `-xxx` 读成「排除 xxx」，
+  // 必选标签 `-RARBG` 往返后会变成排除项（含该串的种子反被排除）。只编码首字符，`a-b` 这类值保持可读。
+  return encodeURIComponent(value)
+    .replace(/[!'()*~]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`)
+    .replace(/^-/, "%2D");
 }
 
 function unEscapeQueryValue(value: unknown): unknown {
@@ -220,7 +221,6 @@ export function checkKeywordValue(
   keyword: string,
   format: TFormat = {},
   exclude = false,
-  // @ts-ignore
 ): boolean | undefined {
   const itemValue = get(rawItem, keyword); // true    filter[keyword] = ['1']
   if (filter[keyword]) {
@@ -242,6 +242,7 @@ export function checkKeywordValue(
       return filter[keyword].some((k: string) => matchFilterValue(itemParsedValue, k));
     }
   }
+  return undefined; // 该 keyword 未参与筛选：调用方据 undefined 跳过（T-2：原用 @ts-ignore 吞掉 TS7030）
 }
 
 /**
@@ -277,7 +278,6 @@ export function checkRangeValue(
   rawItem: TRawItem,
   keyword: string,
   format: TFormat = {},
-  // @ts-ignore
 ): boolean | undefined {
   const itemValue = get(rawItem, keyword);
   if (filter[keyword] && typeof itemValue !== "undefined") {
@@ -287,6 +287,7 @@ export function checkRangeValue(
 
     return value >= from && value <= to;
   }
+  return undefined; // 同上
 }
 
 interface TableCustomFilterOptions<ItemType> {

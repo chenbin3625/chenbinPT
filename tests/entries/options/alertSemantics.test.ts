@@ -163,6 +163,36 @@ describe("其他页面的 alert 级别与其触发条件", () => {
     view.unmount();
   });
 
+  it("插件重置：「清空用户配置」确认后 siteIndex 也写成空表（M-6）", async () => {
+    const callsBefore = sendMessageMock.mock.calls.length;
+    const pinia = prepareOptionsPinia();
+    const { useMetadataStore } = await import("@/options/stores/metadata.ts");
+    const metadataStore = useMetadataStore(pinia);
+    metadataStore.siteHostMap = { "a.example": "siteA" } as any;
+    metadataStore.siteNameMap = { siteA: "Site A" } as any;
+    (metadataStore as any).$save = vi.fn(async () => {});
+
+    const { default: ResetWindow } = await import("@/options/views/Settings/SetBase/ResetWindow.vue");
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const view = mountOptionsView(ResetWindow, { pinia });
+    try {
+      await view.settle();
+      const title = i18nInstance.global.t("SetBase.reset.clearUserConfig");
+      const row = view.$$(".ant-list-item").find((item) => item.textContent?.includes(title));
+      row!.querySelector<HTMLButtonElement>("button")!.click();
+      await view.settle();
+      document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-dangerous")!.click();
+      await view.settle(80);
+
+      const siteIndexWrites = sendMessageMock.mock.calls
+        .slice(callsBefore)
+        .filter(([type, payload]) => type === "setExtStorage" && payload?.key === "siteIndex");
+      expect(siteIndexWrites.at(-1)?.[1].value).toEqual({ siteHostMap: {}, siteNameMap: {} });
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("原生桥接：隐私说明是 warning 级提示", async () => {
     const { default: NativeBridgeWindow } = await import("@/options/views/Settings/SetBase/NativeBridgeWindow.vue");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");

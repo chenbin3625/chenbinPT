@@ -36,7 +36,14 @@ const showPlanMenu = computed(() => searchPlans.length > 0);
 
 <template>
   <a-dropdown :disabled="!showPlanMenu" placement="bottomRight">
-    <a-list-item class="ptd-parse-result-row" @click="() => doKeywordSearch(keyword, searchPlan)">
+    <a-list-item
+      class="ptd-parse-result-row"
+      role="button"
+      tabindex="0"
+      @click="() => doKeywordSearch(keyword, searchPlan)"
+      @keydown.enter.prevent="() => doKeywordSearch(keyword, searchPlan)"
+      @keydown.space.prevent="() => doKeywordSearch(keyword, searchPlan)"
+    >
       <a-list-item-meta :title="title" />
 
       <template #actions>

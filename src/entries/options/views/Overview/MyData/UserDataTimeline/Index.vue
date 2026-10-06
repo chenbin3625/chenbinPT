@@ -522,7 +522,7 @@ function saveControl() {
                           :config="
                             text({
                               y: 0,
-                              text: `${allAddedSiteMetadata[userInfo.site]?.isDead ? '󰖛' : ''}${allAddedSiteMetadata[userInfo.site].siteName}`,
+                              text: `${allAddedSiteMetadata[userInfo.site]?.isDead ? '󰖛' : ''}${allAddedSiteMetadata[userInfo.site]?.siteName ?? userInfo.site}`,
                               fill: allAddedSiteMetadata[userInfo.site]?.isDead ? '#9E9E9E' : '#fff',
                               fontFamily: allAddedSiteMetadata[userInfo.site]?.isDead
                                 ? 'Material Design Icons For PTD'
@@ -627,121 +627,143 @@ function saveControl() {
         </div>
 
         <div class="ptd-timeline-console__body">
-          <div class="ptd-section-heading" style="margin-top: 0">
-            {{ t("UserDataTimeline.controls.styleSettings") }}
-          </div>
+          <div class="ptd-timeline-settings">
+            <div class="ptd-section-heading ptd-timeline-settings__heading">
+              {{ t("UserDataTimeline.controls.styleSettings") }}
+            </div>
 
-          <a-typography-text style="margin: 8px 0">{{
-            t("UserDataTimeline.controls.usernameAndTitle")
-          }}</a-typography-text>
-
-          <a-row :gutter="8">
-            <a-col :span="24">
-              <a-flex align="center" :gap="4">
-                <a-auto-complete
-                  v-model:value="configStore.userName"
-                  :options="Object.keys(configStore.getUserNames.names).map((name) => ({ value: name, label: name }))"
-                  :placeholder="t('common.username')"
-                  style="flex: 1 1 0"
-                />
-                <HistoryOutlined
-                  style="cursor: pointer"
-                  @click="() => (configStore.userName = configStore.getUserNames.perfName)"
-                />
-              </a-flex>
-            </a-col>
-            <a-col :span="24">
-              <a-form-item :label="t('UserDataTimeline.controls.timelineTitle')"
-                ><a-input v-model:value="timelineTitle">
-                  <template #suffix>
-                    <HistoryOutlined
-                      style="cursor: pointer"
-                      @click="
-                        () => {
-                          control.title = '';
-                          resetTimelineDataWithControl();
-                        }
+            <section class="ptd-timeline-settings__group">
+              <div class="ptd-timeline-settings__label">{{ t("UserDataTimeline.controls.usernameAndTitle") }}</div>
+              <div class="ptd-timeline-settings__inputs">
+                <div>
+                  <span class="ptd-timeline-settings__caption">{{ t("common.username") }}</span>
+                  <div class="ptd-timeline-settings__input-control">
+                    <a-auto-complete
+                      v-model:value="configStore.userName"
+                      :aria-label="t('common.username')"
+                      :options="
+                        Object.keys(configStore.getUserNames.names).map((name) => ({ value: name, label: name }))
                       "
+                      :placeholder="t('common.username')"
                     />
-                  </template> </a-input
-              ></a-form-item>
-            </a-col>
-          </a-row>
+                    <a-button
+                      type="text"
+                      :aria-label="t('common.dialog.reset')"
+                      :title="t('common.dialog.reset')"
+                      @click="configStore.userName = configStore.getUserNames.perfName"
+                    >
+                      <HistoryOutlined />
+                    </a-button>
+                  </div>
+                </div>
+                <a-form-item
+                  class="ptd-timeline-settings__title-field"
+                  :label="t('UserDataTimeline.controls.timelineTitle')"
+                >
+                  <a-input v-model:value="timelineTitle">
+                    <template #suffix>
+                      <a-button
+                        type="text"
+                        size="small"
+                        :aria-label="t('common.dialog.reset')"
+                        :title="t('common.dialog.reset')"
+                        @click="
+                          () => {
+                            control.title = '';
+                            resetTimelineDataWithControl();
+                          }
+                        "
+                      >
+                        <HistoryOutlined />
+                      </a-button>
+                    </template>
+                  </a-input>
+                </a-form-item>
+              </div>
+            </section>
 
-          <a-typography-text style="margin: 8px 0">{{ t("UserDataTimeline.controls.components") }}</a-typography-text>
+            <section class="ptd-timeline-settings__group">
+              <div class="ptd-timeline-settings__label">{{ t("UserDataTimeline.controls.components") }}</div>
+              <div class="ptd-timeline-settings__toggles">
+                <div class="ptd-timeline-settings__toggle">
+                  <a-switch
+                    v-model:checked="control.showTop"
+                    :aria-label="t('UserDataTimeline.controls.showTopSites')"
+                  />
+                  <span>{{ t("UserDataTimeline.controls.showTopSites") }}</span>
+                </div>
+                <div class="ptd-timeline-settings__toggle">
+                  <a-switch
+                    v-model:checked="control.showTimeline"
+                    :aria-label="t('UserDataTimeline.controls.showTimeline')"
+                  />
+                  <span>{{ t("UserDataTimeline.controls.showTimeline") }}</span>
+                </div>
+              </div>
+              <div class="ptd-timeline-settings__color-row">
+                <span>{{ t("UserDataTimeline.controls.customBgColor") }}</span>
+                <div class="ptd-timeline-settings__color-control">
+                  <input
+                    v-model="control.backgroundColor"
+                    type="color"
+                    :aria-label="t('UserDataTimeline.controls.customBgColor')"
+                  />
+                  <a-button
+                    type="text"
+                    :aria-label="t('common.dialog.reset')"
+                    :title="t('common.dialog.reset')"
+                    @click="control.backgroundColor = defaultTimelineBackgroundColor"
+                  >
+                    <HistoryOutlined />
+                  </a-button>
+                </div>
+              </div>
+            </section>
 
-          <!-- antd 的 a-switch 只渲染 checkedChildren/unCheckedChildren 插槽，默认插槽会被丢弃，
-               因此文案必须放在同级节点上 -->
-          <a-switch v-model:checked="control.showTop" />
-          <span style="margin-left: 8px">{{ t("UserDataTimeline.controls.showTopSites") }}</span>
-          <a-switch v-model:checked="control.showTimeline" />
-          <span style="margin-left: 8px">{{ t("UserDataTimeline.controls.showTimeline") }}</span>
+            <section class="ptd-timeline-settings__group">
+              <div class="ptd-timeline-settings__label">{{ t("UserDataTimeline.controls.siteDisplay") }}</div>
+              <div class="ptd-timeline-settings__slider-row">
+                <span>{{ t("UserDataTimeline.controls.faviconBlur") }}</span>
+                <a-slider
+                  v-model:value="control.faviconBlue"
+                  :aria-label="t('UserDataTimeline.controls.faviconBlur')"
+                  :max="8"
+                  :min="0"
+                  :step="1"
+                  @change="updateBlue"
+                />
+                <output>{{ control.faviconBlue }} px</output>
+              </div>
+            </section>
 
-          <a-form-item :label="t('UserDataTimeline.controls.customBgColor')">
-            <a-flex align="center" :gap="4">
-              <input v-model="control.backgroundColor" type="color" style="height: 32px; width: 64px" />
-              <HistoryOutlined
-                style="cursor: pointer"
-                @click="control.backgroundColor = defaultTimelineBackgroundColor"
-              />
-            </a-flex>
-          </a-form-item>
+            <section class="ptd-timeline-settings__group">
+              <div class="ptd-timeline-settings__label">{{ t("UserDataTimeline.controls.displayContent") }}</div>
+              <div class="ptd-timeline-settings__subheading">{{ t("UserDataTimeline.controls.statsSection") }}</div>
+              <div class="ptd-timeline-settings__field-grid">
+                <a-checkbox v-for="(v, key) in control.showField" :key="key" v-model:checked="control.showField[key]">
+                  {{ t("UserDataTimeline.field." + key) }}
+                </a-checkbox>
+              </div>
+              <div class="ptd-timeline-settings__subheading">{{ t("UserDataTimeline.controls.timelineSection") }}</div>
+              <div class="ptd-timeline-settings__field-grid">
+                <a-checkbox
+                  v-for="(v, key) in control.showPerSiteField"
+                  :key="key"
+                  v-model:checked="control.showPerSiteField[key]"
+                >
+                  {{ t("UserDataTimeline.field." + key) }}
+                </a-checkbox>
+              </div>
+            </section>
 
-          <a-typography-text style="margin: 8px 0">{{ t("UserDataTimeline.controls.siteDisplay") }}</a-typography-text>
-
-          <a-row :gutter="8">
-            <a-col :span="20">
-              <a-slider
-                v-model:value="control.faviconBlue"
-                :max="8"
-                :min="0"
-                :step="1"
-                style="padding-right: 20px"
-                :tooltip-open="true"
-                @change="updateBlue"
-              ></a-slider>
-            </a-col>
-          </a-row>
-
-          <a-row :gutter="8">
-            <a-col flex="1 1 0" style="align-self: center; margin-left: 8px">
-              <a-typography-text>{{ t("UserDataTimeline.controls.displayContent") }}</a-typography-text>
-            </a-col>
-            <a-col :span="24" :sm="20">
-              <a-typography-text style="margin: 8px 0">{{
-                t("UserDataTimeline.controls.statsSection")
-              }}</a-typography-text>
-              <a-row :gutter="0" style="padding-left: 20px">
-                <a-col v-for="(v, key) in control.showField" :key="key" :span="12" :sm="8" style="padding: 0">
-                  <a-checkbox v-model:checked="control.showField[key]">
-                    {{ t("UserDataTimeline.field." + key) }}
-                  </a-checkbox>
-                </a-col>
-              </a-row>
-              <a-typography-text style="margin: 8px 0">{{
-                t("UserDataTimeline.controls.timelineSection")
-              }}</a-typography-text>
-              <a-row :gutter="0" style="padding-left: 20px">
-                <a-col v-for="(v, key) in control.showPerSiteField" :key="key" :span="12" :sm="8" style="padding: 0px">
-                  <a-checkbox :key="key" v-model:checked="control.showPerSiteField[key]">
-                    {{ t("UserDataTimeline.field." + key) }}
-                  </a-checkbox>
-                </a-col>
-              </a-row>
-            </a-col>
-          </a-row>
-
-          <a-row :gutter="8">
-            <a-col flex="1 1 0" style="align-self: center; margin-left: 8px">
-              <a-typography-text>{{ t("UserDataTimeline.controls.timeDisplay") }}</a-typography-text>
-            </a-col>
-            <a-col :span="24" :sm="20">
-              <a-radio-group v-model:value="control.dateFormat">
+            <section class="ptd-timeline-settings__group">
+              <div class="ptd-timeline-settings__label">{{ t("UserDataTimeline.controls.timeDisplay") }}</div>
+              <a-radio-group v-model:value="control.dateFormat" class="ptd-timeline-settings__radio-group">
                 <a-radio value="time_added">{{ t("UserDataTimeline.controls.timeAdded") }}</a-radio>
                 <a-radio value="time_alive">{{ t("UserDataTimeline.controls.timeAlive") }}</a-radio>
               </a-radio-group>
-            </a-col>
-          </a-row>
+            </section>
+          </div>
 
           <div class="ptd-section-heading" style="margin-top: 16px">
             <span>{{ t("UserDataTimeline.controls.displaySiteSettings") }}</span>
@@ -845,5 +867,169 @@ function saveControl() {
 
 .ptd-timeline-console__body {
   padding: 16px;
+}
+
+.ptd-timeline-settings {
+  min-width: 0;
+}
+
+.ptd-timeline-settings__heading {
+  margin-top: 0;
+}
+
+.ptd-timeline-settings__group {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+}
+
+.ptd-timeline-settings__group:last-child {
+  border-bottom: 0;
+}
+
+.ptd-timeline-settings__label {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.ptd-timeline-settings__inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+.ptd-timeline-settings__caption {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.ptd-timeline-settings__input-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ptd-timeline-settings__input-control .ant-select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ptd-timeline-settings__input-control .ant-btn,
+.ptd-timeline-settings__color-control .ant-btn {
+  flex: none;
+}
+
+.ptd-timeline-settings__title-field {
+  margin-bottom: 0;
+}
+
+.ptd-timeline-settings__title-field :deep(.ant-form-item-row) {
+  display: block;
+}
+
+.ptd-timeline-settings__title-field :deep(.ant-form-item-label) {
+  padding-bottom: 6px;
+  text-align: left;
+}
+
+.ptd-timeline-settings__title-field :deep(.ant-form-item-label > label) {
+  height: auto;
+}
+
+.ptd-timeline-settings__title-field :deep(.ant-input-suffix .ant-btn) {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.ptd-timeline-settings__toggles {
+  display: grid;
+  gap: 8px;
+}
+
+.ptd-timeline-settings__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.ptd-timeline-settings__toggle .ant-switch {
+  flex: none;
+}
+
+.ptd-timeline-settings__toggle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ptd-timeline-settings__color-row,
+.ptd-timeline-settings__color-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ptd-timeline-settings__color-row {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.ptd-timeline-settings__color-control input {
+  width: 56px;
+  height: 32px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.ptd-timeline-settings__slider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.ptd-timeline-settings__slider-row > span {
+  grid-column: 1 / -1;
+}
+
+.ptd-timeline-settings__slider-row .ant-slider {
+  min-width: 0;
+  margin: 8px 0;
+}
+
+.ptd-timeline-settings__slider-row output {
+  min-width: 36px;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--ptd-text-secondary, #666);
+}
+
+.ptd-timeline-settings__subheading {
+  margin: 12px 0 8px;
+  color: var(--ptd-text-secondary, #666);
+}
+
+.ptd-timeline-settings__field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  gap: 8px 12px;
+}
+
+.ptd-timeline-settings__field-grid :deep(.ant-checkbox-wrapper) {
+  min-width: 0;
+  margin-inline-start: 0;
+  overflow-wrap: anywhere;
+}
+
+.ptd-timeline-settings__radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.ptd-timeline-settings__radio-group :deep(.ant-radio-wrapper) {
+  margin-inline-end: 0;
 }
 </style>

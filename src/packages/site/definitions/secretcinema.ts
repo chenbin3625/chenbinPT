@@ -105,17 +105,9 @@ export const siteMetadata: ISiteMetadata = {
           selector: "div.torrent_snatched",
           filters: [{ name: "parseNumber" }],
         },
-        time: {
-          selector: "span.time",
-          filters: [
-            { name: "parseTTL" },
-            (ts: number) => {
-              const offsetMinutes = new Date().getTimezoneOffset();
-              const offsetMs = offsetMinutes * 60 * 1000;
-              return ts + 1 * 3600000 + offsetMs; // UTC+1
-            },
-          ],
-        },
+        // D-17：parseTTL（"3 hours ago" → now - 3h）产出的已是绝对时间戳，不能再叠加宿主时区与 +1h ——
+        // 那样种子时间会随用户机器时区整体偏移
+        time: { selector: "span.time", filters: [{ name: "parseTTL" }] },
       },
     },
   ],
@@ -223,12 +215,11 @@ export default class SecretCinema extends GazelleJSONAPI {
       params: { id: userId },
       responseType: "document",
     });
-    userSeedingTorrent.seedingBonus! = definedFilters.parseNumber(
-      selectElements("li:contains('Seeding Points: ')", userPage)[0].textContent,
-    );
-    userSeedingTorrent.percentile! = definedFilters.parseNumber(
-      selectElements("li:contains('Overall rank: ')", userPage)[0].textContent,
-    );
+    // D-16：页面结构变化时这两项缺失，不能直接 [0].textContent —— 抛错会让已算出的 seedingSize 一并作废
+    const seedingPoints = selectElements("li:contains('Seeding Points: ')", userPage)[0]?.textContent;
+    if (seedingPoints) userSeedingTorrent.seedingBonus = definedFilters.parseNumber(seedingPoints);
+    const overallRank = selectElements("li:contains('Overall rank: ')", userPage)[0]?.textContent;
+    if (overallRank) userSeedingTorrent.percentile = definedFilters.parseNumber(overallRank);
 
     return userSeedingTorrent;
   }

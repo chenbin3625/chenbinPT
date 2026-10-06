@@ -201,7 +201,7 @@ const clientMeta = computedAsync<IBackupMetadata<any>>(
   { requiredField: [] } as IBackupMetadata<any>,
 );
 
-const nameRules = [formValidateRules.require(t("SetDownloader.editor.nameTip"))];
+const nameRules = [formValidateRules.require(t("SetBackup.Editor.nameTip"))];
 
 function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
   for (const rule of rules) {

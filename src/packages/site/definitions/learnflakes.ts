@@ -61,12 +61,9 @@ export const siteMetadata: ISiteMetadata = {
       options: Object.entries(categoryMap).map(([value, name]) => ({ name, value })),
       cross: { mode: "brackets" },
     },
-    {
-      name: "仅免费",
-      key: "freeleech",
-      options: [{ name: "仅免费种子", value: 1 }],
-      cross: { mode: "append", key: "" },
-    },
+    // D-21：原先的「仅免费」用空 cross.key，实际发出 `1=1` 这类无意义参数、却显示筛选成功。
+    // 站点没有服务端的免费筛选参数（Jackett learnflakes.yml 是在取回页面后按 torrent_free.png 图标过滤行），
+    // 因此去掉该选项；免费种子可在结果里用 Free 标签筛选。
   ],
 
   search: {

@@ -2,13 +2,14 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/GazelleGamesAPI.cs
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/gazellegames.net/config.json
  */
-import type {
-  ISiteMetadata,
-  ISearchInput,
-  ITorrent,
-  IUserInfo,
-  ISearchEntryRequestConfig,
-  ISearchResult,
+import {
+  NoUserInputError,
+  type ISiteMetadata,
+  type ISearchInput,
+  type ITorrent,
+  type IUserInfo,
+  type ISearchEntryRequestConfig,
+  type ISearchResult,
 } from "../types.ts";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 import {
@@ -242,13 +243,19 @@ export default class GazelleGames extends GazelleJSONAPI {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
+    const token = this.userConfig.inputSetting?.token;
+    if (!token) {
+      // M-7：未填写 API Key 时直接拦截（与 huno / beyondhd 一致），而不是带空 key 请求后被判成「0 结果」
+      throw new NoUserInputError("Token");
+    }
+
     // 设置默认的 responseType，这样其他配置不需要显式声明
     axiosConfig.responseType = "json";
 
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      "X-API-Key": this.userConfig.inputSetting?.token ?? "",
+      "X-API-Key": token,
     };
 
     return super.request<T>(axiosConfig, checkLogin);
@@ -344,21 +351,20 @@ export default class GazelleGames extends GazelleJSONAPI {
     doc: torrentSearchResponse,
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
-    if (doc.status === "success") {
-      const { authkey, passkey } = await this.getAuthKey();
-      const rows = Object.values(doc.response);
-      const torrents = this.transformGGnTorrents(authkey, passkey, rows);
-      return torrents;
-    }
-    return [];
+    // M-7：与父类 GazelleJSONAPI 的 E-3 守卫一致 —— API Key 失效 / 限流 / 账号停用时 GGn 返回
+    // HTTP 200 + status: "failure"，静默当成「成功 + 0 结果」会把站点给出的原因丢掉。
+    const okDoc = this.assertApiSuccess(doc, "search");
+    const { authkey, passkey } = await this.getAuthKey();
+    return this.transformGGnTorrents(authkey, passkey, Object.values(okDoc.response ?? {}));
   }
 
   protected override async getUserExtendInfo(userId: number): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
-    const { data: apiUser } = await this.requestApi<ggnUserJsonResponse>("user", {
+    const { data } = await this.requestApi<ggnUserJsonResponse>("user", {
       id: userId,
     });
+    const apiUser = this.assertApiSuccess(data, "user");
 
     return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, [
       "joinTime",

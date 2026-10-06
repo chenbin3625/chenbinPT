@@ -117,8 +117,9 @@ export const siteMetadata: ISiteMetadata = {
 
       tags: [
         { name: "Free", selector: "img.free", color: "blue" },
-        { name: "2xFree", selector: "img.twoup", color: "green" },
-        { name: "2xUp", selector: "img.twoupfree", color: "lime" },
+        // D-11：twoupfree 才是「免费 + 2x 上传」，twoup 只是 2x 上传（原先两者互换，会把非免费种标成 2xFree）
+        { name: "2xFree", selector: "img.twoupfree", color: "green" },
+        { name: "2xUp", selector: "img.twoup", color: "lime" },
         { name: "2x50%", selector: "img.twouphalfdown", color: "light-green" },
         { name: "30%", selector: "img.thirtypercent", color: "indigo" },
         { name: "50%", selector: "img.halfdown", color: "deep-orange-darken-1" },

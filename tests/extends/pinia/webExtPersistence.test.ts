@@ -173,6 +173,34 @@ describe("webExtPersistence：写入合并（P1-5）", () => {
     expect(stored.sites.siteA.name).toBe("third");
   });
 
+  it("首个保存失败时拒绝首个等待者，排队的最新状态仍可成功落盘", async () => {
+    const store = createTestStore();
+    await store.$onReady();
+    const setSpy = vi.spyOn(storageLocal, "set");
+    let rejectFirst!: (error: Error) => void;
+    setSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+
+    try {
+      store.sites.siteA.name = "first";
+      const first = store.$save();
+      store.sites.siteA.name = "second";
+      const second = store.$save();
+      await vi.waitFor(() => expect(rejectFirst).toBeTypeOf("function"));
+      rejectFirst(new Error("quota exceeded"));
+
+      await expect(first).rejects.toThrow("quota exceeded");
+      await expect(second).resolves.toBeUndefined();
+      expect((backing.get(STORE_KEY) as any).sites.siteA.name).toBe("second");
+    } finally {
+      setSpy.mockRestore();
+    }
+  });
+
   it("persistent() 写入的是解代理后的普通对象（不含 __v_raw）", async () => {
     const state = reactive({ sites: { siteA: { name: "A" } }, count: 1 });
     await persistent("reactiveKey", state);

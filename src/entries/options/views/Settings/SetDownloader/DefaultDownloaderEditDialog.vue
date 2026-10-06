@@ -3,6 +3,7 @@ import { computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type { IDefaultDownloaderConfig, TDownloaderKey } from "@/shared/types/storages/metadata.ts";
 import { useResetableRef } from "@/options/directives/useResetableRef.ts";
 import { getDownloaderIcon } from "@ptd/downloader";
@@ -11,6 +12,7 @@ const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const { ref: defaultDownloaderConfig, reset: resetDefaultDownloaderConfig } = useResetableRef<
   Required<IDefaultDownloaderConfig>
@@ -42,10 +44,14 @@ function updateDefaultDownloaderInput(downloaderId: TDownloaderKey, clean: boole
   };
 }
 
-function saveDefaultDownloader() {
+async function saveDefaultDownloader() {
   metadataStore.defaultDownloader = defaultDownloaderConfig.value;
-  metadataStore.$save();
-  showDialog.value = false;
+  try {
+    await metadataStore.$save();
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 
 function enterDialog() {

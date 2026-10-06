@@ -126,6 +126,13 @@ export default class PrivateSite extends BittorrentSite {
       flushUserInfo = toMerged(flushUserInfo, pick(lastUserInfo, this.metadata.userInfo.pickLast));
     }
 
+    // H-6：本轮「声明了 selector 的字段」里真正在页面上命中的个数。站点改版 / 软错误页（HTTP 200）时
+    // 所有 selector 都会零命中，getFieldData 回落到默认值（"" / 0），若照常标 success，
+    // 真实的上传量/下载量/等级会被一次刷新静默替换成 0 并写进历史。
+    // 只统计 selector 字段：NexusPHP 等由 parseUserInfoForXxx 动态填充的字段不在此列。
+    let declaredSelectorFields = 0;
+    let matchedSelectorFields = 0;
+
     try {
       for (const thisUserInfoProcess of this.metadata.userInfo.process) {
         // 该步骤能够获取的字段
@@ -181,6 +188,10 @@ export default class PrivateSite extends BittorrentSite {
             // 优先使用本步骤定义的选择器，如果没有则使用 userInfo 全局的选择器
             let elementQuery = thisUserInfoProcess.selectors?.[key] ?? this.metadata.userInfo?.selectors?.[key];
             if (elementQuery) {
+              declaredSelectorFields++;
+              if (this.hasFieldMatch(dataDocument, elementQuery as IElementQuery)) {
+                matchedSelectorFields++;
+              }
               flushUserInfo[key] = this.getFieldData(dataDocument, elementQuery as IElementQuery);
             } else {
               // noinspection ExceptionCaughtLocallyJS
@@ -193,6 +204,13 @@ export default class PrivateSite extends BittorrentSite {
       // 如果前面没有获取到用户等级的id，则尝试通过定义的 levelRequirements 来获取
       if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
         flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
+      }
+
+      if (declaredSelectorFields > 0 && matchedSelectorFields === 0) {
+        // noinspection ExceptionCaughtLocallyJS
+        throw new Error(
+          `用户信息页未命中任何字段（${declaredSelectorFields} 个 selector 全部落空），页面可能已改版或不是用户信息页`,
+        );
       }
 
       // 成功时清掉可能从 lastUserInfo 继承来的旧 statusMsg，避免 UI 展示过期错误

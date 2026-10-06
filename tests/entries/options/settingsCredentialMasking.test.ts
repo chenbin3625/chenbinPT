@@ -11,10 +11,21 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { defineComponent, h, nextTick, provide, ref } from "vue";
+
+import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
 // 实体模块会连带引入 @ptd/site/utils/adapter.ts → messages.ts（读取 vite 构建期常量 __BROWSER__），
 // 这里只需要各实体的 serverMetaData 数据，因此把该运行时依赖替换掉。
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
+
+// SetSite/Editor 通过 metadataStore.getSiteMetadata → @ptd/site 的 getDefinedSiteMetadata 取站点定义；
+// 单测里没有构建期的 definitions 映射，这里只替换这一个函数，其余导出保持真实实现。
+const siteDefinition = vi.hoisted(() => ({ current: {} as any }));
+vi.mock("@ptd/site", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@ptd/site")>()),
+  getDefinedSiteMetadata: async () => structuredClone(siteDefinition.current),
+}));
 
 import { serverMetaData as backblazeB2 } from "@ptd/backupServer/entity/BackblazeB2.ts";
 import { serverMetaData as cookieCloud } from "@ptd/backupServer/entity/CookieCloud.ts";
@@ -55,45 +66,102 @@ describe("B-31(b)：备份服务器的凭据字段由 requiredField 显式声明
   });
 });
 
-describe("B-31(a)(c)(d)：其余凭据输入框默认掩码 + 显示切换", () => {
-  const cases: Array<[string, string[]]> = [
-    [
-      "src/entries/options/views/Settings/SetMediaServer/Editor.vue",
-      ["SECRET_AUTH_FIELD_PATTERN", "isAuthFieldMasked", "revealedAuthFields", "EyeInvisibleOutlined"],
-    ],
-    [
-      "src/entries/options/views/Settings/SetSite/Editor.vue",
-      ["SECRET_INPUT_SETTING_PATTERN", "isInputSettingMasked", "revealedInputSettings", "EyeInvisibleOutlined"],
-    ],
-    [
-      "src/entries/options/views/Settings/SetBase/SocialInformationWindow.vue",
-      ["showBangumiApiKey", "EyeInvisibleOutlined"],
-    ],
-  ];
+describe("B-31(a)(c)：凭据输入框真实渲染为掩码，可切换明文（H-13：行为断言）", () => {
+  /**
+   * 原先这里只断言源码里「出现了某些标识符 / 'password' : 'text' 字样」——把掩码判定改成 `return false`
+   * （凭据明文显示）测试照样全绿。现在挂载真实 Editor，断言渲染出来的 input type。
+   */
+  async function settle(times = 6) {
+    for (let i = 0; i < times; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 
-  it.each(cases)("%s 使用掩码 + 眼睛切换", (path, markers) => {
-    const source = readSource(path);
-    for (const marker of markers) {
-      expect(source, `${path} 应包含 ${marker}`).toContain(marker);
+  function inputByLabel(host: HTMLElement, label: string): HTMLInputElement {
+    const item = Array.from(host.querySelectorAll(".ant-form-item")).find(
+      (node) => node.querySelector("label")?.textContent?.trim() === label,
+    );
+    const input = item?.querySelector<HTMLInputElement>("input");
+    expect(input, `应渲染出「${label}」输入框`).toBeTruthy();
+    return input!;
+  }
+
+  function clickRevealToggle(input: HTMLInputElement) {
+    const toggle = input.closest(".ant-input-affix-wrapper")?.querySelector<HTMLElement>(".ant-input-suffix .anticon");
+    expect(toggle, "凭据输入框应带显示切换按钮").toBeTruthy();
+    toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  it("SetSite/Editor：passkey 默认 password，点眼睛变 text；普通字段恒为 text", async () => {
+    siteDefinition.current = {
+      id: "s",
+      name: "Site",
+      urls: ["https://s.example/"],
+      userInputSettingMeta: [
+        { name: "passkey", label: "Passkey", required: false },
+        { name: "uid", label: "UID", required: false },
+      ],
+    };
+    const pinia = prepareOptionsPinia();
+    const { useMetadataStore } = await import("@/options/stores/metadata.ts");
+    // getSiteUserConfig 是 getter：state.sites 有值时直接返回，不走 sendMessage
+    useMetadataStore(pinia).sites.s = { inputSetting: { passkey: "SECRET", uid: "1" } } as any;
+
+    const { default: Editor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const config = ref<any>({});
+    const Root = defineComponent({
+      setup() {
+        provide("storedSiteUserConfig", config);
+        return () => h(Editor, { modelValue: "s" });
+      },
+    });
+    const view = mountOptionsView(Root, { pinia });
+    try {
+      await settle();
+      const passkey = inputByLabel(view.host, "Passkey");
+      expect(passkey.type).toBe("password");
+      expect(inputByLabel(view.host, "UID").type).toBe("text");
+
+      clickRevealToggle(passkey);
+      await nextTick();
+      expect(inputByLabel(view.host, "Passkey").type).toBe("text");
+    } finally {
+      view.unmount();
     }
-    expect(source).toMatch(/'password' : 'text'|'text' : 'password'/);
   });
 
-  it("站点凭据（passkey / apikey / rsskey / token）都在掩码名单内", () => {
-    const source = readSource("src/entries/options/views/Settings/SetSite/Editor.vue");
-    const pattern = source.match(/const SECRET_INPUT_SETTING_PATTERN = (\/.*\/i);/);
-    expect(pattern, "应能取到字段名匹配规则").not.toBeNull();
+  it("SetMediaServer/Editor：apikey 默认 password，点眼睛变 text；userId 恒为 text", async () => {
+    const { default: Editor } = await import("@/options/views/Settings/SetMediaServer/Editor.vue");
+    const config = ref<any>({
+      id: "m",
+      type: "emby",
+      name: "Emby",
+      address: "http://127.0.0.1:8096",
+      auth: { apikey: "SECRET", userId: "u" },
+      enabled: true,
+    });
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(Editor, { modelValue: config.value, "onUpdate:modelValue": (v: any) => (config.value = v) }),
+      }),
+    );
+    try {
+      await settle(10);
+      const apikey = inputByLabel(view.host, "apikey");
+      expect(apikey.type).toBe("password");
+      expect(inputByLabel(view.host, "userId").type).toBe("text");
 
-    const raw = pattern![1]; // 形如 /passkey|.../i
-    const lastSlash = raw.lastIndexOf("/");
-    const regExp = new RegExp(raw.slice(1, lastSlash), raw.slice(lastSlash + 1));
-    for (const name of ["passkey", "apikey", "apiKey", "rsskey", "token", "cookie", "password"]) {
-      expect(regExp.test(name), `${name} 应被掩码`).toBe(true);
+      clickRevealToggle(apikey);
+      await nextTick();
+      expect(inputByLabel(view.host, "apikey").type).toBe("text");
+    } finally {
+      view.unmount();
     }
-    // 站点名 / 分组 / URL 之类不能被误判为凭据
-    for (const name of ["name", "groups", "url", "timezoneOffset"]) {
-      expect(regExp.test(name), `${name} 不应被掩码`).toBe(false);
-    }
+  });
+
+  it("SetBase/SocialInformationWindow：Bangumi API Key 仍有掩码与切换（源码级保留：该窗口依赖整套设置页上下文）", () => {
+    const source = readSource("src/entries/options/views/Settings/SetBase/SocialInformationWindow.vue");
+    expect(source).toContain("showBangumiApiKey");
+    expect(source).toMatch(/'password' : 'text'|'text' : 'password'/);
   });
 });
 

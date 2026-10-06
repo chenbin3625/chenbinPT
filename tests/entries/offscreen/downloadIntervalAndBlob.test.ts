@@ -10,14 +10,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
+  const history = new Map<number, any>();
   const db = {
-    put: vi.fn(async () => 1),
-    get: vi.fn(async () => undefined),
+    put: vi.fn(async (_store: string, _item: any) => 1),
+    get: vi.fn(async (_store: string, id: number) => structuredClone(history.get(id))),
     delete: vi.fn(async () => undefined),
     clear: vi.fn(async () => undefined),
   };
   return {
     db,
+    history,
     onMessage: vi.fn(),
     sendMessage: vi.fn(),
     logger: vi.fn(),
@@ -27,6 +29,7 @@ const mocks = vi.hoisted(() => {
     getRemoteTorrentFile: vi.fn(),
     sessionStore: new Map<string, unknown>(),
     downloadStateListeners: [] as Array<(delta: any) => void>,
+    searchDownload: vi.fn(async () => [{ state: "in_progress" }]),
     createObjectURL: vi.fn(() => "blob:test/torrent"),
     revokeObjectURL: vi.fn(),
     windowOpen: vi.fn(() => ({ closed: false }) as any),
@@ -58,6 +61,7 @@ vi.stubGlobal("chrome", {
     },
   },
   downloads: {
+    search: mocks.searchDownload,
     onChanged: {
       addListener: (fn: (delta: any) => void) => mocks.downloadStateListeners.push(fn),
       removeListener: (fn: (delta: any) => void) => {
@@ -85,7 +89,11 @@ async function loadDownloadModule(): Promise<DownloadHandler> {
   mocks.getSiteInstance.mockReset();
   mocks.getRemoteTorrentFile.mockReset();
   mocks.db.put.mockClear();
-  mocks.db.put.mockImplementation(async () => ++nextDownloadId);
+  mocks.db.put.mockImplementation(async (_store: string, item: any) => {
+    const id = item.id ?? ++nextDownloadId;
+    mocks.history.set(id, structuredClone({ ...item, id }));
+    return id;
+  });
 
   mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
     if (name === "getExtStoragePath") {
@@ -135,7 +143,10 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
   beforeEach(() => {
     nextDownloadId = 1;
     mocks.sessionStore.clear();
+    mocks.history.clear();
     mocks.downloadStateListeners.length = 0;
+    mocks.searchDownload.mockReset();
+    mocks.searchDownload.mockResolvedValue([{ state: "in_progress" }]);
     mocks.createObjectURL.mockClear();
     mocks.revokeObjectURL.mockClear();
     mocks.windowOpen.mockReset();
@@ -199,7 +210,7 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
 
     // 失败没有消耗间隔：紧接着的下载必须被真正执行，而不是被间隔挡住
     const second = await handler({ data: makeOption({ link: "https://example.com/download/2" }) });
-    expect(second.downloadStatus, "失败的下载不应消耗站点下载间隔").toBe("completed");
+    expect(second.downloadStatus, "失败的下载不应消耗站点下载间隔").toBe("pending");
   });
 
   it("L-6：window.open 被拦截（返回 null）时回退到 extension 方法，而不是标记 completed", async () => {
@@ -213,7 +224,7 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
 
     const result = await handler({ data: makeOption({ link: "https://example.com/download/1" }) });
 
-    expect(result.downloadStatus).toBe("completed");
+    expect(result.downloadStatus).toBe("pending");
     const downloadFileCall = mocks.sendMessage.mock.calls.find(([name]) => name === "downloadFile");
     expect(downloadFileCall, "被拦截时必须回退到 chrome.downloads 下载").toBeTruthy();
     expect(downloadFileCall![1].url).toBe("blob:test/torrent");
@@ -249,6 +260,49 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
     mocks.downloadStateListeners[0]!({ id: 4242, state: { current: "complete" } });
     expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:test/torrent");
     expect(mocks.downloadStateListeners, "释放后应移除监听，避免监听器泄漏").toHaveLength(0);
+  });
+
+  it("browser 下载被接受后保持 pending，中断时标记 failed 并归还站点间隔", async () => {
+    const handler = await loadDownloadModule();
+    mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(60));
+
+    const result = await handler({ data: { ...makeOption(), localDownloadMethod: "browser" } });
+    expect(result.downloadStatus).toBe("pending");
+    expect(mocks.history.get(result.downloadId)?.downloadStatus).toBe("pending");
+
+    mocks.downloadStateListeners[0]!({ id: 4242, state: { current: "interrupted" } });
+    await vi.waitFor(() => expect(mocks.history.get(result.downloadId)?.downloadStatus).toBe("failed"));
+    expect(mocks.sessionStore.get("ptd_siteDownloadAt")).toEqual({});
+    expect(mocks.downloadStateListeners).toHaveLength(0);
+  });
+
+  it("extension 下载完成事件到达后才将历史标记 completed", async () => {
+    const handler = await loadDownloadModule();
+    mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(0));
+    mocks.windowOpen.mockReturnValue(null as any);
+    mocks.getRemoteTorrentFile.mockResolvedValue({
+      name: "1.torrent",
+      metadata: { blob: () => new Blob(["x"]) },
+    });
+
+    const result = await handler({ data: makeOption() });
+    expect(result.downloadStatus).toBe("pending");
+    expect(mocks.history.get(result.downloadId)?.downloadStatus).toBe("pending");
+    mocks.downloadStateListeners[0]!({ id: 4242, state: { current: "complete" } });
+
+    await vi.waitFor(() => expect(mocks.history.get(result.downloadId)?.downloadStatus).toBe("completed"));
+    expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:test/torrent");
+  });
+
+  it("监听安装前就完成的下载也通过即时查询更新历史", async () => {
+    const handler = await loadDownloadModule();
+    mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(0));
+    mocks.searchDownload.mockResolvedValue([{ state: "complete" }]);
+
+    const result = await handler({ data: { ...makeOption(), localDownloadMethod: "browser" } });
+
+    await vi.waitFor(() => expect(mocks.history.get(result.downloadId)?.downloadStatus).toBe("completed"));
+    expect(mocks.downloadStateListeners).toHaveLength(0);
   });
 
   it("L-5：下载未被接受（downloadFile 抛错）时立即释放 blob URL", async () => {

@@ -325,7 +325,7 @@ export const siteMetadata: ISiteMetadata = {
           return convertIsoDurationToSeconds(isoDuration);
         },
       },
-      specialSeedsize: {
+      specialSeedingSize: {
         selector: ["td.bhd-user-left:contains('Special Seed Size') + td span.badge-user"],
         filters: [{ name: "parseSize" }],
       },
@@ -393,7 +393,7 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P6M",
       averageSeedingTime: "P30D",
       seedingTime: "P4Y11M",
-      specialSeedsize: "500GiB",
+      specialSeedingSize: "500GiB",
       snatches: 60,
       privilege: "View Invite Forum; View Chat History; Can rescue 12 torrents per day until 36 pending completion.",
     },
@@ -405,7 +405,7 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P9M",
       averageSeedingTime: "P45D",
       seedingTime: "P9Y3M",
-      specialSeedsize: "2TiB",
+      specialSeedingSize: "2TiB",
       snatches: 75,
       privilege:
         "Can rescue 15 torrents per day until 45 pending completion. Receive 2 FL token(s) for every 30 days this class is retained.",
@@ -418,7 +418,7 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P1Y",
       averageSeedingTime: "P60D",
       seedingTime: "P41Y1M5D",
-      specialSeedsize: "4TiB",
+      specialSeedingSize: "4TiB",
       snatches: 250,
       privilege:
         "View Torrent Changes; View Movie / TV Edits; Can rescue 16 torrents per day until 48 pending completion. Receive 2 FL token(s) for every 30 days this class is retained. Receive 25% discount on all downloads.",
@@ -431,7 +431,7 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P2Y",
       averageSeedingTime: "P90D",
       seedingTime: "P123Y3M15D",
-      specialSeedsize: "8TiB",
+      specialSeedingSize: "8TiB",
       snatches: 500,
       privilege:
         "Edit Movie / TV Details; Can rescue 20 torrents per day until 60 pending completion. Receive 2 FL token(s) for every 30 days this class is retained. Receive 50% discount on all downloads.",
@@ -441,11 +441,11 @@ export const siteMetadata: ISiteMetadata = {
       name: "Emperor",
       ratio: 4,
       uploaded: "96TiB",
-      download: "24TiB",
+      downloaded: "24TiB",
       interval: "P5Y",
       averageSeedingTime: "P180D",
       seedingTime: "P123Y3M15D",
-      specialSeedsize: "48TiB",
+      specialSeedingSize: "48TiB",
       snatches: 10000,
       privilege:
         "Can rescue 40 torrents per day until 120 pending completion. Receive 5 FL token(s) for every 30 days this class is retained. Receive 1 invite(s) for every 30 days this class is retained. Receive 100% discount on all downloads.",

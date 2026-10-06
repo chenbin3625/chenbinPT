@@ -297,7 +297,7 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
   const isEncrypted = typeof encryptionKey === "string" && encryptionKey !== "";
 
   const manifest = {
-    ...(data.manifest ?? {}),
+    ...omit(data.manifest ?? {}, [BACKUP_WARNINGS_KEY]), // 上一次解析留下的告警不属于新备份
     encryption: isEncrypted,
     time: new Date().getTime(),
     files: {},
@@ -334,23 +334,21 @@ const isPlainObject = (value: unknown): value is Record<string, any> =>
 /**
  * 恢复时被拒绝/被安全化的条目说明（见 S-1）。
  *
- * 刻意用**非枚举**属性携带：`backupDataToJSZipBlob` 是用 `Object.entries(data)` 遍历顶层键
- * 来生成条目的，普通字段会被写回下一个备份；非枚举属性既不会被遍历到，也不影响 structured clone。
+ * L-15：原先用非枚举属性携带，但「从备份服务器恢复」要经 offscreen → options 的消息传递
+ * （toSerializable 只走 Object.keys，Chrome 消息是 JSON 语义），非枚举属性在这一跳必然丢失，
+ * 于是远端恢复时被丢弃的条目完全没有提示。现改为挂在 `manifest` 上的普通字段：
+ * manifest 本来就随数据一起传递、不作为恢复条目，导出时 backupDataToJSZipBlob 会显式去掉它，
+ * 不会被写进下一个备份。
  */
 const BACKUP_WARNINGS_KEY = "__backupWarnings";
 
 export function getBackupWarnings(data: IBackupData): string[] {
-  const value = (data as Record<string, unknown>)[BACKUP_WARNINGS_KEY];
+  const value = data?.manifest?.[BACKUP_WARNINGS_KEY];
   return Array.isArray(value) ? (value as string[]) : [];
 }
 
 export function setBackupWarnings(data: IBackupData, warnings: string[]): void {
-  Object.defineProperty(data, BACKUP_WARNINGS_KEY, {
-    value: warnings,
-    enumerable: false,
-    writable: true,
-    configurable: true,
-  });
+  data.manifest = { ...(data.manifest ?? {}), [BACKUP_WARNINGS_KEY]: warnings };
 }
 
 /**
@@ -477,9 +475,8 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
       }
     }
 
-    setBackupWarnings(data, warnings);
-
     data.manifest = manifest; // 将 manifest 也添加到数据中
+    setBackupWarnings(data, warnings);
   } else {
     throw new Error("Manifest not found in the zip file");
   }

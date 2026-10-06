@@ -52,7 +52,7 @@ import enUS from "ant-design-vue/es/locale/en_US";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 
-import { type TLangCode } from "./i18n.ts";
+import { i18nInstance, type TLangCode } from "./i18n.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 
 /**
@@ -243,6 +243,11 @@ export function useAntdConfig() {
     () => configStore.lang,
     (lang) => {
       dayjs.locale(resolveLangItem(lang).dayjs);
+      // L-7：vue-i18n 的全局语言也在这里同步。options 页另有 App.vue 的 watch，但内容脚本覆盖层只经过这里 ——
+      // 不同步的话 configStore.lang="en" 时 antd 组件是英文、覆盖层自己的文案（t("contentScript.*")）仍是中文。
+      if (lang && i18nInstance.global.locale.value !== lang) {
+        i18nInstance.global.locale.value = lang;
+      }
     },
     { immediate: true },
   );

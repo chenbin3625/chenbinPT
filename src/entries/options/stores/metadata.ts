@@ -495,10 +495,15 @@ export const useMetadataStore = defineStore("metadata", {
       getSiteMapRebuildState(this).version++;
 
       if (reBuildMap) {
+        // H-8：站点配置本身必须落盘，不能被「派生索引重建失败」连带丢掉 ——
+        // 旧实现在 buildSiteMapCache 抛错（站点定义加载失败等）时直接跳过保存：内存已改、磁盘未改，
+        // 刷新页面后新增/删除就像没发生过。先保存，再把重建错误抛给调用方提示。
+        await this.$save();
         await this.buildSiteMapCache(false);
+        await this.$save(); // 重建出的 siteHostMap / siteNameMap 同样需要持久化
+      } else {
+        scheduleMetadataSave(this);
       }
-
-      scheduleMetadataSave(this);
     },
 
     async removeSite(siteId: TSiteID, options?: { reBuildMap?: boolean }) {
@@ -516,11 +521,16 @@ export const useMetadataStore = defineStore("metadata", {
       }
       delete this.lastUserInfo[siteId];
 
-      if (reBuildMap) {
-        await this.buildSiteMapCache(false);
+      // H-8：保存安排在 finally 里 —— 旧实现在 buildSiteMapCache 抛错时直接跳过保存，
+      // 内存里站点已删、磁盘上还在，刷新后删除像没发生过。
+      // 这里仍走合并写入（DeleteDialog 并发删除 N 个站点时只写一次，见 V-7），只是不再被重建错误短路。
+      try {
+        if (reBuildMap) {
+          await this.buildSiteMapCache(false);
+        }
+      } finally {
+        scheduleMetadataSave(this);
       }
-
-      scheduleMetadataSave(this);
     },
 
     /**
@@ -654,7 +664,7 @@ export const useMetadataStore = defineStore("metadata", {
     async addDownloader(downloaderConfig: IDownloaderMetadata) {
       delete downloaderConfig.valid;
       this.downloaders[downloaderConfig.id] = downloaderConfig;
-      scheduleMetadataSave(this);
+      await this.$save();
     },
 
     async removeDownloader(downloaderId: TDownloaderKey) {

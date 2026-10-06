@@ -14,12 +14,18 @@ import { toSerializable } from "@/shared/messagesSerializable.ts";
 
 const mocks = vi.hoisted(() => {
   const store = new Map<string, unknown>();
+  const downloadHistory = [{ id: 1, title: "original" }] as Array<{ id: number; title: string }>;
   return {
     store,
+    downloadHistory,
     onMessage: vi.fn(),
     sendMessage: vi.fn(),
     logger: vi.fn(),
-    replaceDownloadHistory: vi.fn(async () => true),
+    replaceDownloadHistory: vi.fn(async (_openTransaction: unknown, data: unknown) => {
+      if (!Array.isArray(data)) return false;
+      downloadHistory.splice(0, downloadHistory.length, ...structuredClone(data));
+      return true;
+    }),
     /** 让第 N 次 setExtStorage 失败（模拟写入中途出错），用于验证回滚 */
     failSetForKey: null as string | null,
     setCalls: [] as Array<{ key: string; value: any }>,
@@ -29,7 +35,10 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/messages.ts", () => ({ onMessage: mocks.onMessage, sendMessage: mocks.sendMessage }));
 vi.mock("@/offscreen/utils/logger.ts", () => ({ logger: mocks.logger }));
 vi.mock("@/offscreen/adapter/indexdb.ts", () => ({
-  ptdIndexDb: Promise.resolve({ transaction: () => ({}) }),
+  ptdIndexDb: Promise.resolve({
+    transaction: () => ({}),
+    getAll: async () => structuredClone(mocks.downloadHistory),
+  }),
 }));
 vi.mock("@ptd/backupServer/utils.ts", () => ({
   backupDataToJSZipBlob: vi.fn(),
@@ -117,6 +126,7 @@ const localServer = {
 describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
   beforeEach(() => {
     mocks.store.clear();
+    mocks.downloadHistory.splice(0, mocks.downloadHistory.length, { id: 1, title: "original" });
   });
 
   it("S-1：默认不恢复备份里的 backupServers，且保留本机已有服务器", async () => {
@@ -329,6 +339,33 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(mocks.setCalls.map((call) => call.key)).toEqual(["userInfo", "config", "userInfo"]);
   });
 
+  it("storage 写入失败时连同已恢复的下载历史一起回滚", async () => {
+    const { restoreBackupData } = await loadBackupModule();
+    mocks.store.set("config", { lang: "zh_CN" });
+    mocks.failSetForKey = "config";
+
+    const report = await restoreBackupData(
+      {
+        downloadHistory: [{ id: 2, title: "from backup" }],
+        config: { lang: "en" } as any,
+        manifest: {
+          time: Date.now(),
+          version: "test",
+          files: {
+            downloadHistory: { hash: "h", name: "downloadHistory.json" },
+            config: { hash: "h", name: "config.json" },
+          },
+        },
+      },
+      { fields: ["downloadHistory", "config"] },
+    );
+
+    expect(report.success).toBe(false);
+    expect(report.rolledBack).toBe(true);
+    expect(report.restored).toEqual([]);
+    expect(mocks.downloadHistory).toEqual([{ id: 1, title: "original" }]);
+  });
+
   it("L-10：全部校验通过时按顺序写入，success 为 true", async () => {
     const { handler } = await loadBackupModule();
     mocks.store.set("userInfo", {});
@@ -349,6 +386,42 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(report.restored.sort()).toEqual(["config", "userInfo"]);
     expect(mocks.store.get("config")).toEqual({ lang: "en" });
     expect(mocks.store.get("userInfo")).toEqual({ mteam: { "2026-10-09": { ratio: 9 } } });
+  });
+
+  it("M-19：恢复 config 时沿用本机的备份加密密钥，备份里的密钥不生效", async () => {
+    const { handler } = await loadBackupModule();
+    mocks.store.set("config", { lang: "zh_CN", backup: { encryptionKey: "local-secret" } });
+
+    const report = (await handler({
+      data: {
+        restoreData: {
+          config: { lang: "en", backup: { encryptionKey: "attacker-known" } },
+          manifest: { time: Date.now(), version: "test", files: { config: "h" } },
+        },
+        restoreOptions: { fields: ["config"] },
+      },
+    })) as any;
+
+    expect(report.success).toBe(true);
+    expect(mocks.store.get("config")).toEqual({ lang: "en", backup: { encryptionKey: "local-secret" } });
+    expect(report.sanitized.some((msg: string) => msg.includes("encryptionKey"))).toBe(true);
+  });
+
+  it("M-19：本机未设置密钥时，恢复后仍为未加密（不采用备份里的密钥）", async () => {
+    const { handler } = await loadBackupModule();
+    mocks.store.set("config", { lang: "zh_CN" });
+
+    await handler({
+      data: {
+        restoreData: {
+          config: { lang: "en", backup: { encryptionKey: "attacker-known", other: 1 } },
+          manifest: { time: Date.now(), version: "test", files: { config: "h" } },
+        },
+        restoreOptions: { fields: ["config"] },
+      },
+    });
+
+    expect(mocks.store.get("config")).toEqual({ lang: "en", backup: { encryptionKey: "", other: 1 } });
   });
 
   it("L-10：manifest 声明 cookies 但条目缺失时跳过 Cookie 恢复，不在 storage 写入后抛错", async () => {

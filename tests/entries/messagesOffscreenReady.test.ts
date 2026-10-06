@@ -148,6 +148,48 @@ describe("敏感消息的发送方限制", () => {
     ).toThrow(/permission/i);
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it("内容脚本只能读取引导所需的 storage 路径，不能整份读取或任意写入", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const sender = { id: "extension-id", url: "https://pt.example.com/details.php", tab: { id: 1 } };
+    const read = vi.fn(async () => ({}));
+    onMessage("getExtStoragePath", read);
+    const wrappedRead = originalOnMessage.mock.calls.at(-1)![1];
+
+    await expect(wrappedRead({ data: { key: "config", path: "contentScript" }, sender })).resolves.toEqual({});
+    await expect(wrappedRead({ data: { key: "siteIndex", path: "siteHostMap" }, sender })).resolves.toEqual({});
+    await expect(
+      wrappedRead({ data: { key: "metadata", path: ["sites", "pt", "allowContentScript"] }, sender }),
+    ).resolves.toEqual({});
+    expect(() => wrappedRead({ data: { key: "config", path: [] }, sender })).toThrow(/permission/i);
+    expect(() => wrappedRead({ data: { key: "metadata", path: ["sites", "pt", "inputSetting"] }, sender })).toThrow(
+      /permission/i,
+    );
+    expect(read).toHaveBeenCalledTimes(3);
+
+    const write = vi.fn();
+    onMessage("patchExtStoragePath", write);
+    const wrappedWrite = originalOnMessage.mock.calls.at(-1)![1];
+    expect(() =>
+      wrappedWrite({ data: { key: "metadata", path: ["backupServers", "evil"], value: {} }, sender }),
+    ).toThrow(/permission/i);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("内容脚本不能切换原生桥接开关", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn();
+    onMessage("nativeBridgeSetEnabled", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    expect(() =>
+      wrapped({
+        data: true,
+        sender: { id: "extension-id", url: "https://pt.example.com/details.php", tab: { id: 1 } },
+      }),
+    ).toThrow(/permission/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
 
 describe("跨上下文消息：只读消息才允许自动重试（B-9）", () => {

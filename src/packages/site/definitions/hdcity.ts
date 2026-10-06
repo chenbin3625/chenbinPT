@@ -387,7 +387,8 @@ export const siteMetadata: ISiteMetadata = {
             filters: [
               (query: string) => {
                 return parseSizeString(
-                  query.match(/(上传量|上傳量|Uploaded):\s+([\d.]+ [ZEPTGMK]i?B)/)?.[2]?.trim() ?? "0",
+                  // D-18：与下面 downloaded 同一写法，容忍千分位逗号 / NBSP / 多空格 / 无空格单位
+                  query.match(/(上传量|上傳量|Uploaded):\s+([\d.\s,ZEPTGMKiB]+)/)?.[2]?.trim() ?? "0",
                 );
               },
             ],

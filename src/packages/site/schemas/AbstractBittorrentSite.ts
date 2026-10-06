@@ -348,7 +348,16 @@ export default class BittorrentSite {
    * @param searchEntry
    */
   public async getSearchResult(keywords?: string, searchEntry: ISearchEntryRequestConfig = {}): Promise<ISearchResult> {
-    console?.log(`[Site] ${this.name} start search with keywords:`, keywords, "input searchEntry:", searchEntry);
+    // L-2：searchEntry / requestConfig 是活对象，部分定义会把 passkey / x-api-key / Authorization 就地注入其中，
+    // 与构造函数一致：只在调试构建下打印，且先脱敏
+    if (isDebug) {
+      console.log(
+        `[Site] ${this.name} start search with keywords:`,
+        keywords,
+        "input searchEntry:",
+        redactSensitive(searchEntry),
+      );
+    }
     const result: ISearchResult = {
       data: [],
       status: EResultParseStatus.unknownError,
@@ -380,10 +389,13 @@ export default class BittorrentSite {
       return result;
     }
 
-    console?.log(`[Site] ${this.name} start search with merged searchEntry:`, searchEntry);
+    if (isDebug) {
+      console.log(`[Site] ${this.name} start search with merged searchEntry:`, redactSensitive(searchEntry));
+    }
 
     // 2.1 检查 keywords 是否为空
-    if (searchEntry.skipWhiteSpacePlaceholder === true && !keywords) {
+    // L-1：与 types/search.ts 的契约一致 ——「仅含空白字符」同样视为空关键词，不发请求
+    if (searchEntry.skipWhiteSpacePlaceholder === true && !keywords?.trim()) {
       console?.log(`[Site] ${this.name} skipped due to empty keywords`);
       result.status = EResultParseStatus.passParse;
       result.statusMsg = "i18n.noEmptyKeywords";
@@ -464,7 +476,9 @@ export default class BittorrentSite {
       await sleep(searchEntry.requestDelay!);
     }
 
-    console?.log(`[Site] ${this.name} start search with requestConfig:`, requestConfig);
+    if (isDebug) {
+      console.log(`[Site] ${this.name} start search with requestConfig:`, redactSensitive(requestConfig));
+    }
 
     // 8. 请求页面并转化为document
     try {
@@ -692,6 +706,26 @@ export default class BittorrentSite {
     }
 
     return query;
+  }
+
+  /**
+   * 该 elementQuery 是否在 element 上**真正命中**：取到了非空的原始值（过滤器之前）。
+   *
+   * getFieldData 在零命中时会回落到 `elementQuery.text ?? ""`，调用方无法区分「命中且值为 0」与「根本没命中」；
+   * 用户信息刷新需要这个区分来识别改版页 / 软错误页（见 AbstractPrivateSite 的 H-6、AvistazNetwork 的 M-11）。
+   * 判据看原始值而不是「选中了元素」：`:self` + elementProcess 的字段永远能选中元素，真正的命中与否在 elementProcess 的返回值里。
+   * 没有 selector、只靠 `text` 给常量的字段不算命中。
+   */
+  protected hasFieldMatch(element: Element | object, elementQuery: IElementQuery): boolean {
+    if (!elementQuery.selector) return false;
+
+    const raw = this.getFieldData(element, {
+      ...elementQuery,
+      filters: undefined,
+      switchFilters: undefined,
+      text: undefined,
+    });
+    return raw !== "" && raw !== null && typeof raw !== "undefined";
   }
 
   protected runQueryFilters<T>(query: any, filters: TQueryFilter[] | TQueryFilter): T {

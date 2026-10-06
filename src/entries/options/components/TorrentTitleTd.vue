@@ -9,6 +9,7 @@ import type { ITorrent } from "@ptd/site";
 import type { ISocialInformation, TSupportSocialSite } from "@ptd/social/types.ts";
 
 import { useConfigStore } from "@/options/stores/config.ts";
+import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
 
 const {
@@ -30,7 +31,7 @@ interface ISocialInformationData extends ISocialInformation {
   error?: boolean;
 }
 
-// @ts-ignore
+// T-2：此处原有的 @ts-ignore 已不再需要（vue-tsc 报 Unused），按 background/utils/base.ts 的约定删除
 const socialInformation = reactive<Record<TSupportSocialSite | string, ISocialInformationData>>({});
 
 // P1-17：社交菜单内容按需渲染。
@@ -199,7 +200,9 @@ function canAdvanceSearch(site: TSupportSocialSite) {
                     >
                       {{ t("MyClient.state.error") }}
                     </a-typography-title>
-                    <a-typography-title v-else :level="5" style="margin: 8px 0">No Information</a-typography-title>
+                    <a-typography-title v-else :level="5" style="margin: 8px 0">{{
+                      t("common.noInformation")
+                    }}</a-typography-title>
 
                     <template v-if="canAdvanceSearch(key as TSupportSocialSite)">
                       <a-divider style="margin: 4px 0" />
@@ -246,7 +249,14 @@ function canAdvanceSearch(site: TSupportSocialSite) {
       <!-- 种子标签信息 -->
       <div style="flex: 0 0 auto">
         <template v-if="configStore.searchEntifyControl.showTorrentTag && item.tags && item.tags.length > 0">
-          <a-tag v-for="tag in displayedTags" :key="tag.name" color="default" style="margin-right: 4px">
+          <!-- M-30：按标签自带颜色渲染（tags.ts 的 31 个预定义标签 + 站点页面抓到的真实底色），
+               统一中性色会让免费/2x/H&R/官方等标签无法一眼区分 -->
+          <a-tag
+            v-for="tag in displayedTags"
+            :key="tag.name"
+            :color="resolveColor(tag.color) ?? 'default'"
+            style="margin-right: 4px"
+          >
             {{ tag.name }}
           </a-tag>
           <a-tag v-if="hasMoreTags" color="default" style="margin-right: 4px" @click="tagsExpanded = true">

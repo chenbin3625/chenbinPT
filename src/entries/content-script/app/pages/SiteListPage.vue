@@ -136,6 +136,7 @@ async function handleSearch() {
     type="primary"
     :icon="SaveOutlined"
     :title="t('downloaderLabel.localDownload')"
+    :label="t('contentScript.speedDial.localDownload')"
     @click="wrapperConfirmFn(handleLocalDownloadMulti)"
   />
   <SpeedDialBtn
@@ -144,6 +145,7 @@ async function handleSearch() {
     type="primary"
     :icon="CopyOutlined"
     :title="t('contentScript.copyLink')"
+    :label="t('contentScript.speedDial.copyLink')"
     @click="wrapperConfirmFn(handleLinkCopyMulti)"
   />
   <SpeedDialBtn
@@ -152,6 +154,7 @@ async function handleSearch() {
     type="primary"
     :icon="CloudDownloadOutlined"
     :title="t('contentScript.pushTo')"
+    :label="t('contentScript.speedDial.pushTo')"
     @click="() => handleRemoteDownloadMulti()"
   />
   <SpeedDialBtn
@@ -161,6 +164,7 @@ async function handleSearch() {
     type="primary"
     :icon="DownloadOutlined"
     :title="t('contentScript.pushToDefault')"
+    :label="t('contentScript.speedDial.pushToDefault')"
     @click="() => handleRemoteDownloadMulti(true)"
   />
 
@@ -168,9 +172,16 @@ async function handleSearch() {
     key="advance"
     :icon="CheckSquareOutlined"
     :title="t('contentScript.advanceList')"
+    :label="t('contentScript.speedDial.advanceList')"
     @click="handleAdvanceListModule"
   />
-  <SpeedDialBtn key="search" :icon="SearchOutlined" :title="t('contentScript.quickSearch')" @click="handleSearch" />
+  <SpeedDialBtn
+    key="search"
+    :icon="SearchOutlined"
+    :title="t('contentScript.quickSearch')"
+    :label="t('contentScript.speedDial.quickSearch')"
+    @click="handleSearch"
+  />
 
   <AdvanceListModuleDialog v-model="showAdvanceListModuleDialog" :torrent-items="parsedTorrents" />
 </template>

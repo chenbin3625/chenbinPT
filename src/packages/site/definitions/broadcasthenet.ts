@@ -150,7 +150,8 @@ export const siteMetadata: ISiteMetadata = {
       },
       bonusPerHour: {
         selector: "ul.nobullet > li:contains('Per Day:')",
-        filters: [{ name: "parseNumber" }, { name: "divide", args: [24] }],
+        // M-12：站点给的是「每天」收益；`divide` 并不是已定义的过滤器（会被静默跳过，结果虚高 24 倍），用函数过滤器换算成每小时
+        filters: [{ name: "parseNumber" }, (query: number) => query / 24],
       },
       ratio: undefined,
       joinTime: {

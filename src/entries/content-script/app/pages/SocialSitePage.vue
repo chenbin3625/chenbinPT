@@ -68,6 +68,12 @@ async function handleSearch() {
 </script>
 
 <template>
-  <SpeedDialBtn key="search" :icon="SearchOutlined" :title="t('contentScript.quickSearch')" @click="handleSearch" />
+  <SpeedDialBtn
+    key="search"
+    :icon="SearchOutlined"
+    :title="t('contentScript.quickSearch')"
+    :label="t('contentScript.speedDial.quickSearch')"
+    @click="handleSearch"
+  />
   <SocialSiteParseResultsDialog v-model="showSocialSiteParseResultsDialog" :parse-results="socialSiteParseResults" />
 </template>

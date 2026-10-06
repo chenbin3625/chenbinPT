@@ -310,7 +310,34 @@ export default class GazelleJSONAPI extends GazelleBase {
     return apiInfo;
   }
 
-  protected async getAuthKey(): Promise<{ authkey: string; passkey: string }> {
+  /**
+   * H-7：Gazelle 的 ajax.php 对账号停用 / ratio watch / 限流 / 无权限等情况返回 HTTP 200 +
+   * `{ status: "failure", error: "..." }`。用户信息路径若不看 status，getFieldsData 会在空 response 上
+   * 取到一堆默认值，于是 failure 被写成 success 并整份覆盖当日记录。
+   * 与搜索路径（transformSearchPage 的 E-3 守卫）保持同一判据。
+   */
+  protected assertApiSuccess<T extends jsonResponse>(doc: T | undefined, action: string): T {
+    if (doc?.status !== "success") {
+      throw new Error(`Gazelle API ${action} error: ${doc?.error ?? doc?.status ?? "unknown"}`);
+    }
+    return doc;
+  }
+
+  /**
+   * L-3：实例级记忆（含空凭据）。空凭据刻意不写 12h 持久缓存，但若连实例内也不记，
+   * 一页 N 条结果就会各发一次 /ajax.php?action=index（每个 transform*Torrent 都会调用本方法）。
+   */
+  private _authKeyPromise?: Promise<{ authkey: string; passkey: string }>;
+
+  protected getAuthKey(): Promise<{ authkey: string; passkey: string }> {
+    this._authKeyPromise ??= this.loadAuthKey().catch((error) => {
+      this._authKeyPromise = undefined; // 请求失败不记忆，下次重试
+      throw error;
+    });
+    return this._authKeyPromise;
+  }
+
+  private async loadAuthKey(): Promise<{ authkey: string; passkey: string }> {
     const currentTime = Math.floor(Date.now() / 1000);
 
     const cachedAuthKey = await this.retrieveRuntimeSettings<{
@@ -470,10 +497,8 @@ export default class GazelleJSONAPI extends GazelleBase {
         };
 
         if (!flushUserInfo.seedingSize) {
-          flushUserInfo = {
-            ...flushUserInfo,
-            ...(await this.getSeedingSize(flushUserInfo.id as number)),
-          };
+          // M-8 / L-4：做种体积兜底失败不作废已解析的字段（见 GazelleBase.mergeSeedingSizeSafely）
+          flushUserInfo = await this.mergeSeedingSizeSafely(flushUserInfo);
         }
 
         // 清理数据
@@ -508,7 +533,7 @@ export default class GazelleJSONAPI extends GazelleBase {
   }
 
   protected async getUserBaseInfo(): Promise<Partial<IUserInfo>> {
-    const apiInfo = await this.requestApiInfo();
+    const apiInfo = this.assertApiSuccess(await this.requestApiInfo(), "index");
 
     return this.getFieldsData(apiInfo, this.metadata.userInfo!.selectors!, [
       "id",
@@ -527,9 +552,10 @@ export default class GazelleJSONAPI extends GazelleBase {
   protected async getUserExtendInfo(userId: number): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
-    const { data: apiUser } = await this.requestApi<userJsonResponse>("user", {
+    const { data } = await this.requestApi<userJsonResponse>("user", {
       id: userId,
     });
+    const apiUser = this.assertApiSuccess(data, "user");
 
     return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, [
       "joinTime",

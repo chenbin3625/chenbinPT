@@ -102,7 +102,7 @@ export const siteMetadata: ISiteMetadata = {
     },
     {
       name: "区域",
-      key: "Processing",
+      key: "processing", // D-34：PHP 数组键区分大小写，NexusPHP 读 processing<id>
       options: [
         { name: "中国（含港澳台）", value: 1 },
         { name: "日本", value: 2 },

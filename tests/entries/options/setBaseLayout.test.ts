@@ -14,6 +14,8 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { routerInstance } from "@/options/plugins/router.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import {
   prepareOptionsPinia,
   computedStyle,
@@ -108,6 +110,26 @@ describe("SetBase 页面布局钩子", () => {
     grid.unmount();
 
     view.unmount();
+  });
+
+  it("写盘失败时不能提示保存成功", async () => {
+    const pinia = prepareOptionsPinia();
+    const config = useConfigStore(pinia);
+    const runtime = useRuntimeStore(pinia);
+    const save = vi.fn().mockRejectedValue(new Error("quota exceeded"));
+    config.$save = save;
+    const notice = vi.spyOn(runtime, "showSnakebar").mockImplementation(() => undefined);
+    const { default: SetBaseIndex } = await import("@/options/views/Settings/SetBase/Index.vue");
+    const view = mountOptionsView(SetBaseIndex, { pinia, router: "SetBaseUi" });
+    await view.settle();
+
+    view.$<HTMLButtonElement>(".set-base-save")!.click();
+    await vi.waitFor(() => expect(notice).toHaveBeenCalled());
+    expect(notice).toHaveBeenCalledWith(expect.any(String), { color: "error" });
+    expect(notice).not.toHaveBeenCalledWith(expect.any(String), { color: "success" });
+
+    view.unmount();
+    notice.mockRestore();
   });
 });
 

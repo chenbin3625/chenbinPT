@@ -166,7 +166,9 @@ export const siteMetadata: ISiteMetadata = {
       },
       url: {
         selector: ":self",
-        filters: [(row: object) => `/torrents/${pickAttr(row as IGenerationFreeRawTorrent, "id")}`],
+        // D-15：JSON:API 的 id 在顶层（与上面的 id 选择器一致），不在 attributes 里 —— pickAttr 只读 attributes.*，
+        // 原先每条 url 都是 /torrents/undefined
+        filters: [(row: object) => `/torrents/${get(row, "id") ?? get(row, "attributes.id")}`],
       },
       link: { selector: ["download_link", "attributes.download_link"] },
       category: {

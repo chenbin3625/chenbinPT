@@ -28,23 +28,23 @@ const socialSiteSearchOptions = computed(() =>
   })),
 );
 
-function initContentScriptExceptionSites() {
+async function initContentScriptExceptionSites() {
   Object.keys(metadataStore.sites).forEach((site) => {
     if (typeof metadataStore.sites[site].allowContentScript === "undefined") {
       metadataStore.sites[site].allowContentScript = true;
     }
   });
-  metadataStore.$save();
+  await metadataStore.$save();
 }
 
-function beforeSave() {
+async function beforeSave() {
   // 对从低版本升级上来的用户，在启用例外站点时，补全缺失选项
   if (
     configStore.contentScript.enabled &&
     configStore.contentScript.allowExceptionSites &&
     !isEmpty(metadataStore.sites)
   ) {
-    initContentScriptExceptionSites();
+    await initContentScriptExceptionSites();
   }
 }
 

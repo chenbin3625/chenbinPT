@@ -22,7 +22,7 @@ function saveSearchSnapshotData() {
 }
 
 function dialogEnter() {
-  snapshotName.value = metadataStore.snapshots[props.editId].name;
+  snapshotName.value = metadataStore.snapshots[props.editId]?.name ?? ""; // 快照可能已在别处被删除
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。

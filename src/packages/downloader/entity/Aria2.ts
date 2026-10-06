@@ -658,8 +658,21 @@ export default class Aria2 extends AbstractBittorrentClient {
     if (removeData) {
       throw new Error("Aria2 does not support deleting torrent data through this API");
     }
+    // H-4：aria2.remove 只接受 active / waiting / paused 的任务；对已停止（complete / error / removed）的任务
+    // 调用会返回 JSON-RPC error（"GID ... is not found"），而这类任务只在「下载结果」里，
+    // 需要直接 aria2.removeDownloadResult。先按状态分流，避免「删除已完成任务必失败」。
+    const { result: task } = await this.methodSend<Pick<rawTask, "status">>("aria2.tellStatus", [id, ["status"]]);
+    const stopped = task?.status === "complete" || task?.status === "error" || task?.status === "removed";
+
+    if (stopped) {
+      await this.methodSend<"OK">("aria2.removeDownloadResult", [id]);
+      return true;
+    }
+
     await this.methodSend<string>("aria2.remove", [id]);
-    await this.methodSend<"OK">("aria2.removeDownloadResult", [id]);
+    // aria2.remove 对 active 任务是异步停止，结果稍后才进入「下载结果」；对 waiting / paused 任务则直接移出队列。
+    // 紧接着的 removeDownloadResult 因而可能报 not found —— 删除本身已经成功，这里只做尽力清理。
+    await this.methodSend<"OK">("aria2.removeDownloadResult", [id]).catch(() => undefined);
     return true;
   }
 

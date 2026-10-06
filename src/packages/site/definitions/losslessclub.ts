@@ -7,6 +7,7 @@
  * （Jackett 的 info_login 提示），PTD 走浏览器 cookie 会话，无需额外处理。
  */
 import type { ISiteMetadata } from "../types";
+import { parseSizeString } from "../utils/filesize.ts";
 
 export const siteMetadata: ISiteMetadata = {
   version: 1,
@@ -137,11 +138,15 @@ export const siteMetadata: ISiteMetadata = {
         assertion: { id: "params.id" },
         selectors: {
           seedingSize: {
-            selector: "tr:not(:first-child)",
-            elementProcess: (element: HTMLElement) => {
-              // 逐行累加第 3 列的体积
-              const row = element.closest("tr");
-              return row?.querySelectorAll("td")[2]?.textContent?.trim() || undefined;
+            // D-22：引擎只对选择器的**首个**命中调用 elementProcess，原实现因此只取到第一行的原始文本（且没有 parseSize）。
+            // 改为以整页为上下文，自己遍历所有数据行累加第 3 列的体积
+            selector: ":self",
+            elementProcess: (element: Element | Document) => {
+              const rows = Array.from((element as ParentNode).querySelectorAll("tr")).slice(1);
+              return rows.reduce((total, row) => {
+                const sizeText = row.querySelectorAll("td")[2]?.textContent?.trim();
+                return total + (sizeText ? parseSizeString(sizeText) : 0);
+              }, 0);
             },
           },
         },

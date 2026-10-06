@@ -92,6 +92,62 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("单条配置保存", () => {
+  it("新增站点写盘失败时 addSite 拒绝，不让对话框误判保存完成", async () => {
+    const store = await createMetadataStore();
+    defineSite("siteA");
+    store.$save = vi.fn().mockRejectedValue(new Error("quota exceeded"));
+
+    await expect(store.addSite("siteA", { url: "https://siteA.example/" } as any)).rejects.toThrow("quota exceeded");
+  });
+
+  it("H-8：站点映射重建抛错时，新增/删除站点仍已落盘（不再「内存改了、磁盘没改」）", async () => {
+    const store = await createMetadataStore();
+    const save = vi.fn().mockResolvedValue(undefined);
+    store.$save = save;
+    store.buildSiteMapCache = vi.fn().mockRejectedValue(new Error("site definition failed to load"));
+
+    await expect(store.addSite("siteA", { url: "https://siteA.example/" } as any)).rejects.toThrow(
+      "site definition failed to load",
+    );
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(store.sites.siteA).toBeDefined();
+
+    save.mockClear();
+    await expect(store.removeSite("siteA")).rejects.toThrow("site definition failed to load");
+    expect(store.sites.siteA).toBeUndefined();
+    // 删除走合并写入：窗口结束后必须写盘（旧实现被重建错误短路，永远不写）
+    await vi.advanceTimersByTimeAsync(600);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("新增下载器写盘失败时 addDownloader 拒绝", async () => {
+    const store = await createMetadataStore();
+    store.$save = vi.fn().mockRejectedValue(new Error("quota exceeded"));
+
+    await expect(store.addDownloader({ id: "clientA", enabled: true } as any)).rejects.toThrow("quota exceeded");
+  });
+});
+
+describe("M-6：清空用户配置后 siteIndex 同步清空", () => {
+  it("$reset + $save + syncSiteIndex 之后，storage 里的 siteIndex 不再残留已删站点", async () => {
+    const store = await createMetadataStore();
+    defineSite("siteA");
+    await store.addSite("siteA", { url: "https://siteA.example/" } as any);
+    await vi.advanceTimersByTimeAsync(600);
+
+    sendMessageMock.mockClear();
+    store.$reset();
+    await store.$save();
+    await store.syncSiteIndex();
+
+    const siteIndexWrites = (sendMessageMock.mock.calls as unknown as Array<[string, any]>).filter(
+      ([type, payload]) => type === "setExtStorage" && payload?.key === "siteIndex",
+    );
+    expect(siteIndexWrites.at(-1)?.[1].value).toEqual({ siteHostMap: {}, siteNameMap: {} });
+  });
+});
+
 describe("B-8 getSearchSolution 不得改写 state", () => {
   it("站点 isOffline 时展开方案：返回的浅拷贝丢弃该站点，state.solutions 保持原样", async () => {
     const store = await createMetadataStore();

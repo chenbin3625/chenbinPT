@@ -491,7 +491,7 @@ function saveControl() {
           <template v-for="[field] in perSiteChartField" :key="field">
             <v-chart
               v-if="
-                // @ts-ignore
+                // @ts-expect-error 原因：模板字符串拼出的键（perSiteK…）在类型上是 string，showChart 没有字符串索引签名
                 configStore.userStatisticControl.showChart[`perSiteK${field}`]
               "
               :group="`perSiteK${field}`"
@@ -503,7 +503,7 @@ function saveControl() {
             />
             <v-chart
               v-if="
-                // @ts-ignore
+                // @ts-expect-error 原因：模板字符串拼出的键（perSiteK…）在类型上是 string，showChart 没有字符串索引签名
                 configStore.userStatisticControl.showChart[`perSiteK${field}Incr`]
               "
               :group="`perSiteK${field}Incr`"

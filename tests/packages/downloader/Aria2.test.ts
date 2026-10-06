@@ -268,6 +268,47 @@ describe("Aria2：system.multicall 解包 / 进度单位 / 上传限速 GID", ()
   });
 });
 
+describe("Aria2 删除任务按状态分流（H-4）", () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  it("已完成（complete）的任务只清下载结果，不调用对它必然报错的 aria2.remove", async () => {
+    const { client, ws } = await createClient();
+    const promise = client.removeTorrent("gid-done");
+
+    const status = await waitForRequest(ws, 1);
+    expect(status.method).toBe("aria2.tellStatus");
+    ws.respond({ id: status.id, jsonrpc: "2.0", result: { status: "complete" } });
+
+    const cleanup = await waitForRequest(ws, 2);
+    expect(cleanup.method).toBe("aria2.removeDownloadResult");
+    ws.respond({ id: cleanup.id, jsonrpc: "2.0", result: "OK" });
+
+    await expect(promise).resolves.toBe(true);
+    expect(ws.sent.map((raw) => JSON.parse(raw).method)).not.toContain("aria2.remove");
+  });
+
+  it("活动任务先 aria2.remove；随后的 removeDownloadResult 报 not found 不影响结果", async () => {
+    const { client, ws } = await createClient();
+    const promise = client.removeTorrent("gid-active");
+
+    const status = await waitForRequest(ws, 1);
+    ws.respond({ id: status.id, jsonrpc: "2.0", result: { status: "active" } });
+
+    const remove = await waitForRequest(ws, 2);
+    expect(remove.method).toBe("aria2.remove");
+    ws.respond({ id: remove.id, jsonrpc: "2.0", result: "gid-active" });
+
+    const cleanup = await waitForRequest(ws, 3);
+    expect(cleanup.method).toBe("aria2.removeDownloadResult");
+    ws.respond({ id: cleanup.id, jsonrpc: "2.0", error: { code: 1, message: "GID gid-active is not found" } });
+
+    await expect(promise).resolves.toBe(true);
+  });
+});
+
 describe("Aria2 删除文件参数", () => {
   it("API 不支持删文件时明确拒绝，而不是假报成功", async () => {
     FakeWebSocket.instances = [];

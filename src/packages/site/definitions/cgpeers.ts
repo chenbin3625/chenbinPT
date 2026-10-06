@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/cgpeers.yml
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/cgpeers.com/config.json
  */
-import { type ISiteMetadata, ETorrentStatus } from "../types";
+import { type ISiteMetadata, type IElementQuery, ETorrentStatus } from "../types";
 import { SchemaMetadata } from "../schemas/Luminance";
 import { buildCategoryOptionsFromDict } from "../utils";
 
@@ -19,8 +19,8 @@ const categoryMap: Record<number, string> = {
   9: "Web Development",
 };
 
-const linkSelector = { selector: "a[href*='torrent/download/']", attr: "href" };
-const idSelector = {
+const linkSelector: IElementQuery = { selector: "a[href*='torrent/download/']", attr: "href" };
+const idSelector: IElementQuery = {
   ...linkSelector,
   filters: [{ name: "split", args: ["/", 3] }, { name: "split", args: ["?", 0] }, { name: "parseNumber" }],
 };

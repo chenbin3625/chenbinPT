@@ -5,7 +5,7 @@
 import { mergeWith } from "es-toolkit/compat";
 import { selectElements } from "../utils/selector";
 
-import { EResultParseStatus, type ISiteMetadata, type IUserInfo } from "../types";
+import { EResultParseStatus, type IElementQuery, type ISiteMetadata, type IUserInfo } from "../types";
 import AbstractPrivateSite from "../schemas/AbstractPrivateSite.ts";
 import { cookie } from "../utils/adapter.ts";
 import { parseSizeString } from "../utils/filesize.ts";
@@ -103,7 +103,7 @@ const categoryOptions = [
   { name: "Radio - Reading", value: 132 },
 ];
 
-const commonDocumentSelectors = {
+const commonDocumentSelectors: Record<string, IElementQuery> = {
   id: { selector: "a[href*='/t/']", attr: "href", filters: [{ name: "parseNumber" }] },
   title: { selector: "a.torTitle" },
   url: { selector: "a.torTitle", attr: "href" },

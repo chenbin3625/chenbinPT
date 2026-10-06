@@ -79,26 +79,30 @@ window.addEventListener("resize", handleWindowResize);
 // 由于App.vue是整个应用的根组件，此时 configStore 等 pinia store 可能还未初始化完成，所以需要监听 $onReady
 let stopUrlWatcher: (() => void) | undefined;
 
-configStore.$onReady(() => {
-  openSpeedDial.value = configStore.contentScript?.defaultOpenSpeedDial ?? false;
+void configStore
+  .$onReady(() => {
+    openSpeedDial.value = configStore.contentScript?.defaultOpenSpeedDial ?? false;
 
-  if (openSpeedDial.value) {
-    updatePageType(ptdData).catch();
-  }
+    if (openSpeedDial.value) {
+      void updatePageType(ptdData).catch(() =>
+        runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }),
+      );
+    }
 
-  // A-8：SPA 站点（Unit3D/Livewire 等）列表 → 详情是 pushState 导航，内容脚本不会重新执行，
-  // 必须订阅 URL 变化并重新求值 pageType/站点实例（在 store 就绪后再装，避免水合竞态）。
-  stopUrlWatcher?.(); // 幂等：$onReady 若重复触发，先释放上一轮的订阅，避免监听器累积
-  stopUrlWatcher = installPageTypeUrlWatcher(ptdData);
+    // A-8：SPA 站点（Unit3D/Livewire 等）列表 → 详情是 pushState 导航，内容脚本不会重新执行，
+    // 必须订阅 URL 变化并重新求值 pageType/站点实例（在 store 就绪后再装，避免水合竞态）。
+    stopUrlWatcher?.(); // 幂等：$onReady 若重复触发，先释放上一轮的订阅，避免监听器累积
+    stopUrlWatcher = installPageTypeUrlWatcher(ptdData);
 
-  let { x: storeX = -100, y: storeY = -100 } = configStore.contentScript?.position ?? {};
-  let { clientWidth, clientHeight } = document.documentElement;
+    let { x: storeX = -100, y: storeY = -100 } = configStore.contentScript?.position ?? {};
+    let { clientWidth, clientHeight } = document.documentElement;
 
-  x.value = storeX <= 0 || storeX > clientWidth - 50 ? clientWidth - 100 : storeX; // Default to right side
-  y.value = storeY <= 0 || storeY > clientHeight - 50 ? clientHeight - 100 : storeY; // Default to bottom
-  rightX.value = clientWidth - x.value;
-  bottomY.value = clientHeight - y.value;
-});
+    x.value = storeX <= 0 || storeX > clientWidth - 50 ? clientWidth - 100 : storeX; // Default to right side
+    y.value = storeY <= 0 || storeY > clientHeight - 50 ? clientHeight - 100 : storeY; // Default to bottom
+    rightX.value = clientWidth - x.value;
+    bottomY.value = clientHeight - y.value;
+  })
+  .catch(() => runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }));
 
 const remoteDownloadDialogData = shallowReactive<IRemoteDownloadDialogData>({
   show: false,
@@ -159,6 +163,9 @@ async function onDrop(event: DragEvent) {
 
     if (torrents.length > 0) {
       remoteDownloadDialogData.torrents = torrents;
+      // M-20：拖拽投放总是走「选择下载器」界面。不复位的话，先前点过「推送到默认下载器」后
+      // isDefaultSend 仍为 true，拖拽的内容会不经确认直接发往默认下载器
+      remoteDownloadDialogData.isDefaultSend = false;
       remoteDownloadDialogData.show = true;
     }
   } catch {
@@ -181,7 +188,19 @@ const dropAction = computed(() => {
 });
 
 function openOptions() {
-  sendMessage("openOptionsPage", "/");
+  void sendMessage("openOptionsPage", "/").catch(() =>
+    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }),
+  );
+}
+
+function handleSpeedDialClick(event: MouseEvent) {
+  if (!(event.target instanceof Element) || !event.target.closest(".ant-float-btn-group > .ant-float-btn")) return;
+  openSpeedDial.value = !openSpeedDial.value;
+  if (openSpeedDial.value) {
+    void updatePageType(ptdData).catch(() =>
+      runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }),
+    );
+  }
 }
 </script>
 
@@ -195,6 +214,7 @@ function openOptions() {
     }"
     @mouseleave.prevent="isDragging = false"
     @dragleave.prevent="isDragging = false"
+    @click.stop="handleSpeedDialClick"
     v-on="dropAction"
   >
     <a-float-button-group
@@ -206,18 +226,23 @@ function openOptions() {
       <template #icon>
         <a-avatar
           :src="ptdIcon"
-          :size="32"
+          :size="24"
           shape="square"
           class="ptd-fab-logo"
           :class="{ 'ptd-fab-logo--dragging': isDragging }"
-          @click="updatePageType(ptdData)"
         />
       </template>
 
       <!-- 这里根据 pageType 来决定显示哪些按钮 -->
       <component :is="currentView" :key="pageType" />
 
-      <SpeedDialBtn key="home" :icon="HomeOutlined" :title="t('contentScript.openPTD')" @click="openOptions" />
+      <SpeedDialBtn
+        key="home"
+        :icon="HomeOutlined"
+        :title="t('contentScript.openPTD')"
+        :label="t('contentScript.speedDial.openPTD')"
+        @click="openOptions"
+      />
     </a-float-button-group>
   </div>
 

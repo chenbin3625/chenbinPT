@@ -768,20 +768,38 @@ body {
   word-break: break-word;
 }
 
-/* 快速站点筛选（QuickFilterNotice）：普通行内布局，不再用 alert 承载 */
+/* 搜索结果页的下拉筛选条：普通行内布局，不再用 alert 承载。
+ *
+ * 外层**刻意不换行**（默认 nowrap）：换行只发生在 .search-filter-chips 内部。
+ * 这样在窗口偏窄时被挤到第二行的是筛选项，而不是搜索框 —— 搜索框始终跟在
+ * 最后一个可见筛选项后面，不会独占一行。若外层也允许 wrap，flex 换行判定看的
+ * 是各子项的 flex-basis，搜索框会在筛选项还能收缩时先被换到下一行（旧行为）。 */
 .search-filter-bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   margin-bottom: 8px;
 }
 
+/* 筛选项容器：宽度按内容自适应，空间不足时自己换行；min-width: 0 让它能被压缩。 */
+.search-filter-chips {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 搜索框：紧跟在筛选项之后，不再用 margin-inline-start: auto 贴右。
+ *
+ * flex 基准刻意取 0：这样它只吃「剩下的空间」，不会像固定 240px 基准那样
+ * 在筛选项还放得下时就先换行；收缩份额同样按基准 0 计算，所以空间不够时
+ * 先被压缩的是它（最窄 200px），压缩到下限后剩余缺口才由筛选项内部换行吸收。 */
 .search-filter-search {
-  flex: 1 1 240px;
+  flex: 1 1 0;
   min-width: min(200px, 100%);
   max-width: 320px;
-  margin-inline-start: auto;
 }
 
 .search-filter-clear {
@@ -852,13 +870,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-@media (max-width: 640px) {
-  .search-filter-search {
-    flex-basis: 100%;
-    max-width: none;
-  }
 }
 
 .quick-site-filter {

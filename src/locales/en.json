@@ -444,6 +444,7 @@
       "filterLabel": "Filter search results",
       "filters": {
         "atLeast": "At least {0}",
+        "atMost": "At most {0}",
         "clear": "Clear",
         "completed": "Completed",
         "dates": {
@@ -547,6 +548,7 @@
       "backupIntervalField": "Interval (hours)",
       "backupIntervalHint": "Set auto-backup interval (hours). Leave empty or 0 to disable auto backup. Any length is allowed (e.g. 168 hours = 7 days).",
       "clearRetention": "Clear retention policy (never clean up historical backups)",
+      "nameTip": "Pick a nice and recognizable name for this Backup Server",
       "retention": "Backup Retention Policy",
       "serverConfig": "Server Configuration"
     },
@@ -653,6 +655,9 @@
       "retention": "Retention",
       "retentionDisabled": "Retention policy disabled",
       "retentionEnabled": "Retention policy enabled"
+    },
+    "edit": {
+      "title": "Edit Backup Server"
     }
   },
   "SetBase": {
@@ -894,6 +899,9 @@
     },
     "add": {
       "title": "Add Media Server"
+    },
+    "edit": {
+      "title": "Edit Media Server"
     }
   },
   "SetNativeBridge": {
@@ -1215,6 +1223,7 @@
     "remove": "Delete",
     "save": "Save",
     "saveSettings": "Save Settings",
+    "saveFailed": "Could not save. Check storage space and try again.",
     "saveSuccess": "Saved successfully",
     "search": "Search",
     "site": "Site",
@@ -1234,7 +1243,9 @@
     "type": "Type",
     "username": "Username",
     "version": "Version",
-    "visit": "Visit"
+    "visit": "Visit",
+    "unknown": "Unknown",
+    "noInformation": "No Information"
   },
   "connectCheck": {
     "default": "Check Connect",
@@ -1270,11 +1281,21 @@
     "localDownloadFailed": "Local download failed. Check Download History for details.",
     "noTorrentParsed": "No torrents found on this page",
     "openPTD": "Open PTD",
+    "operationFailed": "Operation failed. Please try again.",
     "parsePageFailed": "Page parsing failed",
     "parseResultEmpty": "Failed to parse results",
     "pushTo": "Push to...",
     "pushToDefault": "Push to Default Downloader",
     "quickSearch": "Quick Search",
+    "speedDial": {
+      "advanceList": "List",
+      "copyLink": "Copy Link",
+      "localDownload": "Download",
+      "openPTD": "Open PTD",
+      "pushTo": "Choose",
+      "pushToDefault": "Default",
+      "quickSearch": "Search"
+    },
     "untrustedTorrentLink": "The parsed download link does not belong to this site and was rejected",
     "unsupportedDropLinks": "The dropped links are unsupported or do not belong to this site and were ignored"
   },

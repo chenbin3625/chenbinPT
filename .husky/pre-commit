@@ -1,6 +1,7 @@
 # 提交前只跑 lint-staged（prettier --write + eslint --fix），只作用于**暂存**文件。
 # 这里刻意不跑 vue-tsc：全量类型检查要 1~2 分钟，放进 commit 钩子会明显拖慢提交，
-# 类型门禁交给 CI 的 `npm run check`（见 .github/workflows/action_build.yml）。
+# 仓库已没有 CI（.github/workflows 已删除）：类型检查 / 全量 lint / 单测统一由 `npm run verify` 负责，
+# 发布脚本 `npm run pack:crx:build` 会先跑它，不通过就不打包（M-15）。
 #
 # 为什么这里不直接写 `npx --no-install eslint --no-warn-ignored --fix`：
 # 不接文件参数的 eslint --fix 会以整个仓库为输入，既会顺手改写**未暂存**的文件

@@ -77,6 +77,28 @@ describe("logger 脱敏（L-7）", () => {
     });
   });
 
+  it("路径里的 passkey 段同样被脱敏（Rartracker：/api/v1/torrents/download/{id}/{passkey}）", async () => {
+    const { logger, getLoggerItems } = await loadLoggerModule();
+
+    logger({
+      msg: "Download torrent file with web method: https://r.example/api/v1/torrents/download/123/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+    });
+
+    const msg = getLoggerItems()[0]!.msg;
+    expect(msg).toBe("Download torrent file with web method: https://r.example/api/v1/torrents/download/123/***");
+    expect(msg).not.toContain("0a1b2c3d4e5f60718293a4b5c6d7e8f9");
+  });
+
+  it("普通路径段（数字 id、单词、带扩展名的文件名）不被误伤", async () => {
+    const { logger, getLoggerItems } = await loadLoggerModule();
+
+    logger({ msg: "https://nyaa.example/download/1234567.torrent and /torrents/download/98765432101234567890" });
+
+    expect(getLoggerItems()[0]!.msg).toBe(
+      "https://nyaa.example/download/1234567.torrent and /torrents/download/98765432101234567890",
+    );
+  });
+
   it("无 query 的 URL 与普通文本保持原样", async () => {
     const { logger, getLoggerItems } = await loadLoggerModule();
 

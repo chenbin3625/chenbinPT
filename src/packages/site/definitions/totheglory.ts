@@ -185,7 +185,8 @@ export const siteMetadata: ISiteMetadata = {
         selector: "td:nth-child(9)",
         filters: [(q: `${number}/${number}`) => q.split("/")[1]],
       },
-      completed: { selector: "td:nth-child(8)", filters: [parseInt] },
+      // 不能直接传 parseInt：过滤器以 (query, args) 调用，args 会被当成 radix
+      completed: { selector: "td:nth-child(8)", filters: [(query: string) => parseInt(query, 10)] },
       comments: { text: 0, selector: 'a[href*="tocomm=1"]' },
 
       tags: [

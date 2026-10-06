@@ -49,7 +49,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "软件", value: 431 },
         { name: "其他", value: 409 },
       ],
-      cross: { mode: "append" },
+      cross: { mode: "append", key: "cat" }, // H-12：NexusPHP 的分类参数是 cat<id>=1，不能用 group key 作前缀
     },
     {
       name: "分类（音乐写真）",
@@ -62,7 +62,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "图片写真", value: 410 },
         { name: "影视写真", value: 411 },
       ],
-      cross: { mode: "append" },
+      cross: { mode: "append", key: "cat" }, // H-12：NexusPHP 的分类参数是 cat<id>=1，不能用 group key 作前缀
     },
     {
       name: "媒介",

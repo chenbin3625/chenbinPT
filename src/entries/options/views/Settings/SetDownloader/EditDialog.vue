@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { cloneDeep } from "es-toolkit";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type { IDownloaderMetadata, TDownloaderKey } from "@/shared/types.ts";
 
 import Editor from "./Editor.vue";
@@ -16,6 +17,7 @@ const clientConfig = ref<IDownloaderMetadata>();
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 function dialogEnter() {
   if (clientId) {
@@ -29,9 +31,13 @@ function dialogEnter() {
   }
 }
 
-function editClientConfig() {
-  metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
-  showDialog.value = false;
+async function editClientConfig() {
+  try {
+    await metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。

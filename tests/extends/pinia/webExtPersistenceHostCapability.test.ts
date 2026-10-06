@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, defineStore } from "pinia";
 import { createApp, h } from "vue";
+import { message } from "ant-design-vue";
 
 const { piniaWebExtPersistencePlugin } = await import("~/extends/pinia/webExtPersistence.ts");
 
@@ -159,7 +160,8 @@ describe("webExtPersistence：非扩展宿主的降级（按钮全失效故障�
     expect(() => store.$disposePersist()).not.toThrow();
   });
 
-  it("storage.local.set 抛错时 $save 仍 resolve（保持既有控制流语义）", async () => {
+  it("storage.local.set 失败时 $save 拒绝，让调用方知道配置未落盘", async () => {
+    const notice = vi.spyOn(message, "open").mockImplementation(() => ({}) as any);
     const setSpy = vi.fn(() => Promise.reject(new Error("quota exceeded")));
     vi.stubGlobal("chrome", {
       storage: {
@@ -171,7 +173,28 @@ describe("webExtPersistence：非扩展宿主的降级（按钮全失效故障�
     const store = createStoreWithId("saveFailure");
     await store.$onReady();
     store.sites.siteA.name = "changed";
-    await expect(store.$save()).resolves.toBeUndefined();
+    await expect(store.$save()).rejects.toThrow("quota exceeded");
     expect(setSpy).toHaveBeenCalled();
+    expect(notice).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
+    notice.mockRestore();
+  });
+
+  it("错误提示不可用时仍抛出原始写盘错误", async () => {
+    const notice = vi.spyOn(message, "open").mockImplementation(() => {
+      throw new Error("message UI unavailable");
+    });
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: {
+          get: () => Promise.resolve({ saveFailure: { sites: { siteA: { name: "A" } } } }),
+          set: () => Promise.reject(new Error("quota exceeded")),
+        },
+      },
+    });
+    const store = createStoreWithId("saveFailure");
+    await store.$onReady();
+
+    await expect(store.$save()).rejects.toThrow("quota exceeded");
+    notice.mockRestore();
   });
 });

@@ -93,7 +93,7 @@ export const siteMetadata: ISiteMetadata = {
       time: {
         selector: [".time_col span[title]"],
         attr: "title",
-        filters: [{ name: "parseValidTimeString" }],
+        filters: [{ name: "parseTime" }], // T-1：过滤器名是 parseTime（其实现为 parseValidTimeString），旧名会被静默跳过
       },
       size: { selector: ".video_size", filters: [{ name: "parseSize" }] },
       author: { selector: [".time_col>i, .time_col>.username-center"] },

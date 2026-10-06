@@ -155,6 +155,64 @@ export function parseValidTimeString(query: string, formatString: string[] = [])
 const explicitTimeZonePattern = /[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
 const wallTimePattern = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(?::(\d{2})(\.\d+)?)?)?$/;
 
+/**
+ * 本地日历方法全部落到 UTC 的 Date：给 date-fns 的 `parse` 当上下文用（`in` 选项），
+ * 让「墙上时间字段」的解析与宿主时区（含夏令时跳变）完全脱钩。
+ */
+class UTCWallDate extends Date {
+  constructor(value: number | string | Date = Date.now()) {
+    super(value instanceof Date ? +value : value);
+  }
+  override getFullYear() {
+    return this.getUTCFullYear();
+  }
+  override getMonth() {
+    return this.getUTCMonth();
+  }
+  override getDate() {
+    return this.getUTCDate();
+  }
+  override getDay() {
+    return this.getUTCDay();
+  }
+  override getHours() {
+    return this.getUTCHours();
+  }
+  override getMinutes() {
+    return this.getUTCMinutes();
+  }
+  override getSeconds() {
+    return this.getUTCSeconds();
+  }
+  override getMilliseconds() {
+    return this.getUTCMilliseconds();
+  }
+  override getTimezoneOffset() {
+    return 0;
+  }
+  override setFullYear(...args: Parameters<Date["setUTCFullYear"]>) {
+    return this.setUTCFullYear(...args);
+  }
+  override setMonth(...args: Parameters<Date["setUTCMonth"]>) {
+    return this.setUTCMonth(...args);
+  }
+  override setDate(date: number) {
+    return this.setUTCDate(date);
+  }
+  override setHours(...args: Parameters<Date["setUTCHours"]>) {
+    return this.setUTCHours(...args);
+  }
+  override setMinutes(...args: Parameters<Date["setUTCMinutes"]>) {
+    return this.setUTCMinutes(...args);
+  }
+  override setSeconds(...args: Parameters<Date["setUTCSeconds"]>) {
+    return this.setUTCSeconds(...args);
+  }
+  override setMilliseconds(ms: number) {
+    return this.setUTCMilliseconds(ms);
+  }
+}
+
 export function parseValidTimeStringInZone(
   query: string,
   formatString: string[],
@@ -162,6 +220,22 @@ export function parseValidTimeStringInZone(
 ): number | string {
   if (/^\d+$/.test(query)) return parseTimeWithZone(query, offset);
   if (wallTimePattern.test(query)) return parseTimeWithZone(query, offset);
+
+  // 站点自定义格式：在 UTC 上下文里解析出墙上时间字段，再按站点时区换算。
+  // 不能先让 date-fns 按宿主时区 parse 再 format 回字段 —— 宿主处于夏令时跳变的那一小时
+  // （如纽约 2024-03-10 02:30 不存在）时，parse 会把它挪到 03:30，站点时间就差 1 小时。
+  for (const f of formatString) {
+    try {
+      // 格式里没有的字段（如年份）取自参考日期，与 date-fns 默认一致取当前时刻
+      const wall = parse(query, f, new UTCWallDate(), { in: (value) => new UTCWallDate(value) });
+      if (!isValid(wall)) continue;
+      // 格式自带时区（XXX / 'Z' 等）时 date-fns 已换算成绝对时间，直接返回
+      if (/[XxOz]/.test(f.replace(/'[^']*'/g, ""))) return +wall;
+      return parseTimeWithZone(new Date(+wall).toISOString().slice(0, 23), offset);
+    } catch {
+      // 坏格式不阻止后续格式的尝试
+    }
+  }
 
   const parsed = parseValidTimeString(query, formatString);
   if (typeof parsed !== "number" || explicitTimeZonePattern.test(query)) return parsed;

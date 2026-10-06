@@ -180,8 +180,6 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
       items: [],
     };
 
-    const serverIdentity = await this.getServerIdentity();
-
     // 生成基本请求参数
     let requestConfig: AxiosRequestConfig = { params: {} };
     config.startIndex = requestConfig.params["X-Plex-Container-Start"] = config.startIndex ?? 0;
@@ -189,6 +187,10 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
     requestConfig = toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {});
 
     try {
+      // M-17：identity 请求必须在 try 内 —— 放在外面时服务器离线 / 地址填错 / 令牌失效会让整个调用 reject，
+      // 调用方拿不到 status 与 errorMessage，媒体墙静默空白、没有任何提示
+      const serverIdentity = await this.getServerIdentity();
+
       // 从服务器获取最新数据 /library/recentlyAdded
       let url = "/library/recentlyAdded";
 
@@ -228,6 +230,8 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
       if (e instanceof AxiosError && e.response?.status === 401) {
         result.status = EResultParseStatus.needLogin;
       }
+      // 与 emby / jellyfin 一致：把真实原因交给 UI，而不是落回「未知错误」
+      result.errorMessage = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
 
     return result;

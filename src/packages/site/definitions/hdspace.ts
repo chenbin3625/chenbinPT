@@ -2,6 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/hdspace.yml
  */
 import type { ISiteMetadata } from "../types.ts";
+import type { TQueryFilter } from "../utils/filter.ts";
 import { set } from "es-toolkit/compat";
 import { buildCategoryOptionsFromDict } from "../utils.ts";
 import { extractTextExcluding } from "../utils/html.ts";
@@ -49,7 +50,7 @@ const timeFilterWithDay = (query: string) => {
   currentDate.setHours(...(dateParts[1].trim().split(":").map(Number) as [number, number, number]));
   return currentDate.getTime();
 };
-const timeFilterWithoutDay = { name: "parseTime", args: ["MMMM dd, yyyy,\u00A0HH:mm:ss"] };
+const timeFilterWithoutDay: TQueryFilter = { name: "parseTime", args: ["MMMM dd, yyyy,\u00A0HH:mm:ss"] };
 
 export const siteMetadata: ISiteMetadata = {
   version: 1,
@@ -129,7 +130,7 @@ export const siteMetadata: ISiteMetadata = {
       size: { selector: "td:nth-child(6)", filters: [{ name: "parseSize" }] },
       seeders: { selector: "td:nth-child(8)" },
       leechers: { selector: "td:nth-child(9)" },
-      completed: { selector: "td:nth-child(9)", filters: [statsFilter] },
+      completed: { selector: "td:nth-child(10)", filters: [statsFilter] }, // D-10：完成数在第 10 列（Jackett hdspace.yml 的 grabs）
       comments: { selector: "td:nth-child(3)", filters: [statsFilter] },
       subTitle: {
         selector: "td:nth-child(2) > span",

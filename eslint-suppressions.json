@@ -43,11 +43,6 @@
       "count": 2
     }
   },
-  "src/entries/content-script/app/App.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    }
-  },
   "src/entries/content-script/app/components/AdvanceListModuleDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
@@ -166,7 +161,7 @@
   },
   "src/entries/options/views/Overview/MediaServerEntity/utils.ts": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Overview/MyClient/ClientStatusDialog.vue": {
@@ -242,11 +237,6 @@
       "count": 1
     }
   },
-  "src/entries/options/views/Overview/SearchEntity/ActionTd.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/entries/options/views/Overview/SearchEntity/AdvanceFilterGenerateDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
@@ -254,7 +244,7 @@
   },
   "src/entries/options/views/Overview/SearchEntity/Index.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     },
     "no-console": {
       "count": 2
@@ -271,9 +261,6 @@
     }
   },
   "src/entries/options/views/Overview/SearchEntity/utils/search.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "no-console": {
       "count": 8
     }
@@ -301,11 +288,6 @@
       "count": 1
     }
   },
-  "src/entries/options/views/Settings/SetBackup/Index.vue": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "src/entries/options/views/Settings/SetBackup/LocalExportConfirmDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
@@ -329,35 +311,22 @@
       "count": 6
     }
   },
-  "src/entries/options/views/Settings/SetBase/UiWindow.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/entries/options/views/Settings/SetBase/UserInfoWindow.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 2
     }
   },
-  "src/entries/options/views/Settings/SetDownloader/AddDialog.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/entries/options/views/Settings/SetDownloader/DefaultDownloaderEditDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Settings/SetDownloader/EditDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Settings/SetDownloader/PathAndTagSuggestDialog.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "no-console": {
       "count": 1
     }
@@ -433,7 +402,7 @@
   },
   "src/extends/pinia/webExtPersistence.ts": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     },
     "no-console": {
       "count": 3

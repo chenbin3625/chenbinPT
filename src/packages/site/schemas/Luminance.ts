@@ -312,8 +312,8 @@ export default class Luminance extends GazelleBase {
     flushUserInfo.seedingSize = seedingSize;
 
     if (!seedingSize) {
-      // 否则则尝试解析做种列表计算获取
-      flushUserInfo = toMerged(flushUserInfo, await this.getSeedingSize(flushUserInfo.id as number));
+      // 否则则尝试解析做种列表计算获取（M-10 / L-4：失败不作废其它字段，见 GazelleBase.mergeSeedingSizeSafely）
+      flushUserInfo = await this.mergeSeedingSizeSafely(flushUserInfo);
     }
 
     return flushUserInfo;

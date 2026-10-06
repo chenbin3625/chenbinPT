@@ -98,17 +98,18 @@ function secondsToISO8601(seconds: number) {
             t("MediaServerEntity.ItemInformationDialog.type")
           }}</a-typography-text>
           <a-space wrap>
-            <a-tag
-              v-for="tag in item.tags ?? []"
-              :key="tag.name"
-              :href="tag.url ?? (false as unknown as undefined)"
-              :target="tag.url ? '_blank' : undefined"
-              style="margin-right: 4px"
-              rel="noopener noreferrer nofollow"
-              color="#ff9800"
-              ><TagsOutlined style="margin-right: 4px" />
-              {{ tag.name }}
-            </a-tag>
+            <!-- M-24：antd 4.2.6 的 a-tag 没有 href 属性（渲染成 <span href>，点不动），链接必须包一层 <a>；
+                 无链接（Plex / fnOS 传空串）时只渲染标签，不留无效的 href="" -->
+            <template v-for="tag in item.tags ?? []" :key="tag.name">
+              <a v-if="tag.url" :href="tag.url" rel="noopener noreferrer nofollow" target="_blank">
+                <a-tag color="#ff9800" style="margin-right: 4px; cursor: pointer"
+                  ><TagsOutlined style="margin-right: 4px" />{{ tag.name }}</a-tag
+                >
+              </a>
+              <a-tag v-else color="#ff9800" style="margin-right: 4px"
+                ><TagsOutlined style="margin-right: 4px" />{{ tag.name }}</a-tag
+              >
+            </template>
           </a-space>
         </div>
         <div v-if="item.duration" class="info-label">

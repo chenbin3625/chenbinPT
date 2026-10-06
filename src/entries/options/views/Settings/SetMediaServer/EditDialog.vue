@@ -41,7 +41,7 @@ watch(showDialog, (open) => {
     v-model:open="showDialog"
     :cancel-text="t('common.dialog.cancel')"
     :ok-text="t('common.dialog.ok')"
-    :title="t('SetDownloader.edit.title')"
+    :title="t('SetMediaServer.edit.title')"
     :width="800"
     @ok="editClientConfig"
   >

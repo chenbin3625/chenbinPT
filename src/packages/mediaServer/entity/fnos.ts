@@ -467,6 +467,8 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       } else {
         result.status = EResultParseStatus.parseError;
       }
+      // M-17：只置 parseError 不给原因时 UI 会落回「未知错误」（#1437 要消灭的现象）
+      result.errorMessage = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
 
     return result;

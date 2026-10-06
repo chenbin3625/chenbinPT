@@ -1,13 +1,13 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/digitalcore-api.yml
  */
-import type { ISiteMetadata } from "../types";
+import type { ISiteMetadata, IElementQuery } from "../types";
 import { get } from "es-toolkit/compat";
 import { buildCategoryOptionsFromDict } from "../utils";
 import Rartracker from "../schemas/Rartracker";
 import { SchemaMetadata } from "../schemas/Rartracker";
 
-const commonDocumentSelectors = {
+const commonDocumentSelectors: Record<string, IElementQuery> = {
   rows: { selector: "torrents-table[torrents] > table > tbody > tr" },
   id: {
     selector: "a[title]",

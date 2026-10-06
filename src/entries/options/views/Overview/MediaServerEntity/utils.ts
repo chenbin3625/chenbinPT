@@ -1,7 +1,7 @@
 import PQueue from "p-queue";
 import { markRaw, ref, watch } from "vue";
 import { omit } from "es-toolkit";
-import { type IMediaServerItem, type IMediaServerSearchOptions } from "@ptd/mediaServer";
+import { type IMediaServerItem, type IMediaServerSearchOptions, type IMediaServerSearchResult } from "@ptd/mediaServer";
 
 import { sendMessage } from "@/messages.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
@@ -44,7 +44,9 @@ searchQueue.on("active", () => {
   // 启动后，根据 configStore 的值，自动更新 searchQueue 的并发数
   if (searchQueue.concurrency != configStore.mediaServerEntity.queueConcurrency) {
     searchQueue.concurrency = configStore.mediaServerEntity.queueConcurrency;
-    sendMessage("logger", { msg: `Search queue concurrency changed to: ${searchQueue.concurrency}` }).catch();
+    void sendMessage("logger", { msg: `Search queue concurrency changed to: ${searchQueue.concurrency}` }).catch(
+      () => {},
+    );
   }
 
   // 队列开始活跃时，更新全局 Set
@@ -80,11 +82,17 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean 
         searchOptions.startIndex = (searchOptions.startIndex ?? 0) + (searchOptions.limit ?? 0);
       }
 
-      const searchResult = await sendMessage("getMediaServerSearchResult", {
+      // M-17：任务 reject 时 p-queue 只 emit("error")，而本队列没有该监听 —— 失败会完全静默。
+      // 这里把消息层的异常（offscreen 不可达、实体抛错）也收敛成一个失败结果，走下面统一的提示分支。
+      const searchResult: IMediaServerSearchResult = await sendMessage("getMediaServerSearchResult", {
         mediaServerId,
         keywords: searchKey,
         options: searchOptions,
-      });
+      }).catch((e: unknown) => ({
+        status: EResultParseStatus.unknownError,
+        items: [],
+        errorMessage: e instanceof Error ? e.message : String(e),
+      }));
 
       runtimeStore.mediaServerSearch.searchStatus[mediaServerId] = {
         ...omit(searchResult, ["items"]),

@@ -43,5 +43,5 @@ onMounted(async () => {
       </a-tooltip>
     </template>
   </div>
-  <template v-else>Unknown</template>
+  <template v-else>{{ t("common.unknown") }}</template>
 </template>

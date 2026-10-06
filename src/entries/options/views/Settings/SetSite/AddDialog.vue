@@ -6,6 +6,7 @@ import { ISiteMetadata, type ISiteUserConfig, type TSiteID } from "@ptd/site";
 
 import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { getCanAddedSiteMetadata } from "./utils.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
@@ -17,6 +18,7 @@ const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const currentStep = ref<0 | 1>(0);
 const selectedSiteId = ref<TSiteID | null>(null);
@@ -63,8 +65,12 @@ watch(showDialog, (open) => {
 });
 
 async function saveSite() {
-  await metadataStore.addSite(selectedSiteId.value!, storedSiteUserConfig.value!);
-  showDialog.value = false;
+  try {
+    await metadataStore.addSite(selectedSiteId.value!, storedSiteUserConfig.value!);
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 </script>
 

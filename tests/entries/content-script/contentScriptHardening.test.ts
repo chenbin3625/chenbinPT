@@ -34,8 +34,14 @@ vi.mock("@/options/stores/metadata.ts", () => ({
 
 (globalThis as any).__BROWSER__ = "chrome";
 
-const { installPageTypeUrlWatcher, pageType, siteInstance, copyTextToClipboard, setClipboardFallbackContainer } =
-  await import("@/content-script/app/utils.ts");
+const {
+  installPageTypeUrlWatcher,
+  pageType,
+  siteInstance,
+  copyTextToClipboard,
+  setClipboardFallbackContainer,
+  URL_POLL_INTERVAL,
+} = await import("@/content-script/app/utils.ts");
 
 const SITE_ID = "testsite";
 const REPO_ROOT = resolve(import.meta.dirname, "../../..");
@@ -67,6 +73,36 @@ beforeEach(() => {
   mocks.getSite.mockImplementation(async () => FAKE_SITE);
   siteInstance.value = undefined;
   pageType.value = "unknown";
+});
+
+describe("H-3 · 页面 world 的 pushState（隔离世界里补丁不可见）", () => {
+  it("绕过补丁直接调用原生 pushState 后，轮询仍能发现 URL 变化并重新求值", async () => {
+    vi.useFakeTimers();
+    try {
+      history.replaceState({}, "", "/torrents");
+      const stop = installPageTypeUrlWatcher({ siteId: SITE_ID });
+
+      // 模拟真实浏览器：页面脚本调用的是页面 world 的 History，内容脚本装在自己 world 上的补丁不会经过。
+      // 这里用 History.prototype 上的原生实现绕过补丁，补丁（以及旧实现）对此完全无感。
+      History.prototype.pushState.call(history, {}, "", "/torrent/42");
+      await flushAsync();
+      expect(mocks.getSite).toHaveBeenCalledTimes(0);
+
+      vi.advanceTimersByTime(URL_POLL_INTERVAL);
+      await flushAsync();
+      expect(mocks.getSite).toHaveBeenCalledTimes(1);
+      expect(pageType.value).toBe("detail");
+
+      // 取消订阅后轮询停止
+      stop();
+      History.prototype.pushState.call(history, {}, "", "/torrents");
+      vi.advanceTimersByTime(URL_POLL_INTERVAL * 4);
+      await flushAsync();
+      expect(mocks.getSite).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("A-8 · URL 变化订阅", () => {

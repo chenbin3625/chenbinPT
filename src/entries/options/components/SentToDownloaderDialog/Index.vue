@@ -249,7 +249,15 @@ watch(
         <a-list v-if="quickSendRows.length > 0" :data-source="quickSendRows" size="small">
           <template #renderItem="{ item: row }">
             <a-dropdown :trigger="['hover']" placement="bottomRight">
-              <a-list-item style="cursor: pointer" @click="() => quickSendToDownloader(row.downloader, row.path)">
+              <!-- L-17：a-list-item 渲染为裸 <li>，补上按钮语义与键盘触发，纯键盘用户才能用 -->
+              <a-list-item
+                role="button"
+                style="cursor: pointer"
+                tabindex="0"
+                @click="() => quickSendToDownloader(row.downloader, row.path)"
+                @keydown.enter.prevent="() => quickSendToDownloader(row.downloader, row.path)"
+                @keydown.space.prevent="() => quickSendToDownloader(row.downloader, row.path)"
+              >
                 <a-list-item-meta :description="row.path || undefined" :title="downloaderTitle(row.downloader)">
                   <template #avatar>
                     <a-avatar :src="getDownloaderIcon(row.downloader.type)" shape="square" />

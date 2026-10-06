@@ -60,7 +60,7 @@ export async function sendTorrentToDownloader(
       // 此处允许空字符 ""， 但不允许用户取消（即取消动态替换操作则认为取消推送任务）
       const userInput = await promptReplace(key);
       if (userInput !== null) {
-        // @ts-ignore
+        // @ts-expect-error 原因：key 来自 Object.keys 的字符串字段名，CAddTorrentOptions 各字段类型不同，无法按索引赋 string
         addTorrentOptions[key] = (addTorrentOptions[key] as string).replace("<...>", userInput.trim());
       } else {
         // 用户取消输入，则停止该任务；调用方（Index.vue）会 catch 并给出可区分的提示（V-3）
@@ -109,7 +109,7 @@ export async function sendTorrentToDownloader(
           delete realAddTorrentOptions[key];
         } else {
           for (const [replaceKey, value] of Object.entries(replaceMap)) {
-            // @ts-ignore
+            // @ts-expect-error 原因：同上，按动态字段名对字符串字段做占位符替换
             realAddTorrentOptions[key] = (realAddTorrentOptions[key]! as string).replace(`$${replaceKey}$`, value);
           }
         }

@@ -206,8 +206,10 @@ async function dispatchMessage(type: string, data: unknown): Promise<void> {
   await settle();
 }
 
+/** 尚未执行的任务（不含已执行任务留下的 consumed 墓碑，见 alarms.ts 的 H-11） */
 function pendingJobs(): Record<string, any> {
-  return (backing.get(PENDING_JOB_KEY) as Record<string, any>) ?? {};
+  const stored = (backing.get(PENDING_JOB_KEY) as Record<string, any>) ?? {};
+  return Object.fromEntries(Object.entries(stored).filter(([, job]) => job?.kind !== "consumed"));
 }
 
 function messagesOfType(type: string) {
@@ -365,6 +367,25 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     expect(chainedRetries[0]).toMatchObject({ retryIndex: 2 });
   });
 
+  it("站点配置缺少 allowQueryUserInfo 时仍按默认允许刷新", async () => {
+    await chromeMock.storage.local.set({
+      config: { userInfo: { autoReflush: { enabled: true, retry: { max: 0 } } } },
+      metadata: { sites: { siteA: { url: "https://site.example" } }, lastUserInfoAutoFlushAt: 0 },
+      [PENDING_JOB_KEY]: {
+        "flushUserInfo-Retry-partial": {
+          kind: "flushUserInfoRetry",
+          retryIndex: 1,
+          fireAt: Date.now(),
+        },
+      },
+    });
+    await bootServiceWorker();
+
+    await fireAlarm("flushUserInfo-Retry-partial");
+
+    expect(messagesOfType("getSiteUserInfoResult").map((message) => message.data)).toContain("siteA");
+  });
+
   it("同一个 alarm 触发两次也只执行一次（先取走再执行）", async () => {
     await bootServiceWorker();
     await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60 * 1000 });
@@ -374,6 +395,30 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     await fireAlarm("reDownloadTorrent-42");
 
     expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+  });
+
+  it("H-11：冷启动扫描重建了刚触发的 alarm，重复触发不得把已成功的重新下载改判 failed", async () => {
+    await bootServiceWorker();
+    await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60 * 1000 });
+
+    // 真实浏览器：SW 被该 alarm 唤醒时 alarms.get 已查不到它（onAlarm 触发即视为已消费），参数仍在
+    createdAlarms.delete("reDownloadTorrent-42");
+    await bootServiceWorker();
+    await settle();
+    // 冷启动的恢复扫描把它当成「丢失的 alarm」重建了一次
+    expect(createdAlarms.has("reDownloadTorrent-42")).toBe(true);
+
+    await fireAlarm("reDownloadTorrent-42"); // 原 alarm：执行并成功
+    await fireAlarm("reDownloadTorrent-42"); // 重建出的 alarm：约 1 秒后再次触发
+
+    expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+    expect(downloadHistoryStatus()).toEqual([]);
+
+    // 再次冷启动也不会把墓碑复活成待执行任务
+    createdAlarms.clear();
+    await bootServiceWorker();
+    await settle();
+    expect(createdAlarms.has("reDownloadTorrent-42")).toBe(false);
   });
 
   it("不处理与自身无关的 alarm（interval job / nativeMessaging）", async () => {

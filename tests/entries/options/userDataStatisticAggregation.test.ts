@@ -10,11 +10,20 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { isNumber } from "es-toolkit/compat";
+import { EResultParseStatus } from "@ptd/site/types/base.ts";
 
-vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
-vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => ({ getAddedSiteIds: [] }) }));
+const mocks = vi.hoisted(() => ({ userInfo: {} as Record<string, any>, addedSiteIds: [] as string[] }));
+vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(async () => mocks.userInfo), onMessage: vi.fn() }));
+vi.mock("@/options/stores/metadata.ts", () => ({
+  useMetadataStore: () => ({
+    get getAddedSiteIds() {
+      return mocks.addedSiteIds;
+    },
+  }),
+}));
 
-const { toNumber, sumUserInfoFieldByDate } = await import("@/options/views/Overview/MyData/UserDataStatistic/utils.ts");
+const { toNumber, sumUserInfoFieldByDate, loadFullData } =
+  await import("@/options/views/Overview/MyData/UserDataStatistic/utils.ts");
 
 describe("V-12：toNumber 数值归一化", () => {
   it("数字原样返回，非有限数字归零", () => {
@@ -92,5 +101,24 @@ describe("V-12：合计与逐站序列一致", () => {
     expect(sumUserInfoFieldByDate(dailyUserInfo, ["2026-01-03"], sites, "uploaded")).toEqual([0]);
     expect(sumUserInfoFieldByDate({}, dates, sites, "uploaded")).toEqual([0, 0]);
     expect(sumUserInfoFieldByDate(dailyUserInfo, dates, [], "uploaded")).toEqual([0, 0]);
+  });
+});
+
+describe("M-23：增量数据与累计数据对数字字符串的口径一致", () => {
+  it("以数字字符串存储的 uploaded 也能算出每日增量（修复前恒为 {}）", async () => {
+    mocks.addedSiteIds = ["site-a"];
+    mocks.userInfo = {
+      "site-a": {
+        "2026-01-01": { status: EResultParseStatus.success, uploaded: "1000" },
+        "2026-01-02": { status: EResultParseStatus.success, uploaded: "1500" },
+        "2026-01-03": { status: EResultParseStatus.success, uploaded: 1600 },
+      },
+    };
+
+    const { incrementalData } = await loadFullData();
+    const daily = incrementalData["site-a"]!;
+    expect(daily["2026-01-01"]?.uploaded).toBe(0);
+    expect(daily["2026-01-02"]?.uploaded).toBe(500);
+    expect(daily["2026-01-03"]?.uploaded).toBe(100);
   });
 });

@@ -305,7 +305,7 @@ describe("我的下载器进度列展示", () => {
   /**
    * 保留的源码级断言（1 条）—— 为什么这里必须是源码级：
    *
-   * 「进度列宽 72」是**列定义对象里的一个字段**（`{ title, key: "progress", align: "end", width: "72" }`），
+   * 「进度列宽 120」是**列定义对象里的一个字段**（`{ title, key: "progress", align: "end", width: "120" }`），
    * 不是 DOM 上的东西：实测 mount 后 rc-table 只把 text-align 写到 `<th>`，
    * `<colgroup>` 里的 `<col>` 不带宽度（只有固定布局/横向滚动时 antd 才会下发宽度），
    * 而 `fullTableHeader` 是视图内的 computed，没有导出、外部无法读到。
@@ -317,6 +317,8 @@ describe("我的下载器进度列展示", () => {
       "utf8",
     );
 
-    expect(source).toMatch(/\{ title: t\("MyClient\.table\.progress"\), key: "progress", align: "end", width: "72" \}/);
+    expect(source).toMatch(
+      /\{ title: t\("MyClient\.table\.progress"\), key: "progress", align: "end", width: "120" \}/,
+    );
   });
 });

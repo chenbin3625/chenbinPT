@@ -1,21 +1,12 @@
 node_modules
 .env.submit
 
-# 本地调研/设计文档（不入库）
+# 本地调研/设计/审查文档（不入库）
 #
-# 注意用 `docs/*` 而不是 `docs`：目录级忽略（`docs`）会让目录内**任何**文件都无法再被
-# `!` 重新包含（Git 规定「父目录被排除时，无法重新包含其中的文件」），
-# 于是「需要随代码交付的审查/整改文档」会被静默忽略、提交时丢失。
-# 下面把确实要入库的工程化报告显式放行，其余调研文档继续不入库。
-#
-# 注（代码审查 A-6/A-21）：这里原先放行的是 `engineering-audit.md` 与
-# `engineering-remediation-status.md`，而这两个文件**从未存在过**——与此同时 `src/` 里有 83 处
-# 注释在引用 5 个同样不存在的 `docs/*.md`（`performance-audit.md` 79 处、
-# `style-layout-audit.md`、`functional-audit/06-shell-entry.md`、`antd-migration-guide.md`、
-# `antd-component-audit.md`）。放行清单与实际交付物脱节，等于「该入库的文档被静默忽略」。
-# 现已改为放行**真实存在**的那份审查报告。
+# 代码审查报告刻意留在仓库树之外（见提交 03e5c491 / 484c4766），需要时在本地 docs/ 下查阅。
+# 原先这里还有一条 `!docs/code-review-2026-10-04.md` 放行，而该文件早已不在 docs/ 下（L-14），
+# 留着只会让人误以为某份报告应当入库。
 docs/*
-!docs/code-review-2026-10-04.md
 
 ## Build files
 dist

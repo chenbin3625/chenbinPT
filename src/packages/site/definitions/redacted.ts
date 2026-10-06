@@ -193,9 +193,10 @@ export default class Redacted extends GazelleJSONAPI {
   protected override async getSeedingSize(userId: number, sizeIndex: number = 0): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
-    const { data: apiUser } = await this.requestApi<communityStatsJsonResponse>("community_stats", {
+    const { data } = await this.requestApi<communityStatsJsonResponse>("community_stats", {
       userid: userId,
     });
+    const apiUser = this.assertApiSuccess(data, "community_stats");
 
     return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, [
       "seedingSize",

@@ -9,6 +9,13 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const FILES_DIR = "build";
 
+/**
+ * 只上传发布产物。`build/` 同时也是 pack-crx 的默认私钥目录（chrome-extension-signing-key.pem / .pub），
+ * 按「目录里的所有文件」上传会把签名私钥发到 Telegram —— 持有私钥即可签出同一扩展 ID 的 CRX。
+ * 因此用后缀白名单，而不是黑名单排除 .pem（避免以后换了私钥文件名又漏出去）。
+ */
+const RELEASE_ARTIFACT_PATTERN = /\.(zip|crx|xpi)$/i;
+
 // Telegram Bot API 域名固定；token 形态校验后拼接，避免任意值直接进入请求 URL
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 if (!BOT_TOKEN || !/^\d+:[A-Za-z0-9_-]{30,}$/.test(BOT_TOKEN)) {
@@ -88,10 +95,10 @@ ${escapeLegacyMarkdown(commitInfo.moreMessage)}`
   const files = fs
     .readdirSync(FILES_DIR)
     .map((fileName: string) => path.join(FILES_DIR, fileName))
-    .filter((filePath: string) => fs.statSync(filePath).isFile());
+    .filter((filePath: string) => fs.statSync(filePath).isFile() && RELEASE_ARTIFACT_PATTERN.test(filePath));
 
   if (files.length === 0) {
-    console.error(`目录为空: ${FILES_DIR}`);
+    console.error(`目录下没有发布产物（.zip / .crx / .xpi）: ${FILES_DIR}`);
     process.exit(1);
   }
 

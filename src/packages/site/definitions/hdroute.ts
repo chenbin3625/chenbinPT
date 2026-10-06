@@ -194,11 +194,13 @@ export const siteMetadata: ISiteMetadata = {
           },
           uploaded: {
             selector: ".headerRightInfo span:contains('上传量:') .header-user-data",
-            filters: [{ name: "replace", args: [/&nbsp;/g, " "] }, { name: "trim" }],
+            // D-7：缺 parseSize 时 "1.00 TB" 保持为字符串，时间线 / 合计 / 等级门槛比较全部失效
+            filters: [{ name: "replace", args: [/&nbsp;/g, " "] }, { name: "trim" }, { name: "parseSize" }],
           },
           downloaded: {
             selector: ".headerRightInfo span:contains('下载量:') .header-user-data",
-            filters: [{ name: "replace", args: [/&nbsp;/g, " "] }, { name: "trim" }],
+            // D-7：缺 parseSize 时 "1.00 TB" 保持为字符串，时间线 / 合计 / 等级门槛比较全部失效
+            filters: [{ name: "replace", args: [/&nbsp;/g, " "] }, { name: "trim" }, { name: "parseSize" }],
           },
           ratio: {
             selector: ".headerRightInfo span:contains('分享率:') .header-user-data",

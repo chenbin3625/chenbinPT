@@ -13,6 +13,7 @@ import {
 
 import type { IDownloaderMetadata } from "@/shared/types.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import Editor from "./Editor.vue";
 
@@ -22,6 +23,7 @@ const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const currentStep = ref<0 | 1>(0);
 const selectedClientType = ref<string | null>(null);
@@ -55,15 +57,18 @@ async function updateStoredDownloaderConfigByDefault(type: string) {
 }
 
 async function saveStoredDownloaderConfig() {
-  await metadataStore.addDownloader(storedDownloaderConfig.value as IDownloaderMetadata);
+  try {
+    await metadataStore.addDownloader(storedDownloaderConfig.value as IDownloaderMetadata);
 
-  // 如果只有一个下载器，则将这个下载器设为默认下载器
-  if (metadataStore.getDownloaders.length === 1) {
-    metadataStore.defaultDownloader = { id: storedDownloaderConfig.value.id!, folder: "", tags: "" };
-    metadataStore.$save();
+    if (metadataStore.getDownloaders.length === 1) {
+      metadataStore.defaultDownloader = { id: storedDownloaderConfig.value.id!, folder: "", tags: "" };
+      await metadataStore.$save();
+    }
+
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
   }
-
-  showDialog.value = false;
 }
 </script>
 

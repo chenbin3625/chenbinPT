@@ -55,10 +55,14 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
    * 则将其修正为入口 https://127.0.0.1:8096/
    */
   get baseUrl() {
-    let serverAddress = this.config.address;
-    serverAddress = serverAddress.replace(/web\/(#\/home.html.+)?/, "");
-
-    return serverAddress;
+    // M-18：锚定到路径末尾整段去掉 /web 及其后的前端路由。旧正则 `web\/(#\/home.html.+)?` 里的 `.+`
+    // 要求 home.html 后至少还有一个字符，于是 `…/web/#/home.html` 只被去掉 `web/`，baseUrl 成了 `…/#/home.html`。
+    const serverAddress = this.config.address
+      .trim()
+      .replace(/#.*$/, "")
+      .replace(/\/+$/, "")
+      .replace(/\/web(?:\/.*)?$/i, "");
+    return `${serverAddress}/`;
   }
 
   protected async request<T = any, D = any>(

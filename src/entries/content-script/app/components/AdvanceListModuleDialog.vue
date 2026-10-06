@@ -29,6 +29,7 @@ const { t } = useI18n();
 const showDialog = defineModel<boolean>();
 
 const { height: windowHeight } = useWindowSize();
+const tableScrollHeight = computed(() => Math.max(160, Math.min(360, windowHeight.value - 360)));
 
 const { torrentItems } = defineProps<{
   torrentItems: ITorrent[];
@@ -171,8 +172,9 @@ watch(showDialog, (open) => {
 <template>
   <a-modal
     v-model:open="showDialog"
+    centered
     :title="t('contentScript.AdvanceListModuleDialog.title', [torrentItems.length])"
-    :width="1200"
+    :width="'min(1200px, calc(100vw - 32px))'"
   >
     <NavButton
       :icon="InboxOutlined"
@@ -187,10 +189,10 @@ watch(showDialog, (open) => {
     <a-table
       :columns="tableColumns"
       :data-source="torrentItems"
-      :pagination="{ pageSize: 25, showSizeChanger: true }"
+      :pagination="{ defaultPageSize: 25, showSizeChanger: true }"
       :row-key="(record: ITorrent) => record.id"
       :row-selection="rowSelection"
-      :scroll="{ y: windowHeight - 256 }"
+      :scroll="{ x: 'max-content', y: tableScrollHeight }"
       class="ptd-data-table table-stripe table-header-no-wrap"
     >
       <template #bodyCell="{ column, record }">
@@ -212,7 +214,7 @@ watch(showDialog, (open) => {
     </a-table>
 
     <template #footer>
-      <a-flex align="center" justify="space-between">
+      <a-flex align="center" justify="space-between" wrap="wrap" :gap="8">
         <span v-show="hasSelectedTorrent">{{
           t("contentScript.AdvanceListModuleDialog.selectedInfo", [
             selectedTorrentsCount,
@@ -220,7 +222,7 @@ watch(showDialog, (open) => {
           ])
         }}</span>
 
-        <a-flex align="center" :gap="8">
+        <a-flex align="center" wrap="wrap" :gap="8">
           <NavButton
             :disabled="!hasSelectedTorrent"
             :loading="localDownloadMultiStatus"

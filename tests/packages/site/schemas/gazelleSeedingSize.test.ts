@@ -36,6 +36,8 @@ vi.stubGlobal("chrome", {
 
 const { GazelleBase } = await import("@ptd/site/schemas/Gazelle.ts");
 const { parseSizeString } = await import("@ptd/site/utils/filesize.ts");
+const { default: GazelleJSONAPI } = await import("@ptd/site/schemas/GazelleJSONAPI.ts");
+const { EResultParseStatus } = await import("@ptd/site/types.ts");
 
 const metadata = {
   id: "gazelle-test",
@@ -100,5 +102,66 @@ describe("GazelleBase.getSeedingSize", () => {
 
     const result = await site.run(1, 0);
     expect(result.seedingSize).toBe(parseSizeString("3 GB"));
+  });
+});
+
+describe("GazelleJSONAPI 用户信息（H-7 / M-8）", () => {
+  const jsonMetadata = {
+    id: "gazelle-json-test",
+    name: "Gazelle JSON Test",
+    type: "private",
+    urls: ["https://example.com/"],
+    userInfo: {
+      requestDelay: 0,
+      selectors: {
+        id: { selector: "response.id" },
+        name: { selector: "response.username" },
+        uploaded: { selector: "response.userstats.uploaded" },
+        joinTime: { selector: "response.stats.joinedDate" },
+      },
+    },
+  } as any;
+
+  class TestJSON extends GazelleJSONAPI {
+    public responses: Record<string, any> = {};
+    public seedingSizeError?: Error;
+    protected override async requestApi<T>(action: string): Promise<any> {
+      return { data: this.responses[action] as T };
+    }
+    protected override async getSeedingSize(): Promise<any> {
+      if (this.seedingSizeError) throw this.seedingSizeError;
+      return { seedingSize: 42 };
+    }
+  }
+
+  it("index 返回 status: failure（账号停用 / 限流）时不写成 success", async () => {
+    const site = new TestJSON(jsonMetadata, {});
+    site.responses.index = { status: "failure", error: "Your account has been disabled", response: [] };
+
+    const result = await site.getUserInfoResult({ uploaded: 123 });
+    expect(result.status).not.toBe(EResultParseStatus.success);
+    expect(result.statusMsg).toContain("disabled");
+  });
+
+  it("user 接口 failure 同样判失败", async () => {
+    const site = new TestJSON(jsonMetadata, {});
+    site.responses.index = { status: "success", response: { id: 7, username: "u", userstats: { uploaded: 9 } } };
+    site.responses.user = { status: "failure", error: "rate limited", response: [] };
+
+    const result = await site.getUserInfoResult({});
+    expect(result.status).not.toBe(EResultParseStatus.success);
+    expect(result.statusMsg).toContain("rate limited");
+  });
+
+  it("仅做种体积兜底失败时保留已解析字段并标记 success（M-8）", async () => {
+    const site = new TestJSON(jsonMetadata, {});
+    site.responses.index = { status: "success", response: { id: 7, username: "u", userstats: { uploaded: 9 } } };
+    site.responses.user = { status: "success", response: { stats: { joinedDate: "2020-01-01 00:00:00" } } };
+    site.seedingSizeError = new Error("torrents page timeout");
+
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.success);
+    expect(result.name).toBe("u");
+    expect(result.uploaded).toBe(9);
   });
 });

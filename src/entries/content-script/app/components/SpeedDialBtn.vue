@@ -8,12 +8,15 @@ const configStore = useConfigStore();
 
 const {
   title,
+  label,
   icon,
   type = "default",
   disabled = false,
   loading = false,
 } = defineProps<{
   title: string;
+  /** 方形菜单使用的短标签；tooltip 仍显示完整标题 */
+  label?: string;
   /** 图标组件（如 `HomeOutlined`）；antd 用组件而非 mdi 字符串 */
   icon: Component;
   /** antd FloatButton 只有 default / primary，替代 Vuetify 的 color 调色板 */
@@ -51,7 +54,7 @@ function handleClick(event: MouseEvent) {
       <component :is="icon" v-else />
     </template>
     <template #description>
-      <span v-if="configStore.contentScript.stackedButtons">{{ title }}</span>
+      <span v-if="configStore.contentScript.stackedButtons">{{ label ?? title }}</span>
     </template>
   </a-float-button>
 </template>

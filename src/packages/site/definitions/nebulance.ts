@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/NebulanceAPI.cs
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/nebulance.io/config.json
  */
-import { ISiteMetadata, ITorrent, ISearchInput, ETorrentStatus } from "../types";
+import { ISiteMetadata, ITorrent, ISearchInput, ETorrentStatus, type TSchemaMetadataListSelectors } from "../types";
 import { selectElements } from "../utils/selector";
 import Gazelle, { SchemaMetadata, top10PageList } from "../schemas/Gazelle.ts";
 import { createDocument, parseValidTimeString, buildCategoryOptionsFromList } from "../utils.ts";
@@ -321,7 +321,7 @@ export const siteMetadata: ISiteMetadata = {
   ],
 };
 
-const groupPageSelectors = {
+const groupPageSelectors: TSchemaMetadataListSelectors & { rows: { selector: string } } = {
   rows: { selector: "table.torrent_table tr.torrent" },
   subTitle: { selector: "a.codecs[href*='torrents.php?id=']" },
   size: { selector: "> td:nth-child(2)", filters: [{ name: "parseSize" }] },

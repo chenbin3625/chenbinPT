@@ -73,11 +73,12 @@ function thresholds(field: RangeField) {
 function selectedThreshold(field: RangeField): number | "all" | "custom" {
   const [min, max] = rangeValue(field);
   if (min === -Infinity && max === Infinity) return "all";
+  if (field === "size") return min === 0 && thresholds(field).includes(max) ? max : "custom";
   return max === Infinity && thresholds(field).includes(min) ? min : "custom";
 }
 
 function setThreshold(field: RangeField, value: number) {
-  advanceFilterDictRef.value[field] = [value, Infinity];
+  advanceFilterDictRef.value[field] = field === "size" ? [0, value] : [value, Infinity];
   updateTableFilterValueFn();
 }
 
@@ -169,7 +170,9 @@ function firstValue(field: FilterField): string {
       Number.isFinite(max) ? (field === "size" ? `${Math.round(max / gib)} GB` : max) : "∞"
     }`;
   }
-  return t("SearchEntity.index.filters.atLeast", [field === "size" ? `${selected / gib} GB` : selected]);
+  return t(field === "size" ? "SearchEntity.index.filters.atMost" : "SearchEntity.index.filters.atLeast", [
+    field === "size" ? `${selected / gib} GB` : selected,
+  ]);
 }
 
 function extraCount(field: FilterField) {
@@ -186,110 +189,119 @@ function extraCount(field: FilterField) {
 
 <template>
   <div class="search-filter-bar">
-    <a-popover
-      v-for="field in fields"
-      :key="field"
-      placement="bottomLeft"
-      trigger="click"
-      overlay-class-name="search-filter-menu"
-    >
-      <button
-        type="button"
-        class="search-filter-chip"
-        :class="{ 'search-filter-chip--active': firstValue(field) }"
-        :data-filter="field"
+    <!-- 筛选项包一层容器：换行只发生在容器内部，外层不换行，搜索框因此不会被挤到单独一行 -->
+    <div class="search-filter-chips">
+      <a-popover
+        v-for="field in fields"
+        :key="field"
+        placement="bottomLeft"
+        trigger="click"
+        overlay-class-name="search-filter-menu"
       >
-        <span class="search-filter-chip__label">
-          {{ label(field)
-          }}<template v-if="firstValue(field)"
-            >：<SiteName
-              v-if="field === 'site' && keywordValues('site').length"
-              :site-id="keywordValues('site')[0]"
-              tag="span"
-            /><span v-else>{{ firstValue(field) }}</span></template
-          >
-        </span>
-        <span v-if="extraCount(field)" class="search-filter-count">+{{ extraCount(field) }}</span>
-        <DownOutlined class="search-filter-chip__arrow" />
-      </button>
-      <template #content>
-        <div class="search-filter-menu__content">
-          <a-button
-            v-if="firstValue(field)"
-            class="search-filter-clear"
-            type="link"
-            size="small"
-            @click="clearField(field)"
-          >
-            {{ t("SearchEntity.index.filters.clear") }}
-          </a-button>
-          <template v-if="field === 'site'">
-            <a-checkbox
-              v-for="site in advanceItemPropsRef.site ?? []"
-              :key="site"
-              :checked="keywordValues('site').includes(site)"
-              @change="(event: any) => toggleKeyword('site', site, event.target.checked)"
+        <button
+          type="button"
+          class="search-filter-chip"
+          :class="{ 'search-filter-chip--active': firstValue(field) }"
+          :data-filter="field"
+        >
+          <span class="search-filter-chip__label">
+            {{ label(field)
+            }}<template v-if="firstValue(field)"
+              >：<SiteName
+                v-if="field === 'site' && keywordValues('site').length"
+                :site-id="keywordValues('site')[0]"
+                tag="span"
+              /><span v-else>{{ firstValue(field) }}</span></template
             >
-              <SiteName :site-id="site" tag="span" />
-            </a-checkbox>
-          </template>
-          <template v-else-if="field === 'tags'">
-            <a-checkbox
-              v-for="tag in tags"
-              :key="tag.name"
-              :checked="keywordValues('tags').includes(tag.name)"
-              @change="(event: any) => toggleKeyword('tags', tag.name, event.target.checked)"
+          </span>
+          <span v-if="extraCount(field)" class="search-filter-count">+{{ extraCount(field) }}</span>
+          <DownOutlined class="search-filter-chip__arrow" />
+        </button>
+        <template #content>
+          <div class="search-filter-menu__content">
+            <a-button
+              v-if="firstValue(field)"
+              class="search-filter-clear"
+              type="link"
+              size="small"
+              @click="clearField(field)"
             >
-              {{ tag.name }}
-            </a-checkbox>
-          </template>
-          <template v-else-if="field === 'status'">
-            <a-checkbox
-              v-for="status in statusOptions"
-              :key="status"
-              :checked="keywordValues('status').includes(status)"
-              @change="(event: any) => toggleKeyword('status', status, event.target.checked)"
-            >
-              {{ t(`torrent.status.${status}`) }}
-            </a-checkbox>
-          </template>
-          <template v-else-if="field === 'text' || field === 'exclude'">
-            <a-select
-              mode="tags"
-              :value="keywordValues('text', field === 'exclude' ? 'exclude' : 'required')"
-              :placeholder="label(field)"
-              style="width: 250px"
-              @change="(values: string[]) => setKeywords('text', field === 'exclude' ? 'exclude' : 'required', values)"
-            />
-          </template>
-          <template v-else-if="field === 'time'">
-            <a-radio-group :value="selectedDate()" @change="(event: any) => setDate(event.target.value)">
-              <a-radio v-for="preset in datePresets" :key="preset" :value="preset">
-                {{ t(`SearchEntity.index.filters.dates.${preset}`) }}
-              </a-radio>
-            </a-radio-group>
-            <a-range-picker
-              :value="customDateValue"
-              style="width: 260px"
-              @change="(values: any) => setCustomDate(values)"
-            />
-          </template>
-          <template v-else>
-            <a-radio-group
-              :value="selectedThreshold(field)"
-              @change="(event: any) => setThreshold(field, event.target.value)"
-            >
-              <a-radio v-for="threshold in thresholds(field)" :key="threshold" :value="threshold">
-                {{ t("SearchEntity.index.filters.atLeast", [field === "size" ? `${threshold / gib} GB` : threshold]) }}
-              </a-radio>
-              <a-radio v-if="selectedThreshold(field) === 'custom'" value="custom" disabled>
-                {{ firstValue(field) }}
-              </a-radio>
-            </a-radio-group>
-          </template>
-        </div>
-      </template>
-    </a-popover>
+              {{ t("SearchEntity.index.filters.clear") }}
+            </a-button>
+            <template v-if="field === 'site'">
+              <a-checkbox
+                v-for="site in advanceItemPropsRef.site ?? []"
+                :key="site"
+                :checked="keywordValues('site').includes(site)"
+                @change="(event: any) => toggleKeyword('site', site, event.target.checked)"
+              >
+                <SiteName :site-id="site" tag="span" />
+              </a-checkbox>
+            </template>
+            <template v-else-if="field === 'tags'">
+              <a-checkbox
+                v-for="tag in tags"
+                :key="tag.name"
+                :checked="keywordValues('tags').includes(tag.name)"
+                @change="(event: any) => toggleKeyword('tags', tag.name, event.target.checked)"
+              >
+                {{ tag.name }}
+              </a-checkbox>
+            </template>
+            <template v-else-if="field === 'status'">
+              <a-checkbox
+                v-for="status in statusOptions"
+                :key="status"
+                :checked="keywordValues('status').includes(status)"
+                @change="(event: any) => toggleKeyword('status', status, event.target.checked)"
+              >
+                {{ t(`torrent.status.${status}`) }}
+              </a-checkbox>
+            </template>
+            <template v-else-if="field === 'text' || field === 'exclude'">
+              <a-select
+                mode="tags"
+                :value="keywordValues('text', field === 'exclude' ? 'exclude' : 'required')"
+                :placeholder="label(field)"
+                style="width: 250px"
+                @change="
+                  (values: string[]) => setKeywords('text', field === 'exclude' ? 'exclude' : 'required', values)
+                "
+              />
+            </template>
+            <template v-else-if="field === 'time'">
+              <a-radio-group :value="selectedDate()" @change="(event: any) => setDate(event.target.value)">
+                <a-radio v-for="preset in datePresets" :key="preset" :value="preset">
+                  {{ t(`SearchEntity.index.filters.dates.${preset}`) }}
+                </a-radio>
+              </a-radio-group>
+              <a-range-picker
+                :value="customDateValue"
+                style="width: 260px"
+                @change="(values: any) => setCustomDate(values)"
+              />
+            </template>
+            <template v-else>
+              <a-radio-group
+                :value="selectedThreshold(field)"
+                @change="(event: any) => setThreshold(field, event.target.value)"
+              >
+                <a-radio v-for="threshold in thresholds(field)" :key="threshold" :value="threshold">
+                  {{
+                    t(field === "size" ? "SearchEntity.index.filters.atMost" : "SearchEntity.index.filters.atLeast", [
+                      field === "size" ? `${threshold / gib} GB` : threshold,
+                    ])
+                  }}
+                </a-radio>
+                <a-radio v-if="selectedThreshold(field) === 'custom'" value="custom" disabled>
+                  {{ firstValue(field) }}
+                </a-radio>
+              </a-radio-group>
+            </template>
+          </div>
+        </template>
+      </a-popover>
+    </div>
     <a-input
       :value="tableWaitFilterRef"
       class="search-filter-search"

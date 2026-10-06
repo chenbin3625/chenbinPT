@@ -9,9 +9,21 @@ const showDialog = defineModel<boolean>();
 const { t } = useI18n();
 
 const backupFields = ref<TBackupFields[]>([]);
+const isExporting = ref(false);
 
+/**
+ * L-11：antd Modal 的 ok 只 emit，不会自动关闭；同类弹窗（ExportUserInfoDialog / RestoreDialog）都显式关闭。
+ * 不关的话用户以为确认没生效，再点一次会在同一分钟内重复生成并下载同一份 zip。
+ */
 async function doLocalExport() {
-  await sendMessage("exportBackupData", { backupFields: backupFields.value, backupServerId: "local" });
+  if (isExporting.value) return;
+  isExporting.value = true;
+  try {
+    await sendMessage("exportBackupData", { backupFields: backupFields.value, backupServerId: "local" });
+    showDialog.value = false;
+  } finally {
+    isExporting.value = false;
+  }
 }
 
 function dialogEnter() {
@@ -28,6 +40,7 @@ watch(showDialog, (open) => {
   <a-modal
     v-model:open="showDialog"
     :cancel-text="t('common.dialog.cancel')"
+    :confirm-loading="isExporting"
     :ok-text="t('common.export')"
     :title="t('SetBackup.LocalExportConfirmDialog.title')"
     :width="600"

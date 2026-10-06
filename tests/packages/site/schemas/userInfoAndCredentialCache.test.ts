@@ -47,6 +47,7 @@ vi.stubGlobal("chrome", {
 const { default: Unit3D } = await import("@ptd/site/schemas/Unit3D.ts");
 const { default: GazelleJSONAPI } = await import("@ptd/site/schemas/GazelleJSONAPI.ts");
 const { default: Rartracker } = await import("@ptd/site/schemas/Rartracker.ts");
+const { default: PrivateSite } = await import("@ptd/site/schemas/AbstractPrivateSite.ts");
 const { EResultParseStatus } = await import("@ptd/site/types.ts");
 const { NetworkError } = await import("@ptd/site/utils/error.ts");
 
@@ -149,8 +150,12 @@ describe("问题5：空凭据不写入 12h 缓存", () => {
     } as any;
 
     const empty = new TestGazelleJSONAPI(metadata, {});
+    const infoSpy = vi.spyOn(empty as any, "requestApiInfo");
     await empty.runGetAuthKey();
     expect(mocks.store).not.toHaveBeenCalled();
+    // L-3：空凭据虽不进持久缓存，但实例内要记住 —— 一页多条结果不能各发一次 action=index
+    await Promise.all([empty.runGetAuthKey(), empty.runGetAuthKey(), empty.runGetAuthKey()]);
+    expect(infoSpy).toHaveBeenCalledTimes(1);
 
     const valid = new TestGazelleJSONAPI(metadata, {});
     valid.apiInfoResponse = { response: { authkey: " ak ", passkey: " pk " } };
@@ -199,5 +204,62 @@ describe("问题5：空凭据不写入 12h 缓存", () => {
     expect(mocks.store).toHaveBeenCalledTimes(1);
     expect(mocks.store.mock.calls[0][1]).toBe("passKey");
     expect(mocks.store.mock.calls[0][2]).toMatchObject({ passkey: "realkey" });
+  });
+});
+
+describe("H-6：用户信息页零命中不得报 success（改版页 / 软错误页）", () => {
+  const metadata = {
+    id: "private-test",
+    name: "Private Test",
+    type: "private",
+    urls: ["https://example.com/"],
+    userInfo: {
+      process: [
+        {
+          requestConfig: { url: "/userdetails.php" },
+          fields: ["name", "uploaded", "downloaded"],
+        },
+      ],
+      selectors: {
+        name: { selector: "#info .username" },
+        uploaded: { selector: "#info .uploaded", filters: [{ name: "parseSize" }] },
+        downloaded: { selector: "#info .downloaded", filters: [{ name: "parseSize" }] },
+      },
+    },
+  } as any;
+
+  function respondWithHtml(html: string) {
+    mocks.request.mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      request: { responseURL: "https://example.com/userdetails.php" },
+      data: new DOMParser().parseFromString(html, "text/html"),
+    });
+  }
+
+  beforeEach(() => {
+    mocks.request.mockReset();
+  });
+
+  it("所有 selector 零命中 → parseError + statusMsg，而不是 success + 全 0", async () => {
+    respondWithHtml("<html><body><div class='maintenance'>Site upgrading</div></body></html>");
+    const site = new PrivateSite(metadata, {});
+
+    const result = await site.getUserInfoResult({ uploaded: 12.3e12 });
+    expect(result.status).toBe(EResultParseStatus.parseError);
+    expect(result.statusMsg).toMatch(/未命中任何字段/);
+  });
+
+  it("命中的字段即使值为 0 仍是 success（不能把真实的 0 当成零命中）", async () => {
+    respondWithHtml(
+      "<html><body><div id='info'><span class='username'>tester</span>" +
+        "<span class='uploaded'>0 B</span><span class='downloaded'>0 B</span></div></body></html>",
+    );
+    const site = new PrivateSite(metadata, {});
+
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.success);
+    expect(result.name).toBe("tester");
+    expect(result.uploaded).toBe(0);
   });
 });

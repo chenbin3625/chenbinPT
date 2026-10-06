@@ -156,10 +156,17 @@ watch(
       invalidateSearchTasks();
       cancelSearchQueue();
 
-      metadataStore.getSearchSnapshotData(snapshotId).then((data) => {
+      void metadataStore.getSearchSnapshotData(snapshotId).then((data) => {
         // 过期响应 / 用户已切到别的快照 / 已离开快照视图：直接丢弃
-        if (!data || loadToken !== snapshotLoadToken) return;
+        if (loadToken !== snapshotLoadToken) return;
         if (route.query.snapshot !== snapshotId) return;
+
+        if (!data) {
+          // H-15：快照已被删除（从 sessionStorage 还原的 search.snapshot 或回退到 ?snapshot=）：
+          // 清掉残留的快照标记，警示条回到普通状态，而不是一直指着不存在的快照
+          if (runtimeStore.search.snapshot === snapshotId) runtimeStore.search.snapshot = undefined;
+          return;
+        }
 
         runtimeStore.search = { ...data, snapshot: snapshotId };
         buildAdvanceItemPropsFn();
@@ -315,7 +322,7 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       <template v-else>
         <template v-if="runtimeStore.search.snapshot">
           {{ t("SearchEntity.index.alert.snapshot") }}
-          [{{ metadataStore.snapshots[runtimeStore.search.snapshot].name }}]，
+          [{{ metadataStore.snapshots[runtimeStore.search.snapshot]?.name ?? runtimeStore.search.snapshot }}]，
         </template>
         <template v-else>
           {{ t("SearchEntity.index.alert.plan") }}

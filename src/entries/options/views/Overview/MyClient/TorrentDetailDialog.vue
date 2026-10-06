@@ -21,7 +21,7 @@ import {
   TagOutlined,
   UpOutlined,
 } from "@ant-design/icons-vue";
-import { nextTick, ref, watch, type Component } from "vue";
+import { computed, nextTick, ref, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type {
@@ -82,13 +82,18 @@ const trackersLoading = ref(false);
 const trackersGuard = createGuard();
 const trackerInput = ref("");
 
-const priorityItems: Array<{ title: string; value: TorrentFilePriority }> = [
+const allPriorityItems: Array<{ title: string; value: TorrentFilePriority }> = [
   { title: t("MyClient.detail.prioritySkip"), value: "skip" },
   { title: t("MyClient.detail.priorityLow"), value: "low" },
   { title: t("MyClient.detail.priorityNormal"), value: "normal" },
   { title: t("MyClient.detail.priorityHigh"), value: "high" },
   { title: t("MyClient.detail.priorityHighest"), value: "highest" },
 ];
+// L-13：只提供当前下载器真正支持的档位（例如 qBittorrent 没有「低」，选了会被静默降级成「普通」）
+const priorityItems = computed(() => {
+  const unsupported = metaData.value?.feature?.FilePriority?.unsupportedPriorities ?? [];
+  return allPriorityItems.filter((item) => !unsupported.includes(item.value));
+});
 
 const trackerStatusIcon: Record<CTrackerState, Component> = {
   unknown: QuestionCircleOutlined,

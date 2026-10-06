@@ -206,9 +206,11 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P2W",
       ratio: 1.05,
       // 满足以下任一组：上传 10GiB 且发布 10 个种子 / 上传 1GiB 且发布 100 个种子
-      uploaded: "10GiB",
-      uploads: 10,
-      alternative: [{ uploaded: "1GiB", uploads: 100 }],
+      // D-12：两组都要放进 alternative —— 顶层键对所有情况强制生效，原写法实际变成「上传≥10GiB 且发布≥100」
+      alternative: [
+        { uploaded: "10GiB", uploads: 10 },
+        { uploaded: "1GiB", uploads: 100 },
+      ],
       isKept: true,
       privilege:
         "Create collections; Add torrents to collections (unless protected); Access to the Power User and Invite forums; Exempt from inactivity disabling; Receives one invite on the 1st and 15th of every month (maximum of 2)",

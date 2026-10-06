@@ -444,6 +444,7 @@
       "filterLabel": "过滤搜索结果",
       "filters": {
         "atLeast": "至少 {0}",
+        "atMost": "最多 {0}",
         "clear": "清除",
         "completed": "完成人数",
         "dates": {
@@ -547,6 +548,7 @@
       "backupIntervalField": "间隔（小时）",
       "backupIntervalHint": "设置自动备份间隔（小时），留空或为 0 表示不自动备份，可设置为任意时长（例如 168 小时即 7 天）",
       "clearRetention": "清空保留策略（不自动清理历史备份）",
+      "nameTip": "为这个备份服务器取一个便于识别的好名字",
       "retention": "备份保留策略",
       "serverConfig": "服务器配置"
     },
@@ -653,6 +655,9 @@
       "retention": "保留策略",
       "retentionDisabled": "未启用保留策略",
       "retentionEnabled": "已启用保留策略"
+    },
+    "edit": {
+      "title": "编辑备份服务器"
     }
   },
   "SetBase": {
@@ -894,6 +899,9 @@
     },
     "add": {
       "title": "添加媒体服务器"
+    },
+    "edit": {
+      "title": "编辑媒体服务器"
     }
   },
   "SetNativeBridge": {
@@ -1212,6 +1220,7 @@
     "remove": "删除",
     "save": "保存",
     "saveSettings": "保存设置",
+    "saveFailed": "保存失败，请检查存储空间并重试",
     "saveSuccess": "保存成功",
     "search": "搜索",
     "site": "站点",
@@ -1231,7 +1240,9 @@
     "type": "类型",
     "username": "用户名",
     "version": "版本",
-    "visit": "访问"
+    "visit": "访问",
+    "unknown": "未知",
+    "noInformation": "暂无信息"
   },
   "connectCheck": {
     "default": "检查连接性",
@@ -1267,11 +1278,21 @@
     "localDownloadFailed": "本地下载失败，请到下载历史中查看失败原因",
     "noTorrentParsed": "未解析到当前页面种子",
     "openPTD": "打开PTD",
+    "operationFailed": "操作失败，请重试",
     "parsePageFailed": "页面解析失败",
     "parseResultEmpty": "未能解析出结果",
     "pushTo": "推送到...",
     "pushToDefault": "推送到默认下载器",
     "quickSearch": "快捷搜索",
+    "speedDial": {
+      "advanceList": "高级列表",
+      "copyLink": "复制链接",
+      "localDownload": "本地下载",
+      "openPTD": "打开面板",
+      "pushTo": "选择下载",
+      "pushToDefault": "默认推送",
+      "quickSearch": "快捷搜索"
+    },
     "untrustedTorrentLink": "解析出的下载链接不属于该站点，已拒绝",
     "unsupportedDropLinks": "拖拽内容里的链接不受支持或不属于当前站点，已忽略"
   },

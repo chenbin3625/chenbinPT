@@ -45,6 +45,8 @@ export const siteMetadata: ISiteMetadata = {
                 if (/épp itt van/i.test(text)) return Date.now();
                 const normalized = text
                   .replace(/(\d+)\s*éve?/gi, "$1 years")
+                  // D-20：「X hónapja」（X 个月前）原先没有归一化，parseTimeToLiveToDate 会原样返回匈牙利文本
+                  .replace(/(\d+)\s*hónapja?/gi, "$1 months")
                   .replace(/(\d+)\s*hete?/gi, "$1 weeks")
                   .replace(/(\d+)\s*napja?/gi, "$1 days")
                   .replace(/(\d+)\s*órája?/gi, "$1 hours")

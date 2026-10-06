@@ -69,7 +69,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "Books", value: 49 },
         { name: "Non-Porn", value: 41 },
       ],
-      cross: { mode: "brackets", key: "category[]" },
+      cross: { mode: "brackets", key: "category" }, // D-4：brackets 会自动补 []，再写 [] 会变成 category[][0]=…
     },
   ],
 

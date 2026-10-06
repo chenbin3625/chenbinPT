@@ -54,6 +54,9 @@ const resetItems = computed<IResetItem[]>(() => [
     action: async () => {
       metadataStore.$reset();
       await metadataStore.$save();
+      // M-6：siteIndex 是独立 storage key（content script / 右键菜单读它判断「站点已配置」），
+      // $reset/$save 都不会同步它；不清掉的话已删站点仍会被注入覆盖层、仍出现站点专属菜单。
+      await metadataStore.syncSiteIndex();
     },
   },
   {
@@ -139,6 +142,8 @@ async function confirmReset() {
     runtimeStore.showSnakebar(t("SetBase.reset.resetSuccess"), { color: "success" });
     showConfirm.value = false;
     pendingItem.value = null;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
   } finally {
     isResetting.value = false;
   }

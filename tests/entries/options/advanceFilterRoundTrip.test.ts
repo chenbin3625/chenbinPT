@@ -62,18 +62,29 @@ afterEach(() => {
 });
 
 describe("B-14 转义往返：值不会被 search-query-parser 改写", () => {
-  it.each(["My Sites", "hello world", "a,b", "a:b", "back\\slash", "100%", "it's", `/1080p/g`, "标签 组A,组B"])(
-    "%j 经 stringify → parse 无损",
-    (raw) => {
-      const filter = createSiteFilter();
+  it.each([
+    "My Sites",
+    "hello world",
+    "a,b",
+    "a:b",
+    "back\\slash",
+    "100%",
+    "it's",
+    `/1080p/g`,
+    "标签 组A,组B",
+    // M-21：值首字符的 `-` 会被 search-query-parser 读成「排除」
+    "-RARBG",
+    "--x",
+    "a-b",
+  ])("%j 经 stringify → parse 无损", (raw) => {
+    const filter = createSiteFilter();
 
-      filter.advanceFilterDictRef.value["userConfig.groups"] = { required: [raw], exclude: [] };
-      const text = filter.stringifyFilterDictFn();
-      filter.buildFilterDictFn(text);
+    filter.advanceFilterDictRef.value["userConfig.groups"] = { required: [raw], exclude: [] };
+    const text = filter.stringifyFilterDictFn();
+    filter.buildFilterDictFn(text);
 
-      expect(filter.advanceFilterDictRef.value["userConfig.groups"]).toEqual({ required: [raw], exclude: [] });
-    },
-  );
+    expect(filter.advanceFilterDictRef.value["userConfig.groups"]).toEqual({ required: [raw], exclude: [] });
+  });
 
   it("多值与排除筛选同样无损（逗号/空格不会把值拆错）", () => {
     const filter = createSiteFilter();
@@ -89,6 +100,15 @@ describe("B-14 转义往返：值不会被 search-query-parser 改写", () => {
       required: ["My Sites", "a,b"],
       exclude: ["x y"],
     });
+  });
+
+  it("M-21：必选 text 以 - 开头时仍是必选，不会被读成排除", () => {
+    const filter = createSiteFilter();
+
+    filter.advanceFilterDictRef.value.text = { required: ["-RARBG"], exclude: [] };
+    filter.buildFilterDictFn(filter.stringifyFilterDictFn());
+
+    expect(filter.advanceFilterDictRef.value.text).toEqual({ required: ["-RARBG"], exclude: [] });
   });
 
   it("text 字段含空格时同样无损", () => {
@@ -230,6 +250,19 @@ describe("范围筛选的零值边界", () => {
 });
 
 describe("搜索结果预设范围", () => {
+  it("体积快捷筛选 5 GB 生成上限范围，不命中 5.77 GB", async () => {
+    const filter = useTableCustomFilter({
+      parseOptions: { ranges: ["size"] },
+      titleFields: ["title"],
+      format: { size: "size" },
+    });
+    filter.advanceFilterDictRef.value.size = [0, 5 * 1024 ** 3];
+    await applyFilterText(filter, filter.stringifyFilterDictFn());
+
+    expect(runFilter(filter, { title: "within", size: 5 * 1024 ** 3 })).toBe(true);
+    expect(runFilter(filter, { title: "over", size: 5.77 * 1024 ** 3 })).toBe(false);
+  });
+
   it("阈值超过当前结果最大值时保持阈值，不错误地命中最大值", async () => {
     const filter = useTableCustomFilter({
       parseOptions: { ranges: ["seeders"] },

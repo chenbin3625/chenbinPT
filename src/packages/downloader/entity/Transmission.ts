@@ -514,7 +514,13 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         }
       }
 
-      addResult.success = data.result === "success";
+      // L-12：重复种子在各版本上的形态不同 —— 2.77（rpc14）只回 result: "duplicate torrent"、没有 arguments；
+      // 2.80（rpc15）带 torrent-duplicate 但 result 仍不是 success。两者都是「已在库中」的成功语义。
+      const isDuplicate = /duplicate torrent/i.test(data.result ?? "") || !!data.arguments?.["torrent-duplicate"];
+      addResult.success = data.result === "success" || isDuplicate;
+      if (typeof torrentId !== "undefined") {
+        addResult.id = String(torrentId);
+      }
       if (!addResult.success) {
         addResult.message = data;
       }

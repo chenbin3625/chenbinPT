@@ -61,6 +61,7 @@ import {
 
 import { isDebug } from "~/helper.ts";
 import { toSerializable } from "@/shared/messagesSerializable.ts";
+import { parsePath } from "@/shared/storagePath.ts";
 
 /**
  * 把消息处理函数类型收窄为可调用类型，用于满足 `Parameters` / `ReturnType` 的泛型约束。
@@ -328,6 +329,8 @@ const messageMaps: Partial<ProtocolMap> = {};
 const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "getExtStorage",
   "setExtStorage",
+  "patchExtStoragePath",
+  "getDownloaderConfig",
   "getAllCookies",
   "getCookie",
   "setCookie",
@@ -336,12 +339,51 @@ const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "exportBackupData",
   "getRemoteBackupData",
   "deleteBackupHistory",
+  "applyBackupRetention",
+  "saveSearchResultSnapshotData",
+  "removeSearchResultSnapshotData",
+  "setSiteLastUserInfo",
+  "removeSiteUserInfo",
+  "setDownloadHistoryStatus",
+  "deleteDownloadHistoryById",
+  "clearDownloadHistory",
+  "createKeepUploadTask",
+  "updateKeepUploadTask",
+  "deleteKeepUploadTask",
+  "clearKeepUploadTasks",
+  "updateDNRSessionRules",
   "removeDNRSessionRuleById",
+  "nativeBridgeGetStatus",
+  "nativeBridgeSetEnabled",
+  "nativeBridgeReconnect",
 ]);
 
 function isExtensionPageSender(sender: chrome.runtime.MessageSender | undefined): boolean {
   const extensionBase = chrome.runtime.getURL("");
   return sender?.id === chrome.runtime.id && typeof sender.url === "string" && sender.url.startsWith(extensionBase);
+}
+
+function isContentScriptStoragePathAllowed(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const { key, path } = data as { key?: unknown; path?: unknown };
+  if (typeof path !== "string" && !Array.isArray(path)) return false;
+  if (Array.isArray(path) && !path.every((part) => typeof part === "string" || typeof part === "number")) {
+    return false;
+  }
+  const parts = parsePath(path as string | Array<string | number>);
+  if (parts.length === 1) {
+    return (
+      (key === "config" && parts[0] === "contentScript") ||
+      ((key === "siteIndex" || key === "metadata") && parts[0] === "siteHostMap")
+    );
+  }
+  return (
+    key === "metadata" &&
+    parts.length === 3 &&
+    parts[0] === "sites" &&
+    typeof parts[1] === "string" &&
+    parts[2] === "allowContentScript"
+  );
 }
 
 /**
@@ -481,8 +523,7 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     original.onMessage(type, (message) => {
       if (
         (extensionPageOnlyMessages.has(type as keyof ProtocolMap) ||
-          (type === "updateDNRSessionRules" &&
-            (message.data as { extOnly?: boolean } | undefined)?.extOnly === false)) &&
+          (type === "getExtStoragePath" && !isContentScriptStoragePathAllowed(message.data))) &&
         !isExtensionPageSender(message.sender)
       ) {
         throw new Error(`Permission denied for message sender: ${String(type)}`);

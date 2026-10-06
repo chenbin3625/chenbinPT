@@ -217,7 +217,11 @@ export const siteMetadata: ISiteMetadata = {
         filters: [(row: object) => getHunoApiValue(row, ["category.name", "attributes.category.name"], "All")],
       },
       size: { selector: ["size", "attributes.size"] },
-      time: { selector: ["created_at", "attributes.created_at", "bumped_at", "attributes.bumped_at"] },
+      // D-19：与同引擎的 concertos 一致先 parseTime —— 字符串时间直接交给 parseTimeWithZone 会按宿主时区解释
+      time: {
+        selector: ["created_at", "attributes.created_at", "bumped_at", "attributes.bumped_at"],
+        filters: [{ name: "parseTime" }],
+      },
       author: {
         selector: ["uploader.username", "uploader.name", "attributes.uploader.username", "attributes.uploader.name"],
       },

@@ -16,6 +16,7 @@ import { BackupFields, type TBackupFields, type IRestoreOptions } from "@/shared
 import PageSkeleton from "@/options/components/PageSkeleton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import { analyzeRestoreSecurity, summarizeRestoreResult } from "./restoreSecurity.ts";
+import { compareVersion } from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
 const { t } = useI18n();
@@ -117,42 +118,6 @@ function loadRemoteBackupFile() {
         isLoadingRemoteBackupFile.value = false;
       });
   }
-}
-
-function extractVersion(str: string = "") {
-  const regex = /v(\d+\.\d+\.\d+\.\d+)/;
-  const match = str.match(regex);
-  return match ? match[1] : null;
-}
-
-/**
- *
- * 比较两个版本号字符串
- *
- * inputV1 < inputV2 返回 -1
- * inputV1 = inputV2 返回 0
- * inputV1 > inputV2 返回 1
- *
- */
-function compareVersion(inputV1?: string, inputV2?: string) {
-  const v1 = extractVersion(inputV1);
-  const v2 = extractVersion(inputV2);
-
-  if (!v1 || !v2) return null;
-
-  const parts1 = v1.split(".").map(Number);
-  const parts2 = v2.split(".").map(Number);
-  const maxLength = Math.max(parts1.length, parts2.length);
-
-  for (let i = 0; i < maxLength; i++) {
-    const num1 = parts1[i] || 0;
-    const num2 = parts2[i] || 0;
-
-    if (num1 > num2) return 1;
-    if (num1 < num2) return -1;
-  }
-
-  return 0;
 }
 
 /** 用 antd 的 Modal 替代原生浏览器版本确认框（异步等待用户选择） */

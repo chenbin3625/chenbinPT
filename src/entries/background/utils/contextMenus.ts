@@ -580,14 +580,14 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
 function scheduleContextMenusBuild() {
   const task = buildChain.then(
     async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       if (!tab) {
         return;
       }
       await initContextMenus(tab);
     },
     async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       if (!tab) {
         return;
       }
@@ -624,6 +624,20 @@ if (chrome.contextMenus) {
     );
   });
 
+  /**
+   * M-16：切换窗口也要重建。两个窗口各停在站点 X / Y 时，`windows.update({ focused: true })` 只触发
+   * `windows.onFocusChanged`，不触发 `tabs.onActivated`，菜单会继续按 X 构建（`$torrent.site$`、「在站点中搜索」都指向 X）。
+   * 焦点移出浏览器时回调参数是 WINDOW_ID_NONE，此时不必重建。
+   */
+  chrome.windows?.onFocusChanged?.addListener((windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+      return;
+    }
+    scheduleContextMenusBuild().catch((err) =>
+      logBackgroundError("Failed to rebuild context menus on window focus change", err),
+    );
+  });
+
   // SW 冷启动后立即恢复菜单与点击回调
   scheduleContextMenusBuild().catch((err) => console.error("Failed to initialize context menus:", err));
 
@@ -637,7 +651,9 @@ if (chrome.contextMenus) {
     if (areaName !== "local" || !(Object.hasOwn(changes, "config") || Object.hasOwn(changes, "metadata"))) {
       return;
     }
-    lastBuiltContextKey = null;
+    // L-6：不再把 lastBuiltContextKey 置 null。上下文摘要已覆盖菜单依赖的全部输入（配置开关 / 方案 / 站点 /
+    // 下载器 / 站点名），摘要不变就说明菜单不需要变；置 null 会让「每刷新一个站点的 lastUserInfo」
+    // （同样写 metadata 这个顶层 key）都触发一次 removeAll + 全量重建。
     // 窗口内的后续变更会被合并；执行期间的新变更会在本轮结束后再跑一轮，保证最后一次变更一定生效
     rebuildDebounce.schedule();
   });

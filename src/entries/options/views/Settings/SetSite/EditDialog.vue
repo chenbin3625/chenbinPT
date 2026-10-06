@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import Editor from "./Editor.vue";
 
@@ -14,6 +15,7 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const isFormValid = ref<boolean>(false);
 
@@ -21,8 +23,12 @@ const storedSiteUserConfig = ref<ISiteUserConfig & { valid?: boolean }>({ valid:
 provide("storedSiteUserConfig", storedSiteUserConfig);
 
 async function patchSite() {
-  await metadataStore.addSite(props.siteId, storedSiteUserConfig.value);
-  showDialog.value = false;
+  try {
+    await metadataStore.addSite(props.siteId, storedSiteUserConfig.value);
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 
 function dialogEnter() {

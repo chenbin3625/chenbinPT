@@ -2,9 +2,11 @@ import CryptoJS from "crypto-js";
 import { describe, expect, it } from "vitest";
 
 import {
+  backupDataToJSZipBlob,
   decryptData,
   encryptData,
   getBackupWarnings,
+  jsZipBlobToBackupData,
   setBackupWarnings,
   validateBackupPayload,
 } from "@ptd/backupServer/utils.ts";
@@ -150,16 +152,24 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
   });
 
   describe("警告的携带方式", () => {
-    it("用非枚举属性，避免被 backupDataToJSZipBlob 的 Object.entries 写回下一个备份", () => {
-      const data: IBackupData = { config: {} };
+    it("L-15：告警能经过 JSON 语义的消息传递（从备份服务器恢复走 offscreen → options）", () => {
+      const data: IBackupData = { config: {}, manifest: { version: "v0.0.10" } };
       setBackupWarnings(data, ["metadata：形状不符，已跳过该条目"]);
 
-      // 可读
-      expect(getBackupWarnings(data)).toEqual(["metadata：形状不符，已跳过该条目"]);
-      // 但不可枚举 —— backupDataToJSZipBlob 遍历 Object.entries(data) 生成 zip 条目，
-      // 若它是普通字段就会被写成 __backupWarnings.json 带进下一个备份。
-      expect(Object.keys(data)).not.toContain("__backupWarnings");
-      expect(Object.entries(data).map(([k]) => k)).toEqual(["config"]);
+      const overTheWire = JSON.parse(JSON.stringify(data)) as IBackupData;
+      expect(getBackupWarnings(overTheWire)).toEqual(["metadata：形状不符，已跳过该条目"]);
+      // 告警挂在 manifest 上，而不是新的顶层条目（顶层键会被当成可恢复字段）
+      expect(Object.keys(data)).toEqual(["config", "manifest"]);
+    });
+
+    it("导出新备份时不把上一次解析的告警写进 manifest", async () => {
+      const data: IBackupData = { config: { a: 1 }, manifest: { version: "v0.0.10" } };
+      setBackupWarnings(data, ["stale warning"]);
+
+      const blob = await backupDataToJSZipBlob(data);
+      const restored = await jsZipBlobToBackupData(blob);
+      expect(restored.manifest?.version).toBe("v0.0.10");
+      expect(getBackupWarnings(restored)).toEqual([]);
     });
 
     it("未设置时返回空数组", () => {

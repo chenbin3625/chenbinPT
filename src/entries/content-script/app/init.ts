@@ -8,6 +8,7 @@ import { message } from "ant-design-vue";
 
 import App from "./App.vue";
 import { createRemountGuard } from "./remountGuard.ts";
+import { stopRetargetedSelectPointerDown } from "./shadowPopupEvents.ts";
 import { syncThemeVarsToHost } from "./themeVars.ts";
 import { setClipboardFallbackContainer } from "./utils.ts";
 import { piniaInstance as pinia } from "@/options/plugins/pinia.ts";
@@ -55,6 +56,8 @@ export function mountApp(document: Document, data: any = {}) {
   const popupHostElement = document.createElement("div");
   popupHostElement.id = "ptd-content-script-popup-host";
   popupHostElement.className = "ptd-content-script-popup-host";
+  popupHostElement.addEventListener("mousedown", stopRetargetedSelectPointerDown);
+  popupHostElement.addEventListener("touchstart", stopRetargetedSelectPointerDown);
   shadowRoot.appendChild(popupHostElement);
   message.config({ getContainer: () => popupHostElement });
 

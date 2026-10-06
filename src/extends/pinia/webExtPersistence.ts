@@ -4,8 +4,10 @@
 import type { Ref } from "vue";
 import { getCurrentScope, onScopeDispose, ref, unref } from "vue";
 import { MutationType, PiniaPluginContext } from "pinia";
+import { message } from "ant-design-vue";
 
 import { toSerializable } from "@/shared/messagesSerializable.ts";
+import { i18n } from "@/options/plugins/i18n.ts";
 
 /**
  * 取可用的 storage 区域；宿主没有完整扩展 API 时返回 null。
@@ -704,7 +706,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    */
   let inFlight: Promise<void> | null = null;
   let queuedStateGetter: (() => any) | null = null;
-  let queuedResolvers: Array<() => void> = [];
+  let queuedWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
 
   async function doWrite(getState: () => any) {
     // 标记"接下来的写入是本上下文发起的"，并**在写盘之前**登记本次写入的内容快照：
@@ -722,9 +724,13 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       selfWriteUntil = Date.now() + SELF_WRITE_ECHO_WINDOW;
     } catch (error) {
       // 修复 P1-5「保存失败完全静默」：给出可诊断信息（store id + storage key）。
-      // 控制流语义保持不变——$save() 的 Promise 仍然 resolve，写盘失败不会阻塞 UI；
-      // 这里只是不再无声，避免"以为已保存、实际每次都失败"的问题无法被发现。
       console.error(`[PTD] failed to persist store "${store.$id}" (storage key: ${key})`, error);
+      try {
+        message.open({ type: "error", content: i18n.t("common.saveFailed") });
+      } catch {
+        // 提示层不可用时仍以原始写盘错误为准。
+      }
+      throw error;
     }
   }
 
@@ -733,25 +739,30 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       return;
     }
     const getState = queuedStateGetter;
-    const resolvers = queuedResolvers;
+    const waiters = queuedWaiters;
     queuedStateGetter = null;
-    queuedResolvers = [];
+    queuedWaiters = [];
 
     const task = doWrite(getState);
     inFlight = task.finally(() => {
       inFlight = null;
       flushQueued();
     });
-    void task.then(() => resolvers.forEach((resolve) => resolve()));
+    void inFlight.then(
+      () => waiters.forEach(({ resolve }) => resolve()),
+      (error) => waiters.forEach(({ reject }) => reject(error)),
+    );
   }
 
   const $save = (newState = store.$state): Promise<void> => {
     if (inFlight) {
       // 已有写入在飞行中：只登记最新状态，等它结束后合并补写一次
       queuedStateGetter = () => newState;
-      return new Promise<void>((resolve) => {
-        queuedResolvers.push(resolve);
+      const queued = new Promise<void>((resolve, reject) => {
+        queuedWaiters.push({ resolve, reject });
       });
+      void queued.catch(() => undefined);
+      return queued;
     }
 
     const task = doWrite(() => newState);
@@ -759,6 +770,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       inFlight = null;
       flushQueued();
     });
+    void inFlight.catch(() => undefined);
     return inFlight;
   };
 
@@ -766,7 +778,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
     store.$subscribe((mutation, state: any) => {
       console?.log("Store `" + store.$id + "` change subscribed: ", mutation);
       if (autoSaveType.includes(mutation.type)) {
-        $save(state);
+        void $save(state).catch(() => undefined);
       }
     });
   }

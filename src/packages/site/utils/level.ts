@@ -218,8 +218,25 @@ export function levelRequirementUnMet(
   }
 
   // 比较 bonus, bonusPerHour, seedingBonus, uploads, leeching, snatches, posts 等应该大于的字段
+  // L-18：percentile（站内排名百分位，secretcinema 从 user.php 的 "Overall rank" 取到）同样是「应当大于等于」，
+  // 不在列表里时 `percentile: 50/70/90` 门槛会被静默忽略，用户可能被误判为已达标
   for (const currentGtElement of intersection(
-    ["bonus", "bonusPerHour", "seedingBonus", "uploads", "leeching", "snatches", "posts", "perfectFlacs", "groups"],
+    [
+      "bonus",
+      "bonusPerHour",
+      "seedingBonus",
+      "uploads",
+      "leeching",
+      "snatches",
+      "posts",
+      "perfectFlacs",
+      "groups",
+      "percentile",
+      // D-23 / D-24：anthelion 的 adoptions、alpharatio 的 donation 都已采集到用户信息里，但不在此列表时
+      // alternative 分支恒判满足（anthelion 0 发布量也能升级）、捐款门槛被丢弃（alpharatio 判级偏松）
+      "adoptions",
+      "donation",
+    ],
     levelRequirementKeys,
   )) {
     let currentGtRequirement = levelRequirement[currentGtElement];

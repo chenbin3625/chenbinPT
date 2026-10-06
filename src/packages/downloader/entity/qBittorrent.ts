@@ -83,6 +83,8 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
+      // L-13：qBittorrent 只有 Ignored=0 / Normal=1 / High=6 / Maximum=7（downloadpriority.h），没有「低」
+      unsupportedPriorities: ["low"],
     },
     PeerList: {
       allowed: true,
@@ -554,7 +556,10 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     if (typeof res.data === "object" && res.data !== null) {
       // qBittorrent >= v5.2.0 JSON response
       const jsonData = res.data as QBittorrentAddTorrentResponse;
-      addResult.success = (jsonData.success_count ?? 0) > 0 && (jsonData.failure_count ?? 0) === 0;
+      // M-27：链接直发时 qBittorrent 解析不出 infoHash，会返回 202 + pending_count>0（已异步入队，稍后才知道结果）。
+      // 这是「已接受」而不是失败；只有 failure_count>0 或什么都没接受时才判失败。
+      const accepted = (jsonData.success_count ?? 0) + (jsonData.pending_count ?? 0);
+      addResult.success = accepted > 0 && (jsonData.failure_count ?? 0) === 0;
       if (addResult.success && jsonData.added_torrent_ids?.length) {
         addResult.id = jsonData.added_torrent_ids[0];
       }

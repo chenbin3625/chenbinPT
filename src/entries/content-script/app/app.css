@@ -72,6 +72,73 @@
   inset: auto;
 }
 
+/* 菜单脱离普通流，始终在固定的入口按钮上方向左展开。 */
+.ptd-content-script-draggable .ant-float-btn-group {
+  width: 40px;
+}
+
+.ptd-content-script-draggable .ant-float-btn-group .ant-float-btn-group-wrap {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  inset-inline-end: 0;
+  margin-bottom: 0;
+}
+
+.ptd-content-script-draggable .ant-float-btn-group-square .ant-float-btn-group-wrap {
+  width: 132px;
+}
+
+.ptd-content-script-draggable .ant-float-btn-group-square .ant-float-btn-group-wrap .ant-float-btn {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  text-align: start;
+}
+
+.ptd-content-script-draggable .ant-float-btn-group-square .ant-float-btn-group-wrap .ant-float-btn-body {
+  width: 100%;
+  height: 100%;
+}
+
+.ptd-content-script-draggable
+  .ant-float-btn-group-square
+  .ant-float-btn-group-wrap
+  .ant-float-btn-body
+  .ant-float-btn-content {
+  width: 100%;
+  min-height: 40px;
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0;
+}
+
+.ptd-content-script-draggable
+  .ant-float-btn-group-square
+  .ant-float-btn-group-wrap
+  .ant-float-btn-content
+  .ant-float-btn-icon {
+  flex: 0 0 18px;
+  margin: 0;
+}
+
+.ptd-content-script-draggable
+  .ant-float-btn-group-square
+  .ant-float-btn-group-wrap
+  .ant-float-btn-content
+  .ant-float-btn-description {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 主按钮的 Logo 需要完整占据图标槽；antd 默认按字体图标宽度限制并裁切内容。 */
+.ptd-content-script-draggable .ant-float-btn-group > .ant-float-btn .ant-float-btn-body .ant-float-btn-icon {
+  width: 24px;
+}
+
 /* 悬浮球主按钮上的 PTD logo（原 PtdAvatar image=... color="transparent" rounded="0"）。 */
 .ptd-fab-logo {
   transition: transform 0.2s ease;

@@ -19,7 +19,7 @@ vi.mock("@ptd/downloader/utils.ts", () => ({
 }));
 
 import axios from "axios";
-import RuTorrent from "@ptd/downloader/entity/ruTorrent.ts";
+import RuTorrent, { clientMetaData } from "@ptd/downloader/entity/ruTorrent.ts";
 import { CTorrentState } from "@ptd/downloader/types.ts";
 
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -190,15 +190,13 @@ describe("ruTorrent：恢复动作使用 unpause", () => {
   });
 });
 
-describe("ruTorrent：限速单位", () => {
-  it("KiB/s 换算成 rTorrent 的 bytes/s", async () => {
+describe("ruTorrent：单种限速（H-4）", () => {
+  it("rTorrent 没有单种限速命令：能力声明为不支持，且不再发出不存在的 d.set_upload_limit", async () => {
     const { client, requestHttpRpc } = createClient(intResultXml());
 
-    await expect(client.setTorrentSpeedLimit("hash", { upload: 1024, download: 128 })).resolves.toBe(true);
-
-    const xml = String(requestHttpRpc.mock.calls[0][0]);
-    expect(xml).toContain("1048576");
-    expect(xml).toContain("131072");
+    expect(clientMetaData.feature.SpeedLimit.allowed).toBe(false);
+    await expect(client.setTorrentSpeedLimit("hash", { upload: 1024, download: 128 })).resolves.toBe(false);
+    expect(requestHttpRpc).not.toHaveBeenCalled();
   });
 });
 

@@ -12,7 +12,6 @@ import {
   CTorrentState,
   TorrentClientStatus,
   CAddTorrentResult,
-  TorrentSpeedLimit,
   CTorrentFile,
   CTorrentFileSelection,
   CTorrentPeer,
@@ -49,8 +48,10 @@ export const clientMetaData: TorrentClientMetaData = {
     Queue: {
       allowed: false,
     },
+    // rTorrent 没有「单种限速」命令：d.set_upload_limit / d.set_download_limit 并不存在（会以 fault 返回），
+    // 单种限速只能通过预先在 rtorrent.rc 里定义的 throttle 组（d.throttle_name.set）实现，无法按任意数值设置。
     SpeedLimit: {
-      allowed: true,
+      allowed: false,
     },
     Label: {
       allowed: true,
@@ -567,24 +568,6 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     const postData = buildRequestXML([["d.check_hash", [id.toUpperCase()]]]);
     await this.requestHttpRpc(postData);
     return true;
-  }
-
-  // 设置单个种子的速度限制（单位 KiB/s，0 表示不限速；rTorrent: d.set_upload_limit / d.set_download_limit）
-  override async setTorrentSpeedLimit(id: any, limits: TorrentSpeedLimit): Promise<boolean> {
-    const upId = id.toUpperCase();
-    const calls: Array<[string, string[]?]> = [];
-
-    if (typeof limits.upload !== "undefined") {
-      calls.push(["d.set_upload_limit", [upId, String(limits.upload > 0 ? limits.upload * 1024 : 0)]]);
-    }
-
-    if (typeof limits.download !== "undefined") {
-      calls.push(["d.set_download_limit", [upId, String(limits.download > 0 ? limits.download * 1024 : 0)]]);
-    }
-
-    const postData = buildRequestXML(calls);
-    const { data } = await this.requestHttpRpc<string>(postData);
-    return !isXmlRpcFaultResponse(data);
   }
 
   // 设置单个种子的标签（rTorrent: d.custom1.set）

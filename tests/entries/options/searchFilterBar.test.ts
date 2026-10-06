@@ -96,6 +96,22 @@ describe("搜索结果下拉筛选", () => {
     view.unmount();
   });
 
+  it("体积预设是上限，选择 5 GB 后排除 5.77 GB 的结果", async () => {
+    const view = mountOptionsView(Bar, { pinia: prepareOptionsPinia() });
+    await view.settle();
+    view.$<HTMLButtonElement>('[data-filter="size"]')!.click();
+    await view.settle();
+    const menu = Array.from(document.querySelectorAll<HTMLElement>(".search-filter-menu")).at(-1)!;
+    const options = Array.from(menu.querySelectorAll<HTMLElement>("input[type=radio]"));
+
+    options[1]!.click();
+    await view.settle();
+
+    expect(filterMock.state.advanceFilterDictRef.value.size).toEqual([0, 5 * 1024 ** 3]);
+    expect(view.$('[data-filter="size"]')?.textContent).toContain("最多 5 GB");
+    view.unmount();
+  });
+
   it("站点可以多选且筛选状态即时同步", async () => {
     const view = mountOptionsView(Bar, { pinia: prepareOptionsPinia() });
     await view.settle();
@@ -151,6 +167,21 @@ describe("搜索结果下拉筛选", () => {
     await view.settle();
     expect(filterMock.state.tableWaitFilterRef.value).toBe("1080p");
     expect(filterMock.state.buildFilterDictFn).toHaveBeenCalledWith("1080p");
+    view.unmount();
+  });
+
+  it("搜索框与筛选项同排：筛选项包在容器里，搜索框是它的后继兄弟节点", async () => {
+    // 布局由 style.css 保证（.search-filter-bar 不换行、换行只发生在 .search-filter-chips 内部），
+    // 这里锁定该布局依赖的 DOM 结构：十个下拉筛选必须是容器内的直接子元素，
+    // 搜索框必须是容器之后的下一个兄弟节点，否则搜索框会掉到单独一行。
+    const view = mountOptionsView(Bar, { pinia: prepareOptionsPinia() });
+    await view.settle();
+    const bar = view.$<HTMLElement>(".search-filter-bar")!;
+    const chips = view.$<HTMLElement>(".search-filter-chips")!;
+    expect(chips).not.toBeNull();
+    expect(Array.from(bar.children)).toEqual([chips, view.$(".search-filter-search")]);
+    expect(chips.querySelectorAll(":scope > .search-filter-chip")).toHaveLength(10);
+    expect(bar.querySelectorAll(".search-filter-chip")).toHaveLength(10);
     view.unmount();
   });
 

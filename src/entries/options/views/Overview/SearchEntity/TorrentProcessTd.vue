@@ -3,6 +3,7 @@ import { ArrowDownOutlined, ArrowUpOutlined, CheckOutlined, DisconnectOutlined }
 import { computed, type Component } from "vue";
 import { ETorrentStatus } from "@ptd/site";
 
+import { resolveColor } from "@/shared/colors.ts";
 import { ISearchResultTorrent } from "@/shared/types.ts";
 
 const { torrent } = defineProps<{
@@ -50,7 +51,8 @@ const color = computed(() => {
   -->
   <a-row align="middle" :gutter="0" style="padding-top: 4px">
     <a-col :span="4" style="padding: 0">
-      <component class="ptd-icon-sm" />
+      <!-- M-29：缺 :is 时渲染成未知元素 <component>，状态图标从不显示 -->
+      <component :is="icon" class="ptd-icon-sm" :style="{ color: resolveColor(color) }" />
     </a-col>
     <a-col flex="1 1 0" style="padding-left: 4px">
       <a-progress :percent="torrent.progress" :show-info="false" status="active" :title="`${torrent.progress}%`" />

@@ -141,29 +141,33 @@ const doBackupStatus = ref<Record<TBackupServerKey | symbol, boolean>>({});
 async function doBackup(backupServerId: TBackupServerKey | symbol) {
   doBackupStatus.value[backupServerId] = true;
 
-  if (typeof backupServerId == "string") {
-    const serverConfig = metadataStore.backupServers[backupServerId];
-    const backupFields = serverConfig.backupFields ?? [...BackupFields];
-    const backupStatus = await sendMessage("exportBackupData", { backupFields, backupServerId });
-    if (backupStatus) {
-      // 备份成功后的保留策略清理由 exportBackupData 内部完成，此处仅对启用了保留策略的服务器加以提示
-      const hasRetention = hasBackupRetentionToApply(serverConfig?.retention);
-      runtimeStore.showSnakebar(
-        t(hasRetention ? "SetBackup.snackbar.successWithRetention" : "SetBackup.snackbar.success"),
-        {
-          color: "success",
-        },
-      );
-    } else {
-      runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+  // M-25：复位放在 finally、异常给出失败提示。WebDAV.addFile 等不带 try，exportBackupData 又不在消息重试白名单里，
+  // 401 之类会以 rejection 抛到这里；原先复位写在 await 之后，按钮会永久 loading（antd loading 还会拦截点击）。
+  try {
+    if (typeof backupServerId == "string") {
+      const serverConfig = metadataStore.backupServers[backupServerId];
+      const backupFields = serverConfig.backupFields ?? [...BackupFields];
+      const backupStatus = await sendMessage("exportBackupData", { backupFields, backupServerId });
+      if (backupStatus) {
+        // 备份成功后的保留策略清理由 exportBackupData 内部完成，此处仅对启用了保留策略的服务器加以提示
+        const hasRetention = hasBackupRetentionToApply(serverConfig?.retention);
+        runtimeStore.showSnakebar(
+          t(hasRetention ? "SetBackup.snackbar.successWithRetention" : "SetBackup.snackbar.success"),
+          {
+            color: "success",
+          },
+        );
+      } else {
+        runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+      }
+    } else if (backupServerId == localBackup) {
+      showLocalExportConfirmDialog.value = true;
     }
-  } else if (backupServerId == localBackup) {
-    showLocalExportConfirmDialog.value = true;
-  } else {
-    console.log('"doBackup" without valid backupServerId');
+  } catch {
+    runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+  } finally {
+    doBackupStatus.value[backupServerId] = false;
   }
-
-  doBackupStatus.value[backupServerId] = false;
 }
 
 const toEditBackupServerId = ref<TBackupServerKey | null>(null);

@@ -127,9 +127,13 @@ async function loadClientLabels() {
   isLoadingClientLabels.value = false;
 }
 
-function saveClientConfig() {
-  metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
-  showDialog.value = false;
+async function saveClientConfig() {
+  try {
+    await metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 </script>
 

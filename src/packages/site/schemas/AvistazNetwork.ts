@@ -14,6 +14,7 @@ import {
   type ITorrent,
   type ITorrentTag,
   type ISearchInput,
+  type IElementQuery,
   CFBlockedError,
   NoTorrentsError,
 } from "../types";
@@ -248,7 +249,7 @@ export interface IAvzNetRawTorrent {
 }
 
 // 种子列表页
-export const listTorrentPageMetadata = {
+export const listTorrentPageMetadata: NonNullable<ISiteMetadata["list"]>[number] = {
   urlPattern: ["/torrents"],
   mergeSearchSelectors: false,
   selectors: {
@@ -281,7 +282,7 @@ export const listTorrentPageMetadata = {
 };
 
 // 下载历史页和HR页
-export const listHistoryPageMetadata = {
+export const listHistoryPageMetadata: NonNullable<ISiteMetadata["list"]>[number] = {
   urlPattern: ["/profile/(.+)/history"],
   mergeSearchSelectors: false,
   selectors: {
@@ -524,6 +525,9 @@ export const SchemaMetadata: Pick<
   ],
 };
 
+/** AvistaZ 系做种列表翻页的最小请求间隔（毫秒），站点未配置 requestDelay 时兜底 */
+const AVISTAZ_MIN_PAGE_INTERVAL = 500;
+
 export default class AvistazNetwork extends PrivateSite {
   /*
     应站点要求，默认不启用用户数据获取。仅供非上游构建显式开启。
@@ -565,6 +569,7 @@ export default class AvistazNetwork extends PrivateSite {
     // E-6：基础信息（profile 页）是「必须成功」的一步：它的失败必须保留错误、
     // 经 classifySiteError 归类后返回，而不是被 mergeUserInfo 吞掉后
     // 统一误判成「站点没有该数据」的 parseError（且没有可展示的 statusMsg）。
+    this.profileFieldHits = 0;
     try {
       flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite(userName)) };
     } catch (error) {
@@ -595,20 +600,8 @@ export default class AvistazNetwork extends PrivateSite {
       );
     }
 
-    const hasProfileInfo = [
-      "levelName",
-      "uploaded",
-      "downloaded",
-      "ratio",
-      "bonus",
-      "joinTime",
-      "lastAccessAt",
-      "uploads",
-      "snatches",
-      "seeding",
-      "leeching",
-      "hnrUnsatisfied",
-    ].some((key) => typeof flushUserInfo[key] !== "undefined" && flushUserInfo[key] !== "");
+    // M-11：按 profile 页上 selector 的真实命中判断，而不是按过滤后的值（"" 解析成 0 也算「有值」）
+    const hasProfileInfo = this.profileFieldHits > 0;
 
     if (hasProfileInfo) {
       flushUserInfo = await mergeUserInfo(
@@ -642,14 +635,24 @@ export default class AvistazNetwork extends PrivateSite {
       responseType: "document",
     });
 
-    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [
-      "name",
-      "levelName",
-      "uploaded",
-      "downloaded",
-      "ratio",
-      "bonus",
-    ]) as Partial<IUserInfo>;
+    const fields = ["name", "levelName", "uploaded", "downloaded", "ratio", "bonus"] as const;
+    this.profileFieldHits += this.countFieldHits(pageDocument, fields);
+    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields]) as Partial<IUserInfo>;
+  }
+
+  /**
+   * M-11：本次刷新在 profile 页上真正命中 selector 的字段数。
+   * 不能拿解析后的值判断「有没有资料」：parseSize("") / parseNumber("") 都是 0，
+   * `typeof 0 !== "undefined"` 恒真，于是 profile 页零命中（改版 / 受限账号）也被当成「有数据且全 0」。
+   */
+  private profileFieldHits = 0;
+
+  private countFieldHits(pageDocument: Document, fields: readonly string[]): number {
+    const selectors = this.metadata.userInfo?.selectors ?? {};
+    return fields.filter((field) => {
+      const query = (selectors as Record<string, IElementQuery | undefined>)[field];
+      return !!query && this.hasFieldMatch(pageDocument, query);
+    }).length;
   }
 
   protected async getExtendInfoFromProfile(userName: string): Promise<Partial<IUserInfo>> {
@@ -659,7 +662,7 @@ export default class AvistazNetwork extends PrivateSite {
       responseType: "document",
     });
 
-    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [
+    const fields = [
       "joinTime",
       "lastAccessAt",
       "uploads",
@@ -667,7 +670,9 @@ export default class AvistazNetwork extends PrivateSite {
       "seeding",
       "leeching",
       "hnrUnsatisfied",
-    ]) as Partial<IUserInfo>;
+    ] as const;
+    this.profileFieldHits += this.countFieldHits(pageDocument, fields);
+    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields]) as Partial<IUserInfo>;
   }
 
   protected async getUserSeedingTorrents(userName: string): Promise<Partial<IUserInfo>> {
@@ -682,12 +687,15 @@ export default class AvistazNetwork extends PrivateSite {
 
       let seedingSize = getSeedingSize(firstPage);
       const maxPages = 100; // 硬上限，与原实现一致
-      const concurrency = 4;
+      // M-28：5 个 AvistaZ 系定义都没配 requestDelay，旧实现「4 并发 + 节流器拿到 undefined 即空转」
+      // 等于零间隔连发最多 100 个请求，有被 WAF/CF 当成刷站的风险。给翻页一个下限间隔并降为 2 并发。
+      const concurrency = 2;
+      const pageInterval = Math.max(this.metadata.userInfo?.requestDelay ?? 0, AVISTAZ_MIN_PAGE_INTERVAL);
       const pageCount = Math.min(getActivePageCount(firstPage), maxPages);
 
       if (pageCount > 1) {
         // 保证并发请求之间仍然满足站点 requestDelay 的请求间隔
-        const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay);
+        const throttle = this.createRequestThrottle(pageInterval);
         const restPages = Array.from({ length: pageCount - 1 }, (_, index) => index + 2);
 
         const restPageSizes = await mapWithConcurrency(restPages, concurrency, async (page) => {

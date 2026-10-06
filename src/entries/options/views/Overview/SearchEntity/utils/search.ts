@@ -57,9 +57,12 @@ export function cancelSearchQueue(): void {
   searchQueue.clear();
 
   for (const plan of Object.values(runtimeStore.search.searchPlan)) {
-    if (plan?.status === EResultParseStatus.waiting) {
+    // M-22：在途（working）的计划同样要写终态。它的响应会因轮次失效在写入前早退，
+    // 不在这里收尾的话状态会永远停在 working（顶部「排队中 1」、该项 loading 永转，且不在重试集合内）。
+    if (plan?.status === EResultParseStatus.waiting || plan?.status === EResultParseStatus.working) {
       plan.status = EResultParseStatus.passParse;
       plan.statusMsg = "i18n.userCancel";
+      plan.endAt ??= Date.now();
     }
   }
 
@@ -178,89 +181,98 @@ export async function doSearchEntity(
   // V-15：捕获入队时的搜索轮次，任务开始/写入前校验（见 searchTaskEpoch 的说明）
   const taskEpoch = searchTaskEpoch;
 
-  // noinspection ES6MissingAwait
-  searchQueue.add(
-    async () => {
-      // V-15：轮次已被取代（切换快照 / 新一轮 flush 搜索）时直接结束，避免写入已被替换的 store
-      if (taskEpoch !== searchTaskEpoch) return;
+  void searchQueue
+    .add(
+      async () => {
+        // V-15：轮次已被取代（切换快照 / 新一轮 flush 搜索）时直接结束，避免写入已被替换的 store
+        if (taskEpoch !== searchTaskEpoch) return;
 
-      const startAt = (runtimeStore.search.searchPlan[solutionKey].startAt = Date.now());
-      console.log(`search ${solutionKey} start at ${startAt}`);
-      runtimeStore.search.searchPlan[solutionKey].status = EResultParseStatus.working;
+        const startAt = (runtimeStore.search.searchPlan[solutionKey].startAt = Date.now());
+        console.log(`search ${solutionKey} start at ${startAt}`);
+        runtimeStore.search.searchPlan[solutionKey].status = EResultParseStatus.working;
 
-      let searchKeyword = runtimeStore.search.searchKey ?? "";
-      if (configStore.searchEntity.treatTTQueryAsImdbSearch && searchKeyword.match(/^tt\d{7,8}/)) {
-        searchKeyword = "imdb|" + searchKeyword;
-      }
-
-      let imdbSearchKeywords;
-      if (searchKeyword.startsWith("imdb|")) {
-        imdbSearchKeywords = definedFilters.extImdbId(searchKeyword.replace("imdb|", ""));
-      }
-
-      const {
-        status: searchStatus,
-        statusMsg: searchStatusMsg,
-        data: searchResult,
-      } = await sendMessage("getSiteSearchResult", {
-        keyword: searchKeyword,
-        siteId,
-        searchEntry,
-        autoDetectOfficialGroupFromTitle: configStore.searchEntity.autoDetectOfficialGroupFromTitle,
-      });
-
-      // V-15：等待响应期间轮次可能已被取代（例如用户切到了某个搜索快照），此时这份实时结果必须丢弃
-      if (taskEpoch !== searchTaskEpoch) return;
-
-      console.log(
-        `success get search ${solutionKey} result`,
-        summarizeSearchResultForLog(searchResult, searchStatus, searchStatusMsg),
-      );
-      runtimeStore.search.searchPlan[solutionKey].status = searchStatus;
-      searchStatusMsg && (runtimeStore.search.searchPlan[solutionKey].statusMsg = searchStatusMsg);
-
-      // 优化：批量处理搜索结果，减少响应式更新次数
-      const newItems: ISearchResultTorrent[] = [];
-
-      for (const item of searchResult) {
-        const itemUniqueId = `${item.site}-${item.id}`;
-        if (!globalExistingIds.has(itemUniqueId)) {
-          const searchResultItem = item as ISearchResultTorrent;
-          searchResultItem.uniqueId = itemUniqueId;
-          searchResultItem.solutionId = searchEntryName;
-          searchResultItem.solutionKey = solutionKey;
-          searchResultItem.status ??= ETorrentStatus.unknown; // 确保 status 字段有默认值，避免过滤器无法处理 undefined
-
-          if (imdbSearchKeywords && configStore.searchEntity.forceImdbIdMatchFilter && searchResultItem.ext_imdb) {
-            if (definedFilters.extImdbId(searchResultItem.ext_imdb) !== imdbSearchKeywords) {
-              continue;
-            }
-          }
-
-          newItems.push(markRaw(searchResultItem)); // 使用 markRaw 冻结对象，避免 Vue 创建响应式代理，提升性能
-          globalExistingIds.add(itemUniqueId);
+        let searchKeyword = runtimeStore.search.searchKey ?? "";
+        if (configStore.searchEntity.treatTTQueryAsImdbSearch && searchKeyword.match(/^tt\d{7,8}/)) {
+          searchKeyword = "imdb|" + searchKeyword;
         }
-      }
 
-      // 批量添加新项目，减少响应式更新
-      if (newItems.length > 0) {
-        runtimeStore.search.searchResult.push(...newItems);
-      }
+        let imdbSearchKeywords;
+        if (searchKeyword.startsWith("imdb|")) {
+          imdbSearchKeywords = definedFilters.extImdbId(searchKeyword.replace("imdb|", ""));
+        }
 
-      // 更新计数状态
-      const endAt = Date.now();
-      runtimeStore.search.searchPlan[solutionKey].count = newItems.length;
-      runtimeStore.search.searchPlan[solutionKey].endAt = endAt;
-      runtimeStore.search.searchPlan[solutionKey].costTime = endAt - startAt;
+        const {
+          status: searchStatus,
+          statusMsg: searchStatusMsg,
+          data: searchResult,
+        } = await sendMessage("getSiteSearchResult", {
+          keyword: searchKeyword,
+          siteId,
+          searchEntry,
+          autoDetectOfficialGroupFromTitle: configStore.searchEntity.autoDetectOfficialGroupFromTitle,
+        });
 
-      // 直接向 advanceItemPropsRef.site 添加 siteId，而不是重新构造全部字典，以便于站点快速选择器更新
-      const sites = advanceItemPropsRef.value.site;
-      if (Array.isArray(sites) && !sites.includes(siteId)) {
-        sites.push(siteId);
+        // V-15：等待响应期间轮次可能已被取代（例如用户切到了某个搜索快照），此时这份实时结果必须丢弃
+        if (taskEpoch !== searchTaskEpoch) return;
+
+        console.log(
+          `success get search ${solutionKey} result`,
+          summarizeSearchResultForLog(searchResult, searchStatus, searchStatusMsg),
+        );
+        runtimeStore.search.searchPlan[solutionKey].status = searchStatus;
+        searchStatusMsg && (runtimeStore.search.searchPlan[solutionKey].statusMsg = searchStatusMsg);
+
+        // 优化：批量处理搜索结果，减少响应式更新次数
+        const newItems: ISearchResultTorrent[] = [];
+
+        for (const item of searchResult) {
+          const itemUniqueId = `${item.site}-${item.id}`;
+          if (!globalExistingIds.has(itemUniqueId)) {
+            const searchResultItem = item as ISearchResultTorrent;
+            searchResultItem.uniqueId = itemUniqueId;
+            searchResultItem.solutionId = searchEntryName;
+            searchResultItem.solutionKey = solutionKey;
+            searchResultItem.status ??= ETorrentStatus.unknown; // 确保 status 字段有默认值，避免过滤器无法处理 undefined
+
+            if (imdbSearchKeywords && configStore.searchEntity.forceImdbIdMatchFilter && searchResultItem.ext_imdb) {
+              if (definedFilters.extImdbId(String(searchResultItem.ext_imdb)) !== imdbSearchKeywords) {
+                continue;
+              }
+            }
+
+            newItems.push(markRaw(searchResultItem)); // 使用 markRaw 冻结对象，避免 Vue 创建响应式代理，提升性能
+            globalExistingIds.add(itemUniqueId);
+          }
+        }
+
+        // 批量添加新项目，减少响应式更新
+        if (newItems.length > 0) {
+          runtimeStore.search.searchResult.push(...newItems);
+        }
+
+        // 更新计数状态
+        const endAt = Date.now();
+        runtimeStore.search.searchPlan[solutionKey].count = newItems.length;
+        runtimeStore.search.searchPlan[solutionKey].endAt = endAt;
+        runtimeStore.search.searchPlan[solutionKey].costTime = endAt - startAt;
+
+        // 直接向 advanceItemPropsRef.site 添加 siteId，而不是重新构造全部字典，以便于站点快速选择器更新
+        const sites = advanceItemPropsRef.value.site;
+        if (Array.isArray(sites) && !sites.includes(siteId)) {
+          sites.push(siteId);
+        }
+      },
+      { priority: queuePriority, id: solutionKey },
+    )
+    .catch((error: unknown) => {
+      if (!isSearchTaskCurrent(taskEpoch)) return;
+      const plan = runtimeStore.search.searchPlan[solutionKey];
+      if (plan) {
+        plan.status = EResultParseStatus.unknownError;
+        plan.statusMsg = error instanceof Error ? error.message : String(error);
+        plan.endAt = Date.now();
       }
-    },
-    { priority: queuePriority, id: solutionKey },
-  );
+    });
 }
 
 export async function doSearch(search: string, plan?: string, flush: boolean = true) {

@@ -75,6 +75,11 @@ export interface TorrentClientConfig extends DownloaderBaseConfig {
 export interface TorrentClientFeatureMetaData {
   allowed: boolean; // 该客户端是否允许该特征
   description?: string; // 该特征的相关说明
+  /**
+   * 仅 FilePriority 使用：客户端没有对应档位的优先级（例如 qBittorrent 没有「低」）。
+   * UI 不应提供这些选项，否则会被静默降级成别的档位（L-13）。
+   */
+  unsupportedPriorities?: TorrentFilePriority[];
 }
 
 // 最通用的自定义目录提示词

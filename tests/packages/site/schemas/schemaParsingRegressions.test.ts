@@ -102,8 +102,8 @@ describe("B-2：NexusPHP 详情页标题按 U+00A0 分隔符切分（结论经�
 });
 
 describe("B-3：Avistaz 列表页 torrent id 取完整数字", () => {
-  const listIdFilter = listTorrentPageMetadata.selectors.id.filters![0] as (href: string) => string | undefined;
-  const historyIdFilter = listHistoryPageMetadata.selectors.id.filters![0] as (href: string) => string | undefined;
+  const listIdFilter = listTorrentPageMetadata.selectors!.id!.filters![0] as (href: string) => string | undefined;
+  const historyIdFilter = listHistoryPageMetadata.selectors!.id!.filters![0] as (href: string) => string | undefined;
 
   it("多位数 id 完整返回（修复前只返回首位数字）", () => {
     expect(listIdFilter("/torrent/12345/some-name")).toBe("12345");
@@ -386,6 +386,18 @@ describe("E-8：Gazelle 合成下载链接必须带上 authkey/torrent_pass", ()
       link: "https://gz.example/torrents.php?torrentid=124",
     });
     expect(site.requestCount).toBe(1);
+  });
+
+  it("M-9：页面上的真实下载链接是相对地址（上游 browse.php 的实际形态）时同样能取到凭据", async () => {
+    const site = newSite();
+    site.pageDoc = makeDoc(`<a href="torrents.php?action=download&id=999&authkey=AK&torrent_pass=PK">DL</a>`);
+
+    const url = await site.runDownloadLink({
+      site: "gazelle-e8-test",
+      id: 123,
+      link: "https://gz.example/torrents.php?torrentid=123",
+    });
+    expect(url).toBe("https://gz.example/torrents.php?action=download&id=123&authkey=AK&torrent_pass=PK");
   });
 
   it("已经是真实下载链接时原样返回，不再发请求", async () => {

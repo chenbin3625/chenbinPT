@@ -132,7 +132,10 @@ async function getFaviconFromUrl(url: string): Promise<Blob> {
     // manifest 可能是 `{"name":"x"}` 这类没有 icons（或 icons 不是数组）的合法 JSON：
     // 这里必须降级而不是抛 TypeError —— 否则第 1 步已收集到的 <link rel=icon> 会一起丢失（A-19）
     if (Array.isArray(manifest?.icons)) {
-      manifest.icons.forEach(({ sizes, src }) => {
+      manifest.icons.forEach((icon) => {
+        // M-32：不能在参数里直接解构 —— `icons: [null]` 会在进入函数体之前就抛 TypeError，
+        // 中止循环并让第 1 步已收集的图标一起作废（正是 A-19 想避免的）
+        const { sizes, src } = icon && typeof icon === "object" ? icon : ({} as { sizes?: string; src?: string });
         if (typeof src !== "string" || src.length === 0) {
           logMessage(`[Favicon] manifest 中存在缺少 src 的图标条目，已跳过`, {
             url: manifestElement.href,

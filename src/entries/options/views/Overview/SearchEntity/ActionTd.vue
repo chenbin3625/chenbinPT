@@ -51,7 +51,11 @@ async function getTorrentDownloadLinks() {
 
   for (const torrent of torrentItems) {
     const downloadUrl = await sendMessage("getTorrentDownloadLink", torrent);
-    sendMessage("logger", { msg: `torrent ${torrent} download link: ${downloadUrl}` }).catch();
+    // 记录 site/id 而不是 `${torrent}`（模板字符串里是 "[object Object]"，没有任何信息量）；
+    // 下载链接里的凭据由 offscreen logger 统一脱敏。日志失败不影响取链接。
+    void sendMessage("logger", { msg: `torrent ${torrent.site}/${torrent.id} download link: ${downloadUrl}` }).catch(
+      () => {},
+    );
     downloadUrls.push({ torrent, downloadUrl });
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "chenbinpt",
   "private": true,
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "PT 站点辅助工具：多站搜索、用户信息汇总、推送到下载器、辅种与备份（浏览器扩展）",
   "license": "MIT",
   "repository": {
@@ -47,11 +47,13 @@
     "test:watch": "vitest",
     "test:e2e": "node scripts/e2e-extension-smoke.mjs",
     "test:legacy": "tsx tests/unit.test.mts",
+    "test:browser": "node tests/entries/content-script/advanceListDialog.browser.mjs",
+    "verify": "npm run check && npm run lint && npm run check:antd && npm test && npm run test:legacy",
     "build:dist": "vite build",
     "build:dist-firefox": "cross-env TARGET=firefox vite build",
     "build:watch": "vite build --watch --mode development --minify false",
     "pack:crx": "node scripts/pack-crx.mjs",
-    "pack:crx:build": "node scripts/pack-crx.mjs --build",
+    "pack:crx:build": "npm run verify && node scripts/pack-crx.mjs --build",
     "action:upload_telegram": "tsx vite/sendToTgChannel.ts",
     "prepare": "husky",
     "postinstall": "patch-package"
