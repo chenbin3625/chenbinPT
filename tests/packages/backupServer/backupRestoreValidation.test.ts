@@ -114,6 +114,14 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
     });
   });
 
+  describe("降级攻击防护（M-4）", () => {
+    it("用户提供了解密密钥时，manifest.encryption=false 的明文备份不得静默恢复", async () => {
+      const blob = await backupDataToJSZipBlob({ config: { lang: "zh_CN" } }, "");
+
+      await expect(jsZipBlobToBackupData(blob, "user-secret")).rejects.toThrow(/downgrade|unencrypted|integrity/i);
+    });
+  });
+
   describe("结构校验：不能误拒合法备份", () => {
     const validMetadata = {
       sites: { mteam: { isOffline: false } },

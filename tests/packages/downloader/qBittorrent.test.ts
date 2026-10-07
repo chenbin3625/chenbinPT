@@ -189,3 +189,98 @@ describe("qBittorrent ≥5.2：/torrents/add 的 JSON 响应（M-27）", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("qBittorrent：sync/maindata 缓存一致性（M-2 / L-3）", () => {
+  beforeEach(() => {
+    axiosMock.request.mockReset();
+    axiosMock.post.mockReset();
+  });
+
+  const rawTorrent = (state: string) => ({
+    name: "Torrent",
+    hash: "HASH",
+    magnet_uri: "",
+    added_on: 0,
+    size: 100,
+    progress: state === "pausedDL" ? 0.5 : 1,
+    dlspeed: 0,
+    upspeed: 0,
+    priority: 0,
+    num_seeds: 0,
+    num_complete: 0,
+    num_leechs: 0,
+    num_incomplete: 0,
+    ratio: 1,
+    eta: 0,
+    state,
+    seq_dl: false,
+    f_l_piece_prio: false,
+    completion_on: 0,
+    tracker: "",
+    dl_limit: -1,
+    up_limit: -1,
+    downloaded: 0,
+    uploaded: 0,
+    downloaded_session: 0,
+    uploaded_session: 0,
+    amount_left: 0,
+    save_path: "/downloads",
+    completed: 0,
+    max_ratio: -1,
+    max_seeding_time: -1,
+    ratio_limit: -1,
+    seeding_time_limit: -1,
+    seen_complete: 0,
+    last_activity: 0,
+    total_size: 100,
+    time_active: 0,
+    category: "",
+  });
+
+  it("pause/remove/resume 等写操作完成后立即刷新列表，不复用 15 秒内的旧快照", async () => {
+    const client = createClient({ username: "", password: "qbt_api_key" });
+    (client as any).webApiVersion = "2.10";
+
+    let syncCalls = 0;
+    axiosMock.request.mockImplementation(async (config: any) => {
+      if (config.url.endsWith("/sync/maindata")) {
+        syncCalls++;
+        return {
+          data:
+            syncCalls === 1
+              ? { rid: 1, full_update: true, torrents: { HASH: rawTorrent("uploading") } }
+              : { rid: 2, full_update: true, torrents: { HASH: rawTorrent("pausedDL") } },
+        };
+      }
+      return { data: "Ok." };
+    });
+
+    const before = await client.getAllTorrents();
+    expect(before[0].state).toBe("seeding");
+
+    await client.pauseTorrent("HASH");
+    const after = await client.getAllTorrents();
+
+    expect(syncCalls).toBe(2);
+    expect(after[0].state).toBe("paused");
+  });
+
+  it("增量同步的 tags 是新增标签，应做并集而不是按数组下标 merge", async () => {
+    const client = createClient({ username: "", password: "qbt_api_key" });
+    const responses = [
+      { rid: 1, full_update: true, tags: ["a", "b", "c"] },
+      { rid: 2, tags: ["d"] },
+    ];
+    axiosMock.request.mockImplementation(async (config: any) => {
+      if (config.url.endsWith("/sync/maindata")) {
+        return { data: responses.shift() };
+      }
+      return { data: "Ok." };
+    });
+
+    expect((await (client as any).getSyncData(true)).tags).toEqual(["a", "b", "c"]);
+    (client as any).lastSyncTimestamp = 0;
+
+    expect((await (client as any).getSyncData()).tags).toEqual(["a", "b", "c", "d"]);
+  });
+});

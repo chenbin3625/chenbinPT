@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
     getDownloaderMetaData: vi.fn(),
     releaseDownloaderInstance: vi.fn(),
     getRemoteTorrentFile: vi.fn(),
+    sessionStore: new Map<string, unknown>(),
   };
 });
 
@@ -46,6 +47,17 @@ type DownloadHandler = (args: { data: any }) => Promise<any>;
 
 async function loadDownloadModule(): Promise<{ handler: DownloadHandler }> {
   vi.resetModules();
+  vi.stubGlobal("chrome", {
+    storage: {
+      session: {
+        get: async (key: string) => (mocks.sessionStore.has(key) ? { [key]: mocks.sessionStore.get(key) } : {}),
+        set: async (items: Record<string, unknown>) => {
+          Object.entries(items).forEach(([key, value]) => mocks.sessionStore.set(key, structuredClone(value)));
+        },
+      },
+    },
+    runtime: { id: "test" },
+  });
   mocks.onMessage.mockClear();
   mocks.sendMessage.mockClear();
   mocks.logger.mockClear();
@@ -94,6 +106,7 @@ function makeSiteInstance(downloadInterval = 0) {
 
 describe("offscreen 下载队列：等待站点间隔的任务不占用并发槽", () => {
   beforeEach(() => {
+    mocks.sessionStore.clear();
     // L-6 起 window.open 的返回值会被检查：offscreen 没有用户激活，被拦截时返回 null 并回退到 extension。
     // 这里的用例走的是 "web 方法成功打开" 路径，因此必须返回一个真值（模拟弹窗未被拦截）。
     (window as any).open = vi.fn(() => ({ closed: false }));

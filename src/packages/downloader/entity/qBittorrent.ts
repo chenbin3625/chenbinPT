@@ -26,7 +26,7 @@ import {
 import { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import urlJoin from "url-join";
 import { axios, getRemoteTorrentFile } from "../utils";
-import { merge } from "es-toolkit";
+import { merge, omit } from "es-toolkit";
 
 /**
  * 定义一个 前缀，用于标识 qBittorrent 的分类
@@ -462,7 +462,11 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       });
 
       this.lastSyncTimestamp = Date.now();
-      this.syncData = data.full_update ? data : merge(this.syncData, data);
+      const previousTags = this.syncData.tags ?? [];
+      this.syncData = data.full_update ? data : merge(this.syncData, omit(data, ["tags"]));
+      if (!data.full_update && data.tags) {
+        this.syncData.tags = [...new Set([...previousTags, ...data.tags])];
+      }
 
       if (this.syncData.torrents && this.syncData.torrents_removed) {
         this.syncData.torrents_removed.forEach((hash) => delete this.syncData.torrents![hash]);
@@ -488,6 +492,10 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     }
 
     return this.syncData;
+  }
+
+  private invalidateSyncCache() {
+    this.lastSyncTimestamp = 0;
   }
 
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
@@ -581,6 +589,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       }
     }
 
+    this.invalidateSyncCache();
     return addResult;
   }
 
@@ -664,6 +673,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     // qBittorrent 5.0+ (WebAPI 2.11.0+) renamed /torrents/pause to /torrents/stop
     const endpoint = (await this.isApiVersionAtLeast(2, 11)) ? "/torrents/stop" : "/torrents/pause";
     await this.request(endpoint, { method: "post", data });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -674,6 +684,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       deleteFiles: removeData,
     };
     await this.request("/torrents/delete", { method: "post", data });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -685,6 +696,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     // qBittorrent 5.0+ (WebAPI 2.11.0+) renamed /torrents/resume to /torrents/start
     const endpoint = (await this.isApiVersionAtLeast(2, 11)) ? "/torrents/start" : "/torrents/resume";
     await this.request(endpoint, { method: "post", data });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -729,6 +741,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       method: "post",
       data: { hashes: normalizePieces(id) },
     });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -744,6 +757,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       method: "post",
       data: { hashes: normalizePieces(id) },
     });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -772,6 +786,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     }
 
     await Promise.all(requests);
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -781,6 +796,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       method: "post",
       data: { hashes: normalizePieces(id), category: label },
     });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -847,6 +863,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
         data: { hash, id: ids.join("|"), priority },
       });
     }
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -922,6 +939,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       method: "post",
       data: { hash: this.getTorrentHash(torrent), urls: url },
     });
+    this.invalidateSyncCache();
     return true;
   }
 
@@ -931,6 +949,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       method: "post",
       data: { hash: this.getTorrentHash(torrent), urls: url },
     });
+    this.invalidateSyncCache();
     return true;
   }
 }

@@ -197,4 +197,29 @@ describe("webExtPersistence：非扩展宿主的降级（按钮全失效故障�
     await expect(store.$save()).rejects.toThrow("quota exceeded");
     notice.mockRestore();
   });
+
+  it("content script 运行在普通网页时不得直接读写 chrome.storage.local", async () => {
+    const getSpy = vi.fn(() => Promise.resolve({ contentScriptStore: { sites: { secret: { token: "leak" } } } }));
+    const setSpy = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("chrome", {
+      runtime: {
+        id: "extension-id",
+        getURL: (path: string) => `chrome-extension://extension-id/${path}`,
+      },
+      storage: {
+        local: { get: getSpy, set: setSpy, remove: vi.fn(() => Promise.resolve()) },
+        onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+    });
+
+    const store = createStoreWithId("contentScriptStore");
+    await store.$onReady();
+
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(store.sites).toEqual({ siteA: { name: "A" } });
+
+    store.sites.siteA.name = "changed-in-memory";
+    await expect(store.$save()).resolves.toBeUndefined();
+    expect(setSpy).not.toHaveBeenCalled();
+  });
 });

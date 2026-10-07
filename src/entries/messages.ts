@@ -84,6 +84,15 @@ interface ProtocolMap {
 
   // 1.1 chrome.downloads
   downloadFile(downloadOptions: chrome.downloads.DownloadOptions): number;
+  registerDownloadTracking(data: {
+    chromeDownloadId: number;
+    downloadId: TTorrentDownloadKey;
+    reservation?: { site: string; at: number; previous: number };
+  }): void;
+  registerBlobDownloadTracking(data: { chromeDownloadId: number; blobUrl: string }): void;
+  getSiteDownloadAt(site: string): number;
+  reserveSiteDownloadAt(data: { site: string; at: number }): number;
+  rollbackSiteDownloadAt(data: { site: string; at: number; previous: number }): void;
 
   // 1.2 chrome.storage
   getExtStorage<T extends TExtensionStorageKey>(key: T): IExtensionStorageSchema[T];
@@ -97,6 +106,7 @@ interface ProtocolMap {
     path: string | Array<string | number>;
     defaultValue?: any;
   }): any;
+  getContentScriptBootstrapData(): { config: Record<string, any>; metadata: Record<string, any> };
   /**
    * 局部更新：在 service worker 内「读 → 改指定路径 → 写回」，避免大对象跨上下文往返与并发读改写。
    * `remove: true` 表示删除该路径。
@@ -193,6 +203,16 @@ interface ProtocolMap {
   getDownloadHistory(): ITorrentDownloadMetadata[];
   getDownloadHistoryById(downloadId: TTorrentDownloadKey): ITorrentDownloadMetadata;
   setDownloadHistoryStatus(data: { downloadId: TTorrentDownloadKey; status: TTorrentDownloadStatus }): void;
+  settleBrowserDownload(data: {
+    downloadId: TTorrentDownloadKey;
+    state: "complete" | "interrupted";
+    reservation?: { site: string; at: number; previous: number };
+  }): void;
+  releaseBrowserDownloadBlob(data: {
+    chromeDownloadId: number;
+    state: "complete" | "interrupted";
+    blobUrl: string;
+  }): void;
   deleteDownloadHistoryById(downloadId: TTorrentDownloadKey): void;
   clearDownloadHistory(): void;
 
@@ -290,6 +310,8 @@ const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "addClientTorrentTracker",
   "removeClientTorrentTracker",
   "downloadTorrent",
+  "settleBrowserDownload",
+  "releaseBrowserDownloadBlob",
   "getDownloadHistory",
   "getDownloadHistoryById",
   "setDownloadHistoryStatus",
@@ -324,8 +346,9 @@ const offscreenMessageTypes = new Set<keyof ProtocolMap>([
 // 全局消息处理函数映射
 const messageMaps: Partial<ProtocolMap> = {};
 
-// Content scripts must retain search/download access, but must not call administrative
-// endpoints that expose whole storage, cookies, or backup and browser rule controls.
+// Extension pages may use every protocol method. Content scripts are restricted
+// again by the explicit allowlist below; this set remains defense in depth for
+// extension-only administrative endpoints and for path-based storage access.
 // TESTS-2：checkAndExtendCookies 在用户开启 autoExtendCookies 时会真的写 cookie，
 // 因此同样登记；它只由 background 自身注册（background/utils/cookies.ts）、只被 offscreen
 // （扩展页，isExtensionPageSender 放行）调用，登记后这两条路径行为不变。
@@ -334,6 +357,12 @@ const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "setExtStorage",
   "patchExtStoragePath",
   "getDownloaderConfig",
+  "downloadFile",
+  "registerDownloadTracking",
+  "registerBlobDownloadTracking",
+  "getSiteDownloadAt",
+  "reserveSiteDownloadAt",
+  "rollbackSiteDownloadAt",
   "getAllCookies",
   "getCookie",
   "setCookie",
@@ -351,6 +380,8 @@ const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "setDownloadHistoryStatus",
   "deleteDownloadHistoryById",
   "clearDownloadHistory",
+  "clearLogger",
+  "deleteClientTorrent",
   "createKeepUploadTask",
   "updateKeepUploadTask",
   "deleteKeepUploadTask",
@@ -362,12 +393,43 @@ const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "nativeBridgeReconnect",
 ]);
 
+/**
+ * 内容脚本只能使用这组明确列出的能力。
+ *
+ * 内容脚本运行在任意站点页面的渲染进程中，不能把「没列入管理黑名单」当成授权。
+ * `getSiteUserConfig` 会在下方进一步剥离 inputSetting，避免把 passkey/token 送进页面侧。
+ */
+const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
+  "getContentScriptBootstrapData",
+  "getExtStoragePath",
+  "patchExtStoragePath",
+  "getSiteUserConfig",
+  "getTorrentDownloadLink",
+  "downloadTorrent",
+  "matchSocialPage",
+  "openOptionsPage",
+]);
+
 function isExtensionPageSender(sender: chrome.runtime.MessageSender | undefined): boolean {
   const extensionBase = chrome.runtime.getURL("");
   return sender?.id === chrome.runtime.id && typeof sender.url === "string" && sender.url.startsWith(extensionBase);
 }
 
-function isContentScriptStoragePathAllowed(data: unknown): boolean {
+function isContentScriptSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+  const extensionBase = chrome.runtime.getURL("");
+  return sender?.id === chrome.runtime.id && typeof sender.url === "string" && !sender.url.startsWith(extensionBase);
+}
+
+function sanitizeContentScriptSiteUserConfig(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const safe = { ...(value as Record<string, unknown>) };
+  delete safe.inputSetting;
+  return safe;
+}
+
+function isContentScriptStoragePathAllowed(type: keyof ProtocolMap, data: unknown): boolean {
   if (!data || typeof data !== "object") return false;
   const { key, path } = data as { key?: unknown; path?: unknown };
   if (typeof path !== "string" && !Array.isArray(path)) return false;
@@ -375,6 +437,9 @@ function isContentScriptStoragePathAllowed(data: unknown): boolean {
     return false;
   }
   const parts = parsePath(path as string | Array<string | number>);
+  if (type === "patchExtStoragePath") {
+    return key === "config" && parts.length === 2 && parts[0] === "contentScript" && parts[1] === "position";
+  }
   if (parts.length === 1) {
     return (
       (key === "config" && parts[0] === "contentScript") ||
@@ -525,14 +590,23 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     // @ts-expect-error
     messageMaps[type] = handler;
     original.onMessage(type, (message) => {
-      if (
-        (extensionPageOnlyMessages.has(type as keyof ProtocolMap) ||
-          (type === "getExtStoragePath" && !isContentScriptStoragePathAllowed(message.data))) &&
-        !isExtensionPageSender(message.sender)
-      ) {
+      const contentScriptSender = isContentScriptSender(message.sender);
+      if (contentScriptSender && !contentScriptAllowedMessages.has(type as keyof ProtocolMap)) {
         throw new Error(`Permission denied for message sender: ${String(type)}`);
       }
-      return handler(message);
+      const messageType = type as keyof ProtocolMap;
+      const isStoragePathMessage = messageType === "getExtStoragePath" || messageType === "patchExtStoragePath";
+      const storagePathAllowed = isStoragePathMessage && isContentScriptStoragePathAllowed(messageType, message.data);
+      const requiresExtensionPage =
+        extensionPageOnlyMessages.has(messageType) || (isStoragePathMessage && !storagePathAllowed);
+      if (requiresExtensionPage && !storagePathAllowed && !isExtensionPageSender(message.sender)) {
+        throw new Error(`Permission denied for message sender: ${String(type)}`);
+      }
+      const result = handler(message);
+      if (contentScriptSender && type === "getSiteUserConfig") {
+        return Promise.resolve(result).then(sanitizeContentScriptSiteUserConfig) as ReturnType<typeof handler>;
+      }
+      return result;
     });
   };
 
@@ -571,6 +645,11 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     try {
       return await original.sendMessage(type, data); // 执行远程异步调用
     } catch (error) {
+      if (needsOffscreen && isOffscreenConnectionError(error)) {
+        // 即使写类消息不能安全重发，也不能继续相信一个已经失效的 offscreen。
+        // 否则后续调用会复用 resolved promise，永远跳过文档重建。
+        offscreenReadyPromise = null;
+      }
       /**
        * 只有「只读消息 + 传输层连接错误」才允许**原样重发**（缺陷清单 B-9）。
        *
@@ -587,7 +666,6 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
       }
 
       // 只读消息：offscreen 可能在扩展重载或异常后被回收，清掉缓存、重建并只重试一次。
-      offscreenReadyPromise = null;
       await ensureOffscreenReady();
       return await original.sendMessage(type, data);
     }

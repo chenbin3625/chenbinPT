@@ -128,3 +128,40 @@ describe("hdtorrents removeInvalidDataUnit 真正去掉 BiT（DEFS2-13）", () =
     expect(seedSizeFilters[1]("2.00 GB")).toBe("2.00 GB");
   });
 });
+
+describe("L-1/L-2：等级阶梯不能倒挂", () => {
+  it("itzmx 的普通用户下载量门槛随等级递增", async () => {
+    const { siteMetadata } = await import("@ptd/site/definitions/itzmx.ts");
+    const { parseSizeString } = await import("@ptd/site/utils/filesize.ts");
+
+    const downloadedRequirements = siteMetadata
+      .levelRequirements!.filter((level) => (level.groupType ?? "user") === "user" && level.downloaded)
+      .map((level) => ({
+        id: level.id,
+        name: level.name,
+        downloaded: parseSizeString(String(level.downloaded)),
+      }));
+
+    for (let i = 1; i < downloadedRequirements.length; i++) {
+      expect(downloadedRequirements[i].downloaded, downloadedRequirements[i].name).toBeGreaterThanOrEqual(
+        downloadedRequirements[i - 1].downloaded,
+      );
+    }
+  });
+
+  it("railgunpt 的普通用户注册时长门槛随等级递增", async () => {
+    const { siteMetadata } = await import("@ptd/site/definitions/railgunpt.ts");
+
+    const weeks = siteMetadata
+      .levelRequirements!.filter((level) => (level.groupType ?? "user") === "user" && level.interval)
+      .map((level) => ({
+        id: level.id,
+        name: level.name,
+        weeks: Number(String(level.interval).match(/^P(\d+)W$/)?.[1] ?? 0),
+      }));
+
+    for (let i = 1; i < weeks.length; i++) {
+      expect(weeks[i].weeks, weeks[i].name).toBeGreaterThanOrEqual(weeks[i - 1].weeks);
+    }
+  });
+});

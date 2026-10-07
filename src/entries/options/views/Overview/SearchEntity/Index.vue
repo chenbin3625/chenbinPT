@@ -45,7 +45,6 @@ import {
 
 import ActionTd from "./ActionTd.vue";
 import TorrentProcessTd from "./TorrentProcessTd.vue";
-import QuickFilterNotice from "./QuickFilterNotice.vue";
 import SearchFilterBar from "./SearchFilterBar.vue";
 import SelectionBar from "./SelectionBar.vue";
 import SearchStatusDialog from "./SearchStatusDialog.vue";
@@ -458,9 +457,6 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 
     <div style="padding-top: 8px; padding-bottom: 0px">
       <SearchFilterBar />
-      <!-- OPTIONSOVERVIEW-6：QuickFilterNotice 在 antd 迁移时被 SearchFilterBar 替换后成了无人引用的死组件，
-           配置项 searchEntity.quickSiteFilter（默认 true）因此变成空开关；这里重新挂载，恢复快速站点筛选。 -->
-      <QuickFilterNotice />
 
       <a-table
         id="ptd-search-entity-table"

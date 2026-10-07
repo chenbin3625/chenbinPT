@@ -6,6 +6,7 @@ import { has, unset } from "es-toolkit/compat";
 import { usePreferredDark } from "@vueuse/core";
 
 import type { IConfigPiniaStorageSchema, supportThemeType } from "@/shared/types.ts";
+import { sendMessage } from "@/messages.ts";
 
 // 注意：不要在这里 import "./metadata.ts" —— 会与 metadata.ts → config.ts 形成运行时循环依赖。
 // metadata store 通过 metadataStoreBridge 惰性获取（对外 API getUserNames 保持不变）。
@@ -27,6 +28,23 @@ export const defaultTimelineBackgroundColor = "#455A64";
  * 这里收成模块级单例：应用生命周期内只需要一个。
  */
 const preferredDark = usePreferredDark();
+
+function isContentScriptStorageContext(): boolean {
+  try {
+    const runtimeId = globalThis.chrome?.runtime?.id;
+    const href = globalThis.location?.href;
+    if (!runtimeId || typeof href !== "string") {
+      return false;
+    }
+    const extensionBase = globalThis.chrome?.runtime?.getURL?.("");
+    if (extensionBase && href.startsWith(extensionBase)) {
+      return false;
+    }
+    return /^(https?|file):/.test(globalThis.location?.protocol ?? "");
+  } catch {
+    return false;
+  }
+}
 
 export const useConfigStore = defineStore("config", {
   persistWebExt: {
@@ -296,7 +314,6 @@ export const useConfigStore = defineStore("config", {
       forceImdbIdMatchFilter: true,
       autoDetectOfficialGroupFromTitle: false,
 
-      quickSiteFilter: true,
       showHotRecommendations: true,
     },
 
@@ -393,6 +410,14 @@ export const useConfigStore = defineStore("config", {
     updateContentScriptPosition(x: number, y: number) {
       this.contentScript.position.x = x;
       this.contentScript.position.y = y;
+      if (isContentScriptStorageContext()) {
+        void sendMessage("patchExtStoragePath", {
+          key: "config",
+          path: "contentScript.position",
+          value: { x, y },
+        });
+        return;
+      }
       this.$save();
     },
   },

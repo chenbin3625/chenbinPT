@@ -40,7 +40,8 @@ vi.stubGlobal("chrome", {
   i18n: { getMessage: vi.fn((key: string) => key) },
 });
 
-const { buildContextMenusContextKey, createCoalescingDebounce } = await import("@/background/utils/contextMenus.ts");
+const { buildContextMenusContextKey, createCoalescingDebounce, createContextMenuClickDispatcher } =
+  await import("@/background/utils/contextMenus.ts");
 
 const baseMetadata = {
   solutions: { default: { id: "default", name: "Default", enabled: true, sort: 1 } },
@@ -237,5 +238,21 @@ describe("createCoalescingDebounce", () => {
     expect(run).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
+  });
+});
+
+describe("context menu click dispatch", () => {
+  it("service worker 冷启动时先重建事件表，再分发第一次点击", async () => {
+    const eventBus = new Map<string | number, (info: any, tab: any) => void>();
+    const handler = vi.fn();
+    const rebuild = vi.fn(async () => {
+      eventBus.set("menu-1", handler);
+    });
+    const dispatch = createContextMenuClickDispatcher(eventBus, rebuild);
+
+    await dispatch({ menuItemId: "menu-1" } as any, { id: 1 } as any);
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({ menuItemId: "menu-1" }, { id: 1 });
   });
 });

@@ -157,14 +157,35 @@ const contextMenusClickEventBus = new Map<
   (info: chrome.contextMenus.OnClickData, tab: chrome.tabs.Tab) => void
 >();
 
+export function createContextMenuClickDispatcher(
+  eventBus: Map<string | number, (info: chrome.contextMenus.OnClickData, tab: chrome.tabs.Tab) => void>,
+  rebuild: () => void | Promise<void>,
+) {
+  return async (info: chrome.contextMenus.OnClickData, tab: chrome.tabs.Tab | undefined): Promise<void> => {
+    if (!info.menuItemId) {
+      return;
+    }
+
+    let clickHandler = eventBus.get(info.menuItemId);
+    if (!clickHandler) {
+      // MV3 service workers can be restarted while Chrome keeps the native menu.
+      // Rebuild the in-memory callback table before giving up on the first click.
+      await rebuild();
+      clickHandler = eventBus.get(info.menuItemId);
+    }
+
+    if (clickHandler && tab) {
+      clickHandler(info, tab);
+    }
+  };
+}
+
+const dispatchContextMenuClick = createContextMenuClickDispatcher(contextMenusClickEventBus, scheduleContextMenusBuild);
+
 chrome.contextMenus?.onClicked.addListener((info, tab) => {
-  if (!info.menuItemId || !contextMenusClickEventBus.has(info.menuItemId)) {
-    return;
-  }
-  const clickHandler = contextMenusClickEventBus.get(info.menuItemId);
-  if (clickHandler) {
-    clickHandler(info, tab!);
-  }
+  void dispatchContextMenuClick(info, tab).catch((error) => {
+    logBackgroundError("Failed to dispatch context menu click", error);
+  });
 });
 
 function addContextMenu(data: chrome.contextMenus.CreateProperties) {
@@ -233,6 +254,7 @@ async function downloadLinkPush(
   sendMessage("downloadTorrent", {
     torrent, // 组装包含标题、URL和站点信息的种子对象
     downloaderId: downloader.id,
+    allowSiteLessLink: true,
     addTorrentOptions: {
       addAtPaused: !(downloader?.feature?.DefaultAutoStart ?? true),
       savePath: folder!,

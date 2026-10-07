@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   logBackgroundError: vi.fn(),
   cookiesGet: vi.fn(),
+  cookiesGetAll: vi.fn(),
   cookiesSet: vi.fn(),
   storageGetItem: vi.fn(),
 }));
@@ -29,6 +30,7 @@ vi.mock("@/storage.ts", () => ({ extStorage: { getItem: mocks.storageGetItem, se
 vi.stubGlobal("chrome", {
   cookies: {
     get: mocks.cookiesGet,
+    getAll: mocks.cookiesGetAll,
     set: mocks.cookiesSet,
   },
 });
@@ -55,6 +57,7 @@ function newCookie(overrides: Partial<chrome.cookies.SetDetails> = {}): chrome.c
 describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
   beforeEach(() => {
     mocks.cookiesGet.mockReset();
+    mocks.cookiesGetAll.mockReset();
     mocks.cookiesSet.mockReset();
     mocks.logBackgroundError.mockReset();
     mocks.cookiesSet.mockResolvedValue(undefined);
@@ -141,5 +144,35 @@ describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
 
     await expect(setCookie(newCookie({ value: "new-value" }))).resolves.toBe(true);
     expect(mocks.cookiesSet).not.toHaveBeenCalled();
+  });
+
+  it("host-only cookie 延长时省略 domain，不能扩大到所有子域", async () => {
+    mocks.cookiesGetAll.mockResolvedValue([
+      {
+        name: "remember_web_abc",
+        value: "value",
+        domain: "site.example",
+        hostOnly: true,
+        expirationDate: nowSeconds() + 60,
+        path: "/",
+        secure: true,
+        httpOnly: true,
+        sameSite: "lax",
+      },
+    ]);
+    mocks.cookiesSet.mockResolvedValue({
+      name: "remember_web_abc",
+      value: "value",
+    });
+    mocks.storageGetItem.mockResolvedValue({
+      autoExtendCookies: { enabled: true, triggerThreshold: 2, extensionDuration: 3 },
+    });
+
+    const { checkAndExtendCookies } = await import("@/background/utils/cookies.ts");
+    await checkAndExtendCookies("https://site.example/");
+
+    expect(mocks.cookiesSet).toHaveBeenCalledTimes(1);
+    expect(mocks.cookiesSet.mock.calls[0]![0]).not.toHaveProperty("domain");
+    expect(mocks.cookiesSet.mock.calls[0]![0].url).toBe("https://site.example/");
   });
 });

@@ -20,9 +20,10 @@ import type { IDownloaderMetadata } from "@/shared/types.ts";
 import { createDynamicReplacePrompter, sendTorrentToDownloader } from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
-const { torrentItems, isDefaultSend } = defineProps<{
+const { torrentItems, isDefaultSend, allowSiteLessLink } = defineProps<{
   torrentItems: ITorrent[];
   isDefaultSend?: boolean;
+  allowSiteLessLink?: boolean;
 }>();
 const emit = defineEmits<{
   (e: "cancel"): void;
@@ -149,6 +150,7 @@ async function sendToDownloader() {
       selectedDownloader.value.id,
       addTorrentOptions.value,
       promptForDynamicReplace,
+      { allowSiteLessLink },
     );
     showDialog.value = false;
     emit("done");

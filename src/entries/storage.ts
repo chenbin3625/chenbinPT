@@ -34,6 +34,22 @@ export interface IExtensionStorageSchema {
 
 export type TExtensionStorageKey = keyof IExtensionStorageSchema;
 
+function restrictStorageLocalAccessToTrustedContexts(): void {
+  try {
+    const localStorage = chrome.storage?.local as any;
+    if (localStorage && typeof localStorage.setAccessLevel === "function") {
+      const result = localStorage.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+      if (typeof result?.catch === "function") {
+        void result.catch(() => undefined);
+      }
+    }
+  } catch {
+    // 不支持 setAccessLevel 的浏览器（如 Firefox）按原访问级别继续运行。
+  }
+}
+
+restrictStorageLocalAccessToTrustedContexts();
+
 /**
  * 注意 extStore 不能在 offscreen 中使用，如果在 offscreen 中有需要，请使用 sw 提供的 sendMessage('getExtStorage' | 'setExtStorage')
  */

@@ -29,6 +29,7 @@ import { sendMessage } from "@/messages.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { registerMetadataStoreAccessor } from "./metadataStoreBridge.ts";
+import { buildSearchSolutionFromCategories } from "@/options/utils/searchSolutionConfig.ts";
 
 type TSimplePatchFieldKey = keyof Pick<
   IMetadataPiniaStorageSchema,
@@ -36,7 +37,33 @@ type TSimplePatchFieldKey = keyof Pick<
 >;
 
 /** 去抖写入只需要插件的 `$save()`，不依赖 pinia 的内部结构（也便于在单测里替换） */
-type TSaveableStore = { $save: () => Promise<void> };
+type TSaveableStore = {
+  $save: (newState?: unknown, options?: { skipMerge?: boolean }) => Promise<void>;
+};
+
+async function refreshSavedSearchSolutionItem(solutionItem: ISearchSolution): Promise<ISearchSolution> {
+  if (!solutionItem.selectedCategories) {
+    return { ...solutionItem };
+  }
+
+  const siteMetadata = await getDefinedSiteMetadata(solutionItem.siteId);
+  const { requestConfig: regeneratedEntry } = buildSearchSolutionFromCategories(
+    siteMetadata.category ?? [],
+    solutionItem.selectedCategories,
+  );
+  const currentEntry = solutionItem.searchEntries?.[solutionItem.id] ?? {};
+
+  return {
+    ...solutionItem,
+    searchEntries: {
+      ...solutionItem.searchEntries,
+      [solutionItem.id]: {
+        ...currentEntry,
+        ...regeneratedEntry,
+      },
+    },
+  };
+}
 
 /**
  * V-8：metadata 写入的短去抖合并（对照 runtime.ts 的 sessionStorage 500ms 节流）。
@@ -57,7 +84,7 @@ const SAVE_MERGE_DELAY = 500;
 
 const pendingSaveTimers = new Map<TSaveableStore, ReturnType<typeof setTimeout>>();
 
-function flushMetadataSave(store: TSaveableStore): void {
+function flushMetadataSave(store: TSaveableStore, skipMerge = false): void {
   const timer = pendingSaveTimers.get(store);
   if (timer === undefined) {
     return;
@@ -67,12 +94,12 @@ function flushMetadataSave(store: TSaveableStore): void {
   clearTimeout(timer);
 
   // 写盘失败由 webExtPersistence 记录（doWrite 内部 catch），这里无需等待结果
-  void store.$save();
+  void store.$save(undefined, skipMerge ? { skipMerge: true } : undefined);
 }
 
 /** 立即落盘所有待保存的 store（页面卸载/隐藏时调用） */
 function flushAllMetadataSaves(): void {
-  [...pendingSaveTimers.keys()].forEach((store) => flushMetadataSave(store));
+  [...pendingSaveTimers.keys()].forEach((store) => flushMetadataSave(store, true));
 }
 
 function scheduleMetadataSave(store: TSaveableStore): void {
@@ -403,7 +430,7 @@ export const useMetadataStore = defineStore("metadata", {
               solutionItems.push({ ...solutionItem, searchEntries });
             }
           } else {
-            solutionItems.push({ ...solutionItem });
+            solutionItems.push(await refreshSavedSearchSolutionItem(solutionItem));
           }
         }
 

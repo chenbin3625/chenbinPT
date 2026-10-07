@@ -43,7 +43,9 @@ onMessage("getCookie", async ({ data: detail }) => {
  * @param cookie cookie详细信息
  * @param force 是否强制设置，为true时跳过过期检查直接设置
  */
-export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolean = false): Promise<boolean> {
+type CookieSetDetails = chrome.cookies.SetDetails & { hostOnly?: boolean };
+
+export async function setCookie(cookie: CookieSetDetails, force: boolean = false): Promise<boolean> {
   let new_cookie = {} as chrome.cookies.SetDetails;
 
   (
@@ -68,6 +70,11 @@ export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolea
     }
   });
 
+  // Omitting domain is the WebExtensions representation of a host-only cookie.
+  // Passing the original domain would silently widen it to the parent-domain scope.
+  if (cookie.hostOnly) {
+    delete new_cookie.domain;
+  }
   new_cookie.url = buildCookieUrl(cookie.secure!, cookie.domain!, cookie.path!);
 
   let allowSet = false;
@@ -165,10 +172,11 @@ export async function checkAndExtendCookies(url: string) {
           // 使用 date-fns 的 add 函数来计算新的过期时间
           const newExpirationDate = Math.floor(add(new Date(), { months: config.extensionDuration }).getTime() / 1000);
 
-          const cookieDetails: chrome.cookies.SetDetails = {
+          const cookieDetails: CookieSetDetails = {
             name: cookie.name,
             value: cookie.value,
             domain: cookie.domain,
+            hostOnly: cookie.hostOnly,
             path: cookie.path,
             secure: cookie.secure,
             httpOnly: cookie.httpOnly,

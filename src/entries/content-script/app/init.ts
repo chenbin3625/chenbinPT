@@ -15,6 +15,7 @@ import { piniaInstance as pinia } from "@/options/plugins/pinia.ts";
 import { i18nInstance as i18n } from "@/options/plugins/i18n.ts";
 import { antdInstance as antd, useAntdConfig } from "@/options/plugins/antd.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
+import { useMetadataStore } from "@/options/stores/metadata.ts";
 
 /**
  * 重挂载预算：模块级单例，跨 `mountApp()` 的递归调用共享（见 remountGuard.ts 的 L-4 说明）。
@@ -108,6 +109,16 @@ export function mountApp(document: Document, data: any = {}) {
     },
   });
   const app = createApp(Root).use(pinia).use(i18n).use(antd);
+  const configStore = useConfigStore(pinia);
+  const metadataStore = useMetadataStore(pinia);
+  void Promise.all([configStore.$onReady(), metadataStore.$onReady()]).then(() => {
+    if (data.config && typeof data.config === "object") {
+      configStore.$patch(data.config);
+    }
+    if (data.metadata && typeof data.metadata === "object") {
+      metadataStore.$patch(data.metadata);
+    }
+  });
   app.provide("ptd_data", data); // 提供数据给 Vue 应用
   app.mount(appMountElement);
 

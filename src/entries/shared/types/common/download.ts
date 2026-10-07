@@ -25,6 +25,9 @@ export interface IDownloadTorrentOption {
   // 是否忽略种子对应站点的下载
   ignoreSiteDownloadInterval?: boolean;
 
+  // 扩展自身页面/右键菜单发起的显式链接推送可允许无站点 http(s) 直链；content script 伪造该字段无效
+  allowSiteLessLink?: boolean;
+
   // 剩余等待时间(估算)
   leftInterval?: number;
 

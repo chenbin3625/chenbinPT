@@ -113,7 +113,7 @@ async function clickShadowOption(page, needle, failureMessage) {
       needle,
       // 用 rAF 轮询（而不是 setTimeout(50)）：本用例等的是「渲染状态静止」，而 headless 下
       // 页面没有新帧时 rAF 会被拖到数秒一次，rc-motion 的 prepare→start→active 步进也跟着被拖长
-      // （实测 rafGaps 有 1.5~5s 的间隔，探针记录见 .scratch/fix-2026-10-06/w3-race/probe.mjs）。
+      // （实测 rafGaps 有 1.5~5s 的间隔；该测量来自一次性探针，探针脚本未入库）。
       // 持续注册 rAF 轮询本身会让浏览器一直出帧，让「入场动画结束」这个确定状态尽快到达 ——
       // 不是 sleep，也不是重试；状态永远不满足时依然会超时失败。
       { timeout: 45000, polling: "raf" },

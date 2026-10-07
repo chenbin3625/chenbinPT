@@ -2,7 +2,7 @@
  * options-overview-b 的修复回归网（OPTIONSOVERVIEW-6/7/8/9）。
  *
  * 每条用例都打在**真实渲染 / 真实副作用**上，旧实现下会红：
- * - 6：搜索页真的渲染出 `.quick-site-filter`，且关掉 `searchEntity.quickSiteFilter` 后消失（不再是空开关）；
+ * - 6：搜索页不再渲染独立的 `.quick-site-filter`，站点筛选只保留在筛选栏内；
  * - 7：ClientStatusDialog 的下载器筛选行可聚焦、能报出 aria-pressed、Enter/Space 能切换筛选；
  * - 8：日期预设写进筛选字典的上界是 Infinity，系统时间前进 61 秒后仍显示「今天」且 radio 仍有选中项；
  * - 9：暂停/继续全部失败时 snackbar 用 error 色（与 recheck/moveQueue 一致）。
@@ -119,10 +119,9 @@ beforeEach(() => {
 
 // ── OPTIONSOVERVIEW-6 ─────────────────────────────────────────────────────
 
-describe("OPTIONSOVERVIEW-6：搜索页重新挂载快速站点筛选条", () => {
-  it("配置开启时渲染筛选条，关闭后不再渲染（配置项不再是空开关）", async () => {
+describe("OPTIONSOVERVIEW-6：搜索页移除独立快速站点筛选条", () => {
+  it("不再渲染快速站点筛选条，原筛选栏仍保留", async () => {
     const pinia = prepareOptionsPinia();
-    const { useConfigStore } = await import("@/options/stores/config.ts");
     const { useMetadataStore } = await import("@/options/stores/metadata.ts");
     const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
 
@@ -135,22 +134,12 @@ describe("OPTIONSOVERVIEW-6：搜索页重新挂载快速站点筛选条", () =>
       searchResult: [{ site: "mteam", id: "1", uniqueId: "mteam-1", title: "x" }],
     } as any;
 
-    const config = useConfigStore(pinia);
-    config.searchEntity.quickSiteFilter = true;
-
     const view = mountOptionsView(SearchEntityView, { pinia, router: true });
     await view.settle(80);
 
-    expect(view.$(".quick-site-filter"), "开关开启时应有快速站点筛选条").not.toBeNull();
-    // 「全部」+ 每个站点各一颗按钮
-    expect(view.$$(".quick-site-filter__option")).toHaveLength(2);
+    expect(view.$(".quick-site-filter"), "搜索页不应再渲染独立快速站点筛选条").toBeNull();
+    expect(view.$$(".quick-site-filter__option")).toHaveLength(0);
     expect(view.$(".search-filter-bar"), "原来的下拉筛选条必须还在").not.toBeNull();
-
-    config.searchEntity.quickSiteFilter = false;
-    await view.settle();
-
-    expect(view.$(".quick-site-filter"), "开关关闭后筛选条不应再渲染").toBeNull();
-    // 表格仍在（不是整页崩掉）
     expect(view.$(".ant-table"), "关掉开关不应影响搜索结果表格").not.toBeNull();
 
     view.unmount();

@@ -23,6 +23,7 @@ function emitChanges(changes: StorageChange) {
 }
 
 const storageLocal = {
+  setAccessLevel: vi.fn(() => Promise.resolve()),
   get: (key: string) => {
     getCallCount++;
     return Promise.resolve(backing.has(key) ? { [key]: backing.get(key) } : {});
@@ -73,6 +74,7 @@ const chromeMock = {
 vi.stubGlobal("chrome", chromeMock);
 vi.stubGlobal("__BROWSER__", "chrome");
 
+vi.resetModules();
 const { getExtStorageCached, getExtStoragePathCached, patchExtStoragePathLocal } =
   await import("@/background/utils/base.ts");
 
@@ -91,6 +93,13 @@ describe("service worker 存储层（读缓存 + 路径读写）", () => {
     emitChanges({ metadata: { oldValue: undefined, newValue: undefined } });
     emitChanges({ userInfo: { oldValue: undefined, newValue: undefined } });
     emitChanges({ config: { oldValue: undefined, newValue: undefined } });
+  });
+
+  it("启动时限制 storage.local 只允许可信扩展上下文直接访问", async () => {
+    storageLocal.setAccessLevel.mockClear();
+    vi.resetModules();
+    await import("@/storage.ts");
+    expect(storageLocal.setAccessLevel).toHaveBeenCalledWith({ accessLevel: "TRUSTED_CONTEXTS" });
   });
 
   it("读缓存：同一 key 连续读取只反序列化一次", async () => {

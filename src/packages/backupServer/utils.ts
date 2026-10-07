@@ -17,6 +17,8 @@ import { createZipBlob } from "./zipStream.ts";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const BACKUP_CIPHER_PREFIX = "PTD-AES-HMAC-v1:";
+const BACKUP_CIPHER_PREFIX_V2 = "PTD-AES-HMAC-v2:";
+const BACKUP_CIPHER_FORMAT_V2 = "PTD-AES-HMAC-v2";
 const BACKUP_KDF_ITERATIONS = 100_000;
 
 /** 恢复备份时逐文件解密/校验的并发上限（有界并发，避免大备份串行阻塞、也避免一次读入全部文件） */
@@ -194,6 +196,15 @@ function deriveAuthenticatedKeys(encryptionKey: string, salt: CryptoJS.lib.WordA
   };
 }
 
+type TAuthenticatedKeys = ReturnType<typeof deriveAuthenticatedKeys>;
+
+export class BackupDowngradeError extends Error {
+  constructor(message = "Backup encryption/integrity downgrade detected") {
+    super(message);
+    this.name = "BackupDowngradeError";
+  }
+}
+
 function macMatches(actual: string, expected: string): boolean {
   if (!/^[0-9a-f]{64}$/.test(expected)) return false;
   let difference = 0;
@@ -201,6 +212,18 @@ function macMatches(actual: string, expected: string): boolean {
     difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return difference === 0;
+}
+
+function encryptDataWithDerivedKeys(data: any, keys: TAuthenticatedKeys, saltBase64: string, field = ""): string {
+  const stringifyData = JSON.stringify(data);
+  const iv = CryptoJS.lib.WordArray.random(16);
+  const ciphertext = CryptoJS.AES.encrypt(stringifyData, keys.cipherKey, { iv }).ciphertext.toString(
+    CryptoJS.enc.Base64,
+  );
+  const ivBase64 = iv.toString(CryptoJS.enc.Base64);
+  const mac = CryptoJS.HmacSHA256(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, keys.macKey).toString();
+
+  return `${BACKUP_CIPHER_PREFIX_V2}${JSON.stringify({ iv: ivBase64, ciphertext, mac })}`;
 }
 
 /** AES-CBC + HMAC-SHA256 format; legacy AES/OpenSSL payloads remain readable. */
@@ -225,6 +248,12 @@ export function encryptData(data: any, encryptionKey?: string, field = ""): stri
   return encryptDataWithKey(data, encryptionKey, field);
 }
 
+interface IDecryptDataOptions {
+  allowLegacy?: boolean;
+  derivedKeys?: TAuthenticatedKeys;
+  saltBase64?: string;
+}
+
 /**
  * `JSON.parse` 的 reviver：丢弃 `__proto__` 键。
  *
@@ -240,7 +269,49 @@ export function stripProtoKeys(key: string, value: unknown): unknown {
   return value;
 }
 
-export function decryptData<T = any>(data: string, encryptionKey?: string, field = ""): T {
+export function decryptData<T = any>(
+  data: string,
+  encryptionKey?: string,
+  field = "",
+  options: IDecryptDataOptions = {},
+): T {
+  if (data.startsWith(BACKUP_CIPHER_PREFIX_V2)) {
+    if (!options.derivedKeys || !options.saltBase64) {
+      throw new Error("Backup v2 decryption context is required");
+    }
+    let envelope: { iv: string; ciphertext: string; mac: string };
+    try {
+      envelope = JSON.parse(data.slice(BACKUP_CIPHER_PREFIX_V2.length));
+    } catch {
+      throw new Error("Invalid encrypted backup envelope");
+    }
+    if (
+      !envelope ||
+      typeof envelope.iv !== "string" ||
+      typeof envelope.ciphertext !== "string" ||
+      typeof envelope.mac !== "string"
+    ) {
+      throw new Error("Invalid encrypted backup envelope");
+    }
+    const iv = CryptoJS.enc.Base64.parse(envelope.iv);
+    if (iv.sigBytes !== 16) {
+      throw new Error("Invalid encrypted backup envelope");
+    }
+    const actualMac = CryptoJS.HmacSHA256(
+      `${field}.${options.saltBase64}.${envelope.iv}.${envelope.ciphertext}`,
+      options.derivedKeys.macKey,
+    ).toString();
+    if (!macMatches(actualMac, envelope.mac)) {
+      throw new Error("Backup integrity/authentication check failed");
+    }
+    const decrypted = CryptoJS.AES.decrypt(
+      { ciphertext: CryptoJS.enc.Base64.parse(envelope.ciphertext) } as CryptoJS.lib.CipherParams,
+      options.derivedKeys.cipherKey,
+      { iv },
+    ).toString(CryptoJS.enc.Utf8);
+    return JSON.parse(decrypted, stripProtoKeys) as T;
+  }
+
   if (data.startsWith(BACKUP_CIPHER_PREFIX)) {
     if (!encryptionKey) {
       throw new Error("Backup encryption key is required");
@@ -288,6 +359,9 @@ export function decryptData<T = any>(data: string, encryptionKey?: string, field
   if (!encryptionKey) {
     return JSON.parse(data, stripProtoKeys);
   }
+  if (options.allowLegacy === false) {
+    throw new BackupDowngradeError("Encrypted backup entry is missing authenticated v1/v2 envelope");
+  }
   const legacyKey = CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
   const decrypted = CryptoJS.AES.decrypt(data, legacyKey).toString(CryptoJS.enc.Utf8);
   return JSON.parse(decrypted, stripProtoKeys) as T;
@@ -295,10 +369,23 @@ export function decryptData<T = any>(data: string, encryptionKey?: string, field
 
 export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: string): Promise<Blob> {
   const isEncrypted = typeof encryptionKey === "string" && encryptionKey !== "";
+  const backupSalt = isEncrypted ? CryptoJS.lib.WordArray.random(16) : undefined;
+  const backupSaltBase64 = backupSalt?.toString(CryptoJS.enc.Base64);
+  const backupKeys = isEncrypted ? deriveAuthenticatedKeys(encryptionKey!, backupSalt!) : undefined;
 
   const manifest = {
     ...omit(data.manifest ?? {}, [BACKUP_WARNINGS_KEY]), // 上一次解析留下的告警不属于新备份
     encryption: isEncrypted,
+    ...(isEncrypted
+      ? {
+          encryptionFormat: BACKUP_CIPHER_FORMAT_V2,
+          kdf: {
+            name: "PBKDF2-SHA256",
+            iterations: BACKUP_KDF_ITERATIONS,
+            salt: backupSaltBase64,
+          },
+        }
+      : {}),
     time: new Date().getTime(),
     files: {},
   } as IBackupFileManifest;
@@ -312,7 +399,10 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
   function* buildZipEntries(): Generator<{ name: string; content: string }> {
     for (const [key, value] of Object.entries(data)) {
       const fileName = `${key}.json`;
-      const fileContent = encryptDataWithKey(value, encryptionKey, key);
+      const fileContent =
+        backupKeys && backupSaltBase64
+          ? encryptDataWithDerivedKeys(value, backupKeys, backupSaltBase64, key)
+          : encryptDataWithKey(value, encryptionKey, key);
       // 这里的 MD5 是备份格式的一部分（manifest.files[*].hash），恢复时会用于校验，因此必须计算一次
       manifest.files[key] = { name: fileName, hash: CryptoJS.MD5(fileContent).toString() };
       yield { name: fileName, content: fileContent };
@@ -420,7 +510,29 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
 
   if (manifest?.files) {
     if (!manifest.encryption && encryptionKey) {
-      encryptionKey = "";
+      throw new BackupDowngradeError("Refusing to restore an unencrypted backup while a decryption key was provided");
+    }
+
+    let decryptOptions: IDecryptDataOptions = {};
+    if (manifest.encryption === true && manifest.encryptionFormat === BACKUP_CIPHER_FORMAT_V2) {
+      if (!encryptionKey) {
+        throw new Error("Backup encryption key is required");
+      }
+      const saltBase64 = manifest.kdf?.salt;
+      if (typeof saltBase64 !== "string") {
+        throw new Error("Invalid encrypted backup manifest");
+      }
+      const salt = CryptoJS.enc.Base64.parse(saltBase64);
+      if (salt.sigBytes !== 16) {
+        throw new Error("Invalid encrypted backup manifest");
+      }
+      decryptOptions = {
+        allowLegacy: false,
+        derivedKeys: deriveAuthenticatedKeys(encryptionKey, salt),
+        saltBase64,
+      };
+    } else if (manifest.encryption === true) {
+      decryptOptions = { allowLegacy: false };
     }
 
     // 只解出 manifest 中记录的其他文件；多文件的解压/解密/校验改为有界并发
@@ -450,7 +562,7 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
 
           let payload: unknown;
           try {
-            payload = decryptData(fileContent, encryptionKey, fileKey);
+            payload = decryptData(fileContent, encryptionKey, fileKey, decryptOptions);
           } catch (e) {
             throw new Error(`Failed to decrypt file: ${fileName}`);
           }

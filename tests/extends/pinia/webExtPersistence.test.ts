@@ -111,6 +111,44 @@ describe("webExtPersistence：最小字段 patch（P0-3）", () => {
     expect(store.sites.siteB).toBe(siteBBefore);
   });
 
+  it("外部写入到达时保留本地尚未保存的修改，同时应用不冲突的外部字段", async () => {
+    const store = createTestStore();
+    await store.$onReady();
+
+    store.sites.siteA.name = "local-unsaved";
+    await storageLocal.set({
+      [STORE_KEY]: {
+        ...(backing.get(STORE_KEY) as any),
+        lastUserInfoAutoFlushAt: 987,
+      },
+    });
+
+    expect(store.sites.siteA.name).toBe("local-unsaved");
+    expect(store.lastUserInfoAutoFlushAt).toBe(987);
+  });
+
+  it("自身回声比较不依赖对象键的插入顺序", async () => {
+    const store = createTestStore();
+    await store.$onReady();
+    store.sites.siteA.name = "changed";
+    await store.$save();
+
+    const mutationCount = { count: 0 };
+    store.$subscribe(() => (mutationCount.count += 1), { detached: true });
+    const stored = backing.get(STORE_KEY) as any;
+    const reordered = {
+      lastUserInfoAutoFlushAt: stored.lastUserInfoAutoFlushAt,
+      sites: {
+        siteB: stored.sites.siteB,
+        siteA: stored.sites.siteA,
+      },
+    };
+
+    await storageLocal.set({ [STORE_KEY]: reordered });
+
+    expect(mutationCount.count).toBe(0);
+  });
+
   it("自身写入的回声被抑制：$save 后 onChanged 回传不会再次 patch（避免级联重算）", async () => {
     const store = createTestStore();
     await store.$onReady();
@@ -181,6 +219,32 @@ describe("webExtPersistence：写入合并（P1-5）", () => {
     backing.clear();
     changeListeners.length = 0;
     setCallCount = 0;
+  });
+
+  it("紧急保存可以跳过落盘前的 storage.get", async () => {
+    const store = createTestStore();
+    await store.$onReady();
+    store.sites.siteA.name = "pagehide-edit";
+
+    const originalGet = storageLocal.get;
+    const setSpy = vi.spyOn(storageLocal, "set");
+    let getResolved = false;
+    storageLocal.get = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          void resolve;
+        }),
+    ) as typeof storageLocal.get;
+
+    try {
+      await (store.$save as any)(undefined, { skipMerge: true });
+
+      expect(getResolved).toBe(false);
+      expect(setSpy).toHaveBeenCalled();
+    } finally {
+      storageLocal.get = originalGet;
+      setSpy.mockRestore();
+    }
   });
 
   it("并发 $save 被合并：N 次调用最多落盘 2 次，且每个 await 都在落盘之后 resolve", async () => {

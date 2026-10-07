@@ -223,8 +223,6 @@ export interface IConfigPiniaStorageSchema {
 
     autoDetectOfficialGroupFromTitle: boolean;
 
-    // 是否启用快速站点过滤功能
-    quickSiteFilter: boolean;
     // 是否在搜索框中展示热门推荐按钮
     showHotRecommendations: boolean;
   };

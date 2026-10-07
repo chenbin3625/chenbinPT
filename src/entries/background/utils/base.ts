@@ -48,6 +48,188 @@ onMessage("downloadFile", async ({ data: downloadOptions }) => {
   return await chrome.downloads.download(downloadOptions);
 });
 
+type DownloadReservation = { site: string; at: number; previous: number };
+type DownloadTrackingState = "complete" | "interrupted";
+type DownloadTrackingRecord = {
+  downloadId?: number;
+  blobUrl?: string;
+  reservation?: DownloadReservation;
+  state?: DownloadTrackingState;
+};
+
+const DOWNLOAD_TRACKING_KEY = "ptd_downloadTracking";
+const SITE_DOWNLOAD_INTERVAL_KEY = "ptd_siteDownloadAt";
+const downloadTracking = new Map<number, DownloadTrackingRecord>();
+const siteDownloadAt = new Map<string, number>();
+let downloadTrackingLoaded: Promise<void> | null = null;
+let siteDownloadAtLoaded: Promise<void> | null = null;
+
+function getSessionStorageArea(): chrome.storage.StorageArea | undefined {
+  return globalThis.chrome?.storage?.session;
+}
+
+async function loadDownloadTracking(): Promise<void> {
+  if (downloadTrackingLoaded) {
+    return downloadTrackingLoaded;
+  }
+  downloadTrackingLoaded = (async () => {
+    try {
+      const stored = await getSessionStorageArea()?.get(DOWNLOAD_TRACKING_KEY);
+      const records = stored?.[DOWNLOAD_TRACKING_KEY] as Record<string, DownloadTrackingRecord> | undefined;
+      for (const [id, record] of Object.entries(records ?? {})) {
+        if (record && (typeof record.downloadId === "number" || typeof record.blobUrl === "string")) {
+          downloadTracking.set(Number(id), record);
+        }
+      }
+    } catch (error) {
+      logBackgroundError("Failed to restore download tracking state", error);
+    }
+  })();
+  return downloadTrackingLoaded;
+}
+
+async function persistDownloadTracking(): Promise<void> {
+  try {
+    await getSessionStorageArea()?.set({
+      [DOWNLOAD_TRACKING_KEY]: Object.fromEntries(downloadTracking.entries()),
+    });
+  } catch (error) {
+    logBackgroundError("Failed to persist download tracking state", error);
+  }
+}
+
+async function settleTrackedDownload(chromeDownloadId: number, state: DownloadTrackingState): Promise<void> {
+  await loadDownloadTracking();
+  const record = downloadTracking.get(chromeDownloadId);
+  if (!record) {
+    return;
+  }
+  record.state = state;
+  await persistDownloadTracking();
+
+  try {
+    if (typeof record.downloadId === "number") {
+      await sendMessage("settleBrowserDownload", {
+        downloadId: record.downloadId,
+        state,
+        reservation: record.reservation,
+      });
+    } else if (record.blobUrl) {
+      await sendMessage("releaseBrowserDownloadBlob", {
+        chromeDownloadId,
+        state,
+        blobUrl: record.blobUrl,
+      });
+    }
+    downloadTracking.delete(chromeDownloadId);
+    await persistDownloadTracking();
+  } catch (error) {
+    // Keep the terminal record in session storage. A later SW startup or a new
+    // registration can retry the handoff without losing the final state.
+    logBackgroundError("Failed to forward settled browser download", error);
+  }
+}
+
+async function flushPendingDownloadSettlements(): Promise<void> {
+  await loadDownloadTracking();
+  for (const [chromeDownloadId, record] of downloadTracking) {
+    if (record.state) {
+      await settleTrackedDownload(chromeDownloadId, record.state);
+      continue;
+    }
+    try {
+      const [item] = (await chrome.downloads?.search?.({ id: chromeDownloadId })) ?? [];
+      if (item?.state === "complete" || item?.state === "interrupted") {
+        await settleTrackedDownload(chromeDownloadId, item.state);
+      }
+    } catch (error) {
+      logBackgroundError(`Failed to reconcile browser download ${chromeDownloadId}`, error);
+    }
+  }
+}
+
+chrome.downloads?.onChanged?.addListener((delta) => {
+  const state = delta.state?.current;
+  if (state === "complete" || state === "interrupted") {
+    void settleTrackedDownload(delta.id, state);
+  }
+});
+
+onMessage("registerDownloadTracking", async ({ data }) => {
+  await loadDownloadTracking();
+  downloadTracking.set(data.chromeDownloadId, {
+    downloadId: data.downloadId,
+    reservation: data.reservation,
+  });
+  await persistDownloadTracking();
+  await flushPendingDownloadSettlements();
+});
+
+onMessage("registerBlobDownloadTracking", async ({ data }) => {
+  await loadDownloadTracking();
+  downloadTracking.set(data.chromeDownloadId, { blobUrl: data.blobUrl });
+  await persistDownloadTracking();
+  await flushPendingDownloadSettlements();
+});
+
+async function loadSiteDownloadAt(): Promise<void> {
+  if (siteDownloadAtLoaded) {
+    return siteDownloadAtLoaded;
+  }
+  siteDownloadAtLoaded = (async () => {
+    try {
+      const stored = await getSessionStorageArea()?.get(SITE_DOWNLOAD_INTERVAL_KEY);
+      const table = stored?.[SITE_DOWNLOAD_INTERVAL_KEY] as Record<string, unknown> | undefined;
+      for (const [site, at] of Object.entries(table ?? {})) {
+        if (typeof at === "number" && Number.isFinite(at)) {
+          siteDownloadAt.set(site, at);
+        }
+      }
+    } catch (error) {
+      logBackgroundError("Failed to restore site download interval state", error);
+    }
+  })();
+  return siteDownloadAtLoaded;
+}
+
+async function persistSiteDownloadAt(): Promise<void> {
+  try {
+    await getSessionStorageArea()?.set({
+      [SITE_DOWNLOAD_INTERVAL_KEY]: Object.fromEntries(siteDownloadAt.entries()),
+    });
+  } catch (error) {
+    logBackgroundError("Failed to persist site download interval state", error);
+  }
+}
+
+onMessage("getSiteDownloadAt", async ({ data: site }) => {
+  await loadSiteDownloadAt();
+  return siteDownloadAt.get(site) ?? 0;
+});
+
+onMessage("reserveSiteDownloadAt", async ({ data: { site, at } }) => {
+  await loadSiteDownloadAt();
+  const previous = siteDownloadAt.get(site) ?? 0;
+  siteDownloadAt.set(site, at);
+  await persistSiteDownloadAt();
+  return previous;
+});
+
+onMessage("rollbackSiteDownloadAt", async ({ data: { site, at, previous } }) => {
+  await loadSiteDownloadAt();
+  if (siteDownloadAt.get(site) !== at) {
+    return;
+  }
+  if (previous > 0) {
+    siteDownloadAt.set(site, previous);
+  } else {
+    siteDownloadAt.delete(site);
+  }
+  await persistSiteDownloadAt();
+});
+
+void flushPendingDownloadSettlements();
+
 /**
  * chrome.storage.local 读缓存。
  *
@@ -217,6 +399,50 @@ onMessage("getExtStorage", async ({ data: key }) => {
  */
 onMessage("getExtStoragePath", async ({ data: { key, path, defaultValue = null } }) => {
   return await getExtStoragePathCached(key, path, defaultValue);
+});
+
+function sanitizeDownloaderForContentScript(downloader: Record<string, any>): Record<string, any> {
+  return {
+    id: downloader.id,
+    type: downloader.type,
+    name: downloader.name,
+    address: downloader.address,
+    enabled: downloader.enabled,
+    sortIndex: downloader.sortIndex,
+    suggestFolders: downloader.suggestFolders,
+    suggestTags: downloader.suggestTags,
+    excludedSites: downloader.excludedSites,
+    feature: downloader.feature,
+    advanceAddTorrentOptions: downloader.advanceAddTorrentOptions,
+  };
+}
+
+onMessage("getContentScriptBootstrapData", async () => {
+  const [config, metadata] = await Promise.all([getExtStorageCached("config"), getExtStorageCached("metadata")]);
+  const downloaders = Object.fromEntries(
+    Object.entries((metadata?.downloaders ?? {}) as Record<string, Record<string, any>>)
+      .filter(([, downloader]) => downloader?.enabled)
+      .map(([id, downloader]) => [id, sanitizeDownloaderForContentScript({ ...downloader, id: downloader.id ?? id })]),
+  );
+
+  return {
+    config: {
+      contentScript: config?.contentScript,
+      download: {
+        allowDownloaderFilterForSite: config?.download?.allowDownloaderFilterForSite,
+        allowDirectSendToClient: config?.download?.allowDirectSendToClient,
+        saveLastDownloader: false,
+        useQuickSendToClient: config?.download?.useQuickSendToClient,
+      },
+    },
+    metadata: {
+      siteHostMap: metadata?.siteHostMap ?? {},
+      defaultDownloader: metadata?.defaultDownloader ?? {},
+      downloaders,
+      defaultSolutionId: metadata?.defaultSolutionId ?? "default",
+      solutions: metadata?.solutions ?? {},
+    },
+  };
 });
 
 onMessage("setExtStorage", async ({ data: { key, value } }) => {

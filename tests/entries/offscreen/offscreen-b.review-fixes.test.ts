@@ -328,6 +328,24 @@ describe("restoreBackupData 的 cookie 恢复（OFFSCREEN-4 / OFFSCREEN-5）", (
     expect(report.skipped.some((item) => item.field === "cookies" && item.reason.includes("结构非法"))).toBe(true);
   });
 
+  it("备份恢复保留 hostOnly 标记，background 可以省略 domain", async () => {
+    const { restoreBackupData } = await loadBackupModule();
+    installMessageRouter();
+    storageStore.set("metadata", { siteHostMap: { "kp.m-team.cc": "mteam" } });
+
+    await restoreBackupData(
+      {
+        cookies: {
+          "kp.m-team.cc": [makeCookie({ name: "host-only", hostOnly: true })],
+        },
+        manifest: makeManifest({ cookies: "h" }),
+      },
+      { fields: ["cookies"] },
+    );
+
+    expect(setCookieCalls).toContainEqual(expect.objectContaining({ name: "host-only", hostOnly: true }));
+  });
+
   it("OFFSCREEN-5：单条 cookie 写入失败不 reject，报告与安全提示必须返回", async () => {
     const { restoreBackupData } = await loadBackupModule();
     installMessageRouter();

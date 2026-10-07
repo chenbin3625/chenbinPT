@@ -195,6 +195,56 @@ describe("B-8 getSearchSolution 不得改写 state", () => {
   });
 });
 
+describe("R4-10 已保存分类方案按当前站点定义展开", () => {
+  it("带 selectedCategories 的旧方案使用新的分类参数，手写方案保持原 requestConfig", async () => {
+    const store = await createMetadataStore();
+    defineSite("siteA");
+    await store.addSite("siteA", {}, { reBuildMap: false });
+    getDefinedSiteMetadataMock.mockResolvedValue({
+      id: "siteA",
+      name: "站点 siteA",
+      urls: ["https://siteA.example/"],
+      isDead: false,
+      category: [{ key: "category", name: "分类", options: [{ name: "电影", value: 401 }] }],
+      searchEntry: { default: {} },
+    });
+    store.solutions = {
+      old: {
+        id: "old",
+        name: "Old",
+        sort: 0,
+        enabled: true,
+        isDefault: false,
+        createdAt: 0,
+        solutions: [
+          {
+            id: "saved",
+            siteId: "siteA",
+            selectedCategories: { category: 401 },
+            searchEntries: { saved: { requestConfig: { params: { cat_torrents401: 1 } } } },
+          },
+          {
+            id: "custom",
+            siteId: "siteA",
+            searchEntries: { custom: { requestConfig: { params: { hand_written: 1 } } } },
+          },
+        ],
+      },
+    } as any;
+
+    const expanded = await store.getSearchSolution("old");
+    expect(expanded?.solutions[0]?.searchEntries.saved).toEqual({
+      requestConfig: { params: { category: 401 } },
+    });
+    expect(expanded?.solutions[1]?.searchEntries.custom).toEqual({
+      requestConfig: { params: { hand_written: 1 } },
+    });
+    expect(store.solutions.old.solutions[0]?.searchEntries.saved).toEqual({
+      requestConfig: { params: { cat_torrents401: 1 } },
+    });
+  });
+});
+
 describe("B-13 方案/站点缺失时的守卫", () => {
   it("方案不存在时返回 undefined 而不是抛 TypeError", async () => {
     const store = await createMetadataStore();
@@ -345,5 +395,6 @@ describe("V-8 写入去抖合并", () => {
     window.dispatchEvent(new Event("pagehide"));
     await vi.advanceTimersByTimeAsync(0);
     expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(saveSpy).toHaveBeenLastCalledWith(undefined, { skipMerge: true });
   });
 });

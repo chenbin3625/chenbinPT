@@ -10,7 +10,8 @@
  * 4. 未加密路径仍走 JSZip + DEFLATE，且两条路径都能往返。
  */
 import JSZip from "jszip";
-import { describe, expect, it } from "vitest";
+import CryptoJS from "crypto-js";
+import { describe, expect, it, vi } from "vitest";
 
 import { backupDataToJSZipBlob, jsZipBlobToBackupData } from "@ptd/backupServer/utils.ts";
 import { crc32, createZipBlob } from "@ptd/backupServer/zipStream.ts";
@@ -90,6 +91,16 @@ describe("createZipBlob：标准 ZIP 容器", () => {
 
 describe("加密备份走流式写出器后的往返（真实恢复路径）", () => {
   const encryptionKey = "test-encryption-key";
+
+  it("整份备份只做一次 PBKDF2 派生，避免字段数 × 400ms 的主线程冻结", async () => {
+    const spy = vi.spyOn(CryptoJS, "PBKDF2");
+    try {
+      await backupDataToJSZipBlob(makeBackupData(), encryptionKey);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  }, 15_000);
 
   it("导出 → 恢复：数据完全一致，manifest 约定不变", async () => {
     const data = makeBackupData();

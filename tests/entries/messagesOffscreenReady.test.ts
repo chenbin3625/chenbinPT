@@ -299,6 +299,28 @@ describe("跨上下文消息：只读消息才允许自动重试（B-9）", () =
     ]);
   });
 
+  it("写类消息发生 offscreen 连接错误后必须清掉就绪缓存，下一次写入重新确认文档", async () => {
+    const connectionError = new Error("The message port closed before a response was received.");
+    originalSendMessage
+      .mockResolvedValueOnce(undefined) // ensure for first write
+      .mockRejectedValueOnce(connectionError) // first write loses offscreen
+      .mockResolvedValueOnce(undefined) // ensure for second write
+      .mockResolvedValueOnce({ downloadId: "d2", status: 0 }); // second write
+    const sendMessage = await loadSendMessage();
+
+    await expect(sendMessage("downloadTorrent", { downloadId: "d1" } as any)).rejects.toBe(connectionError);
+    await expect(sendMessage("downloadTorrent", { downloadId: "d2" } as any)).resolves.toMatchObject({
+      downloadId: "d2",
+    });
+
+    expect(originalSendMessage.mock.calls.map(([type]) => type)).toEqual([
+      "ensureOffscreenDocument",
+      "downloadTorrent",
+      "ensureOffscreenDocument",
+      "downloadTorrent",
+    ]);
+  });
+
   it("handler 内部抛出的、文本命中 `no response` 的错误不会被当成连接错误重试", async () => {
     // @webext-core/messaging 在「没有回包」时抛 Error("No response")，站点/下载器也可能返回同形文案；
     // 旧判据含宽泛的 /no response/i，会把这种业务失败误判成连接故障并整段重发（对写类消息就是重复执行）。
@@ -465,7 +487,13 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
     const { onMessage } = await import("@/messages.ts");
     const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
 
-    for (const type of ["getSiteSearchResult", "getSiteUserConfig", "downloadTorrent", "getClientTorrents"] as const) {
+    for (const type of [
+      "getSiteUserConfig",
+      "getTorrentDownloadLink",
+      "downloadTorrent",
+      "matchSocialPage",
+      "openOptionsPage",
+    ] as const) {
       expect(extensionOnlyTypes, `${type} 是内容脚本必需能力，不应登记`).not.toContain(type);
 
       originalOnMessage.mockClear();
@@ -475,5 +503,44 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
       await expect(wrapped({ data: undefined, sender: contentScriptSender })).resolves.toBe("ok");
       expect(handler).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("内容脚本只能调用显式白名单消息，管理和高权限消息必须拒绝", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const deniedTypes = ["deleteClientTorrent", "downloadFile", "clearLogger"] as const;
+
+    for (const type of deniedTypes) {
+      originalOnMessage.mockClear();
+      const handler = vi.fn(async () => ({ inputSetting: { token: "secret" } }));
+      onMessage(type as any, handler);
+      const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+      expect(() => wrapped({ data: undefined, sender: contentScriptSender }), `${type} 未拒绝内容脚本`).toThrow(
+        /permission/i,
+      );
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
+  it("内容脚本读取站点配置时不得拿到 inputSetting 凭据", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn(async (): Promise<any> => ({
+      url: "https://pt.example.com/",
+      inputSetting: { token: "secret", passkey: "secret-passkey" },
+      allowSearch: true,
+    }));
+    onMessage("getSiteUserConfig", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    await expect(
+      wrapped({
+        data: { siteId: "mteam" },
+        sender: contentScriptSender,
+      }),
+    ).resolves.toEqual({
+      url: "https://pt.example.com/",
+      allowSearch: true,
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

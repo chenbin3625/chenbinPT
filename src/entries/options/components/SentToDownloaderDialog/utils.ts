@@ -51,6 +51,7 @@ export async function sendTorrentToDownloader(
   downloaderId: TDownloaderKey,
   addTorrentOptions: CAddTorrentOptions,
   promptReplace: TDynamicReplacePrompter,
+  options: { allowSiteLessLink?: boolean } = {},
 ): Promise<void> {
   const runtimeStore = useRuntimeStore();
   const metadataStore = useMetadataStore();
@@ -121,6 +122,7 @@ export async function sendTorrentToDownloader(
       sendMessage("downloadTorrent", {
         torrent,
         downloaderId: downloaderId,
+        allowSiteLessLink: options.allowSiteLessLink === true,
         addTorrentOptions: realAddTorrentOptions as CAddTorrentOptions,
       }).catch((x) => {
         runtimeStore.showSnakebar(

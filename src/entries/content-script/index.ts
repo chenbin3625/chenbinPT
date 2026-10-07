@@ -43,6 +43,13 @@ async function loadApp(props: Parameters<(typeof import("./app/init.ts"))["mount
   console.debug("[PTD] app mounted");
 }
 
+let bootstrapDataPromise: Promise<any> | null = null;
+
+function getContentScriptBootstrapData() {
+  bootstrapDataPromise ??= sendMessage("getContentScriptBootstrapData", undefined);
+  return bootstrapDataPromise;
+}
+
 sendMessage("getExtStoragePath", {
   key: "config",
   path: "contentScript",
@@ -56,7 +63,7 @@ sendMessage("getExtStoragePath", {
         const socialSite = await sendMessage("matchSocialPage", window.location.href);
         if (socialSite) {
           console.debug(`[PTD] Social site detected: ${socialSite}, loading app...`);
-          await loadApp({ socialSite });
+          await loadApp({ socialSite, ...(await getContentScriptBootstrapData()) });
           return; // 找到匹配的 social site 后，直接加载应用并退出
         }
       }
@@ -102,7 +109,7 @@ sendMessage("getExtStoragePath", {
         }
 
         console.debug(`[PTD] host found for site: ${siteId}, loading app...`);
-        await loadApp({ siteId });
+        await loadApp({ siteId, ...(await getContentScriptBootstrapData()) });
       }
     }
   })

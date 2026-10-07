@@ -1,7 +1,7 @@
 {
   "name": "chenbinpt",
   "private": true,
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "PT 站点辅助工具：多站搜索、用户信息汇总、推送到下载器、辅种与备份（浏览器扩展）",
   "license": "MIT",
   "repository": {

@@ -285,7 +285,9 @@ function isCookieHostTrusted(hostname: string, allowedHosts: Set<string>): boole
  * sameSite 非字符串会在 cookies.ts:61 的 toLowerCase 抛错，进而让整个恢复流程 reject。
  * 这里只保留已知字段做显式重建；结构不合法返回 null（调用方跳过并计入报告）而不是抛错。
  */
-function toCookieSetDetails(value: unknown): chrome.cookies.SetDetails | null {
+type CookieSetDetails = chrome.cookies.SetDetails & { hostOnly?: boolean };
+
+function toCookieSetDetails(value: unknown): CookieSetDetails | null {
   if (!isPlainObject(value)) {
     return null;
   }
@@ -301,7 +303,7 @@ function toCookieSetDetails(value: unknown): chrome.cookies.SetDetails | null {
   const path = typeof value.path === "string" && value.path.length > 0 ? value.path : "/";
   const domain = value.domain;
 
-  const details: chrome.cookies.SetDetails = {
+  const details: CookieSetDetails = {
     name: value.name,
     value: typeof value.value === "string" ? value.value : "",
     domain,
@@ -312,6 +314,9 @@ function toCookieSetDetails(value: unknown): chrome.cookies.SetDetails | null {
     // 这里给一个同构的合法 url 只是为了满足类型（domain 的前导点在 url 里要去掉）
     url: `http${secure ? "s" : ""}://${domain.replace(/^\./, "")}${path}`,
   };
+  if (typeof value.hostOnly === "boolean") {
+    details.hostOnly = value.hostOnly;
+  }
   if (typeof value.expirationDate === "number" && Number.isFinite(value.expirationDate)) {
     details.expirationDate = value.expirationDate;
   }

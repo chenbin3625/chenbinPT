@@ -97,7 +97,7 @@ describe("SERVERSSOCIAL-2：Gist 恢复端尊重 manifest.encryption", () => {
     return client;
   };
 
-  it("配置了非空备份密钥时，manifest.encryption=false 的明文备份仍能读回", async () => {
+  it("配置了非空备份密钥时，manifest.encryption=false 的明文备份会被当作降级拒绝", async () => {
     logMessageMock.mockClear();
     const configContent = JSON.stringify({ a: 1 });
     const client = buildRemote(
@@ -111,6 +111,21 @@ describe("SERVERSSOCIAL-2：Gist 恢复端尊重 manifest.encryption", () => {
     );
     // 恢复对话框会用 configStore.backup.encryptionKey 自动填充 decryptKey，所以这里必须模拟「有密钥」
     client.setEncryptionKey("real-user-key");
+
+    await expect((client as any).getFile("v1")).rejects.toThrow(/Failed to decrypt file|downgrade|unencrypted/i);
+  });
+
+  it("用户清空解密密钥后，manifest.encryption=false 的明文备份仍可显式读回", async () => {
+    const configContent = JSON.stringify({ a: 1 });
+    const client = buildRemote(
+      {
+        version: "v",
+        time: 0,
+        encryption: false,
+        files: { config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() } },
+      },
+      { "config.json": configContent },
+    );
 
     const result = await (client as any).getFile("v1");
     expect(result.config).toEqual({ a: 1 });

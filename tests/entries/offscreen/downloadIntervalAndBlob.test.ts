@@ -278,6 +278,37 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
     expect(mocks.downloadStateListeners).toHaveLength(0);
   });
 
+  it("Chrome offscreen 没有 downloads/storage.session 时，把状态追踪和间隔读写交给 background", async () => {
+    const originalChrome = (globalThis as any).chrome;
+    (globalThis as any).chrome = { runtime: { id: "test" } };
+    try {
+      const handler = await loadDownloadModule();
+      mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(60));
+      mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
+        if (name === "getExtStoragePath") {
+          if (payload?.path === "download") return { ignoreSiteDownloadIntervalWhenLocalDownload: false };
+          return payload?.defaultValue;
+        }
+        if (name === "getSiteDownloadAt") return 0;
+        if (name === "reserveSiteDownloadAt") return 0;
+        if (name === "registerDownloadTracking") return undefined;
+        if (name === "downloadFile") return 4242;
+        return undefined;
+      });
+
+      const result = await handler({ data: { ...makeOption(), localDownloadMethod: "browser" } });
+
+      expect(result.downloadStatus).toBe("pending");
+      expect(mocks.sendMessage).toHaveBeenCalledWith("reserveSiteDownloadAt", expect.anything());
+      expect(mocks.sendMessage).toHaveBeenCalledWith(
+        "registerDownloadTracking",
+        expect.objectContaining({ chromeDownloadId: 4242, downloadId: result.downloadId }),
+      );
+    } finally {
+      (globalThis as any).chrome = originalChrome;
+    }
+  });
+
   it("extension 下载完成事件到达后才将历史标记 completed", async () => {
     const handler = await loadDownloadModule();
     mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(0));

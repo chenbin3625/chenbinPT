@@ -22,6 +22,7 @@ import { omit } from "es-toolkit";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
 import {
   getBackupRequestTimeout,
+  BackupDowngradeError,
   localSort,
   decryptData,
   encryptData,
@@ -240,6 +241,11 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
           // legacy AES，于是一律抛「Failed to decrypt file.」——同一份备份走本地 zip 路径却正常。
           // 这里对齐 zip 姊妹路径的守卫（utils.ts jsZipBlobToBackupData 的 `!manifest.encryption && encryptionKey`）：
           // 显式 false 时按明文 JSON 解析；字段缺失时保持旧的解密语义，兼容修复前的历史备份。
+          if (manifest.encryption === false && this.encryptionKey) {
+            throw new BackupDowngradeError(
+              "Refusing to restore an unencrypted backup while a decryption key was provided",
+            );
+          }
           payload =
             manifest.encryption === false
               ? decryptData(fileRawContent, undefined, key)

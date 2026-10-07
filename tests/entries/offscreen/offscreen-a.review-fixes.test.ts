@@ -72,7 +72,7 @@ vi.stubGlobal("chrome", {
     search: vi.fn(async () => [{ state: "in_progress" }]),
     onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
   },
-  runtime: { id: "test" },
+  runtime: { id: "test", getURL: (path: string) => `chrome-extension://test/${path}` },
 } as any);
 vi.stubGlobal("__BROWSER__", "chrome");
 
@@ -80,7 +80,7 @@ vi.stubGlobal("__BROWSER__", "chrome");
 (URL as any).createObjectURL = vi.fn(() => "blob:test/torrent");
 (URL as any).revokeObjectURL = vi.fn();
 
-type DownloadHandler = (args: { data: any }) => Promise<any>;
+type DownloadHandler = (args: { data: any; sender?: chrome.runtime.MessageSender }) => Promise<any>;
 type DownloadModule = typeof import("@/offscreen/utils/download.ts");
 
 let downloaderInstanceSeq = 0;
@@ -192,6 +192,38 @@ describe("offscreen-a 审查修复（OFFSCREEN-1 / 3 / 6 / 7）", () => {
       expect(first.downloadId).toBeGreaterThan(0);
       expect(second.downloadId).toBeGreaterThan(0);
       expect(second.downloadId).not.toBe(first.downloadId);
+    });
+  });
+
+  describe("M-1：右键菜单显式推送的无站点链接", () => {
+    it("扩展页 sender 携带 allowSiteLessLink 时，无站点 http(s) 链接可以下载", async () => {
+      const { handler } = await loadDownloadModule();
+
+      const result = await handler({
+        data: {
+          ...makeOption({ site: undefined, link: "https://public.example/file.torrent" }),
+          allowSiteLessLink: true,
+        },
+        sender: { id: "test", url: "chrome-extension://test/options.html" } as any,
+      });
+
+      expect(result.downloadStatus).toBe("completed");
+      expect(mocks.getSiteInstance).not.toHaveBeenCalled();
+    });
+
+    it("content script 伪造 allowSiteLessLink 仍被记录为失败", async () => {
+      const { handler } = await loadDownloadModule();
+
+      const result = await handler({
+        data: {
+          ...makeOption({ site: undefined, link: "https://public.example/file.torrent" }),
+          allowSiteLessLink: true,
+        },
+        sender: { id: "test", url: "https://pt.example/torrents.php" } as any,
+      });
+
+      expect(result.downloadStatus).toBe("failed");
+      expect(result.errorMessage).toMatch(/trusted site/);
     });
   });
 

@@ -727,7 +727,6 @@
       "mediaSearchLimit": "Number of search results per request",
       "mediaSearchLimitMessage": "Please do not load too many search results at once. It's not optimized with virtual-scroll, which may cause the browser to freeze and affect the performance of the media server.",
       "mediaServerSearchConfig": "Media Server Search Configuration",
-      "quickSiteFilter": "Quick Site Filter In Search Page",
       "saveLastSearchFilter": "Save last used search filter",
       "searchPlanLabel": "Search Plan",
       "showHotRecommendations": "Show hot recommendations button in the search box",

@@ -160,7 +160,7 @@ export const siteMetadata: ISiteMetadata = {
       id: 3,
       name: "Lv3",
       privilege: "得到三个邀请名额；可以在做种/下载/发布的时候选择匿名模式。",
-      interval: "P18W",
+      interval: "P10W",
       downloaded: "300GB",
       ratio: 2.05,
     },

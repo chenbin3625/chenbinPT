@@ -9,6 +9,23 @@ import { message } from "ant-design-vue";
 import { toSerializable } from "@/shared/messagesSerializable.ts";
 import { i18n } from "@/options/plugins/i18n.ts";
 
+function isContentScriptStorageContext(): boolean {
+  try {
+    const runtimeId = globalThis.chrome?.runtime?.id;
+    const href = globalThis.location?.href;
+    if (!runtimeId || typeof href !== "string") {
+      return false;
+    }
+    const extensionBase = globalThis.chrome?.runtime?.getURL?.("");
+    if (extensionBase && href.startsWith(extensionBase)) {
+      return false;
+    }
+    return /^(https?|file):/.test(globalThis.location?.protocol ?? "");
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 取可用的 storage 区域；宿主没有完整扩展 API 时返回 null。
  *
@@ -22,6 +39,9 @@ import { i18n } from "@/options/plugins/i18n.ts";
  */
 function getUsableStorageArea(storage: chrome.storage.AreaName): chrome.storage.StorageArea | null {
   try {
+    if (isContentScriptStorageContext()) {
+      return null;
+    }
     return globalThis.chrome?.storage?.[storage] ?? null;
   } catch {
     // 某些宿主用 getter 抛错代替返回 undefined
@@ -32,6 +52,9 @@ function getUsableStorageArea(storage: chrome.storage.AreaName): chrome.storage.
 /** 取可监听的 storage 变更事件；宿主 getter 或能力检测异常时安全降级。 */
 function getUsableStorageChangeEvent(): typeof chrome.storage.onChanged | null {
   try {
+    if (isContentScriptStorageContext()) {
+      return null;
+    }
     const event = globalThis.chrome?.storage?.onChanged;
     return typeof event?.addListener === "function" ? event : null;
   } catch {
@@ -339,7 +362,7 @@ declare module "pinia" {
   export interface PiniaCustomProperties {
     readonly $ready: Ref<boolean>;
 
-    $save(): Promise<void>;
+    $save(newState?: any, options?: { skipMerge?: boolean }): Promise<void>;
     $onReady(callback?: () => void): Promise<void>;
     /**
      * 释放本插件注册的资源（chrome.storage.onChanged 监听），并调用 pinia 内建 `$dispose`。
@@ -506,13 +529,13 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    * 外部写入一旦落在这个窗口里就会被静默丢弃。
    *
    * 现在窗口只用来界定"需要比对"的时间范围，是否忽略由**内容**决定：
-   * - 与自身刚写入的解代理快照逐字节一致（JSON 往返语义）→ 是回声，忽略；
+   * - 与自身刚写入的解代理快照结构相等（对象键顺序无关）→ 是回声，忽略；
    * - 没有可以匹配的自身写入快照，或内容不一致 → 是真实外部写入，照常走最小 patch。
    *
    * 快照本身零额外成本：就是 `$save()` 这次要写盘的那个解代理结果，且**在调用
    * chrome.storage.set 之前**登记（set 有可能在 promise resolve 之前就触发 onChanged，
-   * 登记晚了会把自己的回声误判成外部写入）。指纹（JSON 字符串）只在窗口内真的有
-   * onChanged 到达时才惰性计算一次，写路径上没有额外序列化开销。
+   * 登记晚了会把自己的回声误判成外部写入）。回声到达时使用与最小 patch 相同的
+   * `isDeepEqual` 比较，因此不会被 Chrome 重排对象键的行为干扰。
    *
    * 保留最近几次快照：`$save()` 的密集调用会顺序落盘多次，只留最后一份会把更早的回声
    * 误判成"外部写入"（进而把本地回退到旧内容）。快照在整个窗口内都可用于比对，
@@ -530,7 +553,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
   }
   const SELF_WRITE_ECHO_MAX_SNAPSHOTS = 8;
 
-  type TSelfWriteSnapshot = { value: any; fingerprint?: string | null };
+  type TSelfWriteSnapshot = { value: any };
 
   let selfWriteSnapshots: TSelfWriteSnapshot[] = [];
 
@@ -552,26 +575,9 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       return false; // 窗口内但没有待比对的自身写入 → 只能是外部写入，绝不能吞
     }
 
-    let newValueFingerprint: string | null;
-    try {
-      newValueFingerprint = JSON.stringify(newValue);
-    } catch {
-      newValueFingerprint = null;
-    }
-
     for (let i = 0; i < selfWriteSnapshots.length; i++) {
       const snapshot = selfWriteSnapshots[i];
-      if (snapshot.fingerprint === undefined) {
-        try {
-          snapshot.fingerprint = JSON.stringify(snapshot.value);
-        } catch {
-          snapshot.fingerprint = null; // 无法比对（正常数据不会走到这里）
-        }
-      }
-      if (snapshot.fingerprint === null || newValueFingerprint === null) {
-        continue;
-      }
-      if (snapshot.fingerprint === newValueFingerprint) {
+      if (isDeepEqual(snapshot.value, newValue)) {
         return true;
       }
     }
@@ -584,15 +590,34 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       return;
     }
 
-    // storage 现在的内容就是它（无论是不是回声）：作为下一次 $save 做三方合并的基线（B-10）
-    syncedSnapshot = changes[key].newValue;
+    const previousBase = syncedSnapshot;
+    const newValue = changes[key].newValue;
 
-    if (isSelfWriteEcho(changes[key].newValue)) {
+    if (isSelfWriteEcho(newValue)) {
       // 自身写入的回声：内容与本上下文一致，无需 patch
+      syncedSnapshot = newValue;
       return;
     }
 
-    applyMinimalPatch(changes[key].newValue);
+    // Keep local edits on unrelated paths. Only external changes relative to
+    // the previous storage baseline are applied, instead of patching the whole
+    // external snapshot over the store.
+    if (isPlain(previousBase) && isPlain(newValue)) {
+      const externalChanges: IPathChange[] = [];
+      collectPathChanges(previousBase, newValue, [], externalChanges);
+      if (externalChanges.length > 0) {
+        applyExternalChangesToStore(externalChanges);
+      } else {
+        // A late external echo may contain the same snapshot as the baseline,
+        // but it is still an external event once the self-write window ended.
+        applyMinimalPatch(newValue);
+      }
+      syncedSnapshot = newValue;
+      return;
+    }
+
+    syncedSnapshot = newValue;
+    applyMinimalPatch(newValue);
   }
 
   /**
@@ -740,9 +765,10 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    */
   let inFlight: Promise<void> | null = null;
   let queuedStateGetter: (() => any) | null = null;
+  let queuedSkipMerge = false;
   let queuedWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
 
-  async function doWrite(getState: () => any) {
+  async function doWrite(getState: () => any, skipMerge = false) {
     // 标记"接下来的写入是本上下文发起的"，并**在写盘之前**登记本次写入的内容快照：
     // chrome.storage.set 可能在 promise resolve 之前就触发 onChanged，
     // 登记晚了会把自己的回声误判成外部写入（进而白 patch 一遍，正是 P0-3 要消除的级联）。
@@ -751,7 +777,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       const snapshot = toWriteSnapshot(getState());
       // 落盘前先与 storage 现值合并（B-10）：真正写下的内容可能包含其它上下文的并发改动，
       // 因此回声快照必须登记**合并后**的内容（否则对方改动带来的 onChanged 会被当成外部写入）。
-      const toWrite = await mergeBeforeWrite(snapshot);
+      const toWrite = skipMerge ? snapshot : await mergeBeforeWrite(snapshot);
       rememberSelfWrite(toWrite);
       await writeSerializedSnapshot(key, toWrite, storageArea);
       syncedSnapshot = toWrite;
@@ -773,11 +799,13 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       return;
     }
     const getState = queuedStateGetter;
+    const skipMerge = queuedSkipMerge;
     const waiters = queuedWaiters;
     queuedStateGetter = null;
+    queuedSkipMerge = false;
     queuedWaiters = [];
 
-    const task = doWrite(getState);
+    const task = doWrite(getState, skipMerge);
     inFlight = task.finally(() => {
       inFlight = null;
       flushQueued();
@@ -788,10 +816,12 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
     );
   }
 
-  const $save = (newState = store.$state): Promise<void> => {
+  const $save = (newState = store.$state, options: { skipMerge?: boolean } = {}): Promise<void> => {
+    const skipMerge = options.skipMerge === true;
     if (inFlight) {
       // 已有写入在飞行中：只登记最新状态，等它结束后合并补写一次
       queuedStateGetter = () => newState;
+      queuedSkipMerge = skipMerge;
       const queued = new Promise<void>((resolve, reject) => {
         queuedWaiters.push({ resolve, reject });
       });
@@ -799,7 +829,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       return queued;
     }
 
-    const task = doWrite(() => newState);
+    const task = doWrite(() => newState, skipMerge);
     inFlight = task.finally(() => {
       inFlight = null;
       flushQueued();

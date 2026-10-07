@@ -58,5 +58,11 @@ function onCancel() {
 </script>
 
 <template>
-  <SentToDownloaderDialog v-model="showDialog" :torrent-items="torrentItems" @done="onDone" @cancel="onCancel" />
+  <SentToDownloaderDialog
+    v-model="showDialog"
+    :torrent-items="torrentItems"
+    allow-site-less-link
+    @done="onDone"
+    @cancel="onCancel"
+  />
 </template>

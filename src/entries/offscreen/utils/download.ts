@@ -387,6 +387,9 @@ async function loadSiteDownloadAt(): Promise<void> {
   siteDownloadAtLoaded = true;
 
   try {
+    if (!getSessionStorageArea()) {
+      return;
+    }
     const stored = await getSessionStorageArea()?.get(SITE_DOWNLOAD_INTERVAL_KEY);
     const table = stored?.[SITE_DOWNLOAD_INTERVAL_KEY] as Record<string, unknown> | undefined;
     for (const [site, at] of Object.entries(table ?? {})) {
@@ -404,6 +407,9 @@ async function loadSiteDownloadAt(): Promise<void> {
 }
 
 async function getLastSiteDownloadAt(site: string): Promise<number> {
+  if (!getSessionStorageArea()) {
+    return await sendMessage("getSiteDownloadAt", site);
+  }
   await loadSiteDownloadAt();
   return lastSiteDownloadAt.get(site) ?? 0;
 }
@@ -426,6 +432,9 @@ async function persistSiteDownloadAt(): Promise<void> {
 
 /** 预留某站点的下载时间戳，返回被覆盖的上一个时间戳（供失败回滚） */
 async function reserveSiteDownloadInterval(site: string, at: number): Promise<number> {
+  if (!getSessionStorageArea()) {
+    return await sendMessage("reserveSiteDownloadAt", { site, at });
+  }
   const previous = await getLastSiteDownloadAt(site);
   lastSiteDownloadAt.set(site, at);
   await persistSiteDownloadAt();
@@ -439,6 +448,10 @@ async function reserveSiteDownloadInterval(site: string, at: number): Promise<nu
  * 否则说明后续任务已经预留了更新的时间戳，抹掉它会破坏间隔保护。
  */
 async function rollbackSiteDownloadInterval(site: string, at: number, previous: number): Promise<void> {
+  if (!getSessionStorageArea()) {
+    await sendMessage("rollbackSiteDownloadAt", { site, at, previous });
+    return;
+  }
   if ((await getLastSiteDownloadAt(site)) !== at) {
     return;
   }
@@ -603,7 +616,7 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
   let siteInstance: Awaited<ReturnType<typeof getSiteInstance<"public">>> | null = null;
 
   try {
-    if (!torrent.site && !torrent.link?.startsWith("magnet:")) {
+    if (!torrent.site && !torrent.link?.startsWith("magnet:") && !downloadOption.allowSiteLessLink) {
       throw new Error("Rejected download URL without a trusted site");
     }
     if (torrent.site) {
@@ -689,7 +702,22 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
   return { downloadId, downloadStatus, errorMessage, warningMessage } as IDownloadTorrentResult;
 }
 
-onMessage("downloadTorrent", async ({ data: downloadOption }) => {
+function isExtensionContextSender(sender?: chrome.runtime.MessageSender): boolean {
+  if (!sender || sender.id !== chrome.runtime?.id || typeof sender.url !== "string") {
+    return false;
+  }
+  const extensionBase = chrome.runtime?.getURL?.("");
+  if (extensionBase) {
+    return sender.url.startsWith(extensionBase);
+  }
+  return /^(chrome|moz)-extension:\/\//.test(sender.url);
+}
+
+onMessage("downloadTorrent", async ({ data, sender }) => {
+  const downloadOption: IDownloadTorrentOption = {
+    ...data,
+    allowSiteLessLink: data.allowSiteLessLink === true && isExtensionContextSender(sender),
+  };
   const incomingDownloadId = downloadOption.downloadId;
   // 站点下载间隔判断/调度在入队前完成，等待间隔的任务不会占用下载并发槽
   let prepared: IDownloadTorrentResult | IPreparedDownload;
@@ -908,6 +936,38 @@ function getErrorMessage(error: unknown): string {
 const BLOB_URL_RELEASE_TIMEOUT = 10 * 60 * 1000;
 
 type TDownloadTerminalState = "complete" | "interrupted";
+const remoteDownloadSettlements = new Map<
+  TTorrentDownloadKey,
+  { reservation?: IPreparedDownload["siteDownloadReservation"]; blobUrl?: string }
+>();
+
+async function applySettledDownload(
+  downloadId: TTorrentDownloadKey,
+  state: TDownloadTerminalState,
+  reservation?: IPreparedDownload["siteDownloadReservation"],
+  blobUrl?: string,
+): Promise<void> {
+  if (blobUrl) {
+    URL.revokeObjectURL(blobUrl);
+  }
+  await setDownloadStatus(downloadId, state === "complete" ? "completed" : "failed");
+  if (state === "interrupted") {
+    await patchDownloadHistory(downloadId, { errorMessage: "Browser download interrupted" });
+    if (reservation) {
+      await rollbackSiteDownloadInterval(reservation.site, reservation.at, reservation.previous);
+    }
+  }
+}
+
+onMessage("settleBrowserDownload", async ({ data: { downloadId, state, reservation } }) => {
+  const localTracking = remoteDownloadSettlements.get(downloadId);
+  remoteDownloadSettlements.delete(downloadId);
+  await applySettledDownload(downloadId, state, reservation ?? localTracking?.reservation, localTracking?.blobUrl);
+});
+
+onMessage("releaseBrowserDownloadBlob", async ({ data: { blobUrl } }) => {
+  URL.revokeObjectURL(blobUrl);
+});
 
 function watchDownloadSettled(
   chromeDownloadId: number | undefined,
@@ -1012,19 +1072,37 @@ function trackLocalDownload(
   reservation?: IPreparedDownload["siteDownloadReservation"],
   blobUrl?: string,
 ): void {
+  const downloads = getChromeApi()?.downloads;
+  if (!downloads?.onChanged?.addListener || !downloads.search) {
+    remoteDownloadSettlements.set(downloadId, { reservation, blobUrl });
+    void sendMessage("registerDownloadTracking", {
+      chromeDownloadId,
+      downloadId,
+      reservation,
+    }).catch((error) =>
+      logger({ msg: "Failed to register browser download tracking", level: "error", data: getErrorMessage(error) }),
+    );
+    return;
+  }
+
   watchDownloadSettled(chromeDownloadId, blobUrl, async (state) => {
-    await setDownloadStatus(downloadId, state === "complete" ? "completed" : "failed");
-    if (state === "interrupted") {
-      await patchDownloadHistory(downloadId, { errorMessage: "Browser download interrupted" });
-      if (reservation) {
-        await rollbackSiteDownloadInterval(reservation.site, reservation.at, reservation.previous);
-      }
-    }
+    await applySettledDownload(downloadId, state, reservation);
   });
 }
 
 /** 本地备份也必须等浏览器读完 Blob 才能释放 URL。 */
 export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloadId?: number): void {
+  const downloads = getChromeApi()?.downloads;
+  if (!downloads?.onChanged?.addListener || !downloads.search) {
+    if (typeof chromeDownloadId === "number") {
+      void sendMessage("registerBlobDownloadTracking", { chromeDownloadId, blobUrl }).catch((error) =>
+        logger({ msg: "Failed to register browser blob tracking", level: "error", data: getErrorMessage(error) }),
+      );
+    } else {
+      URL.revokeObjectURL(blobUrl);
+    }
+    return;
+  }
   watchDownloadSettled(chromeDownloadId, blobUrl);
 }
 
