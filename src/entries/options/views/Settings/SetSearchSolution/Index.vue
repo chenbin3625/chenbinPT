@@ -293,9 +293,12 @@ function beforeImportUpload(file: any) {
 function exportSearchSolutions(solutionIds: TSolutionKey[]) {
   const exportedSolutions: IExportedSearchSolution[] = [];
   for (const solutionId of solutionIds) {
-    exportedSolutions.push(
-      omit(metadataStore.solutions[solutionId], ["id", "enabled", "createdAt", "isDefault", "sort"]),
-    );
+    const source = metadataStore.solutions[solutionId];
+    // OPTIONSSETTINGS-9：表格选中项在删除后不会自动清理（包含另一个上下文删除的情况），
+    // 此时 omit(undefined, ...) 会产出 {}，导出文件里混入空对象、再导入被判「方案名缺失」。
+    // 找不到源对象的选中项直接跳过，不要导出空壳。
+    if (!source) continue;
+    exportedSolutions.push(omit(source, ["id", "enabled", "createdAt", "isDefault", "sort"]));
   }
 
   if (exportedSolutions.length > 0) {
@@ -310,6 +313,15 @@ const toDeleteIds = ref<TSolutionKey[]>([]);
 function deleteSearchSolutions(solutionIds: TSolutionKey[]) {
   toDeleteIds.value = solutionIds;
   showDeleteDialog.value = true;
+}
+
+/**
+ * OPTIONSSETTINGS-9：删除后把已不存在的 id 从选中态里剔除。
+ * 按「当前 store 里是否还存在」过滤而不是按本次删除的 id 过滤：DeleteDialog 用 Promise.allSettled
+ * 吞掉删除失败（OPTIONSSHELL-1），只有真正消失的才该取消选中。
+ */
+function pruneTableSelected() {
+  tableSelected.value = tableSelected.value.filter((solutionId) => !!metadataStore.solutions[solutionId]);
 }
 
 async function confirmDeleteSearchSolution(solutionId: TSolutionKey) {
@@ -517,5 +529,10 @@ async function copySearchSolution(solutionId: TSolutionKey) {
   </a-card>
 
   <EditDialog v-model="showEditDialog" :solution-id="solutionId" />
-  <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteSearchSolution" />
+  <DeleteDialog
+    v-model="showDeleteDialog"
+    :to-delete-ids="toDeleteIds"
+    :confirm-delete="confirmDeleteSearchSolution"
+    @all-delete="pruneTableSelected"
+  />
 </template>

@@ -48,10 +48,19 @@ export interface ITorrentDownloadMetadata extends Pick<ITorrent, "title" | "subT
   downloadRequestConfig?: AxiosRequestConfig;
   addTorrentResult?: CAddTorrentResult;
   errorMessage?: string; // 失败时的错误信息（如推送失败原因），便于在下载历史中定位问题
+  /**
+   * DOWNLOADER-8：与 errorMessage 并列的「告警」字段，用于「推送成功但部分设置未生效」的降级场景
+   * （如 uTorrent 直发 http 链接拿不到 infoHash，暂停 / 标签 / 上传限速被跳过）。
+   * 为什么不能复用 errorMessage：UI 是按字段语义着色的（errorMessage = 红色「失败原因」），
+   * 把它写进 errorMessage 会把成功记录渲染成失败，也会让成功记录混进失败统计。
+   */
+  warningMessage?: string;
 }
 
 export interface IDownloadTorrentResult {
   downloadId: TTorrentDownloadKey;
   downloadStatus: TTorrentDownloadStatus;
   errorMessage?: string;
+  /** DOWNLOADER-8：成功但降级时的告警文案；与 downloadStatus 的成功语义互不冲突 */
+  warningMessage?: string;
 }

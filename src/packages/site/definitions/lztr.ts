@@ -36,22 +36,37 @@ export const siteMetadata: ISiteMetadata = {
 
   userInfo: {
     ...SchemaMetadata.userInfo!,
-    // 站点使用 levelExtendInfo 接口补充做种/发布/完成数，沿用 PTPP 的 ajax 端点
-    selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
-      seeding: {
-        selector: "li:contains('Seeding:')",
-        filters: [{ name: "parseNumber" }],
+    // DEFS2-8：做种/发布/完成数来自 PTPP 的 levelExtendInfo 页面
+    // `/user.php?action=user_ajax&type=community&id=$user.id$`，必须放在指向该端点的 process 步骤里。
+    // 原写法把它们并进全局 selectors：snatches 不在 Gazelle 第二步的 fields 中
+    // （AbstractPrivateSite 的 processFields = fields ++ 该步骤 selectors），永远不会被求值；
+    // 而 uploads 的 `li:contains('Uploaded:')` 未限定区块，会命中 user.php Stats 的流量行
+    // 「Uploaded: 1.23 GB」，让 levelRequirements 的 uploads 门槛（5/50/200）误判。
+    process: [
+      ...SchemaMetadata.userInfo!.process!,
+      {
+        requestConfig: {
+          url: "/user.php",
+          params: { action: "user_ajax", type: "community" },
+          responseType: "document",
+        },
+        assertion: { id: "params.id" },
+        selectors: {
+          seeding: {
+            selector: "li:contains('Seeding:')",
+            filters: [{ name: "parseNumber" }],
+          },
+          uploads: {
+            selector: "li:contains('Uploaded:')",
+            filters: [{ name: "parseNumber" }],
+          },
+          snatches: {
+            selector: "li:contains('Snatched:')",
+            filters: [{ name: "parseNumber" }],
+          },
+        },
       },
-      uploads: {
-        selector: "li:contains('Uploaded:')",
-        filters: [{ name: "parseNumber" }],
-      },
-      snatches: {
-        selector: "li:contains('Snatched:')",
-        filters: [{ name: "parseNumber" }],
-      },
-    },
+    ],
   },
 
   levelRequirements: [

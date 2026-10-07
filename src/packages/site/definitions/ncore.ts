@@ -30,7 +30,7 @@ export const siteMetadata: ISiteMetadata = {
           },
           levelName: {
             selector: "#profil_rang > nobr",
-            filters: [{ name: "replace", args: ["/()/", ""] }],
+            filters: [{ name: "replace", args: [/[()]/g, ""] }], // D-36 同型：原先传的是字面字符串 "/()/"
           },
           joinTime: {
             selector: ["div.userbox_tartalom_mini:nth-child(2) > div:nth-child(2) span"],

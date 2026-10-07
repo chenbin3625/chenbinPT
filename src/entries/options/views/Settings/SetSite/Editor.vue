@@ -10,7 +10,7 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { formatDate, formValidateRules } from "@/options/utils.ts";
 import { toMerged } from "es-toolkit";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const metadataStore = useMetadataStore();
 
 const siteId = defineModel<TSiteID>({ default: "" });
@@ -74,10 +74,18 @@ const urlError = computed(() => firstError([formValidateRules.require()], siteUs
 const customUrlError = computed(() =>
   customSiteUrl.value ? firstError([formValidateRules.url()], customSiteUrl.value) : undefined,
 );
+// OPTIONSSETTINGS-8：必填提示此前硬编码英文 "Item is required"，中文界面也会显示英文。
+// 改为走 i18n；对应的键由 locales 补充（见状态文件 cross_package_needs），
+// 键尚未存在时回退到英文原文，避免把键名本身渲染给用户。
+function inputRequiredMessage(): string {
+  return te("SetSite.editor.inputRequired") ? t("SetSite.editor.inputRequired") : "Item is required";
+}
+
 const inputSettingError = computed(() => {
   if (siteMetaData.value.isDead) return undefined;
   for (const userInputMeta of siteMetaData.value.userInputSettingMeta ?? []) {
-    if (userInputMeta.required && !siteUserConfig.value.inputSetting?.[userInputMeta.name]) return "Item is required";
+    if (userInputMeta.required && !siteUserConfig.value.inputSetting?.[userInputMeta.name])
+      return inputRequiredMessage();
   }
   return undefined;
 });
@@ -98,13 +106,23 @@ function updateCustomUrl(val: string) {
   siteUserConfig.value.url = val as unknown as TSiteUrl;
 }
 
+/** OPTIONSSETTINGS-5：站点快速切换时先发起的异步读取可能后返回，用它丢弃过期结果 */
+let initSeq = 0;
+
 async function initSiteData(siteId: TSiteID, flush = false) {
+  // OPTIONSSETTINGS-5：AddDialog 关闭时会把 siteId 置空（Editor 已保留实例），空 id 不做任何读取
+  if (!siteId) return;
+
   console.debug("initSiteData", siteId, flush);
-  siteMetaData.value = await metadataStore.getSiteMetadata(siteId);
-  siteUserConfig.value = toMerged(
-    { inputSetting: {}, url: siteMetaData.value.urls[0] },
-    await metadataStore.getSiteUserConfig(siteId, flush),
-  );
+  const seq = ++initSeq;
+  const siteMetadata = await metadataStore.getSiteMetadata(siteId);
+  const siteUserConfigValue = await metadataStore.getSiteUserConfig(siteId, flush);
+
+  // OPTIONSSETTINGS-5：已有更新的一次初始化发起，本次结果作废，否则旧站点配置会覆盖当前站点
+  if (seq !== initSeq) return;
+
+  siteMetaData.value = siteMetadata;
+  siteUserConfig.value = toMerged({ inputSetting: {}, url: siteMetadata.urls[0] }, siteUserConfigValue);
 
   // fix: customSiteUrl not show in Editor (#726)
   if (!siteMetaData.value.urls.includes(siteUserConfig.value.url)) {
@@ -240,7 +258,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
             :key="userInputMeta.name"
             :help="
               !siteMetaData.isDead && userInputMeta.required && !siteUserConfig.inputSetting![userInputMeta.name]
-                ? 'Item is required'
+                ? inputRequiredMessage()
                 : userInputMeta.hint
             "
             :label="userInputMeta.label"

@@ -68,6 +68,8 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
+      // uTorrent 文件优先级只有 0..3（don't download/low/normal/high），没有 Highest 档（DOWNLOADER-2）
+      unsupportedPriorities: ["highest"],
     },
     PeerList: {
       allowed: false,
@@ -328,6 +330,14 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
           v: options.uploadSpeedLimit * 1024 * 1024,
         });
       }
+    } else if (options.addAtPaused || options.label || (options.uploadSpeedLimit && options.uploadSpeedLimit > 0)) {
+      /**
+       * DOWNLOADER-8：「链接直发」且给的是 http(s) .torrent 直链时，add-url 不回 infoHash，
+       * extractMagnetHash 也拿不到，于是上面的暂停/标签/上传限速被整段跳过。
+       * 种子本身已添加（仍是成功），但必须把「这些设置未生效」回传给调用方，不再静默丢弃。
+       */
+      addResult.message =
+        "uTorrent add-url 未返回 infoHash，添加后暂停 / 标签 / 上传限速设置未生效（可改用「本地中转」推送以避免）";
     }
 
     addResult.success = true;

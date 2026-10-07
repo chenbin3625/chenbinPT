@@ -7,7 +7,8 @@ import BaseDeleteDialog from "@/options/components/DeleteDialog.vue";
 const showDialog = defineModel<boolean>();
 const props = defineProps<{
   toDeleteIds: string[];
-  confirmDelete: (toDeleteId: string, removeData: boolean) => Promise<void> | void;
+  // DOWNLOADER-3：confirmDeleteTorrent 会把 deleteClientTorrent 的 boolean 结果带出来（false = 删不掉）
+  confirmDelete: (toDeleteId: string, removeData: boolean) => Promise<boolean | void> | void;
 }>();
 const emits = defineEmits<{
   (e: "allDelete"): void;

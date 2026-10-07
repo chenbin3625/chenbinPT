@@ -349,6 +349,15 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
   // 检查客户端是否可以连接
   public abstract ping(): Promise<boolean>;
 
+  /**
+   * 释放实例持有的长连接/定时器等资源（目前仅 Aria2 的 WebSocket 实现）。
+   * 缓存淘汰或配置变更导致实例不再被持有时，持有者应调用它（DOWNLOADER-5）。
+   *
+   * 这里用「可选方法签名」而不是 `declare dispose?: () => void`：
+   * 后者是实例属性，会与子类的 `dispose()` 方法冲突（TS2425）。
+   */
+  dispose?(): void;
+
   // 获取客户端版本信息( wrapper with local cache )
   public async getClientVersion(): Promise<string> {
     if (!this.clientVersion) {

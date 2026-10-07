@@ -92,8 +92,21 @@ export default class Rartracker extends PrivateSite {
   private static readonly passKeyCacheKey = "passKey";
   private static readonly passKeyCacheTtl = 12 * 60 * 60; // 12 小时
 
+  // SITECORE-5：实例级记忆（含空 passkey）。空 passkey 刻意不写 12h 持久缓存（见 loadPassKey），
+  // 但若连实例内也不记，一页 N 条搜索结果就会各发一次 /api/v1/status（外加一次 getExtStoragePath IPC），
+  // 有被 WAF 判刷站的风险。与 GazelleJSONAPI.getAuthKey 的 L-3 修复同构；请求失败不记忆，下次重试。
+  private _passKeyPromise?: Promise<string>;
+
   // 从 /api/v1/status 获取 passkey，用于构建种子下载链接
   private async getPassKey(): Promise<string> {
+    this._passKeyPromise ??= this.loadPassKey().catch((error) => {
+      this._passKeyPromise = undefined; // 请求失败不记忆，下次重试
+      throw error;
+    });
+    return this._passKeyPromise;
+  }
+
+  private async loadPassKey(): Promise<string> {
     const currentTime = Math.floor(Date.now() / 1000);
 
     const cachedPassKey = await this.retrieveRuntimeSettings<{ passkey?: string; expiry?: number }>(
@@ -114,7 +127,7 @@ export default class Rartracker extends PrivateSite {
     const passKey = (statResp.user.passkey ?? "").trim();
 
     // 空 passkey 不写入持久化缓存：否则后续 12 小时内的下载链接都会复用空凭据；
-    // 读取侧本来就有非空校验，因此跳过写缓存即可。
+    // 读取侧本来就有非空校验，因此跳过写缓存即可。实例级记忆由 getPassKey 负责。
     if (passKey.length > 0) {
       await this.storeRuntimeSettings(Rartracker.passKeyCacheKey, {
         passkey: passKey,

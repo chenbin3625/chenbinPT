@@ -233,7 +233,7 @@ export function encryptData(data: any, encryptionKey?: string, field = ""): stri
  * 赋值都会顺着原型链写到 `Object.prototype` 上（见审查报告 B-22 的实测）。
  * 在 JSON 边界上直接丢掉该键，比在每个消费点分别设防更可靠。
  */
-function stripProtoKeys(key: string, value: unknown): unknown {
+export function stripProtoKeys(key: string, value: unknown): unknown {
   if (key === "__proto__") {
     return undefined;
   }

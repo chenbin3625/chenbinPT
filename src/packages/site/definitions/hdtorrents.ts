@@ -43,8 +43,10 @@ const statsFilter = (query?: string) => {
 
 const removeInvalidDataUnit = (query: string) => {
   // HDT 特色，当你的上传/下载量为 0 时会显示为 0.00 BiT
-  const match = query.match(/^([\d.]+)\s+(BiT)$/);
-  return match && match.length > 1 ? match[0] : query;
+  // DEFS2-13：原实现正则两端锚定后返回 match[0]（与入参逐字相同）＝恒等空操作，「去除无效单位」从未生效；
+  // 这里改成剥掉 BiT 单位再交给后面的 parseSize——无单位串解析为 0，
+  // 非零的 "1.5 BiT" 不会再被当成合法单位静默算出错误数值
+  return query.replace(/\s*BiT$/i, "");
 };
 
 export const siteMetadata: ISiteMetadata = {

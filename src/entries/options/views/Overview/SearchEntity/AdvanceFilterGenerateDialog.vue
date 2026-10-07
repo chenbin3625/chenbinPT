@@ -246,8 +246,13 @@ watch(showDialog, (open) => {
             </a-popover>
           </a-row>
           <a-row :gutter="0">
+            <!-- OPTIONSOVERVIEW-1 孪生：time/size/seeders/leechers/completed 都是 [min,max] 元组
+                 （useTableCustomFilter 的 ranges 分支就是这么初始化的），而 antd 的 a-slider 只有传 range
+                 才走双滑块实现；缺了它 a-slider 按单值渲染，拖动一次就把元组改写成标量，
+                 点「生成」时 updateTableFilterValueFn 的 `.map()` 抛 TypeError。 -->
             <a-slider
               v-model:value="advanceFilterDictRef.time"
+              range
               :marks="tickMarks(advanceItemPropsRef.time.ticks)"
               :max="advanceItemPropsRef.time.range[1]"
               :min="advanceItemPropsRef.time.range[0]"
@@ -264,6 +269,7 @@ watch(showDialog, (open) => {
           <a-row :gutter="0">
             <a-slider
               v-model:value="advanceFilterDictRef.size"
+              range
               :marks="tickMarks(advanceItemPropsRef.size.ticks)"
               :max="advanceItemPropsRef.size.range[1]"
               :min="advanceItemPropsRef.size.range[0]"
@@ -282,6 +288,7 @@ watch(showDialog, (open) => {
           <a-row :gutter="0">
             <a-slider
               v-model:value="advanceFilterDictRef.seeders"
+              range
               :marks="tickMarks(advanceItemPropsRef.seeders.ticks)"
               :max="advanceItemPropsRef.seeders.range[1]"
               :min="advanceItemPropsRef.seeders.range[0]"
@@ -297,6 +304,7 @@ watch(showDialog, (open) => {
           <a-row :gutter="0">
             <a-slider
               v-model:value="advanceFilterDictRef.leechers"
+              range
               :marks="tickMarks(advanceItemPropsRef.leechers.ticks)"
               :max="advanceItemPropsRef.leechers.range[1]"
               :min="advanceItemPropsRef.leechers.range[0]"
@@ -312,6 +320,7 @@ watch(showDialog, (open) => {
           <a-row :gutter="0">
             <a-slider
               v-model:value="advanceFilterDictRef.completed"
+              range
               :marks="tickMarks(advanceItemPropsRef.completed.ticks)"
               :max="advanceItemPropsRef.completed.range[1]"
               :min="advanceItemPropsRef.completed.range[0]"

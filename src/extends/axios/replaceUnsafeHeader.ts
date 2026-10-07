@@ -47,6 +47,31 @@ interface DnrRuleEntry {
 const dnrRuleCache = new Map<string, DnrRuleEntry>();
 
 /**
+ * 当前 JS 上下文的唯一标识（缺陷清单 EXTENDSI18N-3）。
+ *
+ * 为什么必须把它并进 cacheKey：DNR **会话规则是扩展级共享**的（background 的
+ * `updateSessionRules` / `removeSessionRules`），而本模块的 `dnrRuleCache` 与 inflight 计数
+ * 是**每个 JS 上下文各一份**（options 页、offscreen、content-script 各自独立加载本模块）。
+ * 若规则 id 只按「URL + method + headers」确定性派生，两个上下文会对同一内容算出同一个 id、
+ * 共用同一条规则，但各自独立计数：一方请求结束就按 id 把规则删掉，而另一方本地缓存仍以为
+ * 「规则在、inflight > 0」，后续请求直接复用 id 不重装 —— 那些请求静默丢掉 Referer/Origin/User-Agent。
+ * 把上下文标识并进 cacheKey 后：同一上下文内同内容仍 → 同 id（重装 = 按 id 覆盖，保留复用收益），
+ * 跨上下文 → id 不同，各自只删自己的规则。
+ *
+ * 残余取舍（如实记录）：上下文在请求在途时被销毁（关标签页、SW 被杀）会留下一条会话规则直到
+ * 浏览器会话结束；这是「绝不误删其它上下文仍在用的规则」的取舍，且规则内容对同一请求是幂等的
+ * （多个上下文为同一请求装的规则改写的是同一组头）。
+ */
+const dnrContextId: string = (() => {
+  try {
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  } catch {
+    // 某些宿主没有 crypto：退化为时间戳 + 随机串，仍保证上下文间不重复
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+})();
+
+/**
  * 挂在 config 上的「本次请求需要交给 DNR 改写的请求头」记录（缺陷清单 B-17）。
  *
  * 请求拦截器会把不安全请求头从 `config.headers` 里**剥掉**，改由 DNR 会话规则注入
@@ -70,6 +95,9 @@ interface TUnsafeHeaderCarrier {
  * socialRecommendations 各持一份缓存，随机 id 可能撞号，删除时会误删别人的规则；
  * 确定性哈希保证「同内容 → 同 id（可用 removeRuleIds 覆盖式重装）、不同内容 → 不同 id」，
  * 从而能按 id 精确删除自己装的规则（见 docs/performance-audit.md P1-9）。
+ *
+ * cacheKey 里已经带上当前上下文标识（见 dnrContextId，EXTENDSI18N-3），
+ * 因此「同内容 → 同 id」只在同一 JS 上下文内成立：跨上下文 id 不同，删除不会误伤别人。
  */
 export function dnrRuleIdForCacheKey(cacheKey: string): number {
   let hash = 0x811c9dc5;
@@ -211,7 +239,8 @@ export function setupReplaceUnsafeHeader(axios: AxiosInstance): AxiosAllowUnsafe
       // 带上 params：getUri 返回的才是 axios 真正会请求的 URL（regexFilter 是精确匹配，不能再省略查询串）
       const requestUrl = axios.getUri({ baseURL: config.baseURL, url: config.url, params: config.params });
       const method = (config.method || "GET").toUpperCase();
-      const cacheKey = JSON.stringify({ url: requestUrl, method, requestHeaders });
+      // cacheKey 里的 context 段见 dnrContextId：跨上下文的规则 id 必须不同，否则会互相误删（EXTENDSI18N-3）
+      const cacheKey = JSON.stringify({ context: dnrContextId, url: requestUrl, method, requestHeaders });
       const ruleId = dnrRuleIdForCacheKey(cacheKey);
 
       /**

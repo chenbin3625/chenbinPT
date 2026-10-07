@@ -96,11 +96,8 @@ export const siteMetadata: ISiteMetadata = {
       },
       tags: [
         ...SchemaMetadata.search!.selectors!.tags!,
-        {
-          name: "H&R",
-          selector: "*",
-          color: "red",
-        },
+        // DEFS2-2：原先这里追加的 H&R 用 selector:"*"（对任意行恒真），会把整站结果全标成 H&R；
+        // Unit3D 列表页不渲染 H&R 状态（没有可用的真实徽标选择器），故只保留引擎共享 tags。
       ],
     },
   },

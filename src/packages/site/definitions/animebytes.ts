@@ -7,7 +7,7 @@ import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 import Gazelle, { GazelleUtils, SchemaMetadata, detailPageList } from "../schemas/Gazelle";
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
-import { extractContent, parseValidTimeString } from "../utils";
+import { extractContent, parseValidTimeString, parseValidTimeStringInZone } from "../utils";
 import { parse } from "@ptd/social/entity/anidb";
 
 const tagKeywords = ["Episode", "Season"];
@@ -638,7 +638,11 @@ export default class AnimeBytes extends Gazelle {
             subTitle: `${torrent.EditionData.EditionTitle ? `${extractContent(torrent.EditionData.EditionTitle).trim()} ${delimiter.trim()}` : ""} ${GazelleUtils.extractTags(torrent.Property, tagKeywords, delimiter)}`,
             url: `${this.url}${torrentPage}?id=${group.ID}&torrentid=${torrent.ID}`,
             link: torrent.Link,
-            time: parseValidTimeString(torrent.UploadTime) as number,
+            // SITECORE-1：JSON API 的 UploadTime 是站点墙上时间，按 metadata.timezoneOffset 解析；
+            // 未声明时区（非运行期注册的裸 metadata）退回宿主时区，避免把时间戳变成 0
+            time: (this.metadata.timezoneOffset
+              ? parseValidTimeStringInZone(torrent.UploadTime, [], this.metadata.timezoneOffset)
+              : parseValidTimeString(torrent.UploadTime)) as number,
             size: torrent.Size,
             seeders: torrent.Seeders,
             leechers: torrent.Leechers,

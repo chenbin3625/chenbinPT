@@ -2,14 +2,7 @@ import { matchesSelector, selectElements } from "../utils/selector";
 import { toMerged } from "es-toolkit";
 
 import PrivateSite from "./AbstractPrivateSite";
-import {
-  parseValidTimeString,
-  parseSizeString,
-  parseTimeToLiveToDate,
-  mapWithConcurrency,
-  logMessage,
-  siteErrorLogData,
-} from "../utils";
+import { parseSizeString, parseTimeToLiveToDate, mapWithConcurrency, logMessage, siteErrorLogData } from "../utils";
 import {
   ETorrentStatus,
   EResultParseStatus,
@@ -125,10 +118,13 @@ const baseTimeSelector = {
     let time: number | string = 0;
     try {
       const AccurateTimeAnother = element.querySelector("span[title], time[title]");
+      // SITECORE-1：span/行 title 里的绝对时间字符串不在 elementProcess 里解析（parseValidTimeString
+      // 会按运行主机的时区解释站点墙上时间），留给 parseWholeTorrentFromRow 按 this.metadata.timezoneOffset 换算；
+      // 只有「2 mins ago / Just now」这类相对时间才在此处换算成绝对时间戳。
       if (AccurateTimeAnother) {
-        time = parseValidTimeString(AccurateTimeAnother.getAttribute("title")!);
+        time = AccurateTimeAnother.getAttribute("title")!;
       } else if (element.getAttribute("title")) {
-        time = parseValidTimeString(element.getAttribute("title")!);
+        time = element.getAttribute("title")!;
       } else {
         // 2 mins ago or Just now
         time = element.innerText.trim();
@@ -589,6 +585,11 @@ export class GazelleBase extends PrivateSite {
 }
 
 export default class Gazelle extends GazelleBase {
+  // SITECORE-4：本次 transformSearchPage 中「识别为种子行、却没能产出种子」的行数。
+  // 基类有「全部行失败必须报错」的判据（AbstractBittorrentSite.transformSearchPage），
+  // 本类的覆写此前把它整个丢了，页面有行但条条解析失败时会落 success + data: []。
+  private _searchRowFailures = 0;
+
   protected get torrentClasses(): Record<"group" | "unGroupTorrent", string[]> {
     return {
       group: ["group", "group_redline"], // 种子组行
@@ -609,6 +610,7 @@ export default class Gazelle extends GazelleBase {
   public override async transformSearchPage(doc: Document, searchConfig: ISearchInput): Promise<ITorrent[]> {
     // 每次页面解析开始时重建行级选择器缓存
     this.resetRowElementQueryCache();
+    this._searchRowFailures = 0; // SITECORE-4：计数按本次页面解析重置
 
     let { keywords, searchEntry, requestConfig } = searchConfig;
 
@@ -728,6 +730,13 @@ export default class Gazelle extends GazelleBase {
       // 对于第二种情况，需要将对应 class 添加到 torrentClasses 中，或者在站点定义中覆盖相关方法
     }
 
+    // SITECORE-4：页面有种子行却一条都没产出（典型是改版导致 link 选择器失配），
+    // 必须让上层看到明确的解析错误，而不是伪装成「搜索成功但 0 结果」，
+    // 否则用户无法区分「站点没有该关键词的资源」与「解析全崩」。
+    if (torrents.length === 0 && this._searchRowFailures > 0) {
+      throw new Error(`site '${this.name}': all ${this._searchRowFailures} rows failed to parse`);
+    }
+
     return torrents;
   }
 
@@ -786,7 +795,10 @@ export default class Gazelle extends GazelleBase {
     for (const groupTorrentEl of torrentEls) {
       // 对 link 结果做个检查，检查通过的再进入 parseRowToTorrent
       const link = this.getFieldData(groupTorrentEl, searchConfig.searchEntry!.selectors!.link!);
-      if (!link) continue;
+      if (!link) {
+        this._searchRowFailures++; // SITECORE-4：行在，但下载链接选择器失配 → 视为解析失败而非「无结果」
+        continue;
+      }
 
       // 处理 colspan 的情况
       // https://github.com/WhatCD/Gazelle/blob/63b337026d49b5cf63ce4be20fdabdc880112fa3/sections/torrents/browse.php#L644
@@ -809,6 +821,7 @@ export default class Gazelle extends GazelleBase {
         )) as ITorrent;
         torrents.push(torrent);
       } catch (e) {
+        this._searchRowFailures++; // SITECORE-4
         console.debug(`[PTD] site '${this.name}' parseWholeTorrentFromRow Error:`, e, groupTorrentEl);
       }
     }
@@ -822,7 +835,10 @@ export default class Gazelle extends GazelleBase {
   ): Promise<ITorrent | null> {
     // 对 link 结果做个检查，检查通过的再进入 parseRowToTorrent
     const link = this.getFieldData(torrentEl, searchConfig!.searchEntry!.selectors!.link!);
-    if (!link) return null;
+    if (!link) {
+      this._searchRowFailures++; // SITECORE-4
+      return null;
+    }
 
     // 处理 colspan 的情况 (Gazelle-fork)
     const colSpanTd = torrentEl.querySelector<HTMLTableCellElement>("td[colspan]");
@@ -837,6 +853,7 @@ export default class Gazelle extends GazelleBase {
       const torrent = (await this.parseWholeTorrentFromRow({ link }, torrentEl, searchConfig)) as ITorrent;
       return torrent;
     } catch (e) {
+      this._searchRowFailures++; // SITECORE-4
       console.debug(`[PTD] site '${this.name}' parseWholeTorrentFromRow Error:`, e, torrentEl);
     }
     return null;

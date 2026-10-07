@@ -143,6 +143,11 @@ const remoteDownloadDialogData = inject<IRemoteDownloadDialogData>("remoteDownlo
 function handleRemoteDownloadMulti(isDefaultSend = false) {
   remoteDownloadDialogData.torrents = selectedTorrents.value;
   remoteDownloadDialogData.isDefaultSend = isDefaultSend;
+  // CONTENTSCRIPT-2：两个 a-modal 都 portal 到同一个 popup host，antd 的 Modal 容器在首次 open 时
+  // 创建、关闭后不销毁，未传 zIndex 时两者的 .ant-modal-wrap 同为 token.zIndexPopupBase(1000)，
+  // 叠放由 DOM 顺序（= 首次打开顺序）决定。本页更早开过 SentToDownloaderDialog 时，推送弹窗会渲染
+  // 进更早的容器，被本弹窗及其遮罩整层盖住 —— 表现为「点推送没反应」。先关掉自身，移交下一步。
+  showDialog.value = false;
   remoteDownloadDialogData.show = true;
 }
 

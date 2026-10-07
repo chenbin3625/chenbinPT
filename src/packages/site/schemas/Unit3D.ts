@@ -5,6 +5,7 @@ import PrivateSite from "./AbstractPrivateSite";
 import {
   ETorrentStatus,
   EResultParseStatus,
+  type IElementQuery,
   type ISiteMetadata,
   type IUserInfo,
   type ITorrent,
@@ -12,7 +13,7 @@ import {
   type ITorrentTag,
   type ISearchCategories,
 } from "../types";
-import { classifySiteError, logMessage, parseTimeToLiveToDate, parseValidTimeString, siteErrorLogData } from "../utils";
+import { classifySiteError, logMessage, parseTimeToLiveToDate, siteErrorLogData } from "../utils";
 
 type TUserInfoTransKey =
   "id" | "seedingSize" | "joinTime" | "averageSeedingTime" | "invites" | "ratio" | "trueRatio" | "lastAccessAt";
@@ -139,9 +140,11 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         selector: ["time"],
         elementProcess: (element: any) => {
           if (!element) return undefined;
-          // 优先使用title属性
+          // SITECORE-1：title 属性里的绝对时间字符串不在 elementProcess 里解析（parseValidTimeString
+          // 会按运行主机的时区解释站点墙上时间），留给 parseWholeTorrentFromRow 按
+          // this.metadata.timezoneOffset 统一换算；相对时间（2 hours ago）才在此处换算成绝对时间戳。
           if (element.title) {
-            return parseValidTimeString(element.title);
+            return element.title as string;
           } else {
             const textContent = element.textContent || element.innerText || "";
             return parseTimeToLiveToDate(textContent);
@@ -349,10 +352,11 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
         selector: [
           // refs: https://github.com/HDInnovations/UNIT3D/blob/b5d93fdbe493040a1fa1124d2c8499ee0b180937/resources/views/torrent/show.blade.php#L48-L50
           "h1.torrent__name",
-          "html > body > title",
+          // SITECORE-6：<title> 在 <head> 里，`html > body > title` 永不命中（D-37 在 hdbits 修过同款）
+          "head > title",
         ],
         switchFilters: {
-          "html > body > title": [
+          "head > title": [
             (title: string) => {
               // {{ $torrent->name }} - {{ __('torrent.torrents') }} - {{ config('other.title') }}
               const titleMatch = title.match(/^(.*) - .* - .+$/);
@@ -484,8 +488,11 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
           (query: string) => {
             query = query.replace(RegExp(userInfoTrans.joinTime.join("|")), "");
             query = query.replace(/^:+/g, "").trim();
-            return parseValidTimeString(query, ["MMM dd yyyy, HH:mm:ss", "MMM dd yyyy", "yyyy-MM-dd"]);
+            return query;
           },
+          // SITECORE-1：解析交给具名 parseTime（runQueryFilters 会按 this.metadata.timezoneOffset 换算），
+          // 不再在匿名 filter 里用 parseValidTimeString 按宿主时区解释。
+          { name: "parseTime", args: ["MMM dd yyyy, HH:mm:ss", "MMM dd yyyy", "yyyy-MM-dd"] },
         ],
       },
       lastAccessAt: {
@@ -493,10 +500,10 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
           ...userInfoTrans.lastAccessAt.map((x) => `dt:contains('${x}') + dd time`),
           ...userInfoTrans.lastAccessAt.map((x) => `td:contains('${x}') + td`),
         ],
-        elementProcess: (el: Element) => {
-          const dateStr = el.getAttribute("title") ?? el.getAttribute("datetime");
-          return parseValidTimeString(dateStr || el.textContent.split("(")[0]);
-        },
+        elementProcess: (el: Element) =>
+          el.getAttribute("title") || el.getAttribute("datetime") || el.textContent.split("(")[0],
+        // SITECORE-1：绝对时间字符串交给具名 parseTime 按站点时区解析（elementProcess 本身没有时区信息）
+        filters: [{ name: "parseTime" }],
       },
       invites: {
         selector: [
@@ -650,11 +657,34 @@ export default class Unit3D extends PrivateSite {
       responseType: "document",
     });
 
-    return this.getFieldsData(
-      userDetailDocument,
-      this.metadata.userInfo?.selectors!,
-      Object.keys(omit(this.metadata.userInfo?.selectors!, ["name"])),
-    ) as Partial<IUserInfo>;
+    const userInfoSelectors = this.metadata.userInfo?.selectors!;
+    const fields = Object.keys(omit(userInfoSelectors, ["name"]));
+    const declaredSelectors = userInfoSelectors as Record<string, IElementQuery | undefined>;
+
+    // SITECORE-2：与 AbstractPrivateSite 的 H-6 判据对齐——统计「声明了 selector 的字段」真正命中多少个。
+    // 站点改版 / HTTP 200 软错误页时全部零命中，getFieldsData 会回落成 ""/0，若照常标 success，
+    // 用户已解析的 uploaded/downloaded/ratio/bonus/seedingSize 会被一次刷新静默替换成 0 并写进当日历史。
+    // 53 个声明 schema: "Unit3D" 的定义里 51 个未声明 userInfo.process、全部走这条自定义路径，
+    // 父类 AbstractPrivateSite 的同款守卫覆盖不到它们。
+    let declaredSelectorFields = 0;
+    let matchedSelectorFields = 0;
+    for (const field of fields) {
+      const elementQuery = declaredSelectors[field];
+      if (!elementQuery) continue;
+      declaredSelectorFields++;
+      if (this.hasFieldMatch(userDetailDocument, elementQuery)) {
+        matchedSelectorFields++;
+      }
+    }
+
+    if (declaredSelectorFields > 0 && matchedSelectorFields === 0) {
+      // noinspection ExceptionCaughtLocallyJS
+      throw new Error(
+        `用户信息页未命中任何字段（${declaredSelectorFields} 个 selector 全部落空），页面可能已改版或不是用户信息页`,
+      );
+    }
+
+    return this.getFieldsData(userDetailDocument, userInfoSelectors, fields) as Partial<IUserInfo>;
   }
 
   protected async getUserBonusPerHour(name: string): Promise<number> {

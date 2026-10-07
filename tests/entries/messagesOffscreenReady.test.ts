@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { originalSendMessage, originalOnMessage } = vi.hoisted(() => ({
@@ -319,5 +322,158 @@ describe("跨上下文消息：只读消息才允许自动重试（B-9）", () =
 
     await expect(sendMessage("getSiteUserInfoResult", "audiences")).rejects.toBe(handlerError);
     expect(originalSendMessage.mock.calls).toHaveLength(2);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*        TESTS-2：extensionPageOnlyMessages 名单的完备性守卫（原为零覆盖）        */
+/* -------------------------------------------------------------------------- */
+
+const messagesSource = readFileSync(resolve(process.cwd(), "src/entries/messages.ts"), "utf8");
+
+/** 解析 `const <name> = new Set<...>([ ... ])` 里的字符串字面量集合 */
+function parseSetLiteral(name: string): string[] {
+  const declStart = messagesSource.indexOf(`const ${name} = new Set`);
+  expect(declStart, `messages.ts 里应存在 ${name}`).toBeGreaterThan(-1);
+
+  const bodyStart = messagesSource.indexOf("([", declStart);
+  const bodyEnd = messagesSource.indexOf("]);", bodyStart);
+  expect(bodyStart).toBeGreaterThan(-1);
+  expect(bodyEnd).toBeGreaterThan(bodyStart);
+  const body = messagesSource.slice(bodyStart + 2, bodyEnd);
+
+  const values = [...body.matchAll(/"([^"]+)"/g)].map((match) => match[1]!);
+  // 自证：解析结果必须与块内字符串字面量数量一致（解析器不能吞条目/把注释当条目）
+  const rawQuoteCount = (body.match(/"/g) ?? []).length;
+  expect(values.length * 2, `${name} 的解析结果与源码字符串数量不一致`).toBe(rawQuoteCount);
+  expect(values.length, `${name} 不应为空`).toBeGreaterThan(0);
+  return values;
+}
+
+/** 解析 `interface ProtocolMap { ... }` 的全部消息名（运行时拿不到：它是纯类型） */
+function parseProtocolMessageNames(): string[] {
+  const match = messagesSource.match(/interface ProtocolMap \{([\s\S]*?)\n\}/);
+  expect(match, "messages.ts 里应有 interface ProtocolMap").toBeTruthy();
+  const names = [...match![1]!.matchAll(/^\s{2}([A-Za-z_$][\w$]*)\s*(?:<[^>(]*>)?\s*\(/gm)].map((m) => m[1]!);
+  expect(names.length, "ProtocolMap 消息名解析不应为空").toBeGreaterThan(50);
+  return names;
+}
+
+/**
+ * 管理类消息的命名模式：读写扩展存储 / Cookie / 备份 / DNR / 原生桥接。
+ *
+ * 为什么用「模式 + 豁免表」而不是手抄一份 29 项清单：手抄清单在新增消息时同样会漏
+ * （正是 TESTS-2 要拦的那类回归）；模式规则下新加一个 `deleteBackupServer` /
+ * `patchExtStoragePathBulk` 只要不登记就会让本用例变红，迫使维护者显式决策。
+ */
+const ADMIN_MESSAGE_PATTERNS = [/ExtStorage/, /Cookie/i, /Backup/, /DNR/, /^nativeBridge/];
+
+/** 必须留在 extensionPageOnlyMessages 之外的消息（逐条给出理由） */
+const ADMIN_PATTERN_EXEMPTIONS: Record<string, string> = {
+  getExtStoragePath: "由包装器里的 isContentScriptStoragePathAllowed 做路径白名单，内容脚本可用但不能整份读取",
+  getBackupHistory: "只读：列出远端备份文件名，不上传、不改配置",
+  // checkAndExtendCookies 已于 src/entries/messages.ts:341 登记进 extensionPageOnlyMessages，
+  // 原「已知缺口」豁免已删除：留在这里会让「有人把它从名单里删掉」的回归永远保持绿色（TESTS-2）。
+};
+
+describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性（TESTS-2）", () => {
+  const contentScriptSender = {
+    id: "extension-id",
+    url: "https://pt.example.com/details.php",
+    tab: { id: 1 },
+  };
+
+  beforeEach(() => {
+    originalOnMessage.mockReset();
+    vi.stubGlobal("chrome", {
+      runtime: {
+        id: "extension-id",
+        getURL: (path: string) => `chrome-extension://extension-id/${path}`,
+      },
+    });
+  });
+
+  it("两个名单都只引用真实消息，且解析结果与源码字符串数量一致（自证）", () => {
+    const protocolNames = parseProtocolMessageNames();
+    const offscreenTypes = parseSetLiteral("offscreenMessageTypes");
+    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+
+    expect(extensionOnlyTypes.length).toBeGreaterThan(0);
+    for (const type of [...offscreenTypes, ...extensionOnlyTypes]) {
+      expect(protocolNames, `${type} 不是 ProtocolMap 里的消息（拼写错误或已删除）`).toContain(type);
+    }
+    // 两个名单都不该有重复项
+    expect(new Set(offscreenTypes).size).toBe(offscreenTypes.length);
+    expect(new Set(extensionOnlyTypes).size).toBe(extensionOnlyTypes.length);
+  });
+
+  it("会读写扩展存储 / Cookie / 备份 / DNR / 原生桥接的消息都必须登记（豁免表逐条给理由）", () => {
+    const protocolNames = parseProtocolMessageNames();
+    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+
+    const offenders = protocolNames.filter(
+      (type) =>
+        ADMIN_MESSAGE_PATTERNS.some((pattern) => pattern.test(type)) &&
+        !extensionOnlyTypes.includes(type) &&
+        !(type in ADMIN_PATTERN_EXEMPTIONS),
+    );
+    expect(
+      offenders,
+      "新增的管理类消息未登记进 extensionPageOnlyMessages（内容脚本发送方可直接调用）；" +
+        "若确实只读/无害，请加进 ADMIN_PATTERN_EXEMPTIONS 并写明理由",
+    ).toEqual([]);
+
+    // 豁免表不能腐烂：每条豁免仍必须是真实消息名，且仍匹配管理类模式
+    for (const [type, reason] of Object.entries(ADMIN_PATTERN_EXEMPTIONS)) {
+      expect(protocolNames, `${type} 已不是消息名，豁免过期`).toContain(type);
+      expect(
+        ADMIN_MESSAGE_PATTERNS.some((pattern) => pattern.test(type)),
+        `${type} 已不匹配管理类模式，豁免过期`,
+      ).toBe(true);
+      expect(reason.length, `${type} 的豁免必须写明理由`).toBeGreaterThan(0);
+    }
+
+    // getExtStoragePath 单独走路径白名单：它绝不能被登记进整份拒绝名单
+    expect(extensionOnlyTypes, "getExtStoragePath 由路径白名单单独校验，不应登记").not.toContain("getExtStoragePath");
+  });
+
+  it("名单里的每一条都真的会拒绝内容脚本发送方（静态名单与运行时判定一致）", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+
+    for (const type of extensionOnlyTypes) {
+      originalOnMessage.mockClear();
+      const handler = vi.fn();
+      onMessage(type as any, handler);
+      const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+      expect(() => wrapped({ data: undefined, sender: contentScriptSender }), `${type} 未拒绝内容脚本`).toThrow(
+        /permission/i,
+      );
+      expect(handler, `${type} 的 handler 不应被调用`).not.toHaveBeenCalled();
+
+      // 扩展页发送方仍应放行（名单只针对内容脚本）
+      wrapped({
+        data: undefined,
+        sender: { id: "extension-id", url: "chrome-extension://extension-id/offscreen.html" },
+      });
+      expect(handler, `${type} 应允许扩展页发送方`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("内容脚本必需的搜索 / 下载类消息没有被误登记", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+
+    for (const type of ["getSiteSearchResult", "getSiteUserConfig", "downloadTorrent", "getClientTorrents"] as const) {
+      expect(extensionOnlyTypes, `${type} 是内容脚本必需能力，不应登记`).not.toContain(type);
+
+      originalOnMessage.mockClear();
+      const handler = vi.fn(async () => "ok");
+      onMessage(type as any, handler);
+      const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+      await expect(wrapped({ data: undefined, sender: contentScriptSender })).resolves.toBe("ok");
+      expect(handler).toHaveBeenCalledTimes(1);
+    }
   });
 });

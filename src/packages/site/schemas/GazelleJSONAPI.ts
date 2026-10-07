@@ -2,7 +2,14 @@ import type { AxiosResponse } from "axios";
 
 import { GazelleBase } from "./Gazelle";
 import { classifySiteError, extractContent, logMessage, parseTimeWithZone, siteErrorLogData } from "../utils";
-import { EResultParseStatus, type IUserInfo, type ITorrent, type ISiteMetadata, type ISearchInput } from "../types";
+import {
+  EResultParseStatus,
+  type IElementQuery,
+  type IUserInfo,
+  type ITorrent,
+  type ISiteMetadata,
+  type ISearchInput,
+} from "../types";
 
 /**
  * @refs: https://github.com/WhatCD/Gazelle/blob/63b337026d49b5cf63ce4be20fdabdc880112fa3/sections/ajax/index.php#L16
@@ -324,6 +331,41 @@ export default class GazelleJSONAPI extends GazelleBase {
   }
 
   /**
+   * H-6 家族（GazelleJSONAPI）：与 AbstractPrivateSite / Unit3D 的零命中判据对齐。
+   *
+   * 本 schema 的 userInfo 选择器全是 `response.*` 形式的 JSON path，而 assertApiSuccess 只看 `status`，
+   * 因此 `/ajax.php?action=index|user` 返回 HTTP 200 + `{status:"success"}`（没有 response 对象，
+   * 服务端软错误 / 站点改版）时，getFieldsData 会把所有字段回落成 ""；若照常标 success，
+   * 已解析的 uploaded/downloaded/ratio/bonus/seedingSize 会被一次刷新静默替换成空值/0，
+   * 并写进当日历史与 metadata.lastUserInfo。
+   *
+   * 触发条件：本次请求涉及的 selector 字段数 > 0，且真正命中数为 0（成功响应里至少要有 response.id /
+   * response.userstats.* 之类的真实值）。命中判定看原始值，因此「字段确实存在且值为 0」仍是命中。
+   */
+  protected assertUserInfoFieldsMatched(doc: object, fields: (keyof IUserInfo)[]): void {
+    const selectors = (this.metadata.userInfo?.selectors ?? {}) as Record<string, IElementQuery | undefined>;
+
+    let declaredSelectorFields = 0;
+    let matchedSelectorFields = 0;
+    for (const field of fields) {
+      const elementQuery = selectors[field as string];
+      if (!elementQuery) continue;
+
+      declaredSelectorFields++;
+      if (this.hasFieldMatch(doc, elementQuery)) {
+        matchedSelectorFields++;
+      }
+    }
+
+    if (declaredSelectorFields > 0 && matchedSelectorFields === 0) {
+      // noinspection ExceptionCaughtLocallyJS
+      throw new Error(
+        `用户信息接口未命中任何字段（${declaredSelectorFields} 个 selector 全部落空），接口可能已改版或返回了缺少 response 的软错误响应`,
+      );
+    }
+  }
+
+  /**
    * L-3：实例级记忆（含空凭据）。空凭据刻意不写 12h 持久缓存，但若连实例内也不记，
    * 一页 N 条结果就会各发一次 /ajax.php?action=index（每个 transform*Torrent 都会调用本方法）。
    */
@@ -535,7 +577,7 @@ export default class GazelleJSONAPI extends GazelleBase {
   protected async getUserBaseInfo(): Promise<Partial<IUserInfo>> {
     const apiInfo = this.assertApiSuccess(await this.requestApiInfo(), "index");
 
-    return this.getFieldsData(apiInfo, this.metadata.userInfo!.selectors!, [
+    const fields = [
       "id",
       "name",
       "messageCount",
@@ -546,7 +588,12 @@ export default class GazelleJSONAPI extends GazelleBase {
       "bonus",
       "bonusPerHour",
       "seedingSize",
-    ] as (keyof IUserInfo)[]) as Partial<IUserInfo>;
+    ] as (keyof IUserInfo)[];
+
+    // H-6 家族：`{status:"success"}` 但没有 response 时不能把全空字段当成功写回（见 assertUserInfoFieldsMatched）
+    this.assertUserInfoFieldsMatched(apiInfo, fields);
+
+    return this.getFieldsData(apiInfo, this.metadata.userInfo!.selectors!, fields) as Partial<IUserInfo>;
   }
 
   protected async getUserExtendInfo(userId: number): Promise<Partial<IUserInfo>> {
@@ -557,7 +604,7 @@ export default class GazelleJSONAPI extends GazelleBase {
     });
     const apiUser = this.assertApiSuccess(data, "user");
 
-    return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, [
+    const fields = [
       "joinTime",
       "seeding",
       "uploads",
@@ -565,7 +612,12 @@ export default class GazelleJSONAPI extends GazelleBase {
       "groups",
       "invited",
       "lastAccessAt",
-    ] as (keyof Partial<IUserInfo>)[]) as Partial<IUserInfo>;
+    ] as (keyof IUserInfo)[];
+
+    // H-6 家族：action=user 同样只查了 status，零命中时 joinTime/lastAccessAt 等会被空值覆盖
+    this.assertUserInfoFieldsMatched(apiUser, fields);
+
+    return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, fields) as Partial<IUserInfo>;
   }
 
   protected cleanupUserInfo(flushUserInfo: IUserInfo): IUserInfo {

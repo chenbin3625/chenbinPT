@@ -66,6 +66,8 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
+      // Transmission 文件优先级只有 -1/0/1（low/normal/high），没有 Highest 档（DOWNLOADER-2）
+      unsupportedPriorities: ["highest"],
     },
     PeerList: {
       allowed: true,
@@ -467,7 +469,10 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     }
 
     try {
-      const { data } = await this.request<AddTorrentResponse>("torrent-add", addTorrentOptions);
+      const { data } = await this.request<AddTorrentResponse>("torrent-add", addTorrentOptions, 1, {
+        // 重复种子会以 result: "duplicate torrent" 返回，需由下面的逻辑判读，不能被 request 当成失败（DOWNLOADER-6）
+        allowResultError: true,
+      });
 
       /**
        * torrent-add 的 arguments 里只会有 torrent-added 或 torrent-duplicate：
@@ -881,9 +886,21 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     return true;
   }
 
-  async request<T>(method: TransmissionRequestMethod, args: any = {}, retries = 1): Promise<AxiosResponse<T>> {
+  /**
+   * 发送 RPC 请求。
+   *
+   * `options.allowResultError` 供 torrent-add 使用：重复种子在 rpc14 会以 `result: "duplicate torrent"`
+   * 返回（不是 success），需要调用方自行判读成成功语义（DOWNLOADER-6）。
+   */
+  async request<T>(
+    method: TransmissionRequestMethod,
+    args: any = {},
+    retries = 1,
+    options: { allowResultError?: boolean } = {},
+  ): Promise<AxiosResponse<T>> {
+    let response: AxiosResponse<T>;
     try {
-      return await axios.post<T>(
+      response = await axios.post<T>(
         this.address,
         {
           method: method,
@@ -904,10 +921,22 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       if (isAxiosError(error) && error?.response?.status === 409) {
         if (retries <= 0) throw error;
         this.sessionId = error.response.headers["x-transmission-session-id"]; // lower cased header in axios
-        return await this.request<T>(method, args, retries - 1);
+        return await this.request<T>(method, args, retries - 1, options);
       } else {
         throw error;
       }
     }
+
+    /**
+     * DOWNLOADER-6：上游 rpc-spec 明确「请求失败时 RPC 服务仍返回 HTTP 200」，错误串写在 `result` 里
+     * （legacy 协议）。此前只有 addTorrent 读取 result，暂停/删除/校验/tracker 增删等一律
+     * `await this.request(...); return true`，失败被当成成功。这里统一收口，避免各方法各写一遍。
+     */
+    const result = (response.data as TransmissionBaseResponse | undefined)?.result;
+    if (!options.allowResultError && result !== "success") {
+      throw new Error(`Transmission RPC ${method} failed: ${String(result ?? "unknown error")}`);
+    }
+
+    return response;
   }
 }

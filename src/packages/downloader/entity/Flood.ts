@@ -70,6 +70,9 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
+      // 上游 TorrentContentPriority 只有 DO_NOT_DOWNLOAD/NORMAL/HIGH 三档（DOWNLOADER-2）：
+      // 不声明的话 UI 会提供「低」「最高」，选择后被静默降级成 Normal/High
+      unsupportedPriorities: ["low", "highest"],
     },
     PeerList: {
       allowed: true,

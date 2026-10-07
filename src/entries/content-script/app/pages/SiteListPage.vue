@@ -100,32 +100,46 @@ async function handleLinkCopyMulti() {
 
 const remoteDownloadDialogData = inject<IRemoteDownloadDialogData>("remoteDownloadDialogData")!;
 
-function handleRemoteDownloadMulti(isDefaultSend = false) {
-  parseListPage().then(({ torrents }) => {
+// CONTENTSCRIPT-3：parseListPage() 会 await 引擎解析 / host 校验，失败时必须给出 UI 反馈；
+// 原来这两条 .then 链没有 catch/finally，解析抛错时按钮静默无反应并留下 unhandled rejection
+// （同文件的 handleLocalDownloadMulti/handleLinkCopyMulti 都显式处理了失败）。
+async function handleRemoteDownloadMulti(isDefaultSend = false) {
+  try {
+    const { torrents } = await parseListPage();
     if (torrents.length > 0) {
       remoteDownloadDialogData.torrents = torrents;
       remoteDownloadDialogData.isDefaultSend = isDefaultSend;
       remoteDownloadDialogData.show = true;
     }
-  });
+  } catch (e) {
+    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+  }
 }
 
 const parsedTorrents = shallowRef<ITorrent[]>([]);
 const showAdvanceListModuleDialog = ref<boolean>(false);
 
-function handleAdvanceListModule() {
-  parseListPage().then(({ torrents }) => {
+async function handleAdvanceListModule() {
+  try {
+    const { torrents } = await parseListPage();
     if (torrents.length > 0) {
       parsedTorrents.value = torrents;
       showAdvanceListModuleDialog.value = true;
     }
-  });
+  } catch (e) {
+    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+  }
 }
 
 async function handleSearch() {
-  let keywords = (await parseListPage()).keywords;
+  // CONTENTSCRIPT-3：await parseListPage() 同样要处理失败，否则快捷搜索的点击会留下 unhandled rejection
+  try {
+    let keywords = (await parseListPage()).keywords;
 
-  await doKeywordSearch(keywords);
+    await doKeywordSearch(keywords);
+  } catch (e) {
+    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+  }
 }
 </script>
 

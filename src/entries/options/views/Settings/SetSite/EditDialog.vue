@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { nextTick, provide, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { cloneDeep } from "es-toolkit";
 import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -32,10 +33,12 @@ async function patchSite() {
 }
 
 function dialogEnter() {
-  storedSiteUserConfig.value = {
+  // OPTIONSSETTINGS-1：必须深拷贝。merge/inputSetting 等嵌套对象若与 store 共用引用，
+  // 对话框内编辑会实时改写 store（点「取消」不回滚），且之后任一次 $save() 会把改动落盘。
+  storedSiteUserConfig.value = cloneDeep({
     valid: false,
     ...(metadataStore.sites[props.siteId] ?? {}),
-  };
+  });
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。

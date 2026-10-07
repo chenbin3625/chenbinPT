@@ -125,4 +125,41 @@ describe("fixAllStoredUserInfo（B-18）", () => {
     expect((backing.get("userInfo") as any).mteam["2026-10-01"]).toEqual({ ratio: 1.5, seeding: 3 });
     expect(getCallCount).toBe(writesBefore + 1); // 只多了一次链内读取
   });
+
+  it("BACKGROUNDSHARED-6：null / 非对象条目不再击穿整轮修复，且不再静默", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await storageLocal.set({
+        userInfo: {
+          brokenSite: null, // 站点值本身是坏数据
+          mteam: { "2026-10-01": null }, // 某天的记录是坏数据
+          btsite: { "2026-10-02": { ratio: "2.5" } }, // 同批数据里的正常站点
+        },
+      });
+
+      await fixAllStoredUserInfo();
+
+      const stored = backing.get("userInfo") as any;
+      // 修复前：第一个坏条目就抛 TypeError，整轮所有站点/日期的修复全部作废。
+      // 现在同一批数据里的正常站点仍被修好：
+      expect(stored.btsite["2026-10-02"]).toEqual({ ratio: 2.5 });
+      // 坏条目原样保留（直接丢弃等于静默删用户历史）
+      expect(stored.brokenSite).toBeNull();
+      expect(stored.mteam["2026-10-01"]).toBeNull();
+      // 跳过必须可见（本仓库约定走 logBackgroundError → console.warn + logger 消息）
+      expect(warnSpy.mock.calls.some(([message]) => String(message).includes("skipped"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("BACKGROUNDSHARED-6：只有坏条目、没有任何可修复项时不写存储", async () => {
+    await storageLocal.set({ userInfo: { brokenSite: null } });
+    const writesBefore = getCallCount;
+
+    await fixAllStoredUserInfo();
+
+    expect((backing.get("userInfo") as any).brokenSite).toBeNull();
+    expect(getCallCount).toBe(writesBefore + 1); // 只有链内读取，没有多余的整份写回
+  });
 });

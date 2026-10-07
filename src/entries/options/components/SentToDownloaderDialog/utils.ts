@@ -1,6 +1,7 @@
 import { h, ref } from "vue";
 import { Input, type Modal } from "ant-design-vue";
 import type { ITorrent } from "@ptd/site";
+import type { IDownloadTorrentResult } from "@/shared/types.ts";
 import type { TDownloaderKey } from "@/shared/types/storages/metadata.ts";
 import type { CAddTorrentOptions } from "@ptd/downloader";
 import { formatDate } from "@/options/utils.ts";
@@ -141,8 +142,19 @@ export async function sendTorrentToDownloader(
   if (status.length > 0) {
     const pendingCount = status.filter((x) => x?.downloadStatus === "pending").length;
     const failedCount = status.filter((x) => x?.downloadStatus === "failed").length;
+    // DOWNLOADER-8：`warningMessage` 表示「推送成功但下载器设置未生效」（如 uTorrent 直发 http 链接
+    // 拿不到 infoHash，暂停 / 标签 / 上传限速被跳过）。这类结果既不是 failed 也不是 pending，若只按
+    // 上面两类统计，搜索页的推送汇总就会把它当普通成功，用户看不到「设置没生效」。
+    const warningCount = status.filter((x) => {
+      const result = x as IDownloadTorrentResult | undefined;
+      return (
+        result?.downloadStatus !== "failed" && result?.downloadStatus !== "pending" && Boolean(result?.warningMessage)
+      );
+    }).length;
     const successCount = status.length - failedCount;
-    const color = failedCount > 0 ? "warning" : "success";
+    const color = failedCount > 0 || warningCount > 0 ? "warning" : "success";
+    const warningSummary =
+      warningCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryWarning", { count: warningCount }) : "";
 
     runtimeStore.showSnakebar(
       successCount > 0
@@ -151,7 +163,7 @@ export async function sendTorrentToDownloader(
             pending:
               pendingCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryPending", { count: pendingCount }) : "",
             failed: failedCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryFailed", { count: failedCount }) : "",
-          })
+          }) + warningSummary
         : i18n.t("SentToDownloaderDialog.noTasks"),
       { color },
     );

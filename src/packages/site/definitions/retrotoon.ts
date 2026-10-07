@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/retrotoon.yml
  */
 import type { ISiteMetadata } from "../types";
-import { buildCategoryOptionsFromDict, parseSizeString, parseValidTimeString } from "../utils";
+import { buildCategoryOptionsFromDict, parseSizeString } from "../utils";
 
 const categoryMap: Record<number, string> = {
   1: "Retro",
@@ -114,8 +114,9 @@ export const siteMetadata: ISiteMetadata = {
       },
       time: {
         selector: "td:nth-child(6)",
-        elementProcess: (element: HTMLElement) =>
-          parseValidTimeString(element.textContent?.replace(/\s+/g, "") ?? "", ["yyyy-MM-ddHH:mm:ss"]),
+        // SITECORE-1：elementProcess 里拿不到站点时区，只做文本归一化，解析交给具名 parseTime
+        elementProcess: (element: HTMLElement) => element.textContent?.replace(/\s+/g, "") ?? "",
+        filters: [{ name: "parseTime", args: ["yyyy-MM-ddHH:mm:ss"] }],
       },
       size: { selector: "td:nth-child(7)", filters: [{ name: "parseSize" }] },
       completed: { selector: "td:nth-child(8)", filters: [{ name: "parseNumber" }] },

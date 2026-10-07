@@ -233,7 +233,9 @@ export default class S3 extends AbstractBackupServer<S3Config> {
       // HEAD 请求到 bucket 根目录，S3 返回 200 即表示连通
       await this.s3Request("HEAD", "");
       return true;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：失败由返回值表达，但必须记录原因（签名错误、桶不存在、网络不可达等）
+      this.logBackupFailure("ping", e);
       return false;
     }
   }
@@ -282,7 +284,8 @@ export default class S3 extends AbstractBackupServer<S3Config> {
       });
       return true;
     } catch (e) {
-      console?.warn("S3 addFile failed:", e);
+      // SERVERSSOCIAL-3（P1-5）：旧实现只写 console.warn，生产环境看不到；改为统一日志出口
+      this.logBackupFailure("addFile", e);
       return false;
     }
   }
@@ -298,7 +301,9 @@ export default class S3 extends AbstractBackupServer<S3Config> {
       const objectKey = `${this.keyPrefix}${path}`;
       await this.s3Request("DELETE", objectKey);
       return true;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：删除失败同样要能看到原因（权限不足、对象被锁等）
+      this.logBackupFailure("deleteFile", e);
       return false;
     }
   }

@@ -148,6 +148,33 @@ describe("buildContextMenusContextKey", () => {
     const base = buildContextMenusContextKey(makeInput());
     expect(buildContextMenusContextKey(makeInput({ siteNameMap: { mteam: "M-Team 新名" } }))).not.toBe(base);
   });
+
+  it("BACKGROUNDSHARED-1：downloader.feature.DefaultAutoStart 变化必须让 key 变化（菜单闭包读它决定 addAtPaused）", () => {
+    const base = buildContextMenusContextKey(makeInput());
+
+    const autoStartChanged = {
+      ...baseMetadata,
+      downloaders: {
+        qb: { ...baseMetadata.downloaders.qb, feature: { DefaultAutoStart: false } },
+      },
+    };
+    expect(buildContextMenusContextKey(makeInput({ metadata: autoStartChanged }))).not.toBe(base);
+  });
+
+  it("BACKGROUNDSHARED-4：excludedSites 与站点过滤开关变化必须让 key 变化（否则改了排除也不会重建菜单）", () => {
+    const base = buildContextMenusContextKey(makeInput());
+
+    const excludedChanged = {
+      ...baseMetadata,
+      downloaders: {
+        qb: { ...baseMetadata.downloaders.qb, excludedSites: ["mteam"] },
+      },
+    };
+    expect(buildContextMenusContextKey(makeInput({ metadata: excludedChanged }))).not.toBe(base);
+
+    const filterEnabled = { ...baseConfig, download: { allowDownloaderFilterForSite: true } };
+    expect(buildContextMenusContextKey(makeInput({ config: filterEnabled }))).not.toBe(base);
+  });
 });
 
 describe("createCoalescingDebounce", () => {

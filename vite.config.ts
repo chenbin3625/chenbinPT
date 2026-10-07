@@ -21,7 +21,9 @@ function base_path(_path = "") {
 
 const target = process.env.TARGET || "chrome";
 const permissions = [
-  "activeTab",
+  // INFRA-6：不声明 activeTab —— 全仓没有任何依赖「用户手势后临时访问标签页」的调用
+  // （action.onClicked 只调 openOptionsPage），tab.url 由 host_permissions `*://*/*` 覆盖。
+  // 多余权限会进入商店审核/安装提示的权限面，按最小权限原则移除。
   "alarms",
   "clipboardWrite",
   "contextMenus",
@@ -222,7 +224,11 @@ export default defineConfig({
               // 并计入站点访问统计。此处产物的 `__vite__mapDeps` 全部为 js 依赖、无 css 依赖，
               // 关掉预加载后辅助函数退化为纯 `import()` 包装（仅少一个无效提示，不影响模块解析），
               // 站点侧不再出现任何发往自身 /vendor/... 的请求。
-              // 仅作用于 cs-app 入口所在的多页构建；offscreen 等扩展页面文档不受影响。
+              // ⚠️ 该设置作用于 cs-app 入口所在的**整个 HTML 多页构建**：options/index.html、offscreen.html
+              // 与 cs-app 共用同一份 htmlViteConfig（vite-plugin-web-extension 把 manifest.options_ui.page
+              // 与 additionalInputs 的 .html 一起交给 getMultiPageConfig）。因此管理页与 offscreen 文档
+              // 也会一并失去 `<link rel="modulepreload">` 提示（每页首屏多一次串行 RTT）——这是为消除
+              // 站点侧必然 404 已接受的代价，但**不要**以为只有 cs-app 受影响（INFRA-5）。
               config.build.modulePreload = false;
             },
           },

@@ -160,10 +160,9 @@ export const siteMetadata: ISiteMetadata = {
         selector: ["td:nth-last-child(2) > div"],
         filters: [{ name: "parseFuzzyTime" }],
       },
-      status: {
-        text: ETorrentStatus.unknown,
-        selector: "td:nth-last-child(2) > div",
-      },
+      // D-33：该单元格是日期列（与 time 同一选择器），不能当状态解析 —— 否则 status 变成日期字符串，
+      // 前端渲染出「做种中」图标、按状态筛选永不匹配。站点列表页不提供个人做种状态
+      status: { text: ETorrentStatus.unknown },
       tags: [
         {
           name: "Free",

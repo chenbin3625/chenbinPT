@@ -210,6 +210,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "流行(Pop)", value: 13 },
         { name: "摇滚(Rock)", value: 17 },
         { name: "电子(Electronic)", value: 21 },
+        // D-27：站点页面上「说唱(Rap)」与「英字」都是 tag 58（站点侧的重复，无公开映射可校正），
+        // 两项保留以便按名称识别，但勾选任一项都等价于按 tag 58 筛选
         { name: "说唱(Rap)", value: 58 },
         { name: "爵士(Jazz)", value: 18 },
         { name: "古典(Classical)", value: 14 },

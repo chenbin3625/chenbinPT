@@ -392,7 +392,8 @@ export const siteMetadata: ISiteMetadata = {
       name: "Power User",
       interval: "P4W",
       uploaded: "50GB",
-      downloaded: "5GB", // 官网未列出
+      // DEFS2-11：原先的 downloaded: "5GB" 无站点依据（注释自认「官网未列出」），
+      // downloaded 是「至少」类门槛，会把上传/ratio 达标但下载不足 5GB 的用户硬性压回 id1
       ratio: 1.05,
       privilege: "Are able to make requests for torrents, view the Top 10, and apply for Uploader status.",
     },

@@ -12,7 +12,6 @@ import {
 } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite";
 import { buildCategoryOptionsFromList, createDocument, parseSizeString } from "../utils";
-import { parseValidTimeString } from "../utils/datetime.ts";
 
 export const siteMetadata: ISiteMetadata = {
   id: "aidoruonline",
@@ -118,7 +117,8 @@ export const siteMetadata: ISiteMetadata = {
       link: { selector: ["a[href*='download.php?id=']"], attr: "href" },
       time: {
         selector: ["td.ttable_timestamp"],
-        filters: [(query: string) => parseValidTimeString(query, ["MMddyy HH:mm:ss"])],
+        // SITECORE-1：站点墙上时间交给具名 parseTime，由 runQueryFilters 按 metadata.timezoneOffset 换算
+        filters: [{ name: "parseTime", args: ["MMddyy HH:mm:ss"] }],
       },
       size: { selector: ["td.ttable_size"], filters: [{ name: "parseSize" }] },
       author: { selector: ["a[href*='account-details.php?id=']"] },

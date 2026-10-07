@@ -18,8 +18,17 @@
 
 import axios, { AxiosRequestConfig } from "axios";
 import CryptoJS from "crypto-js";
+import { omit } from "es-toolkit";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { getBackupRequestTimeout, localSort, decryptData, encryptData } from "../utils.ts";
+import {
+  getBackupRequestTimeout,
+  localSort,
+  decryptData,
+  encryptData,
+  setBackupWarnings,
+  stripProtoKeys,
+  validateBackupPayload,
+} from "../utils.ts";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import {
   IBackupConfig,
@@ -97,7 +106,8 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       const pingReq = await this.request<{ url?: string }>("");
       return typeof pingReq.data?.url === "string";
     } catch (e) {
-      console?.warn(e);
+      // SERVERSSOCIAL-3（P1-5）：旧实现只写 console.warn，生产环境看不到；失败原因要能定位（gist_id/token 错误等）
+      this.logBackupFailure("ping", e);
     }
     return false;
   }
@@ -123,6 +133,16 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
   }
 
   async addFile(fileName: string, file: IBackupData): Promise<boolean> {
+    // SERVERSSOCIAL-2：不再用非机密的 gist_id 派生「默认加密」密钥（旧实现等于用字面量 `|<gist_id>`
+    // 当口令，知道 gist 链接的人都能解密，而 manifest 仍宣称 encryption: true）。
+    // 未设置备份加密密钥时如实退化为明文 JSON（与 backupDataToJSZipBlob 的 zip 路径一致），
+    // 并在 manifest 里写 encryption: false，不再伪造「已加密」。
+    const hasEncryptionKey = typeof this.encryptionKey === "string" && this.encryptionKey !== "";
+    if (!hasEncryptionKey) {
+      // SERVERSSOCIAL-2：明文上传必须留痕，避免用户以为 gist 上的备份受密钥保护
+      logMessage("[Gist] 未设置备份加密密钥，本次备份将以明文 JSON 上传", undefined, "warn");
+    }
+
     let patchFile = {} as Record<string, { content: string } | null>;
 
     const manifest = {
@@ -130,15 +150,17 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       time: new Date().getTime(),
       ...(file.manifest ?? {}),
 
-      encryption: true, // 为 Gist 开启默认加密
+      encryption: hasEncryptionKey,
       fileName,
       files: {},
     } as IGistBackupFileManifest;
 
     const writeFile = {} as Record<string, { content: string } | null>;
-    for (const [key, value] of Object.entries(file)) {
+    // SERVERSSOCIAL-6：backupData 里一定带 manifest，它只是元数据、不是可恢复条目；
+    // 不排除就会额外生成 manifest.txt 并登记进 manifest.files，恢复时被当成未知字段。
+    for (const [key, value] of Object.entries(omit(file, ["manifest"]))) {
       const writeFileName = `${key}.${manifest.encryption ? "txt" : "json"}`;
-      const fileContent = encryptData(value, `${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`, key);
+      const fileContent = hasEncryptionKey ? encryptData(value, this.encryptionKey, key) : JSON.stringify(value);
       manifest.files[key] = { name: writeFileName, hash: CryptoJS.MD5(fileContent).toString() };
       writeFile[writeFileName] = { content: fileContent };
     }
@@ -166,6 +188,8 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       });
       return true;
     } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：上传失败必须留下原因（token 权限不足、gist 被删、网络中断等）
+      this.logBackupFailure("addFile", e);
       return false;
     }
   }
@@ -183,10 +207,18 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     }
 
     const result = {} as IBackupData;
+    const warnings: string[] = [];
 
-    const manifest = JSON.parse(fileManifestContent) as IGistBackupFileManifest;
-    for (const [key, value] of Object.entries(manifest.files)) {
-      const { hash: manifestContentHash, name: fileName } = value;
+    // SERVERSSOCIAL-5：_manifest.json 是不可信输入（他人分享/被篡改的 gist），
+    // 与 zip 路径 jsZipBlobToBackupData 对齐，解析时剥离 __proto__
+    const manifest = JSON.parse(fileManifestContent, stripProtoKeys) as IGistBackupFileManifest;
+    for (const [key, value] of Object.entries((manifest.files ?? {}) as Record<string, unknown>)) {
+      // manifest.files[*] 的形状同样来自不可信输入，先确认能安全解构（否则解构 null 会抛 TypeError）
+      if (typeof value !== "object" || value === null || typeof (value as any).name !== "string") {
+        warnings.push(`${key}：manifest 中的条目缺少合法的文件名，已跳过`);
+        continue;
+      }
+      const { hash: manifestContentHash, name: fileName } = value as { hash: string; name: string };
 
       let fileRawContent = files[fileName]?.content;
       if (fileRawContent) {
@@ -200,15 +232,36 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
           throw new Error(`File hash mismatch for ${fileName}.`);
         }
 
+        let payload: unknown;
         try {
-          result[key] = this.decryptData(fileRawContent, key);
+          // SERVERSSOCIAL-2：生产端在未设置备份密钥时会如实写 manifest.encryption=false + 明文 JSON，
+          // 但消费端旧实现无条件走 this.decryptData（候选密钥取自本机配置的加密密钥与 gist_id）。
+          // 一旦用户配置了非空备份密钥（恢复对话框会自动带上），明文既不以密文前缀开头、也过不了
+          // legacy AES，于是一律抛「Failed to decrypt file.」——同一份备份走本地 zip 路径却正常。
+          // 这里对齐 zip 姊妹路径的守卫（utils.ts jsZipBlobToBackupData 的 `!manifest.encryption && encryptionKey`）：
+          // 显式 false 时按明文 JSON 解析；字段缺失时保持旧的解密语义，兼容修复前的历史备份。
+          payload =
+            manifest.encryption === false
+              ? decryptData(fileRawContent, undefined, key)
+              : this.decryptData(fileRawContent, key);
         } catch (e) {
           throw new Error(`Failed to decrypt file.`);
         }
+
+        // SERVERSSOCIAL-5：与 zip 路径同一套结构校验，形状不符的条目丢弃并记录原因，
+        // 而不是把不可信结构原样交给上层
+        const problem = validateBackupPayload(key, payload);
+        if (problem) {
+          warnings.push(`${key}：${problem}，已跳过该条目`);
+          continue;
+        }
+
+        result[key] = payload;
       }
     }
 
     result.manifest = manifest;
+    setBackupWarnings(result, warnings); // 警告挂在 manifest 上，可经消息传递到恢复对话框
     return result;
   }
 
@@ -218,12 +271,14 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
   }
 
   protected override encryptData(data: any): string {
-    const encryptKey = `${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`;
-
-    return encryptData(data, encryptKey);
+    // SERVERSSOCIAL-2：不再把非机密的 gist_id 拼进口令（旧实现未设置密钥时等价于用字面量
+    // `|<gist_id>` 加密）。这里只使用用户真实设置的备份加密密钥；未设置时 encryptData 退化为明文 JSON。
+    return encryptData(data, this.encryptionKey);
   }
 
   protected override decryptData<T = any>(data: string, field = ""): T {
+    // SERVERSSOCIAL-2：`|<gist_id>` 候选密钥仅为兼容修复前上传的旧备份（它们确实是用它加密的），
+    // 新备份不再使用该密钥派生方式。
     const decryptKeys = [`${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`, this.encryptionKey];
 
     for (const key of decryptKeys) {

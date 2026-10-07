@@ -86,7 +86,7 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P15W",
       downloaded: "300GB",
       ratio: 2.05,
-      seedingBonus: 15000,
+      seedingBonus: 150000, // D-28：原写 15000，低于上一级 Elite 的 80000（NexusPHP 默认阶梯为 150000）
       privilege: "得到两个邀请名额；可以在做种/下载/发布的时候选择匿名模式。",
     },
     {
@@ -95,7 +95,7 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P25W",
       downloaded: "500GB",
       ratio: 2.55,
-      seedingBonus: 25000,
+      seedingBonus: 250000, // D-28：原写 25000，同上
       privilege: "可以查看普通日志。",
     },
     {

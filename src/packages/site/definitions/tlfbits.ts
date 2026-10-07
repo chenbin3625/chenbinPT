@@ -1,7 +1,7 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/tlfbits.yml
  */
-import { ETorrentStatus, type ISiteMetadata } from "../types";
+import { type ISiteMetadata } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP.ts";
 
 export const siteMetadata: ISiteMetadata = {
@@ -45,26 +45,11 @@ export const siteMetadata: ISiteMetadata = {
 
   search: {
     ...SchemaMetadata.search,
+    // D-30：这里原先有一段与 tccf.ts 逐字节相同的 status / progress 选择器（按 td[bgcolor] 三个色值判状态），
+    // TLFBits 并无这套配色（Jackett tlfbits.yml 也不解析行内状态），于是状态恒 unknown、进度回落空串。
+    // 去掉后沿用 NexusPHP schema 的默认解析。
     selectors: {
       ...SchemaMetadata.search!.selectors,
-      status: {
-        text: ETorrentStatus.unknown,
-        selector: ["td[bgcolor='#bce672']", "td[bgcolor='#44cef6']", "td[bgcolor='#d0d0d0']"],
-        case: {
-          "td[bgcolor='#bce672']": ETorrentStatus.seeding,
-          "td[bgcolor='#44cef6']": ETorrentStatus.downloading,
-          "td[bgcolor='#d0d0d0']": ETorrentStatus.completed,
-        },
-      },
-      progress: {
-        selector: ["td[bgcolor]"],
-        filters: [
-          (query: string) => {
-            const progressText = query.split("%")[0];
-            return progressText ? parseFloat(progressText) : 0;
-          },
-        ],
-      },
     },
   },
 

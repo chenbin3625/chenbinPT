@@ -115,7 +115,9 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
         url: "https://api.dropboxapi.com/2/users/get_current_account",
       });
       return !!data.account_id;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：失败由返回值表达，但必须记录原因（token 失效、网络不可达等）
+      this.logBackupFailure("ping", e);
       return false;
     }
   }
@@ -131,7 +133,9 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
       });
 
       return !!data.is_downloadable;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：上传失败必须留下原因（空间不足、token 权限不足、网络中断等）
+      this.logBackupFailure("addFile", e);
       return false;
     }
   }
@@ -159,7 +163,9 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
       });
 
       return !data.error_summary;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：删除失败要能看到原因（文件已被移走、token 权限不足等）
+      this.logBackupFailure("deleteFile", e);
       return false;
     }
   }

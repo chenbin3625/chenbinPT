@@ -5,10 +5,26 @@
 import { ISiteMetadata, ITorrent, ISearchInput, ETorrentStatus, type TSchemaMetadataListSelectors } from "../types";
 import { selectElements } from "../utils/selector";
 import Gazelle, { SchemaMetadata, top10PageList } from "../schemas/Gazelle.ts";
-import { createDocument, parseValidTimeString, buildCategoryOptionsFromList } from "../utils.ts";
+import {
+  createDocument,
+  parseValidTimeStringInZone,
+  buildCategoryOptionsFromList,
+  type timezoneOffset,
+} from "../utils.ts";
 
 const nblTimezoneOffset = -11;
 const showPageRegex = /\/torrents\.php\?(?:.*&)?showid=\d+/;
+
+/**
+ * DEFS2-3：详情（种子组）页 overlay 里的 "Uploaded: YYYY-MM-DD HH:MM" 是站点墙上时间，
+ * 必须按站点时区 -11:00 换算成绝对时间戳；原实现先 parseValidTimeString（按宿主时区解析）再手工 -11h，
+ * 结果会随用户所在时区漂移（UTC+8 宿主约偏 -19h）。
+ * 解析失败时返回 0（与 datetime.ts 的失败安全值约定一致），不再把字符串当时间戳往下传。
+ */
+export const parseNblOverlayTime = (dateStr: string, offset: timezoneOffset): number => {
+  const parsed = parseValidTimeStringInZone(dateStr, [], offset);
+  return typeof parsed === "number" ? parsed : 0;
+};
 
 function createOverlayDocument(overlayScriptEl: Element): Document {
   const overlayDocRawStr = overlayScriptEl.textContent.match(/"(.*)"/s)![1];
@@ -117,13 +133,11 @@ export const siteMetadata: ISiteMetadata = {
           },
         ],
       },
-      tags: [
-        {
-          name: "H&R",
-          selector: "*",
-          color: "red",
-        },
-      ],
+      // DEFS2-2 / DEFS1-2 同根因：原先只有一条 selector:"*" 的 H&R 标签（对任意行恒真 → 整站结果全被标 H&R）；
+      // 列表页没有 H&R 徽标（hnrUnsatisfied 是账号维度数据），故删除这条恒真标签。
+      // 但 `tags: []` 会连 Gazelle 共享 tags 一起覆盖掉（Gazelle.ts 的 strong:contains('Freeleech!') → Free），
+      // 等于把「恒真 H&R」换成「什么标签都没有」；这里改为展开共享 tags，保留引擎对 Freeleech 的真实检测。
+      tags: [...(SchemaMetadata.search!.selectors!.tags ?? [])],
 
       ext_tvmaze: {
         selector: "a[href*='showid=']",
@@ -140,14 +154,9 @@ export const siteMetadata: ISiteMetadata = {
         time: {
           text: 0,
           selector: "span.time",
-          filters: [
-            { name: "parseTTL" },
-            (ts: number) => {
-              const offsetMinutes = new Date().getTimezoneOffset();
-              const offsetMs = offsetMinutes * 60 * 1000;
-              return ts + offsetMs + nblTimezoneOffset * 3600000;
-            },
-          ],
+          // DEFS2-3：parseTTL 已产出绝对毫秒戳（datetime.ts 的 parseTimeToLiveToDate），
+          // 再叠加宿主 getTimezoneOffset 与 -11h 会把发布时间平移（UTC+8 宿主约 -19h）。
+          filters: [{ name: "parseTTL" }],
         },
       },
     },
@@ -381,8 +390,7 @@ export default class Nebulance extends Gazelle {
 
         const rightTd = selectElements("td.rightOverlay", overlayDoc)[0];
         const dateStr = rightTd.textContent.match(/Uploaded:\s*([0-9-]+\s+[0-9:]+)/)![1];
-        const parsedTime = parseValidTimeString(dateStr) as number;
-        const time = parsedTime + nblTimezoneOffset * 3600000;
+        const time = parseNblOverlayTime(dateStr, this.metadata.timezoneOffset!);
 
         const cat = this.getFieldData(tr, categorySelector);
         if (cat) currentCategory = cat;
@@ -391,7 +399,8 @@ export default class Nebulance extends Gazelle {
           {
             title,
             time,
-            tags: [{ name: "H&R", color: "red" }],
+            // DEFS2-2：不要给整个种子组的每一行硬写 H&R；列表/overlay 都没有 H&R 徽标
+            tags: [],
             category: currentCategory,
             ext_tvmaze: tvMazeId,
           },

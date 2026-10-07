@@ -5,7 +5,6 @@ import { set } from "es-toolkit/compat";
 
 import { type ISiteMetadata } from "../types.ts";
 import { SchemaMetadata, CategorySpstate, CategoryInclbookmarked } from "../schemas/NexusPHP.ts";
-import { parseValidTimeString } from "../utils.ts";
 import { selectElements } from "../utils/selector";
 
 export const siteMetadata: ISiteMetadata = {
@@ -147,15 +146,15 @@ export const siteMetadata: ISiteMetadata = {
           let time: number | string = 0;
           try {
             time = el.getAttribute("title") || el.dataset.originalTitle || 0;
-            if (time) {
-              time = parseValidTimeString(time as string);
-            }
+            // SITECORE-1：elementProcess 里拿不到站点时区，字符串原样返回，解析交给具名 parseTime
           } catch {
             // 该行没有可解析的时间属性时保持 time 的原值（可能是 0/原始字符串），
             // 由上层按「未知时间」处理；此处不中断整页解析。
           }
           return time;
         },
+        // SITECORE-1：具名 parseTime 由 runQueryFilters 按 metadata.timezoneOffset 换算
+        filters: [{ name: "parseTime" }],
       },
       size: { selector: "div.row > div:nth-child(3)", filters: [{ name: "parseSize" }] },
       completed: { selector: "div.row > div:nth-child(4)" },

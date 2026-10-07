@@ -7,7 +7,7 @@ import { set } from "es-toolkit/compat";
 
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import { SchemaMetadata } from "../schemas/NexusPHP.ts";
-import { parseSizeString, parseValidTimeString } from "../utils";
+import { parseSizeString } from "../utils";
 import { type ISearchInput, type ISiteMetadata, type ITorrent, type ITorrentTag } from "../types";
 
 const linkQuery = {
@@ -121,12 +121,12 @@ export const siteMetadata: ISiteMetadata = {
             if (queryMatch && queryMatch.length > 2) {
               const [hours, minutes, seconds] = queryMatch[1].split(":");
               const [day, month, year] = queryMatch[2].split("/");
-              return parseValidTimeString(
-                `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")} ${hours}:${minutes}:${seconds}`,
-              );
+              // SITECORE-1：这里只归一化成 "yyyy-MM-dd HH:mm:ss"，时区换算交给具名 parseTime
+              return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")} ${hours}:${minutes}:${seconds}`;
             }
             return "";
           },
+          { name: "parseTime" },
         ],
       },
       size: { selector: "div:nth-child(7)", filters: [{ name: "parseSize" }] },
@@ -206,20 +206,14 @@ export const siteMetadata: ISiteMetadata = {
           joinTime: {
             selector: ["td:contains('Join'):contains('date') + td"],
             filters: [
-              (query: string) => {
-                query = query.split(" (")[0];
-                return parseValidTimeString(query);
-              },
+              // 只做字符串归一化（split + trim），时区换算交给具名 parseTime（metadata.timezoneOffset）
+              (query: string) => query.split(" (")[0].trim(),
+              { name: "parseTime" },
             ],
           },
           lastAccessAt: {
             selector: ["td:contains('Last'):contains('seen') + td"],
-            filters: [
-              (query: string) => {
-                query = query.split(" (")[0];
-                return parseValidTimeString(query);
-              },
-            ],
+            filters: [(query: string) => query.split(" (")[0].trim(), { name: "parseTime" }],
           },
           seeding: {
             selector: ["td:contains('Seed'):contains('bonus') + td > div:first"],

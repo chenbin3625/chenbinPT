@@ -87,10 +87,48 @@ async function copyTorrentDownloadLink() {
 const localDlTorrentDownloadLinkBtnStatus = ref(false);
 async function localDlTorrentDownloadLink() {
   localDlTorrentDownloadLinkBtnStatus.value = true;
-  await Promise.allSettled(
-    torrentItems.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
-  );
-  localDlTorrentDownloadLinkBtnStatus.value = false;
+  try {
+    const results = await Promise.allSettled(
+      torrentItems.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
+    );
+
+    // OPTIONSOVERVIEW-3：downloadTorrent 失败时不会 reject，而是返回 { downloadStatus: "failed", errorMessage }，
+    // 旧写法完全不看 allSettled 结果，批量本地下载失败时静默无声。按 ReDownloadSelectDialog 的写法统计失败。
+    let failedCount = 0;
+    let firstError = "";
+    // DOWNLOADER-8：downloadTorrent 结果里 warningMessage 表示「推送成功但部分设置未生效」，
+    // 它与失败并列、不能计入失败数，但也必须让用户看到，否则「设置已生效」是错误预期。
+    let warningCount = 0;
+    let firstWarning = "";
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failedCount++;
+        firstError ||= String(result.reason);
+      } else if (result.value?.downloadStatus === "failed") {
+        failedCount++;
+        firstError ||= result.value.errorMessage ?? "";
+      } else if (result.value?.warningMessage) {
+        warningCount++;
+        firstWarning ||= result.value.warningMessage;
+      }
+    }
+
+    // 只在有失败时提示：逐行批量下载成功时也弹提示会淹没有效信息
+    if (failedCount > 0) {
+      const succeeded = results.length - failedCount;
+      const errorDetail = firstError ? ` (${t("DownloadHistory.detail.errorMessage")}: ${firstError})` : "";
+      const message = `${t("contentScript.localDownloadFailed")} (${succeeded}/${results.length})${errorDetail}`;
+      runtimeStore.showSnakebar(message, { color: succeeded > 0 ? "warning" : "error" });
+    } else if (warningCount > 0) {
+      // DOWNLOADER-8：全部成功但有降级告警时也必须提示（此时不会有失败提示，告警否则完全不可见）
+      const warningDetail = firstWarning ? ` (${t("DownloadHistory.detail.warningMessage")}: ${firstWarning})` : "";
+      const message = `${t("DownloadHistory.warningSummary", { count: warningCount })} (${results.length}/${results.length})${warningDetail}`;
+      runtimeStore.showSnakebar(message, { color: "warning" });
+    }
+  } finally {
+    // V-16 同类：取链接/下载中途抛错时也必须复位 loading，否则按钮永久转圈
+    localDlTorrentDownloadLinkBtnStatus.value = false;
+  }
 }
 
 const showDownloadClientDialog = ref(false);

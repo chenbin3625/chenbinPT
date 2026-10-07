@@ -91,11 +91,18 @@ watch(showDialog, (open) => {
 <template>
   <a-modal v-model:open="showDialog" :title="t('MyClient.clientStatusDialog.title')" :width="800">
     <a-list>
+      <!-- OPTIONSOVERVIEW-7：这一行是「只看某个下载器」的唯一入口，挂 @click 的 li 必须自己可聚焦、
+           能报出按压状态并响应键盘，否则纯键盘用户无法使用单个下载器筛选。 -->
       <a-list-item
         v-for="d in enabledDownloaders"
         :key="d.id"
+        role="button"
+        tabindex="0"
+        :aria-pressed="isDownloaderActive(d.id)"
         :style="[isDownloaderActive(d.id) ? { color: 'var(--ptd-primary)' } : undefined, { cursor: 'pointer' }]"
         @click="toggleDownloaderFilter(d.id)"
+        @keydown.enter.prevent="toggleDownloaderFilter(d.id)"
+        @keydown.space.prevent="toggleDownloaderFilter(d.id)"
       >
         <a-list-item-meta>
           <template #avatar>

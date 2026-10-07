@@ -1,7 +1,8 @@
 /**
  * 最小单元测试集（无新增依赖，仅用仓库已有的 tsx 运行）。
  *
- * 运行：npm test
+ * 运行：npm run test:legacy（`npm run verify` 会跑；vitest 的 include 是 `tests/**\/*.test.ts`，
+ * 不会收集这份 .mts，所以 `npm test` 跑不到这 30 条断言 —— 见 TESTS-8）
  *
  * 覆盖本轮性能修复中最容易出错、且无需浏览器环境即可验证的纯逻辑：
  * - chrome.storage 路径读写（P0-2 / P2-17 的基础设施）

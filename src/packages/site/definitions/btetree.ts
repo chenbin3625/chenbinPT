@@ -3,7 +3,7 @@
  */
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import BittorrentSite from "../schemas/AbstractBittorrentSite.ts";
-import { parseValidTimeString } from "../utils/datetime.ts";
+import { parseValidTimeString, parseValidTimeStringInZone } from "../utils/datetime.ts";
 
 const torrentYearMap = [
   // year, min torrent_id in this year
@@ -108,7 +108,17 @@ export default class BtEtree extends BittorrentSite {
     // 按照默认方式获取 MM/dd HH:mm 信息
     const torrentTimeByString = this.getFieldData(row, searchConfig!.searchEntry!.selectors!.time!);
 
-    torrent.time = parseValidTimeString(`${torrentYear}/${torrentTimeByString}`, ["yyyy/MM/dd HH:mm"]) as number;
+    // SITECORE-1：站点的 MM/dd HH:mm 是对应年度的墙上时间，按 metadata.timezoneOffset 解析；
+    // 未声明时区时退回原有的宿主时区解析，避免直接得到 0
+    torrent.time = (
+      this.metadata.timezoneOffset
+        ? parseValidTimeStringInZone(
+            `${torrentYear}/${torrentTimeByString}`,
+            ["yyyy/MM/dd HH:mm"],
+            this.metadata.timezoneOffset,
+          )
+        : parseValidTimeString(`${torrentYear}/${torrentTimeByString}`, ["yyyy/MM/dd HH:mm"])
+    ) as number;
     return torrent;
   }
 }

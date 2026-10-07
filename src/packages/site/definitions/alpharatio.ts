@@ -218,7 +218,13 @@ const tvmazeRe = /^(?:tvmaze\.)?(\d+)$/;
 export default class AlphaRatio extends GazelleJSONAPI {
   protected override async transformUnGroupTorrent(group: torrentBrowseResult): Promise<ITorrent> {
     const torrent = await super.transformUnGroupTorrent(group);
-    torrent.tags?.push({ name: "H&R" });
+    // DEFS2-2 收尾：删除原先对每个种子无条件 push 的 { name: "H&R" }，判据与依据：
+    // (1) 上游 fb79a2a7「feat: add default H&R tags with red color for global sites」(PR #336) 的全站 H&R
+    //     名单只有 asiancinema/beyondhd/blutopia/broadcasthenet/huno/torrentleech，不含 AlphaRatio；
+    // (2) Gazelle browse 接口的 torrentBrowseResult 类型里没有任何 H&R 字段（见 GazelleJSONAPI.ts），
+    //     本站 metadata 亦注明「普通用户无法查看 H&R 信息」，故这不是「按行真实数据判定」，而是对每一行恒真。
+    // 在拿不到按种子的真实 H&R 判据前按 DEFS2-2 删除，避免给所有结果贴误导性标签；若将来接口提供该字段，
+    // 应改为按该字段判定后再补标签。
 
     const imdbId = group.tags.find((tag) => imdbRe.test(tag))?.match(imdbRe)?.[0];
     if (imdbId) {

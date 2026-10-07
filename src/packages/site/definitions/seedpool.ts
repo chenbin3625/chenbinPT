@@ -198,14 +198,10 @@ export const siteMetadata: ISiteMetadata = {
         data: "categoryId",
         filters: [(query: string) => categoryMap[Number(query)]],
       },
-      tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
-        {
-          name: "H&R",
-          selector: "*",
-          color: "red",
-        },
-      ],
+      // DEFS3-5：这里原本追加了 `{ name: "H&R", selector: "*" }`。`*` 对每一行恒为真，
+      // 会让每条结果都被打上红色 H&R（「排除 H&R」筛选会把整站结果滤掉），而 Unit3D 的搜索结果
+      // 列表页并不渲染 H&R 状态（H&R 是「用户 × 种子」的历史状态，没有可用的真实选择器）。
+      // 故直接沿用 Unit3D 引擎的 tags，不再伪造全站 H&R 标签。
     },
   },
 };

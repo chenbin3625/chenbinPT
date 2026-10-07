@@ -54,14 +54,17 @@ export function resolveColor(color?: string | null): string | undefined {
   if (color.startsWith("#") || color.startsWith("rgb") || color.startsWith("hsl") || color.startsWith("var(")) {
     return color;
   }
-  if (semanticColors[color]) return semanticColors[color];
+  // BACKGROUNDSHARED-5：两张表都是对象字面量，普通下标会沿原型链命中
+  // （resolveColor("constructor") 会返回 Object 构造函数、"__proto__" 返回 Object.prototype），
+  // 调用点的 `?? "default"` 兜不住真值，于是标签底色退化成无效样式。查表统一改用 Object.hasOwn。
+  if (Object.hasOwn(semanticColors, color)) return semanticColors[color];
 
   const name = color === "gray" ? "grey" : color;
   const match = name.match(/^(.+?)-((?:lighten|darken|accent)-\d)$/);
-  if (match && palette[match[1]]) {
+  if (match && Object.hasOwn(palette, match[1])) {
     return palette[match[1]][match[2]] ?? palette[match[1]].base;
   }
-  if (palette[name]) return palette[name].base;
+  if (Object.hasOwn(palette, name)) return palette[name].base;
 
   // 其他 CSS 颜色关键字（black/transparent/gold/turquoise 等）直接透传
   return name;

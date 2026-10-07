@@ -247,6 +247,9 @@ const STOP_FIRST_ARG_IS_EVENT = new Set(["a-button", "a-checkbox", "a-radio", "a
 // 非 antd 组件一律放行：本地组件与 @ant-design/icons-vue 的图标都是 inheritAttrs 透传，
 // 原生 click 事件即第一个参数（图标内部只把它挂到 <svg> 上，不重新 emit）。
 const STOP_SAFE_TAGS = new Set([...STOP_FIRST_ARG_IS_EVENT, "a-radio-group", "a-list", "a-list-item"]);
+// a-typography-link 只把 attrs（含 onClick）透传给内部的 `<a>`（node_modules/ant-design-vue/es/typography/Link.js
+// 用 component: 'a' 交给 Base），第一个参数就是原生 MouseEvent，因此同样放行（INFRA-3）。
+STOP_SAFE_TAGS.add("a-typography-link");
 // 扫描所有「标签 + 属性」片段，要求属性区不含 `>`（跨过普通属性后停在标签结束符上），
 // 这样嵌套组件与自闭合标签都能覆盖到，且不会把下一行的标签误吞进来。
 // L-10：`.stop` 可以出现在修饰符链的任意位置（`@click.prevent.stop` / `@click.once.stop`），
@@ -255,8 +258,13 @@ const stopTagRe = /<([A-Za-z][\w.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)@[a-zA-Z:]+(?
 const stopHits = [];
 for (const f of vueFiles) {
   const text = vueText.get(f);
-  // 只扫模板：`<script>` 里的正则/字符串（例如本文件的说明文字）不是模板语法
-  const template = text.slice(text.indexOf("<template"), text.indexOf("</template>") + 11);
+  // 只扫模板：`<script>` 里的正则/字符串（例如本文件的说明文字）不是模板语法。
+  // INFRA-3：原先切片到**首个** `</template>` 就结束，而 SFC 里第一个 `</template>` 通常是内层
+  // `<template #slot>` / `<template v-if>` 的结束标签，模板其余部分的 `.stop` 全部漏检。
+  // 改为扫到**最后一个** `</template>`（根模板结束），让整段模板都在覆盖范围内。
+  const templateStart = text.indexOf("<template");
+  const templateEnd = text.lastIndexOf("</template>");
+  const template = templateStart === -1 || templateEnd === -1 ? "" : text.slice(templateStart, templateEnd + 11);
   for (const m of template.matchAll(stopTagRe)) {
     const tag = m[1];
     if (!/^[a-z]/.test(tag)) continue; // 原生小写标签（button/div/span…）的 click 一定是原生事件，放行

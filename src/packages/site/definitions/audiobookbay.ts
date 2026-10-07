@@ -169,8 +169,15 @@ export const siteMetadata: ISiteMetadata = {
       link: {
         selector: ":self",
         elementProcess: (doc: Document) => {
-          const title = selectElements(titleSelector.selector, doc)[0].textContent;
-          const hash = selectElements("td:contains('Info Hash:') ~ td", doc)[0].textContent;
+          const titleEl = selectElements(titleSelector.selector, doc)[0];
+          const hashEl = selectElements("td:contains('Info Hash:') ~ td", doc)[0];
+          // DEFS1-5：详情页版式变化时这两个选择器会 0 命中，旧代码直接对 undefined 取 textContent 会抛
+          // TypeError（详情页下载链接整段失败）；取不到就返回空串，infoHashToPublicMagnet 也会判空。
+          if (!titleEl || !hashEl) {
+            return "";
+          }
+          const title = titleEl.textContent;
+          const hash = hashEl.textContent;
           const trackers = selectElements("td:contains('Tracker:') ~ td", doc).map((td) => td.textContent);
           return infoHashToPublicMagnet(hash, title, trackers) || "";
         },

@@ -10,7 +10,7 @@ import NexusPHP, {
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
 import { extractTextExcludingByPredicate } from "../utils/html.ts";
-import { parseSizeString, parseValidTimeString } from "../utils";
+import { parseSizeString } from "../utils";
 
 // 清理用户名中的 star 相关元素和文本
 export const cleanUsername = (element: Element): string => {
@@ -314,9 +314,10 @@ export const siteMetadata: ISiteMetadata = {
       time: {
         selector: "div[style='minfo']",
         filters: [
-          (query: string) => {
-            return query ? parseValidTimeString(query.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)![1]) : "";
-          },
+          // DEFS2-5：自定义 filter 里直调 parseValidTimeString 会按宿主时区解析（站点时区 +0800 被丢弃）；
+          // 这里只把文本归一化成时间字符串，时区换算交给具名 parseTime（runQueryFilters 会走 parseValidTimeStringInZone）。
+          (query: string) => query.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)?.[1] ?? "",
+          { name: "parseTime", args: ["yyyy-MM-dd HH:mm:ss"] },
         ],
       },
       size: { selector: ".mbottom .mbelement:nth-child(3)", filters: [{ name: "parseSize" }] },
@@ -418,7 +419,11 @@ export const siteMetadata: ISiteMetadata = {
             attr: "src",
             filters: [
               (query: string) => {
-                const levelId = parseInt(query.match(/\/class\/(\d+)\.gif/)![1]) - 1;
+                // DEFS2-9：选择器只保证 src 含 "class"，不保证匹配 /class/N.gif；
+                // 与 levelId 一致判空，避免过滤器抛错让整个 userInfo 步骤失败（已算出的字段一并丢失）。
+                const match = query.match(/\/class\/(\d+)\.gif/);
+                if (!match) return query;
+                const levelId = parseInt(match[1]) - 1;
                 return levelRequirements.find((x) => x.id === levelId)?.name ?? levelId;
               },
             ],
@@ -434,17 +439,17 @@ export const siteMetadata: ISiteMetadata = {
           joinTime: {
             selector: [".text:contains('加入日期')", ".text:contains('Join date')"],
             filters: [
-              (query: string) => {
-                return parseValidTimeString(query.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)![1]);
-              },
+              // DEFS2-5：同 time —— 只做字符串归一化，时区交给具名 parseTime（metadata.timezoneOffset 为 +0800）
+              (query: string) => query.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)?.[1] ?? "",
+              { name: "parseTime", args: ["yyyy-MM-dd HH:mm:ss"] },
             ],
           },
           lastAccessAt: {
             selector: [".text:contains('最近动向')", ".text:contains('Last Action')"],
             filters: [
-              (query: string) => {
-                return parseValidTimeString(query.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)![1]);
-              },
+              // DEFS2-5：同 time，避免宿主时区进入计算
+              (query: string) => query.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/)?.[1] ?? "",
+              { name: "parseTime", args: ["yyyy-MM-dd HH:mm:ss"] },
             ],
           },
           invites: {

@@ -136,7 +136,12 @@ export const siteMetadata: ISiteMetadata = {
       progress: selectorSearchProgress,
       status: selectorSearchStatus,
       tags: [
-        { name: "H&R", selector: "*", color: "red" },
+        // DEFS3-5（DEFS2-2 同根因，由 defs-2a 的 cross_package_needs 指出）：原先写 `selector: "*"`，
+        // 对每一行恒为真，会把整站结果都标成红色 H&R 并让「排除 H&R」过滤掉全部结果。
+        // DEFS3-5 收尾：整数组替换还会覆盖 NexusPHP 共享 tags（img.hitandrun 的 H&R、img.pro_free* 的
+        // Free/2xFree/2xUp/30%/50%），这里先展开共享 tags，再追加 TJUPT 自有的 `.tag.tag-*` 列表。
+        // 共享里已有 img.hitandrun → H&R，本站不再重复声明同名标签（否则同一徽标会被计入两次）。
+        ...SchemaMetadata.search!.selectors!.tags!,
         { name: "禁转", selector: ".tag.tag-exclusive", color: "red" },
         { name: "官方", selector: ".tag.tag-tjupt", color: "light-blue" },
         { name: "驻站", selector: ".tag.tag-internal-team", color: "green" },

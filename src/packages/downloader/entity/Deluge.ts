@@ -68,6 +68,9 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
+      // Deluge 没有 Highest 档（上游 FILE_PRIORITY 只有 Skip/Low/Normal/High），不声明会让 UI
+      // 提供「最高」档并在映射时静默降级成 High（DOWNLOADER-1）
+      unsupportedPriorities: ["highest"],
     },
     PeerList: {
       allowed: true,
@@ -199,16 +202,27 @@ function normalizeDelugeError(error: DelugeError): { message: string; notAuthent
   return { message, notAuthenticated: error?.code === 1 || /not authenticated/i.test(message) };
 }
 
-// Deluge 文件优先级: 0=Ignore, 1=Normal, 2=High, 5=Highest（无 low）
+/**
+ * Deluge 文件优先级：数值来自上游 deluge-web 的 FILE_PRIORITY（DOWNLOADER-1）
+ *
+ * deluge/ui/web/js/deluge-all/Deluge.js：
+ *   {0:'Skip',1:'Low',2:'Low',3:'Low',4:'Normal',5:'High',6:'High',7:'High'}，
+ *   反查为 {Skip:0,Low:1,Normal:4,High:7}，且 deluge/core/torrent.py 允许 [0..7]。
+ * 旧实现在这里把 1 当 Normal、2 当 High、5 当 Highest，导致下发与回读整体错位。
+ */
 function mapDelugeFilePriority(priority: number): TorrentFilePriority {
   switch (priority) {
     case 0:
       return "skip";
-    case 2:
-      return "high";
-    case 5:
-      return "highest";
     case 1:
+    case 2:
+    case 3:
+      return "low";
+    case 5:
+    case 6:
+    case 7:
+      return "high";
+    case 4:
     default:
       return "normal";
   }
@@ -218,14 +232,16 @@ function mapTorrentFilePriorityToDeluge(priority: TorrentFilePriority): number {
   switch (priority) {
     case "skip":
       return 0;
-    case "high":
-      return 2;
-    case "highest":
-      return 5;
     case "low":
-    case "normal":
-    default:
       return 1;
+    case "normal":
+      return 4;
+    case "high":
+    // Deluge 无 Highest 档；UI 已通过 unsupportedPriorities 隐藏该档，这里按 High 兜底（DOWNLOADER-1）
+    case "highest":
+      return 7;
+    default:
+      return 4;
   }
 }
 
@@ -655,7 +671,8 @@ export default class Deluge extends AbstractBittorrentClient {
     const filePriorities: number[] = torrentData?.file_priorities ?? [];
 
     return files.map((file, index) => {
-      const priority = mapDelugeFilePriority(filePriorities[index] ?? 1);
+      // 优先级缺失时按 Normal(4) 兜底：旧实现用 1，在新映射里 1 已被上游定义为 Low（DOWNLOADER-1）
+      const priority = mapDelugeFilePriority(filePriorities[index] ?? 4);
       return {
         index: file.index ?? index,
         name: file.path.split(/[/\\]/).pop() || file.path,

@@ -91,6 +91,8 @@ const searchTextDebounced = refDebounced(searchText, 300);
 // delete dialog
 const showDeleteDialog = ref(false);
 const toDeleteTorrents = ref<CTorrent[]>([]);
+// DOWNLOADER-3：删除失败的「原因」通道（下载器实体只回 boolean，见 confirmDeleteTorrent）
+const deleteFailureHints = ref<Record<string, string>>({});
 
 // push to downloader dialog
 const showPushToDownloaderDialog = ref(false);
@@ -251,7 +253,10 @@ async function pauseTorrents(torrents: CTorrent[]) {
     torrents.map((t) => sendMessage("pauseClientTorrent", { downloaderId: t.clientId, id: t.id })),
   );
   const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
-  runtimeStore.showSnakebar(t("MyClient.action.pauseSelectedSuccess", { count: succeeded }), { color: "success" });
+  // OPTIONSOVERVIEW-9：与 recheckTorrents/moveTorrentsInQueue 对齐 —— 0 个成功不能仍报绿色成功
+  runtimeStore.showSnakebar(t("MyClient.action.pauseSelectedSuccess", { count: succeeded }), {
+    color: succeeded > 0 ? "success" : "error",
+  });
   const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
 }
@@ -262,13 +267,18 @@ async function resumeTorrents(torrents: CTorrent[]) {
     torrents.map((t) => sendMessage("resumeClientTorrent", { downloaderId: t.clientId, id: t.id })),
   );
   const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
-  runtimeStore.showSnakebar(t("MyClient.action.resumeSelectedSuccess", { count: succeeded }), { color: "success" });
+  // OPTIONSOVERVIEW-9：同 pauseTorrents，全部失败时用 error 色提示
+  runtimeStore.showSnakebar(t("MyClient.action.resumeSelectedSuccess", { count: succeeded }), {
+    color: succeeded > 0 ? "success" : "error",
+  });
   const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
 }
 
 function openDeleteDialog(torrentList: CTorrent[]) {
   toDeleteTorrents.value = torrentList;
+  // 每次打开都清空上一轮的失败原因，避免把旧的提示带到新的删除操作上
+  deleteFailureHints.value = {};
   showDeleteDialog.value = true;
 }
 
@@ -310,15 +320,39 @@ async function moveTorrentsInQueue(torrentList: CTorrent[], direction: TorrentQu
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
 }
 
+// DOWNLOADER-3：下载器实体用 `return false` 表达「这个客户端没法这样删」，但 `throw` 里原本那句
+// 唯一的解释（Synology 必须勾选删除数据）也随之丢了，BaseDeleteDialog 只能提示一串删不掉的 id。
+// 下载器类型只有这里知道，所以在这里按类型（+ 当前复选框状态）映射一句可操作提示，交给
+// DeleteDialog 附在失败提示里；无法归因的客户端不编造原因，保持原样。
+function deleteFailureHintFor(torrent: CTorrent, removeData: boolean): string | undefined {
+  const downloader = metadataStore.downloaders[torrent.clientId];
+  if (!downloader) return undefined;
+  if (downloader.type === "synologyDownloadStation" && !removeData) {
+    // Synology 的 SYNO.DownloadStation2.Task delete 必须带 removeData，否则实体直接回 false。
+    // 文案复用对话框里那个复选框的 key，保证提示里的名字与用户要勾的选项完全一致。
+    return `${downloader.name || downloader.type}：${t("MyClient.dialog.removeData")}`;
+  }
+  return undefined;
+}
+
 // Called per-item by DeleteDialog
-async function confirmDeleteTorrent(torrentKey_: string, removeData: boolean): Promise<void> {
+// DOWNLOADER-3：删除器实体用返回值表达「删不掉」（false），必须把结果交给 DeleteDialog，
+// 否则 Synology 默认路径（未勾选删除数据）这类失败会被当成成功、弹窗照常关闭。
+async function confirmDeleteTorrent(torrentKey_: string, removeData: boolean): Promise<boolean | void> {
   const torrent = toDeleteTorrents.value.find((t) => torrentKey(t) === torrentKey_);
   if (!torrent) return;
-  await sendMessage("deleteClientTorrent", {
+  const result = await sendMessage("deleteClientTorrent", {
     downloaderId: torrent.clientId,
     id: torrent.id,
     removeData,
   });
+
+  if (result === false) {
+    const hint = deleteFailureHintFor(torrent, removeData);
+    if (hint) deleteFailureHints.value[torrentKey_] = hint;
+  }
+
+  return result;
 }
 
 function clientName(clientId: string) {
@@ -672,10 +706,14 @@ function clearDownloaderFilter() {
     </a-table>
   </a-card>
 
+  <!-- DOWNLOADER-3：failure-hints 是给 BaseDeleteDialog（components/DeleteDialog.vue）的失败原因通道。
+       MyClient/DeleteDialog.vue 这个包装组件没有声明它，靠 Vue 的属性透传（inheritAttrs 默认 true）
+       落到基础弹窗上；删掉这行会让「Synology 要勾选同时删除数据」的原因重新丢失。 -->
   <DeleteDialog
     v-model="showDeleteDialog"
     :to-delete-ids="toDeleteTorrents.map((t) => torrentKey(t))"
     :confirm-delete="confirmDeleteTorrent"
+    :failure-hints="deleteFailureHints"
     @all-delete="loadTorrents"
   />
 

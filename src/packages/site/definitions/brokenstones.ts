@@ -127,14 +127,10 @@ export const siteMetadata: ISiteMetadata = {
       selectors: {
         time: {
           selector: "span.time",
-          filters: [
-            { name: "parseTTL" },
-            (ts: number) => {
-              const offsetMinutes = new Date().getTimezoneOffset();
-              const offsetMs = offsetMinutes * 60 * 1000;
-              return ts - 1 * 3600000 + offsetMs; // UTC-1
-            },
-          ],
+          // SITECORE-1 / DEFS2-3：span.time 是相对时间（如 "2 hours ago"），parseTTL 已产出绝对毫秒戳；
+          // 原实现再叠加宿主 `new Date().getTimezoneOffset()` 并手工 -1h，结果随运行主机漂移，
+          // 且对绝对时间戳而言这两次平移都没有意义。
+          filters: [{ name: "parseTTL" }],
         },
       },
     },

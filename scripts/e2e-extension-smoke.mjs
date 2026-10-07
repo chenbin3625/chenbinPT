@@ -4,7 +4,8 @@
  *
  * Playwright launches its own Chromium because branded Google Chrome ignores
  * the unpacked-extension command-line switches used by extension test runners.
- * The browser runs headed; CI wraps this command with xvfb-run.
+ * The browser runs headed; on a headless machine wrap this command with xvfb-run
+ * (仓库已无 CI workflow，它不会被任何流水线调用 —— INFRA-1)。
  *
  * Coverage:
  * - the options page mounts in a real extension context;

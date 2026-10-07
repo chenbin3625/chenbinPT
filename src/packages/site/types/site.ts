@@ -232,7 +232,7 @@ export interface ISiteMetadata {
      *      - 如果未定义 url 的 selector，则 url 会被自动设置为 doc.URL || location.href
      *      - 如果未定义 id 的 selector，且 url 中有 `&id=` 或者 `&tid=` 字段，则会被自动解析为 id
      *                                 如果 url 中没有 `&id=` 或者 `&tid=` 字段，则 id 会被自动设置为 url
-     *      - 如果未定义 title 的 selector，则 html > body > title 会被自动设置为 title
+     *      - 如果未定义 title 的 selector，则 head > title 会被自动设置为 title（SITECORE-6）
      *    其他模板的详见 metadata 或 override function 情况
      *
      * 2. AbstractBittorrentSite.getTorrentDownloadLink 中会使用 link 的 selector 来获取下载链接

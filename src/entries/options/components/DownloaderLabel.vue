@@ -15,14 +15,16 @@ const { downloader } = defineProps<{
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
 
-const downloaderConfig = metadataStore.downloaders[downloader];
+// OPTIONSSHELL-6：`downloaders` 是异步水合的 store state（其它标签页的 onChanged 也会改写它），
+// setup 期取成常量会让标签/图标永远停在首次渲染值（水合未完成时即 `<a-typography-text delete>` + 断连图标）。
+const downloaderConfig = computed(() => metadataStore.downloaders[downloader]);
 
 const downloaderAvatar = computed<{ icon?: Component; src?: string; style?: Record<string, string> }>(() => {
   if (downloader === "local") {
     return { icon: FolderOpenOutlined, style: { backgroundColor: resolveColor("amber")!, color: "#fff" } };
   }
-  if (downloaderConfig) {
-    return { src: getDownloaderIcon(downloaderConfig.type) };
+  if (downloaderConfig.value) {
+    return { src: getDownloaderIcon(downloaderConfig.value.type) };
   }
   return { icon: DisconnectOutlined, style: { backgroundColor: resolveColor("grey")!, color: "#fff" } };
 });
@@ -30,7 +32,7 @@ const downloaderAvatar = computed<{ icon?: Component; src?: string; style?: Reco
 /** 名称被截断时用于悬停展示的完整文案（本地下载 / 已配置下载器 / 未知下载器三种情形） */
 const downloaderNameTitle = computed(() => {
   if (downloader === "local") return t("downloaderLabel.localDownload");
-  if (downloaderConfig) return downloaderConfig.name;
+  if (downloaderConfig.value) return downloaderConfig.value.name;
   return `[${downloader}]`;
 });
 </script>

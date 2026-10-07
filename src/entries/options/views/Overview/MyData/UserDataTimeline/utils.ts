@@ -76,7 +76,11 @@ export function canThisSiteShow(siteId: TSiteID) {
 
   // 对于已死站点，只要有有效的用户信息就可以显示
   // 对于活跃站点，需要检查是否有 userInfo 配置
-  return siteMetadata.hasUserInfo || isValidUserInfo(siteUserInfo);
+  // OPTIONSOVERVIEW-2：第 70 行的 early-return 已保证走到这里的用户信息有效，因此原先
+  // `siteMetadata.hasUserInfo || isValidUserInfo(siteUserInfo)` 的后半段恒为真、整条表达式恒真，
+  // 元数据加载失败（站点定义已不在构建产物里，siteMetadata 退化为 {}）的站点照样进入时间线。
+  // 这里按注释意图显式区分：已死站点凭有效用户信息显示，活跃站点必须声明了 userInfo 才显示。
+  return siteMetadata.isDead === true || Boolean(siteMetadata.hasUserInfo);
 }
 
 export async function loadFullData(): Promise<Record<TSiteID, IStoredUserInfo>> {

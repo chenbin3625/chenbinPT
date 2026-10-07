@@ -295,10 +295,12 @@ export const siteMetadata: ISiteMetadata = {
       joinTime: {
         selector: "#profileTable td:contains('Join Date') + td",
         filters: [
-          (q: string) => {
-            const cleaned = q.replace(/(\d+)(st|nd|rd|th)/, "$1");
-            return new Date(cleaned).getTime();
-          },
+          // SITECORE-1：只去掉序数后缀（"Mar 1st 2024" → "Mar 1 2024"）得到站点墙上时间，
+          // 时区换算交给具名 parseTime（runQueryFilters 按 metadata.timezoneOffset=+0000 走
+          // parseValidTimeStringInZone）；原实现 `new Date(cleaned).getTime()` 按运行主机的本地
+          // 时区解释墙上时间，结果随宿主漂移。带不带逗号两种写法都给出，避免落到原生 Date 兜底。
+          (q: string) => q.replace(/(\d+)(st|nd|rd|th)/, "$1"),
+          { name: "parseTime", args: ["MMM d yyyy", "MMM d, yyyy"] },
         ],
       },
       // 从个人资料页面的 snatchlist 链接提取数字ID

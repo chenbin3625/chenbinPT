@@ -1,3 +1,5 @@
+import { logMessage } from "@ptd/site/utils/adapter.ts";
+
 import { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption } from "./type.ts";
 import { backupDataToJSZipBlob, decryptData, encryptData, jsZipBlobToBackupData } from "./utils.ts";
 
@@ -60,5 +62,18 @@ export default abstract class AbstractBackupServer<T extends IBackupConfig> {
 
   protected async jsZipBlobToBackupData(blob: Blob): Promise<IBackupData> {
     return await jsZipBlobToBackupData(blob, this.encryptionKey);
+  }
+
+  /**
+   * P1-5：失败必须记录原因。
+   *
+   * 各实体的 ping/addFile/deleteFile 用返回值 `false` 表达失败，但历史实现里 catch 直接吞掉异常，
+   * 自动备份日志只能留下「returned false」，用户无法区分 401/403、地址填错、网络不可达还是配额超限。
+   * 统一收敛到这里，避免再有实体漏掉（SERVERSSOCIAL-3）。
+   */
+  protected logBackupFailure(action: string, error: unknown): void {
+    logMessage(`[${this.config.type}] ${action} 失败`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }

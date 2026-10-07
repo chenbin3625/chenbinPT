@@ -11,7 +11,6 @@ import NexusPHP, {
   CategorySpstate,
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
-import { parseValidTimeString } from "../utils";
 import { selectElements } from "../utils/selector";
 
 const hhLinkQuery = {
@@ -257,10 +256,9 @@ export const siteMetadata: ISiteMetadata = {
       joinTime: {
         selector: ["span:contains('加入日期') + span"],
         filters: [
-          (query: string) => {
-            query = query.split(" (")[0];
-            return parseValidTimeString(query);
-          },
+          // 只做字符串归一化（split + trim），具名 parseTime 由 runQueryFilters 按 metadata.timezoneOffset（+0800）换算
+          (query: string) => query.split(" (")[0].trim(),
+          { name: "parseTime" },
         ],
       },
       bonusPerHour: {
@@ -277,12 +275,7 @@ export const siteMetadata: ISiteMetadata = {
       },
       lastAccessAt: {
         selector: ["span:contains('最近动向') + span"],
-        filters: [
-          (query: string) => {
-            query = query.split(" (")[0];
-            return parseValidTimeString(query);
-          },
-        ],
+        filters: [(query: string) => query.split(" (")[0].trim(), { name: "parseTime" }],
       },
     },
   },

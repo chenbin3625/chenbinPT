@@ -154,11 +154,8 @@ export const siteMetadata: ISiteMetadata = {
           selector: "span.torrent-badges__item--trump",
           color: "red",
         },
-        {
-          name: "H&R",
-          selector: "*",
-          color: "red",
-        },
+        // DEFS2-2：原先这里的 H&R 用 selector:"*"（对任意行恒真），会把整站搜索结果全部标成 H&R。
+        // 列表页没有 H&R 徽标（UNIT3D 的 H&R 是账号维度的欠种状态，不在种子行上），故删除该标签。
       ],
     },
   },

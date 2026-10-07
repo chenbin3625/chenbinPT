@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   onFocusChangedListeners: [] as Array<(windowId: number) => void>,
   storageChangedListeners: [] as Array<(changes: Record<string, unknown>, areaName: string) => void>,
   currentTab: { url: "https://mteam.example/browse" } as { url: string },
+  /** BACKGROUNDSHARED-4：站点过滤开关与排除列表（用例里可改，模拟设置页写入后的 storage 变化） */
+  allowDownloaderFilterForSite: true,
+  excludedSites: [] as string[],
 }));
 
 vi.mock("@/messages.ts", () => ({ sendMessage: mocks.sendMessage, onMessage: mocks.onMessage }));
@@ -86,6 +89,7 @@ mocks.getExtStorageCached.mockImplementation(async (key: string) => {
         allowSocialLinkSearch: false,
         allowLinkDownloadPush: true,
       },
+      download: { allowDownloaderFilterForSite: mocks.allowDownloaderFilterForSite },
     };
   }
   return {
@@ -99,6 +103,7 @@ mocks.getExtStorageCached.mockImplementation(async (key: string) => {
         enabled: true,
         sortIndex: 100,
         suggestFolders: ["/downloads/$torrent.site$"],
+        excludedSites: mocks.excludedSites,
       },
     },
   };
@@ -120,6 +125,13 @@ function menuTitles(fromIndex = 0): string[] {
     .map((menu) => menu.title)
     .filter((title) => typeof title === "string");
 }
+
+/** 只取「从 fromIndex 起新建」的菜单 id（用于断言某个下载器子菜单是否存在） */
+function menuIds(fromIndex = 0): string[] {
+  return mocks.createdMenus.slice(fromIndex).map((menu) => String(menu.id));
+}
+
+const QB_DOWNLOADER_MENU_ID = "chenbinPT-Context-Menus**Link-Download-Push**qb";
 
 describe("右键菜单：同标签页导航后重建（L-2）", () => {
   it("changeInfo.url 触发重建；没有 url 的 onUpdated 不重建", async () => {
@@ -193,5 +205,39 @@ describe("右键菜单：与菜单无关的 metadata 写入不触发重建（L-6
     await flushBuild();
 
     expect(mocks.removeAllCount, "菜单摘要未变化时不应 removeAll + 全量重建").toBe(before);
+  });
+});
+
+describe("右键菜单：按站点排除下载器（BACKGROUNDSHARED-4）", () => {
+  /** 按当前标签页触发一次重建（onUpdated 带 changeInfo.url） */
+  async function rebuildAtCurrentTab() {
+    mocks.onUpdatedListeners[0]!(-1, { url: mocks.currentTab.url }, { ...mocks.currentTab });
+    await flushBuild();
+  }
+
+  it("开关打开且 excludedSites 命中当前站点 → 该下载器不再出现在菜单里", async () => {
+    mocks.currentTab.url = "https://mteam.example/browse";
+    mocks.allowDownloaderFilterForSite = true;
+    mocks.excludedSites = [];
+    await rebuildAtCurrentTab(); // 建立基线（不排除）
+    const before = mocks.createdMenus.length;
+
+    // 站点过滤里把 qb 排除出 mteam：与 options store 的 getEnabledDownloadersBySite 语义一致
+    mocks.excludedSites = ["mteam"];
+    await rebuildAtCurrentTab();
+
+    expect(menuIds(before), "被排除的下载器不得出现在右键菜单里").not.toContain(QB_DOWNLOADER_MENU_ID);
+    expect(menuTitles(before)).not.toContain("-> /downloads/mteam");
+  });
+
+  it("开关关闭时排除列表不生效（否则菜单会与设置页行为相反）", async () => {
+    mocks.currentTab.url = "https://mteam.example/browse";
+    mocks.excludedSites = ["mteam"];
+    mocks.allowDownloaderFilterForSite = false; // 上一个用例是 true → 摘要变化必然重建
+    const before = mocks.createdMenus.length;
+
+    await rebuildAtCurrentTab();
+
+    expect(menuIds(before), "开关关闭时排除列表本就不生效").toContain(QB_DOWNLOADER_MENU_ID);
   });
 });

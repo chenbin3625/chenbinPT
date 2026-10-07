@@ -134,9 +134,17 @@ async function saveSite() {
         </a-typography-text>
       </div>
     </div>
-    <div v-if="currentStep === 1">
-      <!-- 具体配置站点 -->
-      <Editor ref="editor" v-model="selectedSiteId!" @update:form-valid="(v) => (isFormValid = v)" />
+    <!-- OPTIONSSETTINGS-5：这里用 v-show 而非 v-if 保留 Editor 实例。v-if 会在「上一步」时卸载 Editor，
+         「下一步」重新挂载时 initSiteData 会用默认值覆盖注入的 storedSiteUserConfig，
+         用户刚填的凭据 / 自定义分组全部丢失；v-show 只在真正切换站点（watch siteId）时重新初始化。
+         Editor 用 v-if="selectedSiteId != null" 控制挂载：未选站点时不实例化，关闭对话框后随 null 卸载。 -->
+    <div v-show="currentStep === 1">
+      <Editor
+        v-if="selectedSiteId != null"
+        ref="editor"
+        v-model="selectedSiteId!"
+        @update:form-valid="(v) => (isFormValid = v)"
+      />
     </div>
 
     <template #footer>

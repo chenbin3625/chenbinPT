@@ -27,7 +27,7 @@
   },
   "src/entries/background/utils/fixer.ts": {
     "no-console": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/background/utils/nativeMessaging.ts": {
@@ -46,11 +46,6 @@
   "src/entries/content-script/app/components/AdvanceListModuleDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
-    }
-  },
-  "src/entries/content-script/app/pages/SiteListPage.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
     }
   },
   "src/entries/content-script/app/pages/SocialSitePage.vue": {
@@ -85,17 +80,7 @@
   },
   "src/entries/options/components/SentToDownloaderDialog/Index.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 4
-    }
-  },
-  "src/entries/options/components/SiteFavicon/Index.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
-  "src/entries/options/components/SiteName.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 3
     }
   },
   "src/entries/options/components/TorrentTitleTd.vue": {
@@ -201,7 +186,7 @@
   },
   "src/entries/options/views/Overview/MyData/HistoryDataViewDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Overview/MyData/Index.vue": {
@@ -406,21 +391,6 @@
     },
     "no-console": {
       "count": 3
-    }
-  },
-  "src/packages/backupServer/entity/CookieCloud.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/packages/backupServer/entity/Gist.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/packages/backupServer/entity/S3.ts": {
-    "no-console": {
-      "count": 1
     }
   },
   "src/packages/site/definitions/animebytes.ts": {

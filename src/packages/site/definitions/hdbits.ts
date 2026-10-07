@@ -175,7 +175,7 @@ export const siteMetadata: ISiteMetadata = {
 
     selectors: {
       title: {
-        selector: ["h1", "html > body > title"],
+        selector: ["h1", "head > title"],
         switchFilters: {
           h1: [
             (title: string) => {
@@ -188,11 +188,13 @@ export const siteMetadata: ISiteMetadata = {
             },
           ],
 
-          "html > body > title": [
+          // D-37：<title> 在 <head> 里（原选择器 `html > body > title` 永不命中），且正则只有 1 个捕获组，
+          // 原判断 `length >= 3` 恒假 —— 兜底分支从未执行
+          "head > title": [
             (title: string) => {
               // {torrentName} :: HDBits
-              let titleMatch = title.match(/(.+) :: HDBits$/);
-              if (titleMatch && titleMatch.length >= 3) {
+              const titleMatch = title.match(/(.+) :: HDBits$/);
+              if (titleMatch && titleMatch.length >= 2) {
                 return titleMatch[1].trim();
               }
               return title;
@@ -278,7 +280,8 @@ export const siteMetadata: ISiteMetadata = {
           },
           lastAccessAt: {
             selector: ["td.rowhead:contains('seen') + td"],
-            filters: [{ name: "replace", args: ["\\s*\\(.*\\)", ""] }, { name: "parseTime" }],
+            // D-36：replace 的第一个参数要传正则 —— 传字符串时 String.replace 按字面子串匹配，永不生效
+            filters: [{ name: "replace", args: [/\s*\(.*\)/, ""] }, { name: "parseTime" }],
           },
         },
       },

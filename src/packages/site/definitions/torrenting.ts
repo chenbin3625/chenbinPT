@@ -87,7 +87,12 @@ export const siteMetadata: ISiteMetadata = {
       name: "仅免费种子",
       key: "free",
       options: [{ name: "免费", value: "on" }],
-      cross: { mode: "append", key: "" },
+      // cross 仅用于让 UI 把该项渲染成复选（与 generateRequestConfig 搭配，见 CategoryFree 的用法）
+      cross: { mode: "custom" },
+      // DEFS3-1：站点要求的是 `free=on`（Jackett torrenting.yml 的 free 参数，真实 URL 形如
+      // `t?1=&5=&free=on&q=...`）。原先用 cross.mode=append + key="" 时生成器会拼出 `on=1`，
+      // 站点忽略这个未知参数，勾选「仅免费」后实际返回全量结果——筛选静默失效。故改为显式生成参数。
+      generateRequestConfig: () => ({ requestConfig: { params: { free: "on" } } }),
     },
   ],
 
@@ -173,7 +178,8 @@ export const siteMetadata: ISiteMetadata = {
   detail: {
     urlPattern: [/\/t\/[^/?#]+/],
     selectors: {
-      title: { selector: ["h1", "html > body > title"] },
+      // SITECORE-6：<title> 位于 <head>，`html > body > title` 恒不命中，h1 失配时标题会静默变空串
+      title: { selector: ["h1", "head > title"] },
       link: { selector: 'a[href^="/download.php/"]', attr: "href" },
     },
   },

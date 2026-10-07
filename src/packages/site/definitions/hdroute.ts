@@ -16,10 +16,12 @@ const stripDecorativeText = (element?: Element | null): string => {
 };
 
 // 辅助函数：提取种子数量（做种/下载）
-const extractTorrentCount = (element: HTMLElement | null, index: number): number => {
+// DEFS2-1：做种/下载人数是 .torrent-content-right 里的第 5/6 个计数块
+// （Jackett hdroute.yml 写作 div:nth-child(5)/(6)，PDS hdroute.json 写作 :nth-of-type(5)/(6)）。
+// 原实现按 .torrent_count.strong 的下标 0/1 取值：一旦前几个计数块也带该类，就会把别的计数当做人数字段。
+const extractTorrentCount = (element: HTMLElement | null, nth: number): number => {
   if (!element) return 0;
-  const strongElements = element.querySelectorAll(".torrent_count.strong");
-  const span = strongElements[index]?.querySelector("span");
+  const span = element.querySelector(`div.torrent_count.strong:nth-of-type(${nth}) span`);
   const text = span?.textContent?.trim() || "";
   return text && text !== "---" ? parseInt(text) || 0 : 0;
 };
@@ -126,11 +128,11 @@ export const siteMetadata: ISiteMetadata = {
       },
       seeders: {
         selector: makeSelector("torrent-content-right"),
-        elementProcess: (element: HTMLElement) => extractTorrentCount(element, 0),
+        elementProcess: (element: HTMLElement) => extractTorrentCount(element, 5),
       },
       leechers: {
         selector: makeSelector("torrent-content-right"),
-        elementProcess: (element: HTMLElement) => extractTorrentCount(element, 1),
+        elementProcess: (element: HTMLElement) => extractTorrentCount(element, 6),
       },
       completed: {
         selector: makeSelector("torrent_count strong a span.count-color0", ["a span.count-color0"]),

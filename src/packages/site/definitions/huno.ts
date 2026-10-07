@@ -234,26 +234,22 @@ export const siteMetadata: ISiteMetadata = {
       completed: { selector: ["times_completed", "attributes.times_completed", "completed", "attributes.completed"] },
       comments: { text: 0 }, // not provided
 
+      // DEFS2-4：搜索走 /api/torrents/filter（responseType json），行是普通对象，
+      // getFieldData 只在 element instanceof Node 时求值 case → 原先这里的 DOM selector + case 永不生效，
+      // 状态/进度只能保持引擎缺省值（UNIT3D 的 TorrentResource 不含账号维度的做种/进度字段，无法从载荷推算）。
       status: {
         text: ETorrentStatus.unknown,
-        selector: ["div.ds-macro-row__name-content[style*='font-variant-numeric']"],
-        case: {
-          // "span[data-original-title='Leeching']": ETorrentStatus.downloading, //todo
-          "a[href*='peers'][title*='Seeding'][style*='--ds-success']": ETorrentStatus.seeding,
-          // "span[data-original-title='Not Completed']": ETorrentStatus.inactive, // 未完成!
-          // "span[data-original-title='Downloaded but Not Seeding']": ETorrentStatus.completed, // 完成!
-        },
       },
       // 站点似乎不提供 progress
       progress: {
         text: 0,
-        selector: ["div.ds-macro-row__name-content[style*='font-variant-numeric']"],
-        case: {
-          "a[href*='peers'][title*='Seeding'][style*='--ds-success']": 100,
-          "a[href*='peers'][title*='seeders'][style*='inherit']": 0,
-        },
       },
 
+      // DEFS2-2 收尾：这块 DOM selector 对本站 JSON 行（responseType: json）本就不生效，故整体保持注释（DEFS2-4）。
+      // 原数组里的 { name: "H&R", selector: "*", color: "red" } 是上游 fb79a2a7「add default H&R tags with
+      // red color for global sites」(PR #336) 给全站 H&R 站点加的默认标签，整块注释后 H&R 实际丢失；且 JSON 行
+      // 无法被 selector "*" 命中（AbstractBittorrentSite 对对象行走 get(row, "*")，恒为 undefined），
+      // 因此 H&R 已改到本类 parseTorrentRowForTags 末尾无条件补上（见该方法内 H&R 注释）。
       // tags: [ // todo
       //   { name: "Free", selector: "i.far.fa-gift", color: "#c149ab" },
       //   { name: "Pack", selector: "i.far.fa-folder-heart", color: "#e3747a" },
@@ -261,7 +257,6 @@ export const siteMetadata: ISiteMetadata = {
       //   { name: "Internal", selector: "i.far.fa-bolt", color: "#b793f0" },
       //   { name: "Worthy", selector: "i.far.fa-medal", color: "#00c07f" },
       //   { name: "Sticky", selector: "i.far.fa-thumbtack", color: "#d32f2f" },
-      //   { name: "H&R", selector: "*", color: "red" },
       // ],
     },
   },
@@ -535,6 +530,13 @@ export default class Huno extends Unit3D {
     if (isFree) {
       addTag({ name: "Free" });
     }
+
+    // DEFS2-2 收尾（统一判据：站点是否全站 H&R）：本站属上游 fb79a2a7「feat: add default H&R tags with red
+    // color for global sites」(PR #336) 明确列出的全站 H&R 站点——站点规则对**全部**下载都规定 H&R 义务，
+    // 故对每一行无条件贴 H&R（与 beyondhd/torrentleech 的恒真语义一致，属刻意设计）。
+    // 这里不能用恒真 selector:"*"：本站搜索走 /api/torrents/filter（JSON），行是普通对象，
+    // AbstractBittorrentSite 对对象行走 get(row, "*") 恒为 undefined，配置层恒真标签永远不会命中。
+    addTag({ name: "H&R", color: "red" });
 
     extendTorrent.tags = tags;
     return extendTorrent;

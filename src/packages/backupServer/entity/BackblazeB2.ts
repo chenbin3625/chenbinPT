@@ -180,7 +180,9 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
       await this.authorize();
       await this.getBucketId();
       return true;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：失败由返回值表达，但必须记录原因（key 错误、桶不存在、网络不可达等）
+      this.logBackupFailure("ping", e);
       return false;
     }
   }
@@ -253,7 +255,9 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
         timeout: getBackupRequestTimeout(this.userConfig),
       });
       return status === 200;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：上传失败必须留下原因（密钥无写权限、配额超限、网络中断等）
+      this.logBackupFailure("addFile", e);
       return false;
     }
   }
@@ -298,7 +302,9 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
       );
 
       return !!deleteData.fileId;
-    } catch {
+    } catch (e) {
+      // SERVERSSOCIAL-3（P1-5）：删除失败要能看到原因（权限不足、对象已被清理等）
+      this.logBackupFailure("deleteFile", e);
       return false;
     }
   }

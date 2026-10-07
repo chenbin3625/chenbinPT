@@ -188,7 +188,8 @@ export const siteMetadata: ISiteMetadata = {
   detail: {
     urlPattern: ["/torrents/\\d+"],
     selectors: {
-      title: { selector: "h2.card-title span:not([class])" },
+      // D-38：线上详情页标题区的 span 都带 class，`:not([class])` 永不命中，会回落到带「 - nekoBT」后缀的 <title>
+      title: { selector: ["h2.card-title span.wrap-anywhere", "h2.card-title"] },
       link: { selector: "a[href^='magnet:?xt=']:last", attr: "href" },
     },
   },

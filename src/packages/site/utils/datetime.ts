@@ -152,7 +152,10 @@ export function parseValidTimeString(query: string, formatString: string[] = [])
   return query;
 }
 
-const explicitTimeZonePattern = /[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+// DEFS3-3：允许时间与数值偏移之间存在空白（如 `2024-03-10 10:41 +0800`）。
+// 原生 Date 已能把这类串解析成绝对时间，正则若不识别，下面的 parseValidTimeStringInZone 会把它
+// 当作墙上时间再按站点偏移二次换算（并把宿主时区的 local 字段当成站点时间），结果随运行主机漂移。
+const explicitTimeZonePattern = /[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|[+-]\d{2}:?\d{2})$/i;
 const wallTimePattern = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(?::(\d{2})(\.\d+)?)?)?$/;
 
 /**

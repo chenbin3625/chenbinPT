@@ -2,7 +2,12 @@ import { isValid } from "date-fns";
 import { extStorage } from "@/storage.ts";
 import type { TUserInfoStorageSchema, IStoredUserInfo } from "@/shared/types.ts";
 
-import { enqueueWrite, invalidateStorageReadCache } from "./base.ts";
+import { enqueueWrite, invalidateStorageReadCache, logBackgroundError } from "./base.ts";
+
+/** 只有对象才能逐字段修复；数组/null/标量都属于坏数据（见 BACKGROUNDSHARED-6） */
+function isRepairableRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 // 修复用户信息中的坏数据
 function fixStoredUserInfo(userInfo: Partial<IStoredUserInfo>): { fixed: IStoredUserInfo; hasChanges: boolean } {
@@ -32,7 +37,14 @@ function fixStoredUserInfo(userInfo: Partial<IStoredUserInfo>): { fixed: IStored
   // noinspection SuspiciousTypeOfGuard
   if (typeof userInfo.seeding === "string") {
     const seedingNum = parseInt(userInfo.seeding);
-    fixed.seeding = isNaN(seedingNum) ? 0 : seedingNum;
+    if (isNaN(seedingNum)) {
+      // DEFS2-12：站点取不到做种数时过滤器返回 undefined，经 getFieldData 的 `query ??= ""` 回落成空串落库；
+      // 旧实现把 NaN 写回 0，等于每次 onInstalled 都把「没取到」重新塌回静默的 0 个做种。
+      // 这里改为删掉该字段，保持「无值」，与 DEFS2-12 的「取不到就留空」一致。
+      delete fixed.seeding;
+    } else {
+      fixed.seeding = seedingNum;
+    }
     hasChanges = true;
   }
 
@@ -65,12 +77,30 @@ export async function fixAllStoredUserInfo(): Promise<void> {
       const userInfoStore = ((await extStorage.getItem("userInfo")) ?? {}) as TUserInfoStorageSchema;
 
       let hasChanges = false;
+      /** 无法修复的条目数（null / 非对象）：不能影响其余条目的修复，也不能静默 */
+      let skippedCount = 0;
       const fixedUserInfoData = {} as TUserInfoStorageSchema;
 
       for (const [siteId, siteUserInfo] of Object.entries(userInfoStore)) {
+        // BACKGROUNDSHARED-6：以前这里直接 `Object.entries(siteUserInfo)`，siteUserInfo 为 null/标量时抛 TypeError；
+        // 整轮共用一个 try 且只在循环结束后落盘，于是「修补坏数据」的职责本身被一条坏数据击穿、
+        // 所有站点所有日期的修复全部作废，且只有 SW 控制台可见。
+        // 现在逐层做形状守卫：不可修复的条目原样保留（丢弃等于静默删用户历史），只记录日志。
+        if (!isRepairableRecord(siteUserInfo)) {
+          skippedCount += 1;
+          fixedUserInfoData[siteId] = siteUserInfo as unknown as TUserInfoStorageSchema[string];
+          continue;
+        }
+
         fixedUserInfoData[siteId] = {};
         for (const [date, userInfo] of Object.entries(siteUserInfo)) {
-          const result = fixStoredUserInfo(userInfo);
+          if (!isRepairableRecord(userInfo)) {
+            skippedCount += 1;
+            fixedUserInfoData[siteId][date] = userInfo as unknown as IStoredUserInfo;
+            continue;
+          }
+
+          const result = fixStoredUserInfo(userInfo as Partial<IStoredUserInfo>);
 
           // 检查是否有变化
           if (result.hasChanges) {
@@ -79,6 +109,13 @@ export async function fixAllStoredUserInfo(): Promise<void> {
 
           fixedUserInfoData[siteId][date] = result.fixed;
         }
+      }
+
+      // 跳过不等于静默：本仓库统一走 logBackgroundError（会转发到 options 的日志通道）
+      if (skippedCount > 0) {
+        logBackgroundError(
+          `fixAllStoredUserInfo skipped ${skippedCount} unrepairable user info entr${skippedCount === 1 ? "y" : "ies"}`,
+        );
       }
 
       // 只有当有变化时才更新存储
@@ -90,6 +127,7 @@ export async function fixAllStoredUserInfo(): Promise<void> {
       }
     });
   } catch (error) {
-    console.error("[PTD] Error fixing user info data:", error);
+    // 不再只写 SW 控制台：读/写存储的失败必须能被用户看到
+    logBackgroundError("Error fixing user info data", error);
   }
 }

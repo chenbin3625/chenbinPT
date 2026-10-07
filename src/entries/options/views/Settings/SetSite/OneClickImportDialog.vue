@@ -146,6 +146,13 @@ async function doAutoImport() {
       }
     } catch (e) {
       importStatus.value.failed.push(site);
+      // OPTIONSSETTINGS-4：sendMessage 抛错时上面的 addSite 已把站点写进 store 并排入落盘，
+      // 若只标记失败不回滚，界面上「添加失败」的站点其实已被添加（刷新后仍在列表里）。
+      try {
+        await metadataStore.removeSite(site, { reBuildMap: false });
+      } catch {
+        // 回滚失败不阻断后续站点：该站点的 failed 标记已经可见，用户可自行删除
+      }
     }
   }
 

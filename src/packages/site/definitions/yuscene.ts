@@ -3,7 +3,7 @@
  */
 import type { ISiteMetadata } from "../types";
 import { CategoryFree, SchemaMetadata } from "../schemas/Unit3D.ts";
-import { buildCategoryOptionsFromDict, parseValidTimeString } from "../utils.ts";
+import { buildCategoryOptionsFromDict } from "../utils.ts";
 
 const categoryMap: Record<number, string> = {
   1: "Movies",
@@ -74,10 +74,10 @@ export const siteMetadata: ISiteMetadata = {
         ],
         elementProcess: (el: Element) => {
           const timeEl = el.closest("time") ?? el;
-          return parseValidTimeString(
-            timeEl.getAttribute("title") || timeEl.getAttribute("datetime") || el.textContent || "",
-          );
+          return timeEl.getAttribute("title") || timeEl.getAttribute("datetime") || el.textContent || "";
         },
+        // SITECORE-1：elementProcess 里拿不到站点时区，解析交给具名 parseTime（按 metadata.timezoneOffset）
+        filters: [{ name: "parseTime" }],
       },
       lastAccessAt: {
         selector: [
@@ -85,9 +85,9 @@ export const siteMetadata: ISiteMetadata = {
           "main article section:first-of-type div div:nth-child(2) div span:first-of-type time[datetime]",
           ...(SchemaMetadata.userInfo!.selectors!.lastAccessAt?.selector ?? []),
         ],
-        elementProcess: (el: Element) => {
-          return parseValidTimeString(el.getAttribute("title") || el.getAttribute("datetime") || el.textContent || "");
-        },
+        elementProcess: (el: Element) =>
+          el.getAttribute("title") || el.getAttribute("datetime") || el.textContent || "",
+        filters: [{ name: "parseTime" }],
       },
     },
   },

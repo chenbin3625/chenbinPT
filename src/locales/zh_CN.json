@@ -13,7 +13,8 @@
       "title": "重新下载 {0} 条记录"
     },
     "detail": {
-      "errorMessage": "失败原因"
+      "errorMessage": "失败原因",
+      "warningMessage": "设置未全部生效"
     },
     "filterPlaceholder": "过滤下载记录",
     "pollingError": "刷新下载状态失败，部分任务的状态可能不会自动更新",
@@ -31,7 +32,9 @@
       "downloader": "下载服务器",
       "status": "下载状态",
       "title": "种子"
-    }
+    },
+    "warning": "告警",
+    "warningSummary": "，其中 {count} 条推送成功但部分设置未生效"
   },
   "KeepUploadTask": {
     "clearAll": "清空全部",
@@ -534,6 +537,7 @@
     "sendSummary": "成功发送 {success} 个任务到下载器{pending}{failed}",
     "sendSummaryPending": "（{count} 个任务在下载队列中）",
     "sendSummaryFailed": "，有 {count} 个任务发送失败",
+    "sendSummaryWarning": "，{count} 个任务的下载器设置未生效",
     "noTasks": "似乎并没有任务发送到下载器",
     "title": "为 {0} 个种子选择下载器"
   },
@@ -717,7 +721,7 @@
       "forceImdbIdMatchFilter": "使用 IMDb 搜索时，在搜索结果中滤去站点返回的IMDb号不匹配的结果",
       "hiddenTagNames": "隐藏标签（每行一个）",
       "hiddenTagNamesMessage": "在搜索页面手动关闭的为临时关闭，需要在本页面保存后才为永久保存。",
-      "imdbTip": "关闭后，你需要使用 `imdb|tt12345678` 的格式来进行 IMDb 搜索。",
+      "imdbTip": "关闭后，你需要使用 `imdb{'|'}tt12345678` 的格式来进行 IMDb 搜索。",
       "maxTagCountBeforeGroup": "标签分组显示上限（0表示不限制）",
       "mediaQueueConcurrency": "请求队列长度",
       "mediaSearchLimit": "单次搜索结果数量",
@@ -783,6 +787,7 @@
     },
     "userInfo": {
       "afterTime": "每日最早刷新时间",
+      "afterTimeSuffix": "后，",
       "userDataRefresh": "用户数据刷新",
       "userInfoDisplay": "用户信息展示"
     }
@@ -1044,6 +1049,7 @@
       "addUrlTip": "增加一个你正在使用的站点域名，输入的应该以 https:// 或 http:// 开头，以 / 结尾，例如 https://example.com/",
       "customUrlPlaceholder": "自定义站点域名",
       "description": "网站描述",
+      "inputRequired": "此项为必填项",
       "sortIndexTip": "可用于搜索排序",
       "tagTip": "标签输入完成后按回车添加。（只有前4个会在列表页显示）",
       "timezone": "时区",
@@ -1208,6 +1214,10 @@
     "enable": "启用",
     "export": "导出",
     "exportImage": "导出图片",
+    "form": {
+      "invalidUrl": "不是合法的 URL",
+      "required": "此项为必填项"
+    },
     "howToUse": "如何使用？",
     "import": "导入",
     "insecureAddressWarning": "当前地址不是 HTTPS，API 密钥 / 密码会以明文传输，可能被中间人窃取。建议改用 https:// 或 wss:// 地址。",

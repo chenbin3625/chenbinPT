@@ -54,15 +54,11 @@ describe("B-31(b)：备份服务器的凭据字段由 requiredField 显式声明
     expect(secretKeysOf(backblazeB2)).toEqual(["applicationKey"]);
   });
 
-  it("未声明的字段保持历史行为（明文），SetBackup/Editor.vue 依据 secret 掩码", () => {
+  it("未声明的字段保持历史行为（明文）", () => {
     // endpoint / bucket / client_id / accessKeyId 这类标识字段不应被掩码
     expect(secretKeysOf(s3)).not.toContain("accessKeyId");
     expect(secretKeysOf(googleDrive)).not.toContain("client_id");
-
-    const source = readSource("src/entries/options/views/Settings/SetBackup/Editor.vue");
-    expect(source).toMatch(/function isSecretConfigField\(metaField: \{ secret\?: boolean \}\): boolean \{/);
-    expect(source).toMatch(/return metaField\.secret === true;/);
-    expect(source).toMatch(/:type="isConfigFieldMasked\(metaField\) \? 'password' : 'text'"/);
+    // 掩码是否真的生效由下面的真实挂载用例守卫（TESTS-1：原先这里只断言源码字面量）
   });
 });
 
@@ -85,7 +81,13 @@ describe("B-31(a)(c)：凭据输入框真实渲染为掩码，可切换明文（
   }
 
   function clickRevealToggle(input: HTMLInputElement) {
-    const toggle = input.closest(".ant-input-affix-wrapper")?.querySelector<HTMLElement>(".ant-input-suffix .anticon");
+    const suffix = input.closest(".ant-input-affix-wrapper")?.querySelector(".ant-input-suffix");
+    expect(suffix, "凭据输入框应带显示切换按钮").toBeTruthy();
+    // 带 allow-clear 的输入框（如 Bangumi API Key）后缀里第一个 .anticon 是清除图标（不可见），
+    // 这里必须把它排除，否则会点在没有任何行为的节点上（TESTS-1）
+    const toggle = Array.from(suffix!.querySelectorAll<HTMLElement>(".anticon")).find(
+      (node) => !node.closest(".ant-input-clear-icon"),
+    );
     expect(toggle, "凭据输入框应带显示切换按钮").toBeTruthy();
     toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
@@ -158,10 +160,68 @@ describe("B-31(a)(c)：凭据输入框真实渲染为掩码，可切换明文（
     }
   });
 
-  it("SetBase/SocialInformationWindow：Bangumi API Key 仍有掩码与切换（源码级保留：该窗口依赖整套设置页上下文）", () => {
-    const source = readSource("src/entries/options/views/Settings/SetBase/SocialInformationWindow.vue");
-    expect(source).toContain("showBangumiApiKey");
-    expect(source).toMatch(/'password' : 'text'|'text' : 'password'/);
+  it("SetBackup/Editor：secret 字段默认 password，点眼睛变 text；未声明 secret 的字段恒为 text", async () => {
+    // TESTS-1：原先这里与下面的 Bangumi 用例只断言源码里出现了某些标识符/字面量，
+    // 把 isConfigFieldMasked 改成 `return false;`（完全不掩码）测试照样全绿。
+    const { default: Editor } = await import("@/options/views/Settings/SetBackup/Editor.vue");
+    const config = ref<any>({
+      id: "b1",
+      type: "WebDAV",
+      name: "my webdav",
+      enabled: true,
+      backupFields: [],
+      backupInterval: 0,
+      config: { address: "http://127.0.0.1/dav", loginName: "u", loginPwd: "SECRET", digest: false },
+    });
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(Editor, { modelValue: config.value, "onUpdate:modelValue": (v: any) => (config.value = v) }),
+      }),
+    );
+    try {
+      // clientMeta 走 computedAsync(getBackupServerMetaData)，需要多等几轮宏任务
+      await settle(10);
+      const pwd = inputByLabel(view.host, "密码");
+      expect(pwd.type).toBe("password");
+      expect(inputByLabel(view.host, "地址").type).toBe("text");
+      expect(inputByLabel(view.host, "用户名").type).toBe("text");
+
+      clickRevealToggle(pwd);
+      await nextTick();
+      expect(inputByLabel(view.host, "密码").type).toBe("text");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("SetBase/SocialInformationWindow：Bangumi API Key 默认 password，点眼睛变 text；AniDB Client ID 恒为 text", async () => {
+    // TESTS-1：原用例只断言源码里出现 showBangumiApiKey / 'password' : 'text' 字符串，
+    // 把极性反转成默认明文（showBangumiApiKey ? 'password' : 'text'）测试仍然全绿。
+    const { default: SocialInformationWindow } =
+      await import("@/options/views/Settings/SetBase/SocialInformationWindow.vue");
+    const view = mountOptionsView(SocialInformationWindow);
+    try {
+      await settle();
+
+      // 用输入框前缀头像定位到目标行，避免依赖具体 i18n 文案
+      function inputInRowWithAvatar(icon: string): HTMLInputElement {
+        const avatar = view.host.querySelector(`img[src*="${icon}"]`);
+        const input = avatar?.closest(".ptd-settings-row")?.querySelector<HTMLInputElement>("input");
+        expect(input, `应渲染出 ${icon} 所在行的输入框`).toBeTruthy();
+        return input!;
+      }
+
+      const bangumi = inputInRowWithAvatar("bangumi");
+      expect(bangumi.type).toBe("password");
+      expect(inputInRowWithAvatar("anidb").type).toBe("text");
+
+      clickRevealToggle(bangumi);
+      await nextTick();
+      expect(inputInRowWithAvatar("bangumi").type).toBe("text");
+    } finally {
+      view.unmount();
+    }
   });
 });
 

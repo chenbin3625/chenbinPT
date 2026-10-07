@@ -22,17 +22,18 @@ export const siteMetadata: ISiteMetadata = {
       name: "分类",
       key: "cat",
       options: [
-        { name: "Sports/赛事", value: 407 },
+        // DEFS2-6：原表整块抄自 hdbao（含 406/411），与 Jackett hdclone.yml 的 categorymappings 全错位；
+        // 这里按 hdclone.yml 重写：401 Movies / 402 TV Series / 403 TV Shows / 404 Documentaries /
+        // 405 Animations / 407 Others（慎选）/ 408 Music / 409 Playlet（短剧）/ 410 MV（演唱会）。
         { name: "Movies/电影", value: 401 },
         { name: "TV Series/电视剧", value: 402 },
-        { name: "Documentaries/纪录片", value: 404 },
         { name: "TV Shows/综艺", value: 403 },
-        { name: "Misc/音乐", value: 409 },
-        { name: "Concert/演唱会", value: 408 },
-        { name: "Music Videos/音乐MV", value: 406 },
+        { name: "Documentaries/纪录片", value: 404 },
         { name: "Animations/动漫&动画", value: 405 },
-        { name: "Tutorial/教程", value: 410 },
-        { name: "Others/其他", value: 411 },
+        { name: "Others/其他（慎选）", value: 407 },
+        { name: "Music/音乐", value: 408 },
+        { name: "Playlet/短剧", value: 409 },
+        { name: "MV/演唱会", value: 410 },
       ],
       cross: { mode: "append" },
     },

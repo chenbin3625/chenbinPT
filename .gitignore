@@ -14,6 +14,8 @@ dist-*
 *.local
 public/_locales
 .vitest/
+# 审查/调研中间产物目录（INFRA-7/L-14）：内含带 passkey 的代码引用与探针脚本，不属交付物
+.scratch/
 
 # Logs
 logs

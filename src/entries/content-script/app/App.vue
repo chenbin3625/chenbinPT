@@ -1,16 +1,26 @@
 <script setup lang="ts">
-import { inject, provide, useTemplateRef, ref, shallowReactive, computed, withModifiers, onUnmounted } from "vue";
+import {
+  inject,
+  provide,
+  useTemplateRef,
+  ref,
+  shallowReactive,
+  computed,
+  withModifiers,
+  onUnmounted,
+  onMounted,
+} from "vue";
 import { useI18n } from "vue-i18n";
 import { useDraggable } from "@vueuse/core";
 import { HomeOutlined } from "@ant-design/icons-vue";
-import { Modal } from "ant-design-vue";
+import { Modal, message as staticMessage } from "ant-design-vue";
 import { type ITorrent } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
-import { registerModalApi } from "./modal.ts";
+import { registerModalApi, registerMessageApi } from "./modal.ts";
 import type { IRemoteDownloadDialogData } from "./types.ts";
 import {
   CUSTOM_DRAG_MIME,
@@ -35,6 +45,14 @@ const { t } = useI18n();
 // 弹窗才会继承主题/语言/getPopupContainer。详见 ./modal.ts。
 const [modal, modalContextHolder] = Modal.useModal();
 registerModalApi(modal);
+
+// CONTENTSCRIPT-1：runtimeStore.showSnakebar 走的是 antd 静态 message，它的 cssinjs 规则注入宿主
+// document.head，节点却在 closed shadow root 内 ⇒ 通知条是无样式块。这里改用 useMessage() 的实例
+// 并交给 modal.ts 重定向静态 API（contextHolder 必须渲染在 ConfigProvider 之下）。详见 ./modal.ts。
+const [shadowMessage, messageContextHolder] = staticMessage.useMessage();
+// 注册放在 onMounted：holder 未挂载时 useMessage().open() 会静默丢弃消息，而挂载钩子在本次
+// app.mount() 内同步执行，早于任何 $onReady 回调的微任务。
+onMounted(() => registerMessageApi(shadowMessage));
 
 const ptdIcon = chrome.runtime.getURL("icons/logo/64.png");
 const ptdData = inject<IPtdData>("ptd_data", {});
@@ -254,4 +272,7 @@ function handleSpeedDialClick(event: MouseEvent) {
 
   <!-- Modal.useModal() 的 contextHolder：把 confirm/prompt 弹窗渲染在 shadow root 内 -->
   <component :is="modalContextHolder" />
+
+  <!-- message.useMessage() 的 contextHolder：把通知条渲染在 shadow root 内并带上 shadow 主题样式 -->
+  <component :is="messageContextHolder" />
 </template>

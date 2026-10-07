@@ -52,6 +52,13 @@ const restoreOptions = ref<IRestoreOptions>({
 /** S-1：备份服务器配置 / 敏感字段 / 未勾选开关时的后果，见 restoreSecurity.ts */
 const restoreSecurity = computed(() => analyzeRestoreSecurity(restoreData.value, restoreOptions.value));
 
+/**
+ * OPTIONSSETTINGS-6：一个恢复字段都没勾选时，offscreen 的 pendingWrites 为空、一个 key 都不会写，
+ * 但仍会 `report.success = true`，UI 于是提示「恢复成功」——用户会以为数据已恢复回来。
+ * 这里用同一条件禁用确定按钮，从源头掐掉这条静默成功路径（offscreen 侧的返回值问题见 notes）。
+ */
+const canRestore = computed(() => (restoreOptions.value.fields?.length ?? 0) > 0);
+
 /** 解析备份文件时被丢弃的条目（形状不符等），由 packages/backupServer/utils.ts 在解析阶段记录 */
 const backupParseWarnings = computed(() => getBackupWarnings(restoreData.value ?? {}));
 
@@ -157,6 +164,8 @@ function reportRestoreResult(result: unknown) {
 
 const isDoingRestore = ref<boolean>(false);
 async function doRestore() {
+  // OPTIONSSETTINGS-6：确定按钮已按同一条件禁用，这里再挡一次，避免空选择走到「恢复成功」
+  if (!canRestore.value) return;
   isDoingRestore.value = true;
 
   // 检查 version 字段
@@ -431,7 +440,13 @@ watch(showDialog, (open) => {
         >
           {{ t("common.dialog.next") }}
         </a-button>
-        <a-button v-if="currentStep == 'restore'" :loading="isDoingRestore" type="primary" @click="doRestore">
+        <a-button
+          v-if="currentStep == 'restore'"
+          :disabled="isDoingRestore || !canRestore"
+          :loading="isDoingRestore"
+          type="primary"
+          @click="doRestore"
+        >
           {{ t("common.dialog.ok") }}
         </a-button>
       </a-flex>

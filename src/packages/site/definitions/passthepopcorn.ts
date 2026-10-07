@@ -4,7 +4,12 @@
  */
 import { selectElements } from "../utils/selector";
 import Gazelle, { SchemaMetadata } from "../schemas/Gazelle.ts";
-import { parseValidTimeString, parseSizeString, buildCategoryOptionsFromList } from "../utils";
+import {
+  parseValidTimeString,
+  parseValidTimeStringInZone,
+  parseSizeString,
+  buildCategoryOptionsFromList,
+} from "../utils";
 import type { ISiteMetadata, ITorrent, ISearchInput } from "../types";
 import { ETorrentStatus, NoTorrentsError } from "../types";
 
@@ -186,10 +191,9 @@ export const siteMetadata: ISiteMetadata = {
       },
       joinTime: {
         selector: ["div.panel__heading:contains('Stats') + div.panel__body > ul.list > li:contains('Joined:') > span"],
-        elementProcess: (element: HTMLElement) => {
-          const query = (element.getAttribute("title") || element.innerText).trim();
-          return parseValidTimeString(query, ["MMM dd yyyy, HH:mm"]);
-        },
+        elementProcess: (element: HTMLElement) => (element.getAttribute("title") || element.innerText).trim(),
+        // SITECORE-1：elementProcess 里拿不到站点时区，解析交给具名 parseTime（args 传站点格式）
+        filters: [{ name: "parseTime", args: ["MMM dd yyyy, HH:mm"] }],
       },
       seeding: {
         selector: ["div.panel__heading:contains('Community') + div.panel__body > ul.list > li:contains('Seeding:')"],
@@ -324,7 +328,13 @@ export default class PassThePopcorn extends Gazelle {
 
       const tempTimeDiv = this.createTempDiv(torrent.Time);
       const timeStr = selectElements("span", tempTimeDiv)[0]?.getAttribute("title") || "";
-      const time = parseValidTimeString(timeStr, ["MMM dd yyyy, HH:mm"]) as number;
+      // SITECORE-1：API 返回的 Time 是站点墙上时间，按 metadata.timezoneOffset 解析；
+      // 未声明时区时退回宿主时区解析，避免把时间戳变成 0
+      const time = (
+        this.metadata.timezoneOffset
+          ? parseValidTimeStringInZone(timeStr, ["MMM dd yyyy, HH:mm"], this.metadata.timezoneOffset)
+          : parseValidTimeString(timeStr, ["MMM dd yyyy, HH:mm"])
+      ) as number;
       const size = parseSizeString(torrent.Size);
       const seeders = parseFloat(torrent.Seeders);
       const leechers = parseFloat(torrent.Leechers);

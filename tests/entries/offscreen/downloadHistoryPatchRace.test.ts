@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     getSiteInstance: vi.fn(),
     getDownloader: vi.fn(),
     getDownloaderMetaData: vi.fn(),
+    releaseDownloaderInstance: vi.fn(),
     getRemoteTorrentFile: vi.fn(),
   };
 });
@@ -53,6 +54,7 @@ vi.mock("@/offscreen/adapter/indexdb.ts", () => ({ ptdIndexDb: Promise.resolve(m
 vi.mock("@ptd/downloader", () => ({
   getDownloader: mocks.getDownloader,
   getDownloaderMetaData: mocks.getDownloaderMetaData,
+  releaseDownloaderInstance: mocks.releaseDownloaderInstance,
 }));
 vi.mock("@ptd/downloader/utils.ts", () => ({ getRemoteTorrentFile: mocks.getRemoteTorrentFile }));
 

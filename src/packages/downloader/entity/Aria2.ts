@@ -426,9 +426,10 @@ export default class Aria2 extends AbstractBittorrentClient {
   };
 
   /**
-   * 关闭 WebSocket 并释放全部 pending 请求，实例不再使用时应调用
+   * 关闭 WebSocket 并释放全部 pending 请求，实例不再使用时应调用。
+   * 实现 AbstractBittorrentClient 的可选 dispose 契约（DOWNLOADER-5）。
    */
-  public dispose() {
+  public override dispose() {
     if (this._disposed) {
       return;
     }
@@ -656,7 +657,9 @@ export default class Aria2 extends AbstractBittorrentClient {
 
   async removeTorrent(id: string, removeData?: boolean): Promise<boolean> {
     if (removeData) {
-      throw new Error("Aria2 does not support deleting torrent data through this API");
+      // DOWNLOADER-3：原来抛异常，但调用方用 allSettled 吞掉 rejection（弹窗照常关闭、任务还在），
+      // 且 removeTorrent 的契约是 Promise<boolean>。改为返回 false，让「不支持删除数据」可被上层读取。
+      return false;
     }
     // H-4：aria2.remove 只接受 active / waiting / paused 的任务；对已停止（complete / error / removed）的任务
     // 调用会返回 JSON-RPC error（"GID ... is not found"），而这类任务只在「下载结果」里，

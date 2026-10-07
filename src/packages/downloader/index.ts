@@ -66,6 +66,30 @@ function getDownloaderInstanceCacheKey(config: DownloaderBaseConfig): string {
   return stableSerialize({ id, type, address, username, password, timeout, feature, advanceAddTorrentOptions });
 }
 
+/**
+ * 释放实例持有的长连接等资源：仅 Aria2 实现了 dispose（关闭 WebSocket 并清空 pending 请求）。
+ * 其它实体没有长连接，`dispose?.()` 是空操作（DOWNLOADER-5）。
+ */
+function disposeDownloaderInstance(instance: AbstractBittorrentClient): void {
+  instance.dispose?.();
+}
+
+/**
+ * 供持有者主动释放实例（DOWNLOADER-5）。
+ *
+ * 先从本模块缓存移除该实例，再关掉它的长连接；否则「同配置再次 getDownloader」会拿回一个已 dispose
+ * 的实例（Aria2 会直接抛 "client has been disposed"）。offscreen 的 downloaderInstanceCache 在
+ * 配置变更覆盖旧实例时应调用它，而不是只 `set()` 覆盖引用。
+ */
+export function releaseDownloaderInstance(instance: AbstractBittorrentClient): void {
+  for (const [key, cached] of downloaderInstanceCache) {
+    if (cached === instance) {
+      downloaderInstanceCache.delete(key);
+    }
+  }
+  disposeDownloaderInstance(instance);
+}
+
 export async function getDownloader(config: DownloaderBaseConfig): Promise<AbstractBittorrentClient> {
   const cacheKey = getDownloaderInstanceCacheKey(config);
   const cached = downloaderInstanceCache.get(cacheKey);
@@ -84,9 +108,8 @@ export async function getDownloader(config: DownloaderBaseConfig): Promise<Abstr
 
   downloaderInstanceCache.set(cacheKey, instance);
   if (downloaderInstanceCache.size > MAX_CACHED_DOWNLOADER_INSTANCES) {
-    // 这里只淘汰最久未使用的引用，不主动 dispose()：
-    // offscreen 的 downloaderInstanceCache 没有淘汰机制，被淘汰的实例可能仍被其持有，
-    // 主动关闭会破坏调用方仍在使用中的连接。实例不再使用时可由持有者调用 dispose() 释放。
+    // 包级缓存不拥有实例的完整生命周期：offscreen 还可能在自己的缓存中持有它。
+    // 自动淘汰只能移除本缓存引用；真正不再使用时由持有者调用 releaseDownloaderInstance()。
     const oldestKey = downloaderInstanceCache.keys().next().value;
     if (oldestKey !== undefined && oldestKey !== cacheKey) {
       downloaderInstanceCache.delete(oldestKey);

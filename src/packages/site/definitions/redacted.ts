@@ -139,7 +139,10 @@ export const siteMetadata: ISiteMetadata = {
       id: 6,
       name: "Power TM",
       interval: "P8W",
-      uniqueGroups: 500,
+      // DEFS1-4 孪生：原键名 uniqueGroups 不在 level.ts「应当大于等于」求值白名单里（只认 groups），
+      // 该门槛会被静默当作已满足；RED 属 GazelleJSONAPI，response.community.groups 就是「上传过的去重组数」，
+      // 已由引擎采集，故与 dicmusic/orpheus 同款改用 groups，让 500 组门槛真正参与判级。
+      groups: 500,
       uploaded: "500GB",
       ratio: 0.65,
       isKept: true,

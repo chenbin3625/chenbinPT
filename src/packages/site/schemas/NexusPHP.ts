@@ -19,9 +19,10 @@ import {
   createDocument,
   definedFilters,
   extractContent,
+  logMessage,
   parseSizeString,
   parseTimeToLiveToDate,
-  parseValidTimeString,
+  siteErrorLogData,
   sizePattern,
 } from "../utils";
 
@@ -504,17 +505,19 @@ export const SchemaMetadata: Pick<
               time = extractContent(element.innerHTML.replace("<br>", " "));
             }
 
-            if (time.match(/\d+[分时天月年]/g)) {
+            // SITECORE-1：绝对时间字符串必须留给 parseWholeTorrentFromRow 按站点时区（timezoneOffset）解析。
+            // 此前这里调用 parseValidTimeString 会按运行主机的时区解释站点的墙上时间，
+            // 宿主时区 ≠ 站点时区时发布时间整体位移（实测 TZ=UTC 主机访问 +0800 站点偏 8 小时）；
+            // 只有「N 分钟前 / N 天前」这类相对时间可以直接换算成绝对时间戳。
+            if (typeof time === "string" && time.match(/\d+[分时天月年]/g)) {
               time = parseTimeToLiveToDate(time);
-            } else {
-              time = parseValidTimeString(time);
             }
           } catch (e) {
             // P1-5：时间字段解析失败时回落为原始值（time 仍可能是字符串），保持既有行为不抛出。
             // 每行种子都会执行，属高频良性降级路径，故只用 console.debug 避免刷满 logger 缓冲。
             console.debug("[PTD] NexusPHP parse row time failed, fallback to raw value:", time, e);
           }
-          return time as number;
+          return time;
         },
       },
       ext_douban: {
@@ -564,7 +567,8 @@ export const SchemaMetadata: Pick<
 
     selectors: {
       title: {
-        selector: ["h1#top", "html > body > title"],
+        // SITECORE-6：<title> 在 <head> 里，`html > body > title` 永不命中（D-37 在 hdbits 修过同款）
+        selector: ["h1#top", "head > title"],
         switchFilters: {
           "h1#top": [
             (title: string) => {
@@ -585,7 +589,7 @@ export const SchemaMetadata: Pick<
             },
           ],
 
-          "html > body > title": [
+          "head > title": [
             (title: string) => {
               // {siteName} :: 种子详情 "{torrentName}" - Powered by NexusPHP
               // 注意：该正则只有 1 个捕获组，因此下面是 `>= 2` + `[1]`；
@@ -748,12 +752,10 @@ export const SchemaMetadata: Pick<
       seedingBonus: createUserBonusSelectorFn(["做种积分", "Seeding Points", "做種積分", "保种积分"]),
       joinTime: {
         selector: ["td.rowhead:contains('加入日期') + td", "td.rowhead:contains('Join'):contains('date') + td"],
-        filters: [
-          (query: string) => {
-            query = query.split(" (")[0];
-            return parseValidTimeString(query);
-          },
-        ],
+        // SITECORE-1：不再在匿名 filter 里直接 parseValidTimeString（那是宿主时区）；
+        // 具名 parseTime 由 AbstractBittorrentSite.runQueryFilters 统一按 this.metadata.timezoneOffset 换算，
+        // split 的 " (" 参数与修复前的 `query.split(" (")[0]` 等价。
+        filters: [{ name: "split", args: [" (", 0] }, { name: "parseTime" }],
       },
       hnrPreWarning: {
         // example: H&R: 2/1/5
@@ -946,14 +948,35 @@ export default class NexusPHP extends PrivateSite {
       flushUserInfo.status === EResultParseStatus.success &&
       (typeof flushUserInfo.seeding === "undefined" || typeof flushUserInfo.seedingSize === "undefined")
     ) {
-      await this.sleepAction(this.metadata.userInfo?.requestDelay);
-      flushUserInfo = (await this.parseUserInfoForSeedingStatus(flushUserInfo)) as IUserInfo;
+      // SITECORE-3：/getusertorrentlistajax.php 是可选接口，断网/CF/5xx 时 request() 会抛错。
+      // 这个 await 此前不在任何 try/catch 内，异常会逃出「总返回 IUserInfo」的方法契约，
+      // 让上层整次刷新 reject、丢弃已成功解析的 uploaded/downloaded/ratio/levelName 等字段，
+      // 因此与 Gazelle 的 mergeSeedingSizeSafely 同构：失败只记 warn，保留已有字段、不改 status。
+      try {
+        await this.sleepAction(this.metadata.userInfo?.requestDelay);
+        flushUserInfo = (await this.parseUserInfoForSeedingStatus(flushUserInfo)) as IUserInfo;
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForSeedingStatus failed`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
+      }
     }
 
     // 导入用户发布信息
     if (flushUserInfo.status === EResultParseStatus.success && typeof flushUserInfo.uploads === "undefined") {
-      await this.sleepAction(this.metadata.userInfo?.requestDelay);
-      flushUserInfo = (await this.parseUserInfoForUploads(flushUserInfo)) as IUserInfo;
+      // SITECORE-3：同上的可选步骤守卫，失败不应作废整次用户信息刷新。
+      try {
+        await this.sleepAction(this.metadata.userInfo?.requestDelay);
+        flushUserInfo = (await this.parseUserInfoForUploads(flushUserInfo)) as IUserInfo;
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForUploads failed`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
+      }
     }
 
     // 处理捐赠者的特殊配置

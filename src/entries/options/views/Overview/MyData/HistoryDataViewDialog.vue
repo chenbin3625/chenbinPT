@@ -4,11 +4,12 @@ import { toAntdColumns, toPagination } from "../utils/antdTable.ts";
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { saveAs } from "file-saver";
-import { EResultParseStatus, type IUserInfo, type TSiteID } from "@ptd/site";
+import { type IUserInfo, type TSiteID } from "@ptd/site";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
 import { formatNumber, formatSize, formatDate } from "@/options/utils.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formatRatio } from "./utils/format.ts";
 import { loadSiteHistoryData } from "./utils/lastUserData.ts";
 
@@ -22,6 +23,7 @@ const { siteId } = defineProps<{
   siteId: TSiteID | null;
 }>();
 const { t } = useI18n();
+const runtimeStore = useRuntimeStore();
 
 /**
  * A-25：不能在 setup 时取一次「今天」——选项页长时间打开会跨天，那样既会继续保护昨天，
@@ -88,11 +90,25 @@ async function loadHistoryData() {
 }
 
 async function deleteSiteUserInfo(date: string[]) {
-  if (await confirmModal(t("MyData.HistoryDataView.deleteConfirm"))) {
-    sendMessage("removeSiteUserInfo", {
-      siteId: siteId!,
-      date: date.filter((d) => d != currentDate()), // 不允许移除当天的数据
-    }).then(() => loadHistoryData());
+  if (!(await confirmModal(t("MyData.HistoryDataView.deleteConfirm")))) return;
+
+  // OPTIONSOVERVIEW-4：当天数据不允许删除（与行内删除按钮、复选框的判据一致），
+  // 原实现只是静默地把当天日期过滤掉：只勾选当天记录时会以空数组调用后台，
+  // 界面既不提示也没有任何变化。这里显式中止并给出可见反馈。
+  const removable = date.filter((d) => d != currentDate());
+  if (removable.length === 0) {
+    runtimeStore.showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+    return;
+  }
+
+  try {
+    // OPTIONSOVERVIEW-4：sendMessage 原先没有 catch/反馈，删除失败时列表不刷新、也没有任何提示
+    // （未处理的 rejection 只进控制台，用户无从判断是否删成功）。成功与失败都要提示。
+    await sendMessage("removeSiteUserInfo", { siteId: siteId!, date: removable });
+    await loadHistoryData();
+    runtimeStore.showSnakebar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
+  } catch {
+    runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: "error" });
   }
 }
 
@@ -137,7 +153,11 @@ watch(showDialog, (open) => {
       :row-selection="{
         selectedRowKeys: tableSelected,
         onChange: onSelectionChange,
-        getCheckboxProps: (record: any) => ({ disabled: record._selectable === false }),
+        // OPTIONSOVERVIEW-4：原先引用从不存在的 `_selectable` 字段 → 判据恒为 false，
+        // 当天行照样可勾选；而 deleteSiteUserInfo 会把当天日期静默过滤掉，
+        // 于是「勾选当天 → 删除」等于什么都没发生且无提示。当天数据本就不允许删除，
+        // 这里按与行内删除按钮一致的判据禁用复选框。
+        getCheckboxProps: (record: any) => ({ disabled: record.date == currentDate() }),
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"
@@ -232,7 +252,7 @@ watch(showDialog, (open) => {
 
             <!-- 删除 -->
             <a-button
-              :disabled="record.status == EResultParseStatus.success && record.date == currentDate()"
+              :disabled="record.date == currentDate()"
               :title="t('common.remove')"
               @click="() => deleteSiteUserInfo([record.date])"
               danger

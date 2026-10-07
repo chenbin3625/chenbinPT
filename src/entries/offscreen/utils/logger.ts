@@ -106,6 +106,9 @@ function isPlainContainer(value: object): boolean {
  *
  * 只下探普通对象与数组，并保持原型：既覆盖了所有实际调用点传入的普通数据，
  * 又不会因为「复制」而改变 Date/Map/类实例等对象在日志里的既有形状与序列化结果。
+ *
+ * `seen` 只表示**当前递归路径**上的祖先（进入 add、返回前 delete，见 OFFSCREEN-8）：
+ * 这样真正的自引用仍会输出 "[Circular]"，而被多处引用的同一对象（DAG）会被正常复制出内容。
  */
 function redactSensitiveData(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (typeof value === "string") {
@@ -123,13 +126,16 @@ function redactSensitiveData(value: unknown, depth = 0, seen = new WeakSet<objec
   seen.add(value);
 
   if (Array.isArray(value)) {
-    return value.map((item) => redactSensitiveData(item, depth + 1, seen));
+    const output = value.map((item) => redactSensitiveData(item, depth + 1, seen));
+    seen.delete(value); // OFFSCREEN-8：只在当前递归路径上判环，返回前移除
+    return output;
   }
 
   const output = Object.create(Object.getPrototypeOf(value) as object | null) as Record<string, unknown>;
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     output[key] = redactSensitiveData(item, depth + 1, seen);
   }
+  seen.delete(value); // OFFSCREEN-8：DAG 里被多处引用的同一个对象不应被判成 [Circular] 而丢失内容
   return output;
 }
 

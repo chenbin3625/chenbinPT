@@ -84,6 +84,10 @@ async function doExport() {
   isLoading.value = true;
 
   try {
+    // OPTIONSOVERVIEW-5：单个站点读取失败原先只 console.error 并返回空数组，allSettled 会把它
+    // 当成正常结果，于是导出文件静默缺少这些站点（导出常是备份/迁移前的最后一步）。
+    // 这里收集失败站点，导出结束后统一提示用户。
+    const failedSiteIds: TSiteID[] = [];
     const tasks = querySiteIds.value.map(async (siteId) => {
       try {
         const history = (await sendMessage("getSiteUserInfo", siteId)) as Record<string, IUserInfo> | undefined;
@@ -102,6 +106,7 @@ async function doExport() {
         return items;
       } catch (e) {
         console.error(`加载站点 ${siteId} 历史数据失败`, e);
+        failedSiteIds.push(siteId);
         return [];
       }
     });
@@ -116,8 +121,21 @@ async function doExport() {
 
     merged.sort((a, b) => b.date.localeCompare(a.date));
 
+    if (failedSiteIds.length > 0) {
+      // 与 MyData/utils/siteMetadata.ts 的失败提示保持同一口径：最多列 5 个站点名，其余折叠为数量
+      const showSites = failedSiteIds.map((siteId) => metadataStore.siteNameMap[siteId] ?? siteId);
+      const moreText = showSites.length > 5 ? t("common.moreSites", { count: showSites.length }) : "";
+      runtimeStore.showSnakebar(
+        t("MyData.index.flushSiteFailed", { site: `${showSites.slice(0, 5).join("、")}${moreText}` }),
+        { color: "warning" },
+      );
+    }
+
     if (merged.length === 0) {
-      runtimeStore.showSnakebar(t("common.noData"), { color: "warning" });
+      // 全部站点失败时上面的提示已说明原因，不再重复弹「暂无数据」
+      if (failedSiteIds.length === 0) {
+        runtimeStore.showSnakebar(t("common.noData"), { color: "warning" });
+      }
       return;
     }
 

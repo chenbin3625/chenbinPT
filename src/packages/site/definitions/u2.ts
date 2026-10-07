@@ -115,8 +115,17 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       leechers: {
+        // DEFS3-2：原先只有 elementProcess、没有 selector，取值完全依赖 NexusPHP.transformSearchPage
+        // 从表头 `img.leechers` 反推列号；表头一旦改版（或改用文字表头），该分支就永不执行，
+        // 「下载者」列会静默变成空串。这里按 Jackett u2.yml 的 `td.rowfollow:nth-child(7)` 显式给出
+        // 选择器，并保留纯位置写法作为兜底（引擎会依次尝试直到取到值）。
+        selector: ["> td.rowfollow:nth-child(7)", "> td:nth-child(7)"],
         elementProcess: (element: HTMLElement) => {
-          return parseInt(element.firstChild!.textContent!);
+          // 优先取首个子节点的文本（U2 会在同一单元格里追加进度等附加信息），为空时回落到整个单元格；
+          // 都为空则返回 undefined 而不是抛 TypeError，让选择器链/默认回落继续生效。
+          const firstChildText = (element.firstChild?.textContent ?? "").trim();
+          const text = firstChildText || (element.textContent ?? "").trim();
+          return text ? parseInt(text) : undefined;
         },
       },
       ext_anidb: {

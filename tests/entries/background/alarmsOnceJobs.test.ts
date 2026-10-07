@@ -216,6 +216,21 @@ function messagesOfType(type: string) {
   return sentMessages.filter((message) => message.type === type);
 }
 
+/**
+ * 当前已排程的重新下载 alarm 名（BACKGROUNDSHARED-2）。
+ * 名字不再是可以写死的 `reDownloadTorrent-<downloadId>`，而是带 `~<fireAt>~<随机后缀>` 的唯一名，
+ * 因此必须从 mock 的 alarm 表里反查。
+ */
+function reDownloadAlarmNames(): string[] {
+  return [...createdAlarms.keys()].filter((name) => name.startsWith("reDownloadTorrent-"));
+}
+
+function onlyReDownloadAlarmName(): string {
+  const names = reDownloadAlarmNames();
+  expect(names, "应当只有一个待执行的重新下载 alarm").toHaveLength(1);
+  return names[0]!;
+}
+
 function downloadHistoryStatus() {
   return messagesOfType("setDownloadHistoryStatus").map((message) => message.data);
 }
@@ -246,7 +261,9 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     const leftInterval = 5 * 60 * 1000;
     await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval });
 
-    const alarmName = "reDownloadTorrent-42";
+    const alarmName = onlyReDownloadAlarmName();
+    // downloadId 仍编码在名字里（失败标记要能解析回来），但名字不再是 `<prefix><downloadId>`
+    expect(alarmName.startsWith("reDownloadTorrent-42~")).toBe(true);
     // 已按真实剩余间隔排程（不是固定 +30s），且参数已落盘
     expect(createdAlarms.has(alarmName)).toBe(true);
     // 容差说明：scheduledTime 是消息处理时按 `Date.now() + leftInterval` 算出来的，与这里的 Date.now()
@@ -280,6 +297,7 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
   it("重新下载失败：把 downloadHistory 标记为 failed（不再静默停在 pending）", async () => {
     await bootServiceWorker();
     await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 2 * 60 * 1000 });
+    const alarmName = onlyReDownloadAlarmName();
 
     // 模拟 SW 回收重启 + 下载器不可达
     await bootServiceWorker();
@@ -293,7 +311,7 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
       return true;
     };
 
-    await fireAlarm("reDownloadTorrent-42");
+    await fireAlarm(alarmName);
 
     expect(downloadHistoryStatus()).toEqual([{ downloadId: 42, status: "failed" }]);
     expect(messagesOfType("logger").some((m) => String(m.data?.msg).includes("Re-download failed"))).toBe(true);
@@ -304,9 +322,19 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
   it("alarm 触发但参数缺失：判定 failed，而不是静默丢失", async () => {
     await bootServiceWorker();
 
+    // 旧式名字（升级前排下的 alarm）也必须能解析出 downloadId
     await fireAlarm("reDownloadTorrent-99");
 
     expect(downloadHistoryStatus()).toEqual([{ downloadId: 99, status: "failed" }]);
+  });
+
+  it("alarm 触发但参数缺失：新式名字（含负数投递 id）同样解析并判定 failed", async () => {
+    await bootServiceWorker();
+
+    // 关闭下载历史时 offscreen 会用负数序列 id（见 PLAN 跨包契约），名字里带唯一后缀
+    await fireAlarm("reDownloadTorrent--3~1700000000000~deadbeef");
+
+    expect(downloadHistoryStatus()).toEqual([{ downloadId: -3, status: "failed" }]);
   });
 
   it("leftInterval < 30s：不再 sleep 占住消息通道，统一按 alarms 排程", async () => {
@@ -317,9 +345,65 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
 
     // 旧实现在这里 `await sleep(5000)`，消息处理要 5s 后才返回
     expect(Date.now() - startedAt).toBeLessThan(1000);
-    expect(createdAlarms.has("reDownloadTorrent-42")).toBe(true);
-    expect(pendingJobs()["reDownloadTorrent-42"]).toMatchObject({ kind: "reDownloadTorrent", downloadId: 42 });
+    const alarmName = onlyReDownloadAlarmName();
+    expect(createdAlarms.has(alarmName)).toBe(true);
+    expect(pendingJobs()[alarmName]).toMatchObject({ kind: "reDownloadTorrent", downloadId: 42 });
     expect(messagesOfType("downloadTorrent")).toHaveLength(0);
+  });
+
+  it("BACKGROUNDSHARED-2：关闭下载历史时 downloadId 恒为 0，多个延迟下载不得互相覆盖", async () => {
+    await bootServiceWorker();
+
+    // 两个「未到站点下载间隔」的任务都拿到同一条投递 id（历史关闭时 setDownloadHistory 返回 0）
+    await dispatchMessage("reDownloadTorrent", { ...downloadOption, downloadId: 0, leftInterval: 60 * 1000 });
+    await dispatchMessage("reDownloadTorrent", {
+      ...downloadOption,
+      downloadId: 0,
+      torrent: { ...downloadOption.torrent, id: 2, title: "Second Torrent" },
+      leftInterval: 90 * 1000,
+    });
+
+    // 旧实现两者都叫 `reDownloadTorrent-0`：chrome.alarms 同名覆盖 + payload 同名覆盖，先投递者永久丢失
+    const names = reDownloadAlarmNames();
+    expect(names).toHaveLength(2);
+    expect(new Set(names).size).toBe(2);
+    expect(
+      Object.values(pendingJobs()).filter((job: any) => job?.kind === "reDownloadTorrent"),
+      "两条 payload 必须同时保留",
+    ).toHaveLength(2);
+
+    // SW 回收重启后，两个 alarm 都能各自执行一次（先投递者不再永不终态）
+    await bootServiceWorker();
+    await fireAlarm(names[0]!);
+    await fireAlarm(names[1]!);
+
+    expect(messagesOfType("downloadTorrent")).toHaveLength(2);
+    expect(pendingJobs()).toEqual({});
+  });
+
+  it("BACKGROUNDSHARED-2：对账按任务名反查，新式 alarm 名仍能匹配到等待中的任务（不提前判死）", async () => {
+    await bootServiceWorker();
+    await dispatchMessage("reDownloadTorrent", { ...downloadOption, downloadId: 7, leftInterval: 60 * 60 * 1000 });
+    const alarmName = onlyReDownloadAlarmName();
+
+    // 下载历史里这条记录已超期未推进，但参数与 alarm 都还在：L-4 第 2 层不能提前判死
+    sendMessageHandler = (message, sendResponse) => {
+      if (message.type !== "getDownloadHistory") {
+        return false;
+      }
+      sendResponse({
+        res: [{ id: 7, downloadStatus: "pending", downloadAt: Date.now() - 24 * 60 * 60 * 1000 }],
+      });
+      return true;
+    };
+
+    // 让冷启动再跑一次恢复扫描（清掉 6h 节流检查点）
+    sessionBacking.clear();
+    await bootServiceWorker();
+    await settle();
+
+    expect(createdAlarms.has(alarmName)).toBe(true);
+    expect(downloadHistoryStatus()).toEqual([]);
   });
 
   it("用户信息刷新重试：SW 重启后按持久化的 retryIndex 重建并执行，执行后清理", async () => {
@@ -389,10 +473,11 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
   it("同一个 alarm 触发两次也只执行一次（先取走再执行）", async () => {
     await bootServiceWorker();
     await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60 * 1000 });
+    const alarmName = onlyReDownloadAlarmName();
     await bootServiceWorker();
 
-    await fireAlarm("reDownloadTorrent-42");
-    await fireAlarm("reDownloadTorrent-42");
+    await fireAlarm(alarmName);
+    await fireAlarm(alarmName);
 
     expect(messagesOfType("downloadTorrent")).toHaveLength(1);
   });
@@ -400,16 +485,17 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
   it("H-11：冷启动扫描重建了刚触发的 alarm，重复触发不得把已成功的重新下载改判 failed", async () => {
     await bootServiceWorker();
     await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60 * 1000 });
+    const alarmName = onlyReDownloadAlarmName();
 
     // 真实浏览器：SW 被该 alarm 唤醒时 alarms.get 已查不到它（onAlarm 触发即视为已消费），参数仍在
-    createdAlarms.delete("reDownloadTorrent-42");
+    createdAlarms.delete(alarmName);
     await bootServiceWorker();
     await settle();
     // 冷启动的恢复扫描把它当成「丢失的 alarm」重建了一次
-    expect(createdAlarms.has("reDownloadTorrent-42")).toBe(true);
+    expect(createdAlarms.has(alarmName)).toBe(true);
 
-    await fireAlarm("reDownloadTorrent-42"); // 原 alarm：执行并成功
-    await fireAlarm("reDownloadTorrent-42"); // 重建出的 alarm：约 1 秒后再次触发
+    await fireAlarm(alarmName); // 原 alarm：执行并成功
+    await fireAlarm(alarmName); // 重建出的 alarm：约 1 秒后再次触发
 
     expect(messagesOfType("downloadTorrent")).toHaveLength(1);
     expect(downloadHistoryStatus()).toEqual([]);
@@ -418,7 +504,7 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     createdAlarms.clear();
     await bootServiceWorker();
     await settle();
-    expect(createdAlarms.has("reDownloadTorrent-42")).toBe(false);
+    expect(createdAlarms.has(alarmName)).toBe(false);
   });
 
   it("不处理与自身无关的 alarm（interval job / nativeMessaging）", async () => {

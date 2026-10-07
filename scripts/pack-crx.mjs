@@ -224,7 +224,8 @@ async function listZipEntries(buffer) {
 async function checkManifestReferences(zip) {
   const manifestEntry = zip.file("manifest.json");
   if (!manifestEntry) throw new Error("zip 里没有 manifest.json");
-  const manifest = JSON.parse(await manifestEntry.async("string"));
+  const manifestRaw = await manifestEntry.async("string");
+  const manifest = JSON.parse(manifestRaw);
   const referenced = [];
   const bg = manifest.background ?? {};
   if (bg.service_worker) referenced.push(bg.service_worker);
@@ -241,6 +242,26 @@ async function checkManifestReferences(zip) {
   }
   const missing = [...new Set(referenced)].filter((p) => !zip.file(p));
   if (missing.length > 0) throw new Error(`manifest 引用的资源不在包内：${missing.join(", ")}`);
+
+  // INFRA-2：manifest 的 name / description / action.default_title 都是 `__MSG_<key>__` 本地化字符串，
+  // 而 `_locales/<default_locale>/messages.json` 是构建期由 generateWebextLocales 生成的。
+  // 该插件过去生成失败只 console.warn/error 就继续，于是能打出一个「manifest 引用本地化、但包内没有
+  // messages.json / 缺 key」的 CRX —— 装到浏览器才报错，而本脚本仍打印「✓ 自校验通过」。
+  // 因此把本地化引用纳入自校验：缺文件或缺 key 都在这里失败。
+  const msgKeys = [...new Set([...manifestRaw.matchAll(/__MSG_([A-Za-z0-9_@]+)__/g)].map((m) => m[1]))];
+  if (msgKeys.length > 0) {
+    const defaultLocale = manifest.default_locale ?? "en";
+    const messagesPath = `_locales/${defaultLocale}/messages.json`;
+    const messagesEntry = zip.file(messagesPath);
+    if (!messagesEntry) {
+      throw new Error(`manifest 使用了 __MSG_*__，但包里没有 ${messagesPath}（default_locale=${defaultLocale}）`);
+    }
+    const messages = JSON.parse(await messagesEntry.async("string"));
+    const missingKeys = msgKeys.filter((k) => !messages[k]?.message);
+    if (missingKeys.length > 0) {
+      throw new Error(`${messagesPath} 缺少 manifest 引用的本地化键：${missingKeys.join(", ")}`);
+    }
+  }
   return { manifest, referencedCount: new Set(referenced).size };
 }
 

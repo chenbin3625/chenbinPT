@@ -46,9 +46,11 @@ export function isCloudflareBlocked(response: AxiosResponse): boolean {
 }
 
 interface AxiosRetryWhenCloudflareBlockInstance extends AxiosInstance {
-  defaults: AxiosInstance["defaults"] & {
-    retryWhenCloudflare: boolean;
-  };
+  // 防重标志位挂在实例对象上而非 defaults（EXTENDSI18N-6）：
+  // axios.create() 会通过 mergeConfig 继承 defaults，把标志写在 defaults 上会让任何从已配置实例
+  // 派生出来的新实例一出生就带标志位、被守卫静默跳过（拦截器不注册，CF 挑战不再重试）；
+  // 实例自身的属性不会被 create() 继承，因此派生实例仍能正常注册重试拦截器。
+  retryWhenCloudflareSetup?: boolean;
 }
 
 function fixConfig(axiosInstance: AxiosInstance | AxiosStatic, config: AxiosRequestConfig) {
@@ -78,11 +80,11 @@ function removeCustomCloudflareCookie(config: AxiosRequestConfig | undefined) {
 export function setupRetryWhenCloudflareBlock(axios: AxiosInstance): AxiosRetryWhenCloudflareBlockInstance {
   const axiosRetryWhenCloudflareBlockInstance = axios as AxiosRetryWhenCloudflareBlockInstance;
 
-  if (axiosRetryWhenCloudflareBlockInstance.defaults.retryWhenCloudflare) {
+  if (axiosRetryWhenCloudflareBlockInstance.retryWhenCloudflareSetup) {
     console.debug("setupRetryWhenCloudflareBlock() should be called only once");
     return axiosRetryWhenCloudflareBlockInstance;
   }
-  axiosRetryWhenCloudflareBlockInstance.defaults.retryWhenCloudflare = true;
+  axiosRetryWhenCloudflareBlockInstance.retryWhenCloudflareSetup = true;
 
   // 请求完成后，自动删除 我们设置的 cf_clearance cookie （这不会影响具有 partitionKey 属性的原 cookie ）
   axiosRetryWhenCloudflareBlockInstance.interceptors.response.use(

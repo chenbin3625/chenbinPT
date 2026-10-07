@@ -310,12 +310,12 @@ describe("Aria2 删除任务按状态分流（H-4）", () => {
 });
 
 describe("Aria2 删除文件参数", () => {
-  it("API 不支持删文件时明确拒绝，而不是假报成功", async () => {
+  it("API 不支持删文件时明确返回失败，而不是假报成功（DOWNLOADER-3：抛异常会被调用方 allSettled 吞掉）", async () => {
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const { client, ws } = await createClient();
 
-    await expect(client.removeTorrent("gid-1", true)).rejects.toThrow(/does not support/i);
+    await expect(client.removeTorrent("gid-1", true)).resolves.toBe(false);
     expect(ws.sent).toHaveLength(0);
   });
 });

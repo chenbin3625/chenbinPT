@@ -774,7 +774,9 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
           progress: task.size > 0 ? (download / task.size) * 100 : 0,
           savePath: task.additional!.detail!.destination,
           totalSize: task.size,
-          ratio: upload / download,
+          // DOWNLOADER-7：size_downloaded 为 0 时 upload/download 会得到 Infinity/NaN，
+          // 界面会把 Infinity 显示成「∞」并判定分享率达标（0/0 显示成「-」），与 progress 一样防御除零
+          ratio: download > 0 ? upload / download : 0,
           uploadSpeed: task.additional!.transfer!.speed_upload,
           downloadSpeed: task.additional!.transfer!.speed_download,
           totalUploaded: upload,
@@ -811,12 +813,16 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
    * DSM 不支持只删除任务而保留文件，未明确勾选删除数据时拒绝操作，
    * 避免用户按“保留文件”操作却实际删除了文件。
    *
+   * DOWNLOADER-3：这里曾 `throw`，但调用方（options 的 BaseDeleteDialog）用 allSettled 吞掉 rejection，
+   * 弹窗照常关闭、刷新后任务还在，用户完全不知道原因；而且 removeTorrent 的契约是
+   * `Promise<boolean>`（其余实体失败也返回 false）。改为返回 false，让「拒绝执行」这一结果可被上层读取。
+   *
    * @param id
    * @param removeData
    */
   async removeTorrent(id: any, removeData: boolean | undefined): Promise<boolean> {
     if (!removeData) {
-      throw new Error("Synology Download Station cannot delete a task without deleting its data");
+      return false;
     }
     return (
       await this.requestEntryCGI({

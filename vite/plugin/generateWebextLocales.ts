@@ -26,8 +26,10 @@ export function vitePluginGenerateWebextLocales() {
           // 提取 manifest 字段
           const manifest = jsonData.manifest;
           if (!manifest) {
-            console.warn(`No manifest field found in ${file}.`);
-            return;
+            // INFRA-2：原先只 console.warn 后 return，于是 manifest.json 里引用的 `__MSG_extName__`
+            // 没有对应的 messages.json，包能打出来但装到浏览器才失败（pack-crx 也会误报「自校验通过」）。
+            // 构建期直接抛错，失败点离原因最近。
+            throw new Error(`No manifest field found in ${file}.`);
           }
 
           // 生成 messages.json 文件内容
@@ -48,7 +50,9 @@ export function vitePluginGenerateWebextLocales() {
           fs.writeFileSync(outputFilePath, JSON.stringify(messages, null, 2));
           console.log(`Generated ${outputFilePath}`);
         } catch (error) {
+          // INFRA-2：解析失败也必须让构建失败，否则会产出「manifest 有 __MSG_*__ 但没有 messages.json」的包
           console.error(`Error processing ${file}:`, error);
+          throw error;
         }
       });
     },

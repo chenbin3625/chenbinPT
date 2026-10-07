@@ -14,7 +14,7 @@ import NexusPHP, {
   CategorySpstate,
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
-import { createDocument, parseSizeString, parseValidTimeString, rot13, tryToNumber } from "../utils";
+import { createDocument, parseSizeString, rot13, tryToNumber } from "../utils";
 import { set } from "es-toolkit/compat";
 
 const AudiencesBaseLinkQuery: IElementQuery = {
@@ -296,9 +296,12 @@ export const siteMetadata: ISiteMetadata = {
         filters: [
           (query: string) => {
             const queryMatch = query.match(/加入日期[：:]\s*([^(]+?)(?:\s*\(|最近[动動]向|$)/);
-            query = queryMatch?.[1] ?? query.split(" (")[0];
-            return parseValidTimeString(query);
+            // SITECORE-1：只做字符串归一化（trim 掉尾随空白，避免具名 parseTime 落到原生 Date 分支），
+            // 时区换算交给具名 parseTime（按 metadata.timezoneOffset）
+            return (queryMatch?.[1] ?? query.split(" (")[0]).trim();
           },
+          // SITECORE-1：上面的函数只做字符串归一化，时区换算交给具名 parseTime（按 metadata.timezoneOffset）
+          { name: "parseTime" },
         ],
       },
       lastAccessAt: {
@@ -312,9 +315,11 @@ export const siteMetadata: ISiteMetadata = {
         filters: [
           (query: string) => {
             const queryMatch = query.match(/最近[动動]向[：:]\s*([^(]+?)(?:\s*\(|$)/);
-            query = queryMatch?.[1] ?? query.split("(")[0];
-            return parseValidTimeString(query);
+            // SITECORE-1：同 joinTime —— 归一化后由具名 parseTime 按站点时区解析
+            return (queryMatch?.[1] ?? query.split("(")[0]).trim();
           },
+          // SITECORE-1：同 joinTime —— 归一化后由具名 parseTime 按站点时区解析
+          { name: "parseTime" },
         ],
       },
       seeding: {
@@ -484,8 +489,12 @@ export default class Audiences extends NexusPHP {
       const trAnothers = selectElements("table:first tr:contains('Total')", userSeedingPage as Document);
       if (trAnothers.length > 0) {
         const tds = trAnothers[0].getElementsByTagName("td");
-        seedStatus.seeding = tryToNumber(tds[1].innerText.trim());
-        seedStatus.seedingSize = parseSizeString(tds[2].innerText.trim());
+        // DEFS1-5：站点版式变化导致该行缺列时，旧代码对 tds[1]/tds[2] 裸取值会抛 TypeError，
+        // 让整个 userInfo 步骤失败；列数不足时跳过这两个字段（其余字段与合并逻辑不受影响）。
+        if (tds.length > 2) {
+          seedStatus.seeding = tryToNumber(tds[1].innerText.trim());
+          seedStatus.seedingSize = parseSizeString(tds[2].innerText.trim());
+        }
       }
     }
 

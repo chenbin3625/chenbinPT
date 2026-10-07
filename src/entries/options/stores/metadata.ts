@@ -130,6 +130,41 @@ function getSiteMapRebuildState(store: object): ISiteMapRebuildState {
   return state;
 }
 
+/**
+ * OPTIONSSHELL-2：站点定义不可用时的提示（按 store 去重）。
+ *
+ * `state.sites` 里可能残留「已从构建产物移除」的站点 id（扩展升级删掉定义、站点改名后用户配置仍在），
+ * 对这类站点取元数据会抛 TypeError。映射重建改成逐站点降级后，同一个坏站点会在每次
+ * addSite/removeSite 重建时再次命中 —— 这里按 store 记录已提示过的站点，只在出现新的失败站点时提示一次，
+ * 避免连续删除/批量导入时反复弹同一条提示（与 MyData/utils/siteMetadata.ts 的做法一致）。
+ */
+const reportedUnavailableSiteIds = new WeakMap<object, Set<TSiteID>>();
+
+function reportUnavailableSiteIds(store: object, failedSiteIds: TSiteID[]): void {
+  if (failedSiteIds.length === 0) {
+    return;
+  }
+
+  let reported = reportedUnavailableSiteIds.get(store);
+  if (!reported) {
+    reported = new Set();
+    reportedUnavailableSiteIds.set(store, reported);
+  }
+
+  const newFailedSiteIds = failedSiteIds.filter((siteId) => !reported.has(siteId));
+  if (newFailedSiteIds.length === 0) {
+    return;
+  }
+  newFailedSiteIds.forEach((siteId) => reported.add(siteId));
+
+  const showSites = newFailedSiteIds.slice(0, 5).join("、");
+  const moreText = newFailedSiteIds.length > 5 ? i18n.t("common.moreSites", { count: newFailedSiteIds.length }) : "";
+  // 复用 MyData 侧已有的同一句「站点定义不可用」文案，不为这一条提示去改不属于本包的 locale 文件
+  useRuntimeStore().showSnakebar(i18n.t("MyData.siteMetadataLoadFailed", { sites: showSites, more: moreText }), {
+    color: "error",
+  });
+}
+
 export const useMetadataStore = defineStore("metadata", {
   persistWebExt: true,
   state: (): IMetadataPiniaStorageSchema => ({
@@ -502,7 +537,11 @@ export const useMetadataStore = defineStore("metadata", {
         await this.buildSiteMapCache(false);
         await this.$save(); // 重建出的 siteHostMap / siteNameMap 同样需要持久化
       } else {
-        scheduleMetadataSave(this);
+        // OPTIONSSHELL-4：reBuildMap:false 也必须「返回即已落盘」。
+        // 该分支的唯一调用方是一键导入的 URL 探测：addSite 之后立刻 sendMessage("getSiteSearchResult")，
+        // 而 offscreen 侧是从 chrome.storage 读 metadata.sites 的。旧实现只登记 500ms 去抖，
+        // 于是探测用的 url 往往不是刚写入的候选（多 URL 站点永远测 urls[0]，可用站点被判失败并从 store 移除）。
+        await this.$save();
       }
     },
 
@@ -539,34 +578,51 @@ export const useMetadataStore = defineStore("metadata", {
      */
     async buildSiteHostMap() {
       const siteHostMap: Record<TSiteHost, TSiteID> = {};
+      const failedSiteIds: TSiteID[] = [];
       for (const siteId in this.sites) {
         const site = this.sites[siteId];
         if (site.url) {
           siteHostMap[getHostFromUrl(site.url)] = siteId;
         }
-        const urls = await this.getSiteMergedMetadata(siteId, "urls", []);
-        if (urls.length > 0) {
-          for (const url of urls) {
-            siteHostMap[getHostFromUrl(url)] = siteId;
+        // OPTIONSSHELL-2：逐站点降级 —— getSiteMergedMetadata 对「定义已不在构建产物里」的站点会抛
+        // TypeError，旧实现会让循环直接中断：siteHostMap/siteNameMap 都不赋值、syncSiteIndex 也不执行，
+        // 新加站点的 host 永远写不进 siteIndex、已删站点的 host 永远清不掉。这里跳过失败站点，
+        // 保证其余站点与索引同步照常完成，并在末尾统一提示用户。
+        try {
+          const urls = await this.getSiteMergedMetadata(siteId, "urls", []);
+          if (urls.length > 0) {
+            for (const url of urls) {
+              siteHostMap[getHostFromUrl(url)] = siteId;
+            }
           }
-        }
-        const legacyUrls = (await this.getSiteMergedMetadata(siteId, "legacyUrls", []))!;
-        if (legacyUrls.length > 0) {
-          for (const url of legacyUrls) {
-            siteHostMap[getHostFromUrl(url)] = siteId;
+          const legacyUrls = (await this.getSiteMergedMetadata(siteId, "legacyUrls", []))!;
+          if (legacyUrls.length > 0) {
+            for (const url of legacyUrls) {
+              siteHostMap[getHostFromUrl(url)] = siteId;
+            }
           }
+        } catch {
+          failedSiteIds.push(siteId);
         }
       }
       this.siteHostMap = siteHostMap;
+      reportUnavailableSiteIds(this, failedSiteIds);
       await this.syncSiteIndex();
     },
 
     async buildSiteNameMap() {
       const siteNameMap: Record<TSiteID, string> = {};
+      const failedSiteIds: TSiteID[] = [];
       for (const siteId in this.sites) {
-        siteNameMap[siteId] = await this.getSiteName(siteId);
+        // OPTIONSSHELL-2：同 buildSiteHostMap，单个站点定义缺失不能让整张映射停在旧值。
+        try {
+          siteNameMap[siteId] = await this.getSiteName(siteId);
+        } catch {
+          failedSiteIds.push(siteId);
+        }
       }
       this.siteNameMap = siteNameMap;
+      reportUnavailableSiteIds(this, failedSiteIds);
       await this.syncSiteIndex();
     },
 
@@ -637,6 +693,19 @@ export const useMetadataStore = defineStore("metadata", {
       }
 
       const snapshotId = nanoid();
+
+      // OPTIONSSHELL-7：先写外部快照数据、成功后再登记内存元数据 —— 旧实现先写 this.snapshots 再 await，
+      // offscreen 写 IndexedDB 失败（配额/上下文失效）时元数据已留在内存，之后任意一次 $save 就把它落盘，
+      // 用户在列表里看到一条点开取不到数据的「幽灵快照」；调用方是 fire-and-forget，异常也无人提示。
+      // 这里失败即提示并返回，不产生任何内存记录。
+      try {
+        // 保存搜索快照数据
+        await sendMessage("saveSearchResultSnapshotData", { snapshotId, data: searchSnapshotData });
+      } catch {
+        runtimeStorage.showSnakebar(i18n.t("common.saveFailed"), { color: "error" });
+        return;
+      }
+
       this.snapshots[snapshotId] = {
         id: snapshotId,
         name,
@@ -644,20 +713,41 @@ export const useMetadataStore = defineStore("metadata", {
         recordCount: searchSnapshotData.searchResult.length,
       };
 
-      // 保存搜索快照数据
-      await sendMessage("saveSearchResultSnapshotData", { snapshotId, data: searchSnapshotData });
-
       scheduleMetadataSave(this);
     },
 
     async editSearchSnapshotDataName(id: TSearchSnapshotKey, name: string) {
-      this.snapshots[id].name = name;
+      // OPTIONSSHELL-5：与 simplePatch(V-6) 对齐的存在性守卫。快照可能已在另一个标签页被删除
+      // （调用方 EditNameDialog 的 dialogEnter 也只做 `?.` 读），旧实现裸解引用 this.snapshots[id]
+      // 会抛 TypeError：改名静默丢失 + unhandled rejection。这里提示用户并放弃这次修改。
+      const snapshot = this.snapshots[id];
+      if (!snapshot) {
+        useRuntimeStore().showSnakebar(
+          i18n.t("SearchResultSnapshot.updateNotSaved", { schema: "snapshots", id: String(id) }),
+          { color: "error" },
+        );
+        return;
+      }
+
+      snapshot.name = name;
       scheduleMetadataSave(this);
     },
 
     async removeSearchSnapshotData(id: TSearchSnapshotKey) {
+      const runtimeStorage = useRuntimeStore();
+
+      // OPTIONSSHELL-7 孪生：旧实现先 delete 内存元数据再 await 外部删除 —— 外部删除失败（IndexedDB
+      // 配额/上下文失效）时内存记录已消失、异常又让 scheduleMetadataSave 短路：既没有回滚也没有提示，
+      // 用户看到的是「列表里没了、存储里还在」。这里与 saveSearchSnapshotData 保持同一顺序，
+      // 外部删除成功后才改内存；失败则保留记录并提示，用户可重试（也避免留下无法回收的数据）。
+      try {
+        await sendMessage("removeSearchResultSnapshotData", id); // 删除搜索快照数据
+      } catch {
+        runtimeStorage.showSnakebar(i18n.t("KeepUploadTask.deleteError"), { color: "error" });
+        return;
+      }
+
       delete this.snapshots[id]; // 删除搜索快照元数据
-      await sendMessage("removeSearchResultSnapshotData", id); // 删除搜索快照数据
       scheduleMetadataSave(this);
     },
 

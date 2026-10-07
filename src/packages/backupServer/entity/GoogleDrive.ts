@@ -231,6 +231,12 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       if (response?.data?.error?.message?.startsWith("File not found: ")) {
         return true;
       }
+      // SERVERSSOCIAL-3：非「文件已不存在」的删除失败必须留下原因（权限不足、配额超限、网络中断等）。
+      // 旧实现直接落空 return false，自动备份日志里只看得到「returned false」。
+      // 优先记录 Google API 的 error.message：this.request 抛出的是通用文案（如「Network Error: 403」），
+      // 服务端原因只在这里拿得到，否则日志仍然定位不到问题。
+      const apiMessage = response?.data?.error?.message;
+      this.logBackupFailure("deleteFile", apiMessage ? new Error(apiMessage) : e);
     }
     return false;
   }

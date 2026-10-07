@@ -50,10 +50,12 @@ export const stopEventPropagation = (...args: unknown[]) => {
 };
 
 export const formValidateRules: Record<string, (args?: any) => (v: any) => boolean | string> = {
-  require: (args: string = "Item is required") => {
+  // OPTIONSSETTINGS-8：默认文案必须走 i18n —— 旧实现硬编码英文，调用方（Editor.vue 的站点名/排序/URL
+  // 校验）不传文案时，中文界面也会显示 "Item is required" / "Not url"。
+  require: (args: string = i18n.t("common.form.required")) => {
     return (v: any) => !!v || args;
   },
-  url: (args: string = "Not url") => {
+  url: (args: string = i18n.t("common.form.invalidUrl")) => {
     return (v: any) => /^(https?):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;[\]]+[-A-Za-z0-9+&@#/%=~_|]$/.test(v) || args;
   },
 };

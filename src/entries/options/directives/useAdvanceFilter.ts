@@ -439,7 +439,14 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
 
     ranges.forEach((key) => {
       const valueFormat = getValueFormat(key, format);
-      const value = (advanceFilterDictRef.value[key] as unknown as [number, number]).map(valueFormat.parse);
+      // OPTIONSOVERVIEW-1 的指令侧防御：range 字段可能被调用方绑到漏写 `range` 的 a-slider 上，
+      // 拖动后该字段会从 [min,max] 退化成标量，原来直接 `.map` 会抛 `map is not a function`，
+      // 使「生成」按钮既不应用也不关闭弹窗。这里统一折算成 [from, to]：标量视作下界，缺失视作开区间。
+      const rawValue = advanceFilterDictRef.value[key] as unknown;
+      const rawValues: unknown[] = Array.isArray(rawValue) ? rawValue : rawValue === undefined ? [] : [rawValue];
+      const value = [rawValues[0], rawValues[1]].map((raw, idx) =>
+        raw === undefined ? (idx === 0 ? -Infinity : Infinity) : valueFormat.parse(raw),
+      );
 
       if (Number.isFinite(value[0]) || Number.isFinite(value[1])) {
         filters[key] = {
@@ -467,10 +474,22 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
   }
 
   const reBuildFilterCountRef = ref<number>(0);
-  function reBuildAdvanceFilter(updateItemProps: boolean = false) {
+  /**
+   * 重建高级筛选弹窗的内部状态。
+   *
+   * OPTIONSSHELL-3：原先这里无条件 `buildFilterDictFn("")`，于是弹窗一打开就把勾选字典清空，
+   * 而真正驱动表格的 `tableWaitFilterRef` 仍是旧串 —— 快速站点高亮（由字典派生）与表格筛选分裂；
+   * 点「生成」还会用空字典覆盖字符串，静默丢掉只存在于字符串里的筛选（手输词、`site:` 前缀、
+   * V-5 恢复的 lastSearchFilter 等）。
+   *
+   * 因此区分「重建」与「重置」：默认（弹窗打开）以当前筛选串重放一次字典，
+   * 只有显式要求重置（目前唯一调用方是弹窗里的「重置」按钮）才用空串构建。
+   * 第二个参数默认与 `updateItemProps` 绑定，只为兼容既有两处调用点，调用方可显式覆盖。
+   */
+  function reBuildAdvanceFilter(updateItemProps: boolean = false, resetFilterValue: boolean = updateItemProps) {
     reBuildFilterCountRef.value++; // 更新计数，防止因为 :key 的问题导致 vue 无法重置 v-checkbox 状态
     if (updateItemProps) buildAdvanceItemPropsFn();
-    buildFilterDictFn(""); // 使用空字符串构建
+    buildFilterDictFn(resetFilterValue ? "" : tableWaitFilterRef.value);
   }
 
   function toggleKeywordStateFn(field: string, value: string) {

@@ -49,7 +49,22 @@ export const siteMetadata: ISiteMetadata = {
         title: { selector: "a[href^='magnet']" },
         url: { text: "https://torrents-csv.com/" }, // 该站种子不存在独立介绍页
         link: { selector: "a[href^='magnet']", attr: "href" },
-        leechers: { selector: "div.card-body > div.flex > div:nth-child(1) > span:nth-child(2)" },
+        // D-8：原选择器 `div:nth-child(1) > span:nth-child(2)` 写在 leechers 上，取到的其实是**做种数**（线上实测
+        // 文本 "1.36k" 与 API 的 seeders 1357 一致），于是 leechers 恒等于 seeders。改为如实映射到 seeders；
+        // 列表页下载数的位置无法确认，宁可不取也不给错数（搜索走 JSON API，不受影响）。站点用 k / m 缩写数量。
+        seeders: {
+          selector: "div.card-body > div.flex > div:nth-child(1) > span:nth-child(2)",
+          filters: [
+            (query: string) => {
+              const match = String(query)
+                .trim()
+                .match(/^([\d.]+)\s*([km]?)$/i);
+              if (!match) return 0;
+              const scale = { "": 1, k: 1e3, m: 1e6 }[match[2].toLowerCase() as "" | "k" | "m"];
+              return Math.round(parseFloat(match[1]) * scale);
+            },
+          ],
+        },
         size: {
           selector: "div.card-body > div.flex > div:nth-child(2) > span:nth-child(2)",
           filters: [{ name: "parseSize" }],

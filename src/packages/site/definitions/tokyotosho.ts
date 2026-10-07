@@ -71,7 +71,11 @@ export const siteMetadata: ISiteMetadata = {
         selector: "td.desc-bot",
         filters: [
           (t: string) => t.match(/Date: ([^|]+) ?/)?.[1] ?? "",
-          { name: "replace", args: ["UTC", "+0000"] },
+          // DEFS3-3：原先替换成 `+0000`，date-fns 的 XXX token 只认 `+00:00`/`Z`，
+          // 解析失败后会绕过显式时区分支、用宿主本地墙上时间再按 +0000 二次换算，
+          // 于是 Asia/Shanghai 下结果整体 +8h（发布时间与时间区间筛选都随宿主机时区漂移）。
+          // 与 Jackett tokyotosho.yml 的 `["UTC", "+00:00"]` 保持一致。
+          { name: "replace", args: ["UTC", "+00:00"] },
           { name: "parseTime", args: ["yyyy-MM-dd HH:mm XXX"] },
         ],
       },

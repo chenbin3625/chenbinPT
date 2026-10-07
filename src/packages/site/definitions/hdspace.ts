@@ -38,19 +38,32 @@ const statsFilter = (query?: string) => {
   return Number(query);
 };
 
-const timeFilterWithDay = (query: string) => {
+/**
+ * SITECORE-1：`Today at 09:17:08` / `Yesterday at 17:11:03` 里的「今天/昨天」是站点服务器的日历日，
+ * 时分秒是站点墙上时间。原实现用宿主 `new Date()` 取日历日再 `setHours`，得到的是**宿主时区**的绝对
+ * 时间，结果随运行主机漂移（+0800 宿主相对站点 +0000 差 8 小时）。
+ * 这里只把日期词归一化成 `yyyy-MM-dd HH:mm:ss` 墙上时间串：日期取 UTC 日历（与
+ * parseValidTimeStringInZone 在缺少年/月/日时使用的 UTC 参考日历一致，且与宿主时区无关），
+ * 真正的时区换算交给紧随其后的具名 `parseTime`（runQueryFilters 会按 metadata.timezoneOffset
+ * 走 parseValidTimeStringInZone）。
+ */
+const timeFilterWithDay = (query: string): string | null => {
   // Today at 09:17:08
   // Yesterday at 17:11:03
-  const currentDate = new Date();
-  const dateParts = query.trim().split("at");
+  const dateParts = query.trim().split(/\s+at\s+/i);
   if (dateParts.length < 2) return null;
-  if (dateParts[0].trim() === "Yesterday") {
-    currentDate.setDate(currentDate.getDate() - 1);
-  }
-  currentDate.setHours(...(dateParts[1].trim().split(":").map(Number) as [number, number, number]));
-  return currentDate.getTime();
+
+  const dayText = dateParts[0].trim().toLowerCase();
+  if (dayText !== "today" && dayText !== "yesterday") return null;
+
+  const now = new Date();
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const date = new Date(dayStart - (dayText === "yesterday" ? 86_400_000 : 0));
+  return `${date.toISOString().slice(0, 10)} ${dateParts[1].trim()}`;
 };
 const timeFilterWithoutDay: TQueryFilter = { name: "parseTime", args: ["MMMM dd, yyyy,\u00A0HH:mm:ss"] };
+// timeFilterWithDay 归一化出的 `yyyy-MM-dd HH:mm:ss` 墙上时间串，交给具名 parseTime 按站点时区换算
+const timeFilterInZone: TQueryFilter = { name: "parseTime" };
 
 export const siteMetadata: ISiteMetadata = {
   version: 1,
@@ -123,7 +136,7 @@ export const siteMetadata: ISiteMetadata = {
       time: {
         selector: ["td:nth-child(5):contains('day')", "td:nth-child(5):not(:contains('day'))"],
         switchFilters: {
-          "td:nth-child(5):contains('day')": [timeFilterWithDay],
+          "td:nth-child(5):contains('day')": [timeFilterWithDay, timeFilterInZone],
           "td:nth-child(5):not(:contains('day'))": [timeFilterWithoutDay],
         },
       },
@@ -229,7 +242,7 @@ export const siteMetadata: ISiteMetadata = {
             ],
             switchFilters: {
               "td.header:contains('Joined on') + td:not(:contains('day'))": [timeFilterWithoutDay],
-              "td.header:contains('Joined on') + td:contains('day')": [timeFilterWithDay],
+              "td.header:contains('Joined on') + td:contains('day')": [timeFilterWithDay, timeFilterInZone],
             },
           },
           lastAccessAt: {
@@ -238,7 +251,7 @@ export const siteMetadata: ISiteMetadata = {
               "td.header:contains('Last access') + td:not(:contains('day'))",
             ],
             switchFilters: {
-              "td.header:contains('Last access') + td:contains('day')": [timeFilterWithDay],
+              "td.header:contains('Last access') + td:contains('day')": [timeFilterWithDay, timeFilterInZone],
               "td.header:contains('Last access') + td:not(:contains('day'))": [timeFilterWithoutDay],
             },
           },

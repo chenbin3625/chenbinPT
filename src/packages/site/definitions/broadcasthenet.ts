@@ -67,11 +67,14 @@ export const siteMetadata: ISiteMetadata = {
         ],
       },
       tags: [
-        {
-          name: "H&R",
-          selector: "*",
-          color: "red",
-        },
+        // D-25 / DEFS1-2：数组整体替换会把 Gazelle 引擎共享的 tags（strong:contains('Freeleech!') → Free）
+        // 一起丢掉，BTN 结果的免费种不再显示 Free 标签；这里必须展开共享 tags。
+        ...(SchemaMetadata.search!.selectors!.tags ?? []),
+        // DEFS2-2 复核（统一判据：站点是否全站 H&R）：本站属上游 fb79a2a7「feat: add default H&R tags with red
+        // color for global sites」(PR #336) 明确列出的全站 H&R 站点——站点规则对**全部**下载都规定 H&R 义务，
+        // 故用恒真 selector:"*" 表达「所有结果行都带 H&R」（与 torrenting.ts 同一约定）。
+        // 第三波 hrs-sweep 把它当作恒真伪标签删除属过度改动，这里按上游设计恢复。
+        { name: "H&R", selector: "*", color: "red" },
       ],
     },
   },
@@ -390,7 +393,8 @@ export default class BroadcastTheNet extends Gazelle {
         leechers: parseNumberCell(cells.at(-1)),
         progress: 0,
         status: ETorrentStatus.unknown,
-        tags: [{ name: "H&R", color: "red" }],
+        // DEFS2-2：原先这里给 series 页解析出的每一行硬写 tags:[{ name: "H&R" }]，同样会把 imdb 搜索的
+        // 全部结果误标成 H&R（该路径不走 parseTorrentRowForTags，无法判定真实 H&R），故不再伪造标签。
       });
     });
 

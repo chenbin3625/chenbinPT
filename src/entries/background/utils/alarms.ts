@@ -228,15 +228,26 @@ type TStoredOnceJob = TPendingOnceJob | TConsumedOnceJob;
 const RE_DOWNLOAD_ALARM_PREFIX = `${EJobType.ReDownloadTorrent}-`;
 const FLUSH_USER_INFO_RETRY_ALARM_PREFIX = `${EJobType.FlushUserInfo}-Retry-`;
 
-function reDownloadAlarmName(downloadId: number): string {
-  return `${RE_DOWNLOAD_ALARM_PREFIX}${downloadId}`;
+/**
+ * BACKGROUNDSHARED-2：alarm 名不能只由 downloadId 派生。
+ *
+ * 关闭下载历史（config.download.saveDownloadHistory=false）时 offscreen 给出的投递 id 曾是恒定值 0，
+ * 于是多个「未到站点下载间隔」的延迟下载排到同一个 `reDownloadTorrent-0`：
+ * chrome.alarms 同名覆盖 + `addPendingJob` 同名覆盖会顶掉先投递者的 alarm 与 payload，
+ * 先投递者永远不执行也不再重试（调用方只拿到 pending）。
+ * 现在名字额外带上 fireAt 与随机后缀，任何重复的 downloadId 都不会互相覆盖；
+ * downloadId 仍原样放在 payload 里（失败标记需要），旧式 `<prefix><downloadId>` 名字继续可解析。
+ */
+function reDownloadAlarmName(downloadId: number, fireAt: number): string {
+  return `${RE_DOWNLOAD_ALARM_PREFIX}${downloadId}~${fireAt}~${crypto.randomUUID().slice(0, 8)}`;
 }
 
 function parseReDownloadAlarmName(alarmName: string): number | undefined {
   if (!alarmName.startsWith(RE_DOWNLOAD_ALARM_PREFIX)) {
     return undefined;
   }
-  const downloadId = Number(alarmName.slice(RE_DOWNLOAD_ALARM_PREFIX.length));
+  // 兼容两种名字：新版 `<prefix><downloadId>~<fireAt>~<rand>` 与旧版 `<prefix><downloadId>`
+  const downloadId = Number(alarmName.slice(RE_DOWNLOAD_ALARM_PREFIX.length).split("~")[0]);
   return Number.isInteger(downloadId) ? downloadId : undefined;
 }
 
@@ -647,7 +658,7 @@ onMessage("reDownloadTorrent", async ({ data }) => {
   // 到点后由 alarms 唤醒 SW 并从持久化参数重建任务（按实际剩余间隔，见 docs/performance-audit.md P1-22）。
   const fireAt = Date.now() + data.leftInterval;
   try {
-    await schedulePendingOnceJob(reDownloadAlarmName(data.downloadId), fireAt, {
+    await schedulePendingOnceJob(reDownloadAlarmName(data.downloadId, fireAt), fireAt, {
       kind: "reDownloadTorrent",
       downloadId: data.downloadId,
       downloadOption: data,
@@ -715,6 +726,30 @@ async function rescheduleLostOnceJobAlarms(): Promise<void> {
   }
 }
 
+/**
+ * BACKGROUNDSHARED-2：对账「这个 downloadId 还有没有在等的 alarm」。
+ *
+ * alarm 名现在带唯一后缀，不能再靠 `reDownloadAlarmName(downloadId)` 拼出来查，
+ * 否则对不上时会把仍在等待的任务提前判死（或反过来，让残留任务永远停在 pending）；
+ * 因此反查所有待执行任务，并保留旧式 `<prefix><downloadId>` 名字以兼容升级前排下的 alarm。
+ */
+async function hasWaitingReDownloadAlarm(downloadId: number): Promise<boolean> {
+  const jobs = await loadPendingJobs();
+  const alarmNames = new Set<string>([`${RE_DOWNLOAD_ALARM_PREFIX}${downloadId}`]);
+  for (const [alarmName, job] of Object.entries(jobs)) {
+    if (job?.kind === "reDownloadTorrent" && job.downloadId === downloadId) {
+      alarmNames.add(alarmName);
+    }
+  }
+
+  for (const alarmName of alarmNames) {
+    if (await hasAlarm(alarmName)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** 把「投递链已丢失」的超期下载记录标记为失败（见 L-4 第 2 层） */
 async function failStaleDownloadRecords(): Promise<void> {
   // 无参消息也要显式传 `undefined`：包装后的 sendMessage 签名是 (type, data)，
@@ -738,7 +773,7 @@ async function failStaleDownloadRecords(): Promise<void> {
   for (const record of staleRecords) {
     const downloadId = record.id!;
     // 还有闹钟在等（可能刚被 rescheduleLostOnceJobAlarms 重新排上）的任务交给 alarm 处理，不能提前判死
-    if (await hasAlarm(reDownloadAlarmName(downloadId))) {
+    if (await hasWaitingReDownloadAlarm(downloadId)) {
       continue;
     }
     await markReDownloadAsFailed(

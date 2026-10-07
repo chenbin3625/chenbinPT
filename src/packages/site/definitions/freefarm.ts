@@ -121,10 +121,13 @@ export const siteMetadata: ISiteMetadata = {
         { name: "FFTV/电视录制小组", value: 6 },
         { name: "FFCD/无损小组", value: 4 },
         { name: "其它 (Other)", value: 14 },
-        { name: "待定", value: 11 },
-        { name: "待定", value: 9 },
-        { name: "待定", value: 7 },
-        { name: "待定", value: 13 },
+        // DEFS1-8：这 4 个制作组的真实名称还没有可靠来源，原先 4 项都叫「待定」，
+        // UI 上无法分辨勾的是哪个 team id（值分别 11/9/7/13，会发出 team{7|9|11|13}=1）；
+        // 先带上 team id 便于区分，拿到真实名称后再替换。
+        { name: "待定（team=11）", value: 11 },
+        { name: "待定（team=9）", value: 9 },
+        { name: "待定（team=7）", value: 7 },
+        { name: "待定（team=13）", value: 13 },
       ],
       cross: { mode: "append" },
     },

@@ -13,7 +13,8 @@
       "title": "Re-download {0} records"
     },
     "detail": {
-      "errorMessage": "Error Message"
+      "errorMessage": "Error Message",
+      "warningMessage": "Some settings were not applied"
     },
     "filterPlaceholder": "Filter download history",
     "pollingError": "Failed to refresh download status. Some tasks may not update automatically.",
@@ -31,7 +32,9 @@
       "downloader": "Downloader",
       "status": "Download Status",
       "title": "Torrent"
-    }
+    },
+    "warning": "Warning",
+    "warningSummary": ", {count} succeeded with warnings"
   },
   "KeepUploadTask": {
     "clearAll": "Clear All",
@@ -256,7 +259,7 @@
         "viewRaw": "View Raw Data"
       },
       "deleteConfirm": "Confirm to delete this history data?",
-      "title": "User History Data @ "
+      "title": "User History Data"
     },
     "UserLevelRequirementsTd": {
       "levelList": "User Level List"
@@ -415,7 +418,7 @@
         "displayPreferences": "Search Results Display Preferences",
         "pause": "Pause search queue",
         "retry": "Retry Search",
-        "retryFailed": "Retry the failed search plans (such as @:resultParseStatus.unknownError, @:resultParseStatus.parseError, @:resultParseStatus.CFBlocked, @:resultParseStatus.needLogin)",
+        "retryFailed": "Retry the failed search plans (such as @:resultParseStatus.unknownError , @:resultParseStatus.parseError , @:resultParseStatus.CFBlocked , @:resultParseStatus.needLogin)",
         "saveSnapshot": "Save Search Snapshot",
         "start": "Start search queue"
       },
@@ -534,6 +537,7 @@
     "sendSummary": "{success} sent successfully{pending}{failed}",
     "sendSummaryPending": " ({count} pending in queue)",
     "sendSummaryFailed": ", {count} failed",
+    "sendSummaryWarning": ", {count} task(s) where the downloader settings did not take effect",
     "noTasks": "No tasks were sent to the downloader",
     "title": "Select downloader for {0} torrents"
   },
@@ -717,7 +721,7 @@
       "forceImdbIdMatchFilter": "When searching by IMDb, filter out results whose IMDb ID returned by the site does not match",
       "hiddenTagNames": "Hidden tags (one per line)",
       "hiddenTagNamesMessage": "Closing tags on the search page is temporary. Save here to make it permanent.",
-      "imdbTip": "When disabled, you need to use the `imdb|tt12345678` format for IMDb searches.",
+      "imdbTip": "When disabled, you need to use the `imdb{'|'}tt12345678` format for IMDb searches.",
       "maxTagCountBeforeGroup": "Max tags shown before grouping (0 = unlimited)",
       "mediaQueueConcurrency": "Request Queue Concurrency",
       "mediaSearchLimit": "Number of search results per request",
@@ -783,6 +787,7 @@
     },
     "userInfo": {
       "afterTime": "Earliest daily refresh time",
+      "afterTimeSuffix": ", ",
       "userDataRefresh": "User Data Refresh",
       "userInfoDisplay": "User Info Display"
     }
@@ -1044,6 +1049,7 @@
       "addUrlTip": "Add a site url which you current used, for example: https://example.com/",
       "customUrlPlaceholder": "Custom site url",
       "description": "Site description",
+      "inputRequired": "This field is required",
       "sortIndexTip": "Can be used for search sorting",
       "tagTip": "Press Enter to add a tag after typing. (Only the first 4 will be displayed on the list page)",
       "timezone": "Timezone",
@@ -1211,6 +1217,10 @@
     "enable": "Enable",
     "export": "Export",
     "exportImage": "Export Image",
+    "form": {
+      "invalidUrl": "Not a valid URL",
+      "required": "Item is required"
+    },
     "howToUse": "How To Use",
     "import": "Import",
     "insecureAddressWarning": "This address is not HTTPS. The API key / password will be sent in plaintext and may be intercepted. Use an https:// or wss:// address instead.",

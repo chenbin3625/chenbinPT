@@ -167,8 +167,13 @@ watch(showDialog, (open) => {
             </a-popover>
           </a-row>
           <a-row :gutter="0">
+            <!-- OPTIONSOVERVIEW-1：downloadAt 是 [min,max] 元组（useAdvanceFilter 的 ranges 分支就是这么初始化的），
+                 而 antd 的 a-slider 只有传 range 才走双滑块实现。缺了它 a-slider 按单值渲染，
+                 拖动一次就把元组改写成标量，「生成」时 stringifyFilterDictFn 的 `.map()` 抛 TypeError，
+                 弹窗既不关闭也无提示。 -->
             <a-slider
               v-model:value="advanceFilterDictRef.downloadAt"
+              range
               :marks="tickMarks(advanceItemPropsRef.downloadAt.ticks)"
               :max="advanceItemPropsRef.downloadAt.range[1]"
               :min="advanceItemPropsRef.downloadAt.range[0]"

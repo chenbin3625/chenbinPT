@@ -3,7 +3,7 @@ import { ISearchInput, ITorrent, type ISiteMetadata } from "../types";
 import { selectElements } from "../utils/selector";
 import CryptoJS from "crypto-js";
 import { set } from "es-toolkit/compat";
-import { parseTimeToLiveToDate, parseValidTimeString } from "../utils";
+import { parseTimeToLiveToDate } from "../utils";
 
 const extCategories = [
   { uri: "/anime/", cat: 7, value: "Anime" },
@@ -171,8 +171,11 @@ export const siteMetadata: ISiteMetadata = {
           if (el.textContent.match(/minute|hour/)) {
             return parseTimeToLiveToDate(el.textContent);
           }
-          return parseValidTimeString(el.getAttribute("title")!, ["dd MMMM yyyy"]);
+          // SITECORE-1：elementProcess 里拿不到站点时区，title 原样返回，解析交给具名 parseTime
+          return el.getAttribute("title")!;
         },
+        // SITECORE-1：具名 parseTime 由 runQueryFilters 按 metadata.timezoneOffset 换算
+        filters: [{ name: "parseTime", args: ["dd MMMM yyyy"] }],
       },
       seeders: { selector: "span:contains('Seeds') + span" },
       leechers: { selector: "span:contains('Leechs') + span" },
@@ -208,6 +211,13 @@ export default class ExtTorrents extends BittorrentSite {
     const pageToken = this.extractWindowVar(injectScriptEl, "searchPageToken");
     const csrfToken = this.extractWindowVar(injectScriptEl, "csrfToken");
 
+    // DEFS1-5：注入脚本结构变化时该选择器会 0 命中（injectScriptEl 为 undefined），
+    // 过去 extractWindowVar 会抛 TypeError 把整站搜索变成 parseError；这里降级为普通浏览结果，
+    // 后续下载由 getTorrentDownloadLink 走详情页兜底（link 里不再带 "token|token" 标记）。
+    if (!pageToken || !csrfToken) {
+      return torrents;
+    }
+
     return torrents.map((torrent) => ({
       ...torrent,
       link: `${pageToken}|${csrfToken}`, // 后续方法中会获取到正确链接
@@ -218,8 +228,18 @@ export default class ExtTorrents extends BittorrentSite {
     const torrent = await super.transformDetailPage(doc);
     torrent.id = parseId(torrent.url!);
 
-    const pageToken = this.extractWindowVar(selectElements(injectScriptSelector, doc)[0], "pageToken")!;
-    const csrfToken = this.extractWindowVar(selectElements(`${injectScriptSelector} + script`, doc)[0], "csrfToken")!;
+    const injectScriptEl = selectElements(injectScriptSelector, doc)[0];
+    const csrfScriptEl = selectElements(`${injectScriptSelector} + script`, doc)[0];
+    const pageToken = this.extractWindowVar(injectScriptEl, "pageToken");
+    const csrfToken = this.extractWindowVar(csrfScriptEl, "csrfToken");
+
+    // DEFS1-5：取不到脚本元素/token 时不要发必然失败的换取磁力请求，也不要把 undefined 传给
+    // extractWindowVar（那会抛 TypeError 让详情页解析整段失败）；link 置空与请求失败时的结果一致。
+    if (!pageToken || !csrfToken) {
+      torrent.link = "";
+      return torrent;
+    }
+
     torrent.link = (await this.getTorrentMagnet({ id: torrent.id as number, pageToken, csrfToken })) ?? "";
 
     return torrent;
@@ -276,9 +296,11 @@ export default class ExtTorrents extends BittorrentSite {
     return null;
   }
 
-  private extractWindowVar(scriptEl: Element, varName: string): string | null {
+  private extractWindowVar(scriptEl: Element | undefined, varName: string): string | null {
     const regex = new RegExp(`window\\.${varName}\\s*=\\s*['"]([^'"]+)['"]`);
-    const match = scriptEl.textContent?.match(regex);
+    // DEFS1-5：scriptEl 可能为 undefined（版式变化时选择器 0 命中），此处用可选链兜底，
+    // 让调用方以「取不到 token」的方式降级，而不是抛 TypeError 让整个解析步骤失败。
+    const match = scriptEl?.textContent?.match(regex);
     return match ? match[1] : null;
   }
 

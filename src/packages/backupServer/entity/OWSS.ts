@@ -48,7 +48,15 @@ export const serverMetaData: IBackupMetadata<OWSSConfig> = {
   description: "Open Web Simple Storage（OWSS），一个基于 nodejs 简单的 Web 存储微服务，可用于私人配置文件集中存储。",
   requiredField: [
     { name: "地址", key: "address", type: "string" },
-    { name: "授权码", key: "authCode", type: "string", description: "OWSS首次部署时生成的授权码", secret: true },
+    {
+      name: "授权码",
+      key: "authCode",
+      type: "string",
+      // SERVERSSOCIAL-8：OWSS 上游协议只支持把授权码放在 URL 路径里，无法改成请求头；
+      // 服务端访问日志会看到它，所以至少在设置页明确提示。
+      description: "OWSS首次部署时生成的授权码（会出现在请求 URL 路径中，服务端访问日志可见，建议仅在 HTTPS 下使用）",
+      secret: true,
+    },
   ],
 };
 
@@ -61,12 +69,17 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
 
   get address(): string {
     // 生成实际使用的访问链接
-    let { address, authCode } = this.userConfig;
-    if (address.indexOf("storage") === -1) {
+    // SERVERSSOCIAL-8：旧实现用 `address.indexOf("storage") === -1` 做全文子串判断。
+    // 自建 OWSS 部署在 `https://storage.example.com`、`http://storage.local:8088` 或
+    // `http://host/my-storage` 时会被误判为「已有 storage 段」而不补 `/storage`，
+    // 随后所有请求都打到 `<地址>/<authCode>`：ping 恒 false、list 恒空，错误看起来像授权码问题。
+    // 这里按**路径段**判断；authCode 先 trim，避免粘贴时的空白进入请求路径。
+    let address = this.userConfig.address?.trim() ?? "";
+    if (!/\/storage(?:\/|$)/.test(address)) {
       address = urlJoin(address, "storage");
     }
-    address = urlJoin(address, authCode);
-    return address;
+    const authCode = this.userConfig.authCode?.trim() ?? "";
+    return urlJoin(address, authCode);
   }
 
   private async request<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {

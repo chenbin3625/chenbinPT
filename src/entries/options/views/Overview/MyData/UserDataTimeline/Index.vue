@@ -135,6 +135,14 @@ const favicon = (config: TKonvaConfig) => {
 
   const siteConfig = allAddedSiteMetadata[config.site];
 
+  // OPTIONSOVERVIEW-2：站点定义已不在构建产物里时，loadAllAddedSiteMetadata 会把该站点跳过，
+  // allAddedSiteMetadata 里就没有它。原先这里裸读 siteConfig.faviconElement / siteConfig.isDead，
+  // 渲染期抛 TypeError 会让整个 vk-stage 渲染失败（时间线只剩骨架屏）。
+  // 这里降级为「不画 favicon 的占位」：image() 仍按 canvas/size 给出正确尺寸，站点名与数据照常展示。
+  if (!siteConfig) {
+    return image({ image: undefined, ...config });
+  }
+
   let imageElement: HTMLImageElement | OffscreenCanvas = siteConfig.faviconElement;
 
   if (siteConfig.isDead) {

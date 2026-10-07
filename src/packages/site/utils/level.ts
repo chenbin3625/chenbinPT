@@ -1,6 +1,6 @@
 // noinspection ES6PreferShortImport
 
-import { intersection } from "es-toolkit";
+import { intersection, isEqual } from "es-toolkit";
 import { includes, isEmpty, set } from "es-toolkit/compat";
 import { intervalToDuration } from "date-fns";
 
@@ -302,6 +302,38 @@ export function isLevelRequirementMet(userInfo: IUserInfo, levelRequirement: ILe
   return isEmpty(levelRequirementUnMet(userInfo, levelRequirement));
 }
 
+/** 只用于说明、不参与判级的字段：只有这些键的等级没有门槛，不能算「已满足」（DEFS1-1：desigaane 5/6/7 级） */
+const levelDescriptionKeys: string[] = ["id", "name", "nameAka", "groupType", "privilege", "isKept"];
+
+/**
+ * 提取等级的「判级键」（真正决定该等级能否被满足的键）。
+ * 取「除说明性字段外都算判级键」的保守定义：引擎尚未求值的键同样意味着该等级不可判定，跳过比当作已满足安全；
+ * 值为 undefined 的键也不计入，否则 `uploaded: undefined` 会被 levelRequirementUnMet 当作已满足而白送一级。
+ */
+export function getJudgeableLevelRequirement(levelRequirement: ILevelRequirement): Partial<ILevelRequirement> {
+  return Object.fromEntries(
+    Object.entries(levelRequirement).filter(
+      ([key, value]) => !levelDescriptionKeys.includes(key) && typeof value !== "undefined",
+    ),
+  );
+}
+
+/** 该等级是否存在可判定的门槛（无门槛等级不参与回落判级，也不作为「下一级」目标） */
+export function hasJudgeableRequirement(levelRequirement: ILevelRequirement): boolean {
+  return !isEmpty(getJudgeableLevelRequirement(levelRequirement));
+}
+
+/**
+ * 该等级是否为「入口级」门槛 —— 零统计用户（无上传/下载/做种/发布/时间……）也能满足。
+ * DEFS1-6 收口：像 midnightscene 的 `{ratio:0}` 这种门槛，Leech(id0) 与 User(id1) 判级键完全相同，
+ * 但它对任何人都成立（分享率 0 是 `if (minRequireRatio)` 的假值分支，恒不判未满足），
+ * 若按「第一次出现」去重就会把新/小用户固定判成 Leech(0)。
+ * 注意：引擎求 ratio 时会把结果写回 userInfo，所以这里必须传一份新的空画像，不能复用同一对象。
+ */
+function isZeroStatSatisfiable(levelRequirement: ILevelRequirement): boolean {
+  return isLevelRequirementMet({} as IUserInfo, levelRequirement);
+}
+
 export function getMaxUserLevelId(levelRequirements: ILevelRequirement[]): TLevelId {
   return levelRequirements
     .map((x) => ({ ...x, groupType: x.groupType ?? "user" }))
@@ -317,8 +349,30 @@ export function getNextLevelUnMet(
 
   const currentLevelId = userInfo.levelId ?? -1;
   if (currentLevelId < getMaxUserLevelId(levelRequirements)) {
-    const nextLevelRequirement = levelRequirements.find((level) => level.id > currentLevelId);
-    nextLevelUnMet = { ...levelRequirementUnMet(userInfo, nextLevelRequirement!), level: nextLevelRequirement };
+    const currentLevelRequirement = levelRequirements.find((level) => level.id === currentLevelId);
+    const currentJudgeableRequirement = currentLevelRequirement
+      ? getJudgeableLevelRequirement(currentLevelRequirement)
+      : undefined;
+
+    // DEFS1-1/DEFS1-6：无门槛的等级没有任何「待满足条件」，与当前等级门槛逐字相同的等级也不是真实目标，
+    // 二者都会让「距下一级」面板显示一个空目标（desigaane 的 Torrent Master、dicmusic 的 Elite TM +）——
+    // 这里跳过它们，找不到真实下一级时返回空对象（面板显示「已无可判定目标」而不是「无待满足条件」）
+    const nextLevelRequirement = levelRequirements.find((level) => {
+      if (level.id <= currentLevelId) {
+        return false;
+      }
+
+      const judgeableRequirement = getJudgeableLevelRequirement(level);
+      if (isEmpty(judgeableRequirement)) {
+        return false;
+      }
+
+      return !currentJudgeableRequirement || !isEqual(currentJudgeableRequirement, judgeableRequirement);
+    });
+
+    if (nextLevelRequirement) {
+      nextLevelUnMet = { ...levelRequirementUnMet(userInfo, nextLevelRequirement), level: nextLevelRequirement };
+    }
   }
 
   return nextLevelUnMet;
@@ -349,22 +403,62 @@ export function guessUserLevelId(userInfo: IUserInfo, levelRequirements: ILevelR
   }
 
   // 如果还是没有找到，说明应当是 user 类别的某一个，则尝试通过 userInfo 和 levelRequirements 的具体项匹配
-  let testLevel = getMaxUserLevelId(levelRequirements);
-  for (const levelIndex in levelRequirements ?? []) {
-    const testLevelRequirement = levelRequirements[levelIndex];
-    if (!isLevelRequirementMet(userInfo, testLevelRequirement)) {
-      // 这个 level 对应的条件没有满足，返回上一个 level 的 id
-      const prevLevelIndex = parseInt(levelIndex) - 1;
-      if (prevLevelIndex >= 0) {
-        testLevel = levelRequirements[prevLevelIndex].id;
-      } else {
-        // 如果没有上一个 level，比如部分NPHP从 PU 开始定义的
-        testLevel = -1;
-      }
+  // DEFS1-1/1-3/1-6：回落阶梯只走「有可判定门槛」的 user 等级，并取所有门槛都满足的最高等级 ——
+  //  • 只有 name/privilege 的占位等级（desigaane 5/6/7 级）不能算已满足，否则用户会被一路抬到没有门槛的顶级；
+  //  • 判级键与前面等级逐字相同的重复等级（dicmusic id7/id8）只按第一次出现计入，较低的一级仍可被判定；
+  //  • 「遇到首个未满足就取前一项」在阶梯中间插有特殊等级（darkpeers 的 Seeder 等）时会判低一级。
+  let testLevel = -1;
+  const seenJudgeableRequirements: Partial<ILevelRequirement>[] = [];
+  for (const levelRequirement of levelRequirements ?? []) {
+    if ((levelRequirement.groupType ?? "user") !== "user") {
+      continue;
+    }
 
-      break;
+    const judgeableRequirement = getJudgeableLevelRequirement(levelRequirement);
+    if (isEmpty(judgeableRequirement)) {
+      continue;
+    }
+
+    // DEFS1-6 去重只对「非入口级」门槛生效：midnightscene 的 Leech(0)/User(1) 判级键同为 {ratio:0}，
+    // 零统计用户也满足，属入口级的多个档次，去重会跳过较高的 id1 而把新/小用户判成 Leech(0)（分享率降级等级）；
+    // 只有 dicmusic id7/id8 那种需要累积上传/时间/完美 FLAC 的门槛才去重，满足后仍返回较低的一级。
+    if (!isZeroStatSatisfiable(levelRequirement)) {
+      if (seenJudgeableRequirements.some((seen) => isEqual(seen, judgeableRequirement))) {
+        continue;
+      }
+      seenJudgeableRequirements.push(judgeableRequirement);
+    }
+
+    if (isLevelRequirementMet(userInfo, levelRequirement) && levelRequirement.id > testLevel) {
+      testLevel = levelRequirement.id;
     }
   }
 
+  if (testLevel === -1) {
+    // 一个可判定门槛都没被满足时退回原走位（首个未满足 user 等级前最近的那一级）：
+    // 首个等级就带门槛的站点（部分 NPHP 从 PU 开始定义）仍返回 -1「未知等级」，不冒认成该级
+    return getLevelIdBeforeFirstUnmet(userInfo, levelRequirements);
+  }
+
   return testLevel;
+}
+
+/** 原走位兜底：首个带门槛且未满足的 user 等级之前最近的一级；前面没有 user 等级（如部分 NPHP 从 PU 开始定义）则 -1 */
+function getLevelIdBeforeFirstUnmet(userInfo: IUserInfo, levelRequirements: ILevelRequirement[]): TLevelId {
+  let testLevel = -1;
+  for (const levelRequirement of levelRequirements ?? []) {
+    if ((levelRequirement.groupType ?? "user") !== "user") {
+      continue;
+    }
+
+    if (hasJudgeableRequirement(levelRequirement) && !isLevelRequirementMet(userInfo, levelRequirement)) {
+      return testLevel;
+    }
+
+    // 无门槛等级只能作为「上一级」的候选（品牌新用户的默认等级即这类）
+    testLevel = levelRequirement.id;
+  }
+
+  // 整条阶梯都没有可判定门槛（或都被满足）时取最高 user 等级，与原走位一致
+  return getMaxUserLevelId(levelRequirements);
 }

@@ -8,7 +8,7 @@ import { message } from "ant-design-vue";
 
 import App from "./App.vue";
 import { createRemountGuard } from "./remountGuard.ts";
-import { stopRetargetedSelectPointerDown } from "./shadowPopupEvents.ts";
+import { installDialogSentinelFocusGuard, stopRetargetedSelectPointerDown } from "./shadowPopupEvents.ts";
 import { syncThemeVarsToHost } from "./themeVars.ts";
 import { setClipboardFallbackContainer } from "./utils.ts";
 import { piniaInstance as pinia } from "@/options/plugins/pinia.ts";
@@ -58,7 +58,12 @@ export function mountApp(document: Document, data: any = {}) {
   popupHostElement.className = "ptd-content-script-popup-host";
   popupHostElement.addEventListener("mousedown", stopRetargetedSelectPointerDown);
   popupHostElement.addEventListener("touchstart", stopRetargetedSelectPointerDown);
+  // closed shadow 下 vc-dialog 的焦点误判会把焦点从已展开的 Select 上抢走并关掉其下拉
+  // （TESTS-5 残留，机理见 shadowPopupEvents.ts）。
+  installDialogSentinelFocusGuard(shadowRoot);
   shadowRoot.appendChild(popupHostElement);
+  // CONTENTSCRIPT-1：这里只作为静态 message 的兜底挂载点（真正的通路是 App.vue 的 useMessage 实例，
+  // 见 modal.ts）。静态实例的 cssinjs 规则仍在宿主 head，无法在 shadow root 内生效，因此兜底不保证样式。
   message.config({ getContainer: () => popupHostElement });
 
   // 插入到页面中

@@ -43,7 +43,7 @@ onMessage("getCookie", async ({ data: detail }) => {
  * @param cookie cookie详细信息
  * @param force 是否强制设置，为true时跳过过期检查直接设置
  */
-export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolean = false): Promise<void> {
+export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolean = false): Promise<boolean> {
   let new_cookie = {} as chrome.cookies.SetDetails;
 
   (
@@ -85,16 +85,30 @@ export async function setCookie(cookie: chrome.cookies.SetDetails, force: boolea
     } else if ((exist_cookie.expirationDate ?? 0) < now) {
       // 如果站点存在这个Cookies，但已过期，允许设置
       allowSet = true;
+    } else if (
+      exist_cookie.value !== new_cookie.value ||
+      (typeof new_cookie.expirationDate === "number" && new_cookie.expirationDate > (exist_cookie.expirationDate ?? 0))
+    ) {
+      // BACKGROUNDSHARED-3：同名且未过期的 cookie，只要值不同、或新过期时间更晚，就必须覆盖。
+      // 消息契约 `setCookie(data: chrome.cookies.SetDetails)` 无法表达 force，CF 重试
+      // （extends/axios/retryWhenCloudflareBlock.ts）与备份恢复（offscreen/utils/backup.ts）都走这个分支：
+      // 旧逻辑在这里静默跳过 —— CF 重试用不上新解出的 cf_clearance，备份恢复不覆盖旧值/不延长有效期，
+      // 而恢复报告仍无条件宣称 cookies 已恢复。值相同且有效期不更长时跳过是等价的，不影响其它调用方。
+      allowSet = true;
     }
   }
 
   if (allowSet) {
     try {
-      await chrome.cookies.set(new_cookie);
+      return (await chrome.cookies.set(new_cookie)) !== null;
     } catch (error) {
       logBackgroundError(`Failed to set cookie ${cookie.name} for url ${new_cookie.url}`, error);
+      return false;
     }
   }
+
+  // 已存在的 cookie 与目标值等价，无需重写也算达到目标状态。
+  return true;
 }
 
 onMessage("setCookie", async ({ data }) => {

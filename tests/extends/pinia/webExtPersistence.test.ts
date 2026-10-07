@@ -128,18 +128,48 @@ describe("webExtPersistence：最小字段 patch（P0-3）", () => {
     expect(store.sites.siteA.name).toBe("changed");
   });
 
-  it("回声窗口外到达的外部变更仍会被应用（窗口不能吞掉真实的外部更新）", async () => {
-    const store = createTestStore();
-    await store.$onReady();
-
-    // 直接把"自写回声窗口"推回过去：模拟距离上次写入已过很久
-    vi.setSystemTime(Date.now() + 5000);
+  it("回声窗口内：与自身刚写入内容一致的 onChanged 被抑制（对照用例，见下一条 TESTS-6）", async () => {
+    vi.useFakeTimers();
     try {
-      await storageLocal.set({
-        [STORE_KEY]: { sites: { siteA: { name: "external", sortIndex: 1 } }, lastUserInfoAutoFlushAt: 9 },
-      });
-      expect(store.sites.siteA.name).toBe("external");
-      expect(store.lastUserInfoAutoFlushAt).toBe(9);
+      const store = createTestStore();
+      await store.$onReady();
+      store.sites.siteA.name = "self-v1";
+      await store.$save();
+      // 落盘后本地又改了（未落盘）；此时外部把「旧的自身写入内容」写回 storage
+      const selfWritten = JSON.parse(JSON.stringify(backing.get(STORE_KEY)));
+      store.sites.siteA.name = "local-edit";
+
+      await storageLocal.set({ [STORE_KEY]: selfWritten });
+
+      // 仍在 SELF_WRITE_ECHO_WINDOW 内且内容与刚写入的快照逐字节一致 → 判定为自身回声，不下发
+      expect(store.sites.siteA.name).toBe("local-edit");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("回声窗口过期后同样的变更必须被应用（窗口不能一直吞掉外部更新）", async () => {
+    // TESTS-6：原用例全程没有调用 $save()，selfWriteUntil 恒为 0（窗口从未建立），
+    // 把 SELF_WRITE_ECHO_WINDOW 改成 Infinity 或让 isWithinSelfWriteEchoWindow() 恒为 true
+    // 都照样通过。这里先真正建立窗口，再用受控假时钟越过它。
+    vi.useFakeTimers();
+    try {
+      const store = createTestStore();
+      await store.$onReady();
+      store.sites.siteA.name = "self-v1";
+      await store.$save(); // 登记自身写入快照 + 打开回声窗口
+
+      const selfWritten = JSON.parse(JSON.stringify(backing.get(STORE_KEY)));
+      store.sites.siteA.name = "local-edit";
+
+      // 越过 500ms 的自身写入窗口（与上一条只差这一步）
+      vi.advanceTimersByTime(1000);
+
+      await storageLocal.set({ [STORE_KEY]: selfWritten });
+
+      // 窗口已过期：不能再当作回声吞掉，外部写入必须落到本地
+      expect(store.sites.siteA.name).toBe("self-v1");
+      expect((backing.get(STORE_KEY) as any).sites.siteA.name).toBe("self-v1");
     } finally {
       vi.useRealTimers();
     }

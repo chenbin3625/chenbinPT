@@ -87,7 +87,9 @@ onMounted(async () => {
         <a-flex align="center" :gap="8" style="white-space: nowrap; margin-bottom: 8px">
           <span>• {{ t("SetBase.userInfo.afterTime") }}</span>
           <a-time-picker v-model:value="afterTimeValue" format="HH:mm" />
-          <span>后，{{ t("userInfo.autoRefresh.every") }}</span>
+          <!-- OPTIONSSETTINGS-7：原先这里硬编码中文「后，」，英文界面会渲染成中英混排；
+               改用 SetBase.userInfo.afterTimeSuffix（键由 extends-i18n 包补进两个语言包，见 cross_package_needs） -->
+          <span>{{ t("SetBase.userInfo.afterTimeSuffix") }}{{ t("userInfo.autoRefresh.every") }}</span>
           <a-select
             v-model:value="configStore.userInfo.autoReflush.interval"
             :options="rangeOptions(1, 24)"

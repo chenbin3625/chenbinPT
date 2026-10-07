@@ -277,8 +277,10 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
         </template>
 
         <template v-else-if="column.key === 'lastBackupAt'">
+          <!-- OPTIONSSETTINGS-2：原先这里直接渲染字面量 Key 名 notBackup，界面上会出现英文键名；
+               改为走 SetBackup.table.notBackup（en: Not Backed Up / zh_CN: 未备份） -->
           <span class="ptd-date-time">{{
-            record.lastBackupAt ? formatDateTimeForTable(record.lastBackupAt) : "notBackup"
+            record.lastBackupAt ? formatDateTimeForTable(record.lastBackupAt) : t("SetBackup.table.notBackup")
           }}</span>
         </template>
 

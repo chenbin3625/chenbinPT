@@ -5,7 +5,7 @@
  */
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
-import { parseSizeString, parseValidTimeString } from "../utils";
+import { parseSizeString } from "../utils";
 
 const categoryOptions = [
   { value: 1, name: "Movie" },
@@ -13,7 +13,11 @@ const categoryOptions = [
   { value: 3, name: "Literature" },
 ];
 
-function parseKgDate(query: string): number | string {
+/**
+ * SITECORE-1：只把站点时间文本归一化成 "d MMM yy" 形状，时区换算交给具名 parseTime
+ * （由 runQueryFilters 按 metadata.timezoneOffset 走 parseValidTimeStringInZone）。
+ */
+function normalizeKgDate(query: string): string {
   const normalized = query
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
@@ -21,7 +25,7 @@ function parseKgDate(query: string): number | string {
   const match = normalized.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+'(\d{2})/);
   if (!match) return normalized;
 
-  return parseValidTimeString(`${match[2]} ${match[1]} ${match[3]}`, ["d MMM yy"]);
+  return `${match[2]} ${match[1]} ${match[3]}`;
 }
 
 function getCellText(row: Element, cellIndex: number): string {
@@ -175,7 +179,7 @@ export const siteMetadata: ISiteMetadata = {
       subTitle: { selector: ":self", elementProcess: getRowSubTitle },
       url: { selector: 'a[href^="details.php?id="]', attr: "href" },
       link: { selector: 'a[href^="/down.php/"]', attr: "href" },
-      time: { selector: "td:nth-child(9)", filters: [parseKgDate] },
+      time: { selector: "td:nth-child(9)", filters: [normalizeKgDate, { name: "parseTime", args: ["d MMM yy"] }] },
       size: { selector: "td:nth-child(11)", filters: [{ name: "parseSize" }] },
       seeders: { selector: "td:nth-child(13)", filters: [{ name: "parseNumber" }] },
       leechers: { selector: "td:nth-child(14)", filters: [{ name: "parseNumber" }] },

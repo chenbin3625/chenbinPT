@@ -117,7 +117,7 @@ interface ProtocolMap {
 
   // 1.5 chrome.cookies
   getAllCookies(data: chrome.cookies.GetAllDetails): chrome.cookies.Cookie[];
-  setCookie(data: chrome.cookies.SetDetails): void;
+  setCookie(data: chrome.cookies.SetDetails): boolean;
   getCookie(data: chrome.cookies.CookieDetails): chrome.cookies.Cookie | null;
   removeCookie(data: chrome.cookies.CookieDetails | chrome.cookies.SetDetails): chrome.cookies.CookieDetails;
   checkAndExtendCookies(url: string): void;
@@ -326,6 +326,9 @@ const messageMaps: Partial<ProtocolMap> = {};
 
 // Content scripts must retain search/download access, but must not call administrative
 // endpoints that expose whole storage, cookies, or backup and browser rule controls.
+// TESTS-2：checkAndExtendCookies 在用户开启 autoExtendCookies 时会真的写 cookie，
+// 因此同样登记；它只由 background 自身注册（background/utils/cookies.ts）、只被 offscreen
+// （扩展页，isExtensionPageSender 放行）调用，登记后这两条路径行为不变。
 const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "getExtStorage",
   "setExtStorage",
@@ -335,6 +338,7 @@ const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "getCookie",
   "setCookie",
   "removeCookie",
+  "checkAndExtendCookies",
   "restoreBackupData",
   "exportBackupData",
   "getRemoteBackupData",

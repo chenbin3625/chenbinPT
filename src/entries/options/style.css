@@ -630,6 +630,18 @@ body {
   white-space: pre-line;
 }
 
+/*
+ * DOWNLOADER-8：下载器「设置未生效」的告警。刻意用浅色 warning 而不是 error 红——
+ * 任务确实推送成功了，只是暂停/标签/限速等附加设置被下载器跳过。
+ */
+.ptd-download-warning {
+  cursor: pointer;
+}
+
+.ptd-download-warning-detail {
+  word-break: break-word;
+}
+
 .ant-table-wrapper .ant-table-title {
   padding: 6px;
 }

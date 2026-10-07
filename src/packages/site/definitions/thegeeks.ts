@@ -113,7 +113,7 @@ export const siteMetadata: ISiteMetadata = {
       name: "类别",
       key: "category",
       options: buildCategoryOptionsFromDict(categoryMap),
-      cross: { mode: "append", key: "c" },
+      cross: { mode: "appendQuote", key: "filter_cat" }, // D-29：站点只认 filter_cat[<id>]=1（Jackett 定义的 $raw），c<id> 会被忽略
     },
     {
       name: "种子状态",

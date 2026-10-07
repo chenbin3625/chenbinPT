@@ -241,7 +241,10 @@ export const siteMetadata: ISiteMetadata = {
       interval: "P8W",
       uploaded: "200GiB",
       ratio: 1.05,
-      uniqueGroups: 300,
+      // DEFS1-4：level.ts 的「应当大于」白名单只认 groups，不认 uniqueGroups，
+      // 该门槛此前被静默忽略；GazelleJSONAPI 采集的 response.community.groups 就是「上传过的去重组数」，
+      // 改用它后 300 组门槛才真正参与回落判级。
+      groups: 300,
       isKept: true,
       privilege: "首次赠送2枚永久邀请；每月获赠 2 枚临时邀请；佩戴4枚印记；创建4个私人合集；能够检查所有种子",
     },

@@ -77,6 +77,25 @@ function isPlain(value: any): value is Record<string, any> {
 }
 
 /**
+ * 路径段是否会被当作「原型链操作」而不是普通数据键。
+ *
+ * 为什么必须拒绝（C-2 / EXTENDSI18N-4）：`chrome.storage` 读回的是结构化克隆结果，
+ * 自有的 `__proto__` 在 JSON / 结构化克隆语义下是**普通数据属性**（被篡改的备份、Sync 数据都可能带来），
+ * 而把它当路径段重放时 `cursor["__proto__"] = x` 写的是 [[Prototype]]、`cursor["constructor"]` 落到
+ * Function 构造器 —— 即外部数据可以改掉 store state 的原型（此后 `value.__v_raw ?? value` 这类读取
+ * 会沿新原型链拿到外部对象）。三个路径入口（applyPathChanges / resolvePathContainer /
+ * applyExternalChangesToStore）统一用它判定，避免再出现「修一处漏一处」。
+ */
+function isUnsafePathSegment(segment: string): boolean {
+  return segment === "__proto__" || segment === "constructor" || segment === "prototype";
+}
+
+/** 路径中是否含会被当成原型链操作的段（含最后一段：最后一段同样会写进父容器） */
+function hasUnsafePathSegment(path: string[]): boolean {
+  return path.some(isUnsafePathSegment);
+}
+
+/**
  * 结构相等（JSON 语义：普通对象 / 数组 / 原始值；持久化的 store state 都是无环 JSON 数据）。
  *
  * 为什么不能用引用比较：`chrome.storage` 读回来的是**新反序列化**的对象树 ——
@@ -155,7 +174,7 @@ function collectPathChanges(base: any, next: any, path: string[], out: IPathChan
 /** 把 `collectPathChanges` 的结果写进一个**可安全就地修改**的目标对象（落盘前合并用） */
 function applyPathChanges(target: Record<string, any>, changes: IPathChange[]): void {
   for (const change of changes) {
-    if (change.path.some((s) => s === "__proto__" || s === "constructor" || s === "prototype")) continue;
+    if (hasUnsafePathSegment(change.path)) continue; // 见 isUnsafePathSegment（C-2 / EXTENDSI18N-4）
     let cursor: any = target;
     for (let i = 0; i < change.path.length - 1; i++) {
       const segment = change.path[i];
@@ -180,6 +199,11 @@ function applyPathChanges(target: Record<string, any>, changes: IPathChange[]): 
  * 用于把路径级变更落到 store state 上 —— 结构已被改成别的形状时跳过（本地为准），而不是抛错。
  */
 function resolvePathContainer(root: Record<string, any>, path: string[]): Record<string, any> | undefined {
+  // 路径含原型链段时一律视为「不安全路径」，返回 undefined 让调用方跳过：
+  // 既覆盖 applyExternalChangesToStore 的赋值，也覆盖 applyMinimalPatch 的删除分支（EXTENDSI18N-4）
+  if (hasUnsafePathSegment(path)) {
+    return undefined;
+  }
   let cursor: any = root;
   for (let i = 0; i < path.length - 1; i++) {
     cursor = cursor?.[path[i]];
@@ -438,6 +462,15 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       }
     }
 
+    // 顶层键的删除同样要同步（EXTENDSI18N-5）：旧实现只遍历 Object.keys(newValue)，
+    // 递归删除只对子对象生效，于是外部（另一上下文 / 备份恢复）整份写入时删掉的**顶层键**
+    // 会留在本地 store，之后任何一次 $save 又把它写回 storage（「恢复备份」被自己撤销）。
+    for (const topKey of Object.keys(current)) {
+      if (!Object.hasOwn(newValue, topKey)) {
+        removals.push([topKey]);
+      }
+    }
+
     if (Object.keys(patch).length > 0) {
       store.$patch(patch as Parameters<typeof store.$patch>[0]);
     }
@@ -576,7 +609,8 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       for (const change of changes) {
         const container = resolvePathContainer(stateRecord, change.path);
         if (!container) {
-          continue; // 本地结构已变成别的形状：以本地为准
+          // 本地结构已变成别的形状，或路径含原型链段（见 resolvePathContainer）：以本地为准
+          continue;
         }
         const last = change.path[change.path.length - 1];
         if (change.remove) {

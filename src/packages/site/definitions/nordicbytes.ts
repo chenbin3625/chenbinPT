@@ -213,8 +213,10 @@ export const siteMetadata: ISiteMetadata = {
             selector: "ul.__navbar-stats a:has(i.fa-arrow-up) span",
             filters: [
               (query: string) => {
+                // DEFS2-12：该 span 与 uploaded 共用同一个元素，文本里未必带 "(n)" 计数；
+                // 取不到时返回 undefined（而不是 0），避免「没取到」被静默展示成 0 个做种
                 const match = query.match(/\((\d+)\)/);
-                return match ? parseInt(match[1]) : 0;
+                return match ? parseInt(match[1]) : undefined;
               },
             ],
           },
@@ -222,8 +224,9 @@ export const siteMetadata: ISiteMetadata = {
             selector: "ul.__navbar-stats a:has(i.fa-arrow-down) span",
             filters: [
               (query: string) => {
+                // DEFS2-12：同 seeding，取不到计数时返回 undefined 而非静默的 0
                 const match = query.match(/\((\d+)\)/);
-                return match ? parseInt(match[1]) : 0;
+                return match ? parseInt(match[1]) : undefined;
               },
             ],
           },
@@ -275,7 +278,8 @@ export const siteMetadata: ISiteMetadata = {
       id: 9,
       name: "Archivist",
       groupType: "user",
-      averageSeedingTime: "P60D",
+      // D-35：站点还要求平均做种时间 ≥ 60 天，但 userInfo 从不采集 averageSeedingTime（资料页结构未知，
+      // 无法给出可靠选择器）。保留该门槛会让此级在回落比较中永远无法达成，因此不参与自动判定。
       seedingSize: "10TiB",
       interval: "P90D",
       privilege: "发送邀请 免疫HR 全局免费",

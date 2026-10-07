@@ -104,7 +104,9 @@ function dialogEnter() {
   // 生成站点列表
   Promise.all(
     metadataStore.getAddedSiteIds
-      .sort((a, b) => Number(metadataStore.sites[b].allowSearch) - Number(metadataStore.sites[a].allowSearch))
+      // OPTIONSSETTINGS-10：站点列表是按快照取的，期间可能被另一个上下文删除，
+      // 这里与模板一样不能裸解引用 metadataStore.sites[siteId]
+      .sort((a, b) => Number(!!metadataStore.sites[b]?.allowSearch) - Number(!!metadataStore.sites[a]?.allowSearch))
       .map(async (siteId) => ({
         siteId,
         isDead: (await metadataStore.getSiteMergedMetadata(siteId, "isDead")) ?? false,
@@ -178,10 +180,12 @@ watch(showDialog, (open) => {
 
           <a-card :bordered="false" :style="{ height: 'calc(100vh - 340px)', overflowY: 'auto' }">
             <a-collapse>
+              <!-- OPTIONSSETTINGS-10：站点可能已被另一个上下文删除（跨上下文删除会同步进 store），
+                   裸解引用 metadataStore.sites[site].isOffline 会让整个弹窗渲染中断；找不到站点时禁用该面板 -->
               <a-collapse-panel
                 v-for="site in filteredSite"
                 :key="site"
-                :disabled="!!metadataStore.sites[site].isOffline"
+                :disabled="metadataStore.sites[site] ? !!metadataStore.sites[site].isOffline : true"
               >
                 <template #header>
                   <a-flex align="center" :gap="8">

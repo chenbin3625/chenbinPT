@@ -7,6 +7,7 @@ import { isEmpty } from "es-toolkit/compat";
 import {
   getDownloader,
   getDownloaderMetaData,
+  releaseDownloaderInstance,
   type CAddTorrentOptions,
   type CTorrent,
   type CTorrentFile,
@@ -62,9 +63,17 @@ type DownloaderInstance = Awaited<ReturnType<typeof getDownloader>>;
 
 const downloaderInstanceCache = new Map<string, { configKey: string; instance: DownloaderInstance }>();
 
+/**
+ * offscreen 自建实例缓存的 key（见 OFFSCREEN-3）。
+ *
+ * 早期实现只取连接字段，漏掉 `feature` / `advanceAddTorrentOptions`：
+ * 这些字段被实例构造时快照（例如 qBittorrent 的 `this.config.feature?.BypassCSRF`），
+ * 用户在设置里只改「绕过 CSRF」时 offscreen 会一直命中旧实例，开关看起来失效。
+ * 这里与 `@ptd/downloader` 的 `getDownloaderInstanceCacheKey` 保持同一组字段。
+ */
 function getDownloaderConfigKey(config: IDownloaderMetadata): string {
-  const { id, type, address, username, password, timeout } = config;
-  return JSON.stringify({ id, type, address, username, password, timeout });
+  const { id, type, address, username, password, timeout, feature, advanceAddTorrentOptions } = config;
+  return JSON.stringify({ id, type, address, username, password, timeout, feature, advanceAddTorrentOptions });
 }
 
 export async function getDownloaderInstance(downloaderId: string): Promise<DownloaderInstance | null> {
@@ -78,6 +87,12 @@ export async function getDownloaderInstance(downloaderId: string): Promise<Downl
   }
 
   const instance = await getDownloader(downloaderConfig);
+  // OFFSCREEN-7：配置变化时旧实例会被本缓存丢弃，必须主动释放它持有的长连接（Aria2 的 WebSocket），
+  // 否则反复改配置会在 offscreen 生命周期内累积孤儿连接。若库级缓存按稳定 key 返回的是同一个实例，
+  // 则不能 dispose（否则会关掉正在用的连接），只需更新 key。
+  if (cached && cached.instance !== instance) {
+    releaseDownloaderInstance(cached.instance);
+  }
   downloaderInstanceCache.set(downloaderId, { configKey, instance });
   return instance;
 }
@@ -444,6 +459,22 @@ async function getDownloadConfig(): Promise<IConfigPiniaStorageSchema["download"
   })) ?? {}) as IConfigPiniaStorageSchema["download"];
 }
 
+/**
+ * OFFSCREEN-1：关闭「保存下载历史」时仍必须给出唯一且不复用的投递 id。
+ *
+ * `setDownloadHistory` 在不落库时返回 0，早期实现直接把它当投递标识，
+ * 于是多个「未到站点下载间隔」的延迟下载共用 `reDownloadTorrent-0` 互相覆盖，先投递者永不执行。
+ * 这里改为给出负数 id：与 IndexedDB 自增的正数主键天然隔离（不会覆盖既有历史记录），
+ * 以取负的毫秒时间戳为起点并只减不增，因此 offscreen 重建后的起点更小，不会复用上一实例在途的 id。
+ */
+let ephemeralDownloadId = 0;
+
+function nextEphemeralDownloadId(): number {
+  // Math.min 保证严格递减：同一毫秒内多次调用不会重复，系统时钟回拨也不会回退到已用过的值
+  ephemeralDownloadId = Math.min(ephemeralDownloadId - 1, -Date.now());
+  return ephemeralDownloadId;
+}
+
 async function isAllowedSaveDownloadHistory(): Promise<boolean> {
   const allowed = await sendMessage("getExtStoragePath", {
     key: "config",
@@ -495,7 +526,10 @@ async function prepareDownloadTorrent(
   // 1. 生成下载历史（等待重新下载的任务也需要 downloadId 作为投递标识）
   if (typeof downloadOption.downloadId === "undefined") {
     const downloadHistory = buildDownloadHistory(downloadOption);
-    downloadOption.downloadId = await setDownloadHistory(downloadHistory);
+    const savedDownloadId = await setDownloadHistory(downloadHistory);
+    // OFFSCREEN-1：0 只表示「历史未落库」（关闭保存下载历史），不能拿它当投递标识，
+    // 否则多个延迟下载会共用 `reDownloadTorrent-0` 而互相覆盖。
+    downloadOption.downloadId = savedDownloadId === 0 ? nextEphemeralDownloadId() : savedDownloadId;
   }
   const downloadId = downloadOption.downloadId!;
   logger({ msg: `generate download torrent task #${downloadId}` });
@@ -561,6 +595,8 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
   const downloadId = downloadOption.downloadId!;
   let downloadStatus = await setDownloadStatus(downloadId, "pending");
   let errorMessage: string | undefined;
+  // DOWNLOADER-8：与失败并列的告警（推送成功但部分设置未生效），单独透出以免被 UI 当成失败原因
+  let warningMessage: string | undefined;
 
   // 2. 构建下载链接的请求配置
   let downloadRequestConfig: AxiosRequestConfig = { url: torrent.link, method: "GET", timeout: 30e3 };
@@ -622,6 +658,7 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
       );
       downloadStatus = remoteResult.downloadStatus;
       errorMessage = remoteResult.errorMessage;
+      warningMessage = remoteResult.warningMessage;
     }
   } catch (e) {
     downloadStatus = "failed";
@@ -642,12 +679,40 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
       logger({ msg: `Failed to persist errorMessage for download task #${downloadId}` });
     });
   }
-  return { downloadId, downloadStatus, errorMessage } as IDownloadTorrentResult;
+  if (warningMessage) {
+    // DOWNLOADER-8：告警同样要落库，否则只有本次调用方能看到；写独立字段，UI 才能在列表/弹窗里
+    // 以「告警」而不是红色「失败原因」展示（downloadStatus 仍是 completed）
+    await patchDownloadHistory(downloadId, { warningMessage }).catch(() => {
+      logger({ msg: `Failed to persist warningMessage for download task #${downloadId}` });
+    });
+  }
+  return { downloadId, downloadStatus, errorMessage, warningMessage } as IDownloadTorrentResult;
 }
 
 onMessage("downloadTorrent", async ({ data: downloadOption }) => {
+  const incomingDownloadId = downloadOption.downloadId;
   // 站点下载间隔判断/调度在入队前完成，等待间隔的任务不会占用下载并发槽
-  const prepared = await prepareDownloadTorrent(downloadOption);
+  let prepared: IDownloadTorrentResult | IPreparedDownload;
+  try {
+    prepared = await prepareDownloadTorrent(downloadOption);
+  } catch (e) {
+    /**
+     * OFFSCREEN-6：prepareDownloadTorrent 会先落一条 `downloadStatus: "pending"` 的历史再去
+     * 实例化站点（getSiteInstance 对未收录站点会抛错）。这里不处理的话，异常沿消息 reject 出去，
+     * 后面的 downloadTorrent 与 setDownloadStatus(failed) 都不会执行，记录只能等 background 的
+     * failStaleDownloadRecords（1h 阈值 + 6h 扫描）纠偏。
+     *
+     * 只处理「本次调用新建的 id」：调用方显式传入的 id（延迟重下）由 background 的对账逻辑负责，
+     * 避免在这里误改一条既有记录。
+     */
+    if (typeof incomingDownloadId === "undefined" && typeof downloadOption.downloadId !== "undefined") {
+      await setDownloadStatus(downloadOption.downloadId, "failed");
+      await patchDownloadHistory(downloadOption.downloadId, { errorMessage: getErrorMessage(e) }).catch((err) =>
+        logger({ msg: "Failed to store prepare error message", level: "error", data: getErrorMessage(err) }),
+      );
+    }
+    throw e;
+  }
   if (isPendingDownloadResult(prepared)) {
     return prepared;
   }
@@ -767,10 +832,11 @@ async function downloadTorrentToLocalFile(
 async function downloadTorrentToRemote(
   downloadOption: TRemoteDownloadOption,
   downloadRequestConfig: AxiosRequestConfig,
-): Promise<Pick<IDownloadTorrentResult, "downloadStatus" | "errorMessage">> {
+): Promise<Pick<IDownloadTorrentResult, "downloadStatus" | "errorMessage" | "warningMessage">> {
   const { torrent, downloaderId, addTorrentOptions, downloadId } = downloadOption;
   let downloadStatus: TTorrentDownloadStatus = "failed"; // 远程推送默认失败状态
   let errorMessage: string | undefined;
+  let warningMessage: string | undefined;
 
   const downloaderConfig = await getDownloaderConfig(downloaderId);
   if (downloaderConfig.id && downloaderConfig.enabled) {
@@ -789,7 +855,25 @@ async function downloadTorrentToRemote(
       const addTorrentResult = await downloaderInstance.addTorrent(downloadRequestConfig.url!, addTorrentOptions);
       loggerData.addTorrentResult = addTorrentResult;
       if (addTorrentResult?.success === true) {
-        logger({ msg: "Successfully added torrent to downloader", data: loggerData });
+        /**
+         * DOWNLOADER-8：下载器可能「成功但降级」——例如 uTorrent 直发 http(s) 链接时拿不到 infoHash，
+         * 暂停 / 标签 / 上传限速会被跳过，但 addTorrent 仍返回 success=true 并只在 message 里说明。
+         * 这里降级为 warn 日志并把 message 透出到独立的 warningMessage 字段
+         * （downloadStatus 仍保持 completed，成功语义不变）。
+         * 为什么不用 errorMessage：UI 按字段语义着色/统计，写进 errorMessage 会把成功记录渲染成
+         * 红色「失败原因」，并让「发送到下载器」汇总误判为失败。
+         */
+        const addTorrentWarning = addTorrentResult.message ? getErrorMessage(addTorrentResult.message) : undefined;
+        if (addTorrentWarning) {
+          warningMessage = addTorrentWarning;
+          logger({
+            msg: "Successfully added torrent to downloader with warnings",
+            level: "warn",
+            data: { ...loggerData, message: addTorrentWarning },
+          });
+        } else {
+          logger({ msg: "Successfully added torrent to downloader", data: loggerData });
+        }
         downloadStatus = "completed";
       } else {
         logger({ msg: "Failed to add torrent to downloader", data: loggerData });
@@ -807,7 +891,7 @@ async function downloadTorrentToRemote(
     errorMessage = `Downloader is missing or disabled: ${downloaderId}`;
   }
 
-  return { downloadStatus, errorMessage };
+  return { downloadStatus, errorMessage, warningMessage };
 }
 
 function getErrorMessage(error: unknown): string {

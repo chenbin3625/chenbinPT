@@ -54,10 +54,13 @@ chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT
 npm run dev                    # Development server with HMR
 npm run build:dist            # Build Chrome extension
 npm run build:dist-firefox    # Build Firefox addon
-npm run check                 # TypeScript type checking
-npm run verify                # Release gate: check + lint + check:antd + vitest + test:legacy
+npm run check                 # TypeScript type checking (src/, via vue-tsc)
+npm run check:node            # TypeScript type checking for vite.config.ts / vite/**/*.ts (tsconfig.node.json)
+npm run check:bundle          # dist-chrome bundle completeness + size budget (needs a build first)
+npm run check:dist            # check:bundle for both dist-chrome and dist-firefox
+npm run verify                # Release gate: check + check:node + lint + check:antd + vitest + test:legacy
 npm run pack:crx              # Sign dist-chrome into build/extension.crx (self-verifying)
-npm run pack:crx:build        # verify, build Chrome extension, then sign it
+npm run pack:crx:build        # verify, build Chrome extension, sign it, then run check:bundle
 ```
 
 Packing notes: `scripts/pack-crx.mjs` implements CRX3 itself (no Chrome binary, no extra deps beyond
@@ -68,7 +71,8 @@ from `--key`, `CRX_PRIVATE_KEY_FILE`/`CRX_PRIVATE_KEY`, or `build/chrome-extensi
 extension ID and must be backed up by the maintainer (it is git-ignored, never commit it).
 
 Releases are cut locally (the repo has no CI workflows): bump the three-part `package.json` version,
-run `npm run verify` (nothing else gates a release), build both targets, zip `dist-chrome`/`dist-firefox` into `build/`, run `npm run pack:crx`, then
+run `npm run verify` (includes `check:node`; INFRA-1), build both targets, run `npm run check:dist`
+(产物完整性 + 体积预算门禁，两个 target 各跑一次；INFRA-1), zip `dist-chrome`/`dist-firefox` into `build/`, run `npm run pack:crx`, then
 `gh release create v<version> build/extension-chrome.zip build/extension-firefox.zip build/extension.crx`.
 The manifest `version` is exactly the `package.json` version — never derive it from git state, because
 `git rev-list --all --count` depends on local refs and can produce a lower version than what is already

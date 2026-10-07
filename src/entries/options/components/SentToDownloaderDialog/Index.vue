@@ -107,11 +107,23 @@ function restoreAddTorrentOptions(downloader?: IDownloaderMetadata) {
 }
 
 watch(selectedDownloader, (value) => {
-  if (value?.type) {
-    getDownloaderMetaData(value.type).then((v) => (selectedDownloaderMetadata.value = v));
-  } else {
-    selectedDownloaderMetadata.value = null;
-  }
+  const type = value?.type;
+
+  // OPTIONSSHELL-9：只要选中的下载器变了，上一个下载器的元数据立即作废 —— 否则在动态 import
+  // 返回前的窗口里会渲染它的高级选项，而 v-model 写的是**新下载器**的 advanceAddTorrentOptions。
+  selectedDownloaderMetadata.value = null;
+  if (!type) return;
+
+  // getDownloaderMetaData 首次加载慢、其后快：迟到的回调会覆盖当前选中的元数据，
+  // 加载失败还会留下 unhandled rejection。这里做「当前性校验 + catch」，只有仍是同一个 type 才落值。
+  getDownloaderMetaData(type)
+    .then((v) => {
+      if (selectedDownloader.value?.type === type) selectedDownloaderMetadata.value = v;
+    })
+    .catch(() => {
+      // 加载失败保持 null（高级选项面板置灰）而不是沿用上一个下载器的元数据；调用方无日志通道，不新增 console
+      if (selectedDownloader.value?.type === type) selectedDownloaderMetadata.value = null;
+    });
 });
 
 async function sendToDownloader() {

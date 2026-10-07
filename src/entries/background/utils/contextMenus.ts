@@ -79,7 +79,18 @@ export function buildContextMenusContextKey(input: IContextMenusKeyInput): strin
   const downloaders = Object.values(downloadersMeta)
     .filter((x) => !!x.enabled)
     .sort((a, b) => (b.sortIndex ?? 100) - (a.sortIndex ?? 100))
-    .map((x) => [x.id, x.name, x.address, x.sortIndex ?? 100, x.suggestFolders ?? []]);
+    .map((x) => [
+      x.id,
+      x.name,
+      x.address,
+      x.sortIndex ?? 100,
+      x.suggestFolders ?? [],
+      // BACKGROUNDSHARED-1：菜单闭包在 downloadLinkPush 里读 feature.DefaultAutoStart（决定 addAtPaused），
+      // L-6 取消强制重建后摘要必须覆盖它，否则改了「自动开始」也不会重建菜单；
+      // BACKGROUNDSHARED-4：按站点排除下载器（excludedSites）后菜单内容会变，同样必须进摘要。
+      x.feature?.DefaultAutoStart ?? null,
+      x.excludedSites ?? [],
+    ]);
 
   return JSON.stringify({
     tabHost,
@@ -90,6 +101,10 @@ export function buildContextMenusContextKey(input: IContextMenusKeyInput): strin
       allowSelectionTextSearch: contextMenus?.allowSelectionTextSearch ?? true,
       allowSocialLinkSearch: contextMenus?.allowSocialLinkSearch ?? true,
       allowLinkDownloadPush: contextMenus?.allowLinkDownloadPush ?? true,
+    },
+    // BACKGROUNDSHARED-4：站点过滤开关本身也决定菜单是否过滤，必须进摘要
+    download: {
+      allowDownloaderFilterForSite: config?.download?.allowDownloaderFilterForSite ?? false,
     },
     solutions,
     sites,
@@ -474,8 +489,16 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
   // 创建下载链接菜单，所有页面可用
   if (configStore.contextMenus?.allowLinkDownloadPush ?? true) {
     // 查找是否有可用的下载服务器
+    // BACKGROUNDSHARED-4：站点排除（downloader.excludedSites）此前只在 options 聚合搜索页生效，
+    // 站点页右键这个最常用入口完全忽略它。这里对齐 metadata store 的 getEnabledDownloadersBySite：
+    // 仅在 config.download.allowDownloaderFilterForSite 打开时过滤（该开关默认关闭，关闭时排除列表本就不生效），
+    // 且当前标签页不在任何站点时不过滤。
+    const allowDownloaderFilterForSite = configStore.download?.allowDownloaderFilterForSite === true;
     const downloaders = Object.values(metadataStore.downloaders ?? {})
       .filter((x) => !!x.enabled)
+      .filter(
+        (x) => !allowDownloaderFilterForSite || !thisTabSiteId || !(x.excludedSites ?? []).includes(thisTabSiteId),
+      )
       .sort((a, b) => (b.sortIndex ?? 100) - (a.sortIndex ?? 100));
 
     if (downloaders.length > 0) {

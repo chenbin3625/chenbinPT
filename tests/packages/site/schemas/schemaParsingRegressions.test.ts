@@ -86,7 +86,7 @@ describe("B-2：NexusPHP 详情页标题按 U+00A0 分隔符切分（结论经�
 
   // 同一组 title 过滤器里的 <title> 兜底分支：正则只有 1 个捕获组，
   // 早先判定写成 `length >= 3` + `[2]`，永远走空并返回带 "- Powered by NexusPHP" 的原始串。
-  const documentTitleFilters = (NexusPHPSchema as any).detail.selectors.title.switchFilters["html > body > title"] as ((
+  const documentTitleFilters = (NexusPHPSchema as any).detail.selectors.title.switchFilters["head > title"] as ((
     title: string,
   ) => string)[];
 
@@ -459,11 +459,15 @@ describe("S-2：fixLink 协议白名单", () => {
     expect(site.runFixLink("blob:https://ok.example/abc")).toBe("");
   });
 
-  it("magnet / 相对路径 / // 开头 / http(s) 的既有行为逐字不变", () => {
+  it("magnet / 相对路径 / // 开头 / http(s) 的行为", () => {
     expect(site.runFixLink("magnet:?xt=urn:btih:abc")).toBe("magnet:?xt=urn:btih:abc");
     expect(site.runFixLink("./rel")).toBe("https://site.example/rel");
     expect(site.runFixLink("/abs/path")).toBe("https://site.example/abs/path");
-    expect(site.runFixLink("//host/path")).toBe("https:://host/path"); // 既有实现即如此（浏览器可容错）
+    // TESTS-7：协议相对链接按基址补全协议，产出的必须是 URL 解析器接受的合法地址；
+    // 原实现 `${protocol}:${uri}` 会得到 `https:://host/path`（node 实测 new URL 抛 Invalid URL），
+    // 该畸形串随后被当作下载地址使用，下载必然失败。此处不再把它钉成契约。
+    expect(site.runFixLink("//host/path")).toBe("https://host/path");
+    expect(new URL(site.runFixLink("//host/path")).href).toBe("https://host/path");
     expect(site.runFixLink("https://ok.example/x")).toBe("https://ok.example/x");
     expect(site.runFixLink("")).toBe("");
   });

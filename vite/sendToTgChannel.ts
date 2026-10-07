@@ -102,6 +102,27 @@ ${escapeLegacyMarkdown(commitInfo.moreMessage)}`
     process.exit(1);
   }
 
+  // INFRA-4：sendMediaGroup 的 media 必须包含 2~10 项，只有 1 个产物时该接口必然 400。
+  // 这种「只跑过一次 pack:crx」的场景下原本只会抛出难读的 AxiosError，改用单文件接口 sendDocument。
+  if (files.length === 1) {
+    const singleForm = new FormData();
+    singleForm.append("chat_id", CHAT_ID);
+    singleForm.append("caption", message);
+    singleForm.append("parse_mode", "Markdown");
+    singleForm.append(
+      "document",
+      new Blob([fs.readFileSync(files[0])], { type: "application/octet-stream" }),
+      path.basename(files[0]),
+    );
+
+    const response = await axios.post(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/sendDocument`, singleForm);
+
+    if (!response.data.ok) {
+      throw new Error(`Telegram API 错误: ${response.status}`);
+    }
+    return;
+  }
+
   const formData = new FormData();
   formData.append("chat_id", CHAT_ID);
 
@@ -132,5 +153,10 @@ ${escapeLegacyMarkdown(commitInfo.moreMessage)}`
   }
 }
 
+// INFRA-4：原先直接 `main();` 没有 catch，上传失败只留下未处理拒绝（AxiosError），
+// 看不出失败的是哪个接口/哪一步。这里补上可读错误与失败退出码。
 // noinspection JSIgnoredPromiseFromCall
-main();
+main().catch((e) => {
+  console.error("上传发布产物到 Telegram 失败：", e?.response?.data ?? e);
+  process.exit(1);
+});

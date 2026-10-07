@@ -666,6 +666,10 @@ export default class BeyondHD extends PrivateSite {
       tags.push({ name: "中字" });
     }
 
+    // DEFS2-2 收尾（统一判据：站点是否全站 H&R，而非选择器形状）：
+    // 本站属上游 fb79a2a7「feat: add default H&R tags with red color for global sites」(PR #336)
+    // 明确列出的全站 H&R 站点——站点规则对**全部**下载都规定 H&R 义务，故对每一行无条件贴 H&R
+    //（效果等价于恒真 selector:"*"，属刻意设计，不得按「恒真伪标签」删除；与 torrenting.ts 同一约定）。
     tags.push({ name: "H&R", color: "red" });
 
     torrent.tags = tags;

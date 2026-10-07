@@ -111,8 +111,8 @@ function siteHostMatches(host: string, trustedHost: string): boolean {
  * 没有显式 scheme 的相对路径（`./x`、`x`、`/x`）直接放行——它们最终会落到站点的 http(s) 基址上。
  *
  * 这里只做「文本层面的 scheme 提取」，不再重新 `new URL()` 解析：
- * `//` 分支按既有逻辑会产出 `https:://host/path` 这种浏览器可容错、但 URL 解析器不保证接受的形式，
- * 重新解析会把这个既有的合法输入误判成危险链接。
+ * fixLink 已把所有相对路径与协议相对路径（`//host/path`）解析成合法的 http(s) 绝对地址（TESTS-7），
+ * 重新解析没有额外收益，反而要把 `magnet:` 等非 URL 形态塞进 URL 构造的异常路径。
  */
 function hasAllowedLinkProtocol(url: string): boolean {
   const scheme = url.match(explicitSchemePattern)?.[0];
@@ -518,10 +518,10 @@ export default class BittorrentSite {
 
     if (uri.length > 0 && !uri.startsWith("magnet:")) {
       if (uri.startsWith("//")) {
-        // 当 传入的uri 以 /{2,} 开头时，被转换成类似 https?:///xxxx/xxxx 的形式，
-        // 虽不符合url规范，但是浏览器容错高，所以不用担心 2333
-        const urlHelper = new URL(requestConfig.baseURL || this.url);
-        url = `${urlHelper.protocol}:${uri}`;
+        // TESTS-7：原实现 `${urlHelper.protocol}:${uri}` 会拼出 `https:://host/path` 这种 URL 解析器
+        // 不接受的畸形串（node 实测 `new URL("https:://host/path")` 抛 Invalid URL），下载必然失败；
+        // 协议相对链接的语义就是「沿用基址的协议」，交给 new URL 按基址解析才能得到合法绝对地址。
+        url = new URL(uri, requestConfig.baseURL || this.url).toString();
       } else if (uri.slice(0, 4) !== "http") {
         // 基于请求地址，处理 ./xxx, xxxx, /xxxx 等相对路径
         const requestUrl = axios.getUri(requestConfig);
@@ -1116,7 +1116,9 @@ export default class BittorrentSite {
     }
 
     if (!torrent.title) {
-      torrent.title = this.getFieldData(parsedDetailsPage, { text: "", selector: ["html > body > title"] });
+      // SITECORE-6：<title> 位于 <head>，原选择器 `html > body > title` 在标准 HTML 下恒为 0 命中，
+      // getFieldData 会回落到 text: ""，于是未声明 detail.title 的站点标题永远为空且无任何告警。
+      torrent.title = this.getFieldData(parsedDetailsPage, { text: "", selector: ["head > title"] });
     }
 
     if (torrent.link) {

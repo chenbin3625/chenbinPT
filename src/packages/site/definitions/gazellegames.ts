@@ -14,6 +14,7 @@ import {
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 import {
   parseValidTimeString,
+  parseValidTimeStringInZone,
   extractContent,
   buildCategoryOptionsFromList,
   buildCategoryOptionsFromDict,
@@ -334,7 +335,11 @@ export default class GazelleGames extends GazelleJSONAPI {
           completed: torrent.Snatched,
           category: platform ? platform : categoryMap[parseInt(torrent.CategoryID)],
           size: parseInt(torrent.Size),
-          time: parseValidTimeString(torrent.Time) as number,
+          // SITECORE-1：JSON API 的 Time 是站点墙上时间，按 metadata.timezoneOffset 解析；
+          // 未声明时区时退回宿主时区解析，避免把时间戳变成 0
+          time: (this.metadata.timezoneOffset
+            ? parseValidTimeStringInZone(torrent.Time, [], this.metadata.timezoneOffset)
+            : parseValidTimeString(torrent.Time)) as number,
           url: urlJoin(this.url, `torrents.php?id=${torrent.GroupID}&torrentid=${torrent.ID}`),
           link: urlJoin(
             this.url,
@@ -366,7 +371,7 @@ export default class GazelleGames extends GazelleJSONAPI {
     });
     const apiUser = this.assertApiSuccess(data, "user");
 
-    return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, [
+    const fields = [
       "joinTime",
       "seeding",
       "uploads",
@@ -376,6 +381,13 @@ export default class GazelleGames extends GazelleJSONAPI {
       "seedingSize",
       "seedingBonus",
       "lastAccessAt",
-    ] as (keyof Partial<IUserInfo>)[]) as Partial<IUserInfo>;
+    ] as (keyof IUserInfo)[];
+
+    // H-6 家族：本方法整段覆写且不调 super，会绕过父类在两个调用点补上的零命中守卫。
+    // 这里照抄父类的判据（参数顺序 apiUser, fields）——API 返回 `{status:"success"}` 但没有 response
+    // （服务端软错误 / 改版）时，全空字段会被当成成功写回并覆盖当日历史与 metadata.lastUserInfo。
+    this.assertUserInfoFieldsMatched(apiUser, fields);
+
+    return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, fields) as Partial<IUserInfo>;
   }
 }

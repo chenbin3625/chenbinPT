@@ -187,6 +187,21 @@ export async function setSiteLastUserInfo(userData: IUserInfo) {
       data: { site, status: userData.status, updateAt: userData.updateAt },
     });
 
+    // OFFSCREEN-2：只有解析成功的载荷才能覆盖 metadata.lastUserInfo。
+    // 失败载荷只有 status/updateAt/site（加上引擎 pickLast 保留的少量字段，NexusPHP 只有 id），
+    // 无条件整份覆盖会把上一次成功快照的 uploaded/downloaded/ratio/levelName/seedingSize 抹掉，
+    // 而 updateAt 又被刷新为当前时间 —— MyData 主表会显示空值且看不出是失败。
+    // 失败状态仍由 getSiteUserInfoResult 的返回值交给调用方（options 侧 flushSiteLastUserInfo 会提示），
+    // 这里只记日志，不落库。
+    if (userData.status !== EResultParseStatus.success) {
+      logger({
+        msg: `Skip updating metadata.lastUserInfo for ${site}: status is ${EResultParseStatus[userData.status]}`,
+        level: "warn",
+        data: { site, status: userData.status, statusMsg: userData.statusMsg },
+      });
+      return;
+    }
+
     // 存储用户信息到 metadata 中（ pinia/webExtPersistence 会自动同步该部分信息 ）
     await sendMessage("patchExtStoragePath", {
       key: "metadata",

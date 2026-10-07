@@ -39,52 +39,42 @@ export const siteMetadata: ISiteMetadata = {
       name: "Member",
       interval: "P1W",
       uploaded: "10GB",
-      ratio: 0.6, // 例如 0.55
+      ratio: 0.6,
       privilege: "Invites",
     },
     {
       id: 3,
       name: "Power User",
       interval: "P2W",
-      uploads: 5, // 例如 10
+      uploads: 5,
       uploaded: "25GB",
-      ratio: 0.65, // 例如 0.60
+      ratio: 0.65,
       privilege: "",
     },
     {
       id: 4,
       name: "Elite",
       interval: "P4W",
-      uploads: 50, // 例如 10
+      uploads: 50,
       uploaded: "100GB",
-      ratio: 0.65, // 例如 0.60
+      ratio: 0.65,
       privilege: "",
     },
     {
       id: 5,
+      // D-14：5/6/7 级原先是三份逐字相同的模板占位（uploads 500 / 500GB / 0.65 / P8W，还带着「例如 10」注释），
+      // 会被当成真实门槛参与判级。站点的真实要求无公开来源，这里只保留等级名（用 levelName 精确匹配），不再编造门槛。
       name: "Torrent Master",
-      interval: "P8W",
-      uploads: 500, // 例如 10
-      uploaded: "500GB",
-      ratio: 0.65, // 例如 0.60
       privilege: "",
     },
     {
       id: 6,
       name: "Power TM",
-      interval: "P8W",
-      uploads: 500, // 例如 10
-      uploaded: "500GB",
-      ratio: 0.65, // 例如 0.60
       privilege: "",
     },
     {
       id: 7,
       name: "Elite TM",
-      interval: "P8W",
-      uploads: 500, // 例如 10
-      uploaded: "500GB",
-      ratio: 0.65, // 例如 0.60
       privilege: "",
     },
   ],

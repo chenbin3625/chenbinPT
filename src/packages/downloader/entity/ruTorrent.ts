@@ -64,6 +64,8 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
+      // rTorrent 的 f.priority 只有 0..3（off/low/normal/high），没有 Highest 档（DOWNLOADER-2）
+      unsupportedPriorities: ["highest"],
     },
     PeerList: {
       allowed: true,
@@ -343,6 +345,34 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   }
 
   /**
+   * 判断 httprpc 的响应是否表示成功（DOWNLOADER-4）。
+   *
+   * 上游 action.php 有两条失败通道，都走 HTTP 200：
+   * - 原始 XML-RPC 请求（d.check_hash / removewithdata 的 system.multicall / f.priority.set）
+   *   会把 rtorrent 的 fault 原样放在 XML 响应体里；
+   * - mode=pause|unpause|remove 这类 JSON 模式在 makeSimpleCall 失败时返回 PHP false，
+   *   编码成响应体 `false`。
+   * 之前除 setTorrentLabel 外一律 `return true`，于是暂停/恢复/删除/重校验/文件优先级失败时
+   * 都会被当成成功（删除失败时弹窗照常关闭、刷新后种子还在，且没有任何提示）。
+   */
+  private isHttpRpcSuccess(responseData: unknown): boolean {
+    if (responseData === false) {
+      return false;
+    }
+    if (typeof responseData === "string") {
+      const body = responseData.trim();
+      if (body === "false") {
+        return false;
+      }
+      if (body.startsWith("<")) {
+        return !isXmlRpcFaultResponse(body);
+      }
+    }
+    // 既不是 fault 也不是 false 时按成功处理（含 boolean true / JSON 对象等无法判定的形态）
+    return true;
+  }
+
+  /**
    * 鉴于ruTorrent请求 `php/getplugins.php` 页面获取信息为js格式，不好处理，
    * 故考虑请求 `/php/getsettings.php` 页面，如果返回json格式的信息则说明可连接
    */
@@ -524,8 +554,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
       mode: "pause",
       hash: id.toUpperCase(),
     });
-    await this.requestHttpRpc(postData);
-    return true;
+    const { data } = await this.requestHttpRpc(postData);
+    return this.isHttpRpcSuccess(data);
   }
 
   async removeTorrent(id: any, removeData: boolean = false): Promise<boolean> {
@@ -545,8 +575,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
       });
     }
 
-    await this.requestHttpRpc(postData);
-    return true;
+    const { data } = await this.requestHttpRpc(postData);
+    return this.isHttpRpcSuccess(data);
   }
 
   async resumeTorrent(id: string): Promise<boolean> {
@@ -554,8 +584,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
       mode: "unpause",
       hash: id.toUpperCase(),
     });
-    await this.requestHttpRpc(postData);
-    return true;
+    const { data } = await this.requestHttpRpc(postData);
+    return this.isHttpRpcSuccess(data);
   }
 
   async getTorrentTrackers(_torrent: string | CTorrent): Promise<string[]> {
@@ -566,8 +596,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   // 重新校验种子（rTorrent: d.check_hash）
   override async recheckTorrent(id: any): Promise<boolean> {
     const postData = buildRequestXML([["d.check_hash", [id.toUpperCase()]]]);
-    await this.requestHttpRpc(postData);
-    return true;
+    const { data } = await this.requestHttpRpc(postData);
+    return this.isHttpRpcSuccess(data);
   }
 
   // 设置单个种子的标签（rTorrent: d.custom1.set）
@@ -575,7 +605,7 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     const postData = buildRequestXML([["d.custom1.set", [id.toUpperCase(), label]]]);
     const { data: responseXML } = await this.requestHttpRpc<string>(postData);
     // 返回真实结果：httprpc 以 HTTP 200 + fault 报文返回失败，硬编码 true 会让「标签没设置上」显示成功
-    return !isXmlRpcFaultResponse(responseXML);
+    return this.isHttpRpcSuccess(responseXML);
   }
 
   // ─────────────────────────────────────────────
@@ -632,8 +662,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     }));
 
     const postData = buildSystemMulticallXML(calls);
-    await this.requestHttpRpc(postData);
-    return true;
+    const { data } = await this.requestHttpRpc(postData);
+    return this.isHttpRpcSuccess(data);
   }
 
   // peer 列表: p.multicall

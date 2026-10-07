@@ -8,7 +8,7 @@ import { mergeWith } from "es-toolkit";
 
 import type { ISearchInput, ISiteMetadata, ITorrent, IUserInfo } from "../types";
 import { EResultParseStatus } from "../types";
-import { parseSizeString, createDocument } from "../utils";
+import { parseSizeString, createDocument, logMessage, siteErrorLogData } from "../utils";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 
 const categoryOptions = [
@@ -155,7 +155,7 @@ export const siteMetadata: ISiteMetadata = {
       author: { selector: "uploader" },
       seeders: { selector: "seeders" },
       leechers: { selector: "leechers" },
-      completed: { selector: "numComments" },
+      completed: { selector: "completed" }, // D-31：原先取的是评论数 numComments
       category: {
         selector: "categoryID",
         filters: [(categoryId: number) => categoryOptions.find((cat) => cat.value == categoryId)?.name ?? "Unknown"],
@@ -395,6 +395,10 @@ export default class TorrentLeech extends PrivateSite {
     if (row.tags?.includes("FREELEECH")) {
       torrent.tags.push({ name: "Free", color: "blue" });
     }
+    // DEFS2-2 收尾（统一判据：站点是否全站 H&R，而非选择器形状）：
+    // 本站属上游 fb79a2a7「feat: add default H&R tags with red color for global sites」(PR #336)
+    // 明确列出的全站 H&R 站点——站点规则对**全部**下载都规定 H&R 义务，故对每一行无条件贴 H&R
+    //（效果等价于恒真 selector:"*"，属刻意设计，不得按「恒真伪标签」删除；与 torrenting.ts 同一约定）。
     torrent.tags.push({ name: "H&R", color: "red" });
 
     return torrent;
@@ -513,8 +517,23 @@ export default class TorrentLeech extends PrivateSite {
           return typeof srcValue === "undefined" ? objValue : srcValue;
         }) as IUserInfo;
       }
+
+      // DEFS3-4：接口 200 但响应里没有 aaData（字段改名 / 返回登录页 HTML）时，
+      // 原先会直接跳出 try，uploads 保持 undefined 而用户无从区分「接口坏了」与「我真的没发种」；
+      // 这里补一条可见告警（不改变 success 状态，因为发布数只是可选增强）。
+      logMessage(
+        `[Site] ${this.name} parseUserInfoForUploads: response has no aaData`,
+        { site: this.metadata.id },
+        "warn",
+      );
     } catch (error) {
-      // 静默处理错误，不影响主要功能
+      // DEFS3-4：原先完全静默（既不记日志也不设 statusMsg），发布数/发布列表抓取失败时毫无痕迹。
+      // 沿用 P1-2 的统一日志出口，把失败暴露到运行时日志里。
+      logMessage(
+        `[Site] ${this.name} parseUserInfoForUploads failed`,
+        { site: this.metadata.id, error: siteErrorLogData(error) },
+        "warn",
+      );
     }
 
     return flushUserInfo as IUserInfo;

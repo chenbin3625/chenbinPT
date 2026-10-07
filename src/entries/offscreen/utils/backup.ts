@@ -238,6 +238,89 @@ function isRestorableCookies(value: unknown): value is Required<IBackupData>["co
   return isPlainObject(value) && Object.values(value).every((cookies) => Array.isArray(cookies));
 }
 
+/** chrome.cookies.SameSiteStatus 的全部合法取值（恢复不可信备份时逐条校验，见 OFFSCREEN-4） */
+const VALID_SAME_SITE_VALUES = new Set(["no_restriction", "lax", "strict", "unspecified"]);
+
+/** 规范化主机名：去前导点、去端口、小写；空值/非法返回 null */
+function normalizeHostname(host: string): string | null {
+  const value = host.trim().toLowerCase().replace(/^\./, "");
+  if (value.length === 0) {
+    return null;
+  }
+  // siteHostMap 的键来自 getHostFromUrl（url.host，可能带端口），而 cookie.domain 不带端口
+  const withoutPort = value.startsWith("[") ? value : value.replace(/:\d+$/, "");
+  return withoutPort.length > 0 ? withoutPort : null;
+}
+
+/** 取 cookie 归属的主机名：优先 domain，其次 url（见 OFFSCREEN-4） */
+function getCookieHostname(cookie: { domain?: unknown; url?: unknown }): string | null {
+  if (typeof cookie.domain === "string" && cookie.domain.length > 0) {
+    return normalizeHostname(cookie.domain);
+  }
+  if (typeof cookie.url === "string" && cookie.url.length > 0) {
+    try {
+      return normalizeHostname(new URL(cookie.url).hostname);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** cookie 主机是否属于本机已配置站点（等于该 host 或为其子域，见 OFFSCREEN-4） */
+function isCookieHostTrusted(hostname: string, allowedHosts: Set<string>): boolean {
+  for (const allowed of allowedHosts) {
+    if (hostname === allowed || hostname.endsWith(`.${allowed}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 校验并重建一条来自备份的 cookie（见 OFFSCREEN-4）。
+ *
+ * 备份是不可信输入，原实现把条目原样 `as chrome.cookies.SetDetails` 后直接交给 background：
+ * 缺 domain/path 会在 background 的 buildCookieUrl（cookies.ts:71）抛 TypeError，
+ * sameSite 非字符串会在 cookies.ts:61 的 toLowerCase 抛错，进而让整个恢复流程 reject。
+ * 这里只保留已知字段做显式重建；结构不合法返回 null（调用方跳过并计入报告）而不是抛错。
+ */
+function toCookieSetDetails(value: unknown): chrome.cookies.SetDetails | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  if (typeof value.name !== "string" || value.name.length === 0) {
+    return null;
+  }
+  // background 依据 secure + domain + path 重建 url，domain 必须有值
+  if (typeof value.domain !== "string" || value.domain.length === 0) {
+    return null;
+  }
+
+  const secure = value.secure === true;
+  const path = typeof value.path === "string" && value.path.length > 0 ? value.path : "/";
+  const domain = value.domain;
+
+  const details: chrome.cookies.SetDetails = {
+    name: value.name,
+    value: typeof value.value === "string" ? value.value : "",
+    domain,
+    path,
+    secure,
+    httpOnly: value.httpOnly === true,
+    // background 的 setCookie 会依据 secure + domain + path 重建 url（cookies.ts:71），
+    // 这里给一个同构的合法 url 只是为了满足类型（domain 的前导点在 url 里要去掉）
+    url: `http${secure ? "s" : ""}://${domain.replace(/^\./, "")}${path}`,
+  };
+  if (typeof value.expirationDate === "number" && Number.isFinite(value.expirationDate)) {
+    details.expirationDate = value.expirationDate;
+  }
+  if (typeof value.sameSite === "string" && VALID_SAME_SITE_VALUES.has(value.sameSite.toLowerCase())) {
+    details.sameSite = value.sameSite.toLowerCase() as chrome.cookies.SameSiteStatus;
+  }
+  return details;
+}
+
 /**
  * metadata 的最小形状校验（见 S-1）。
  *
@@ -409,9 +492,32 @@ export async function restoreBackupData(
 
   const restoreFields: TBackupFields[] = intersection(fields, restoreDataExistFields).filter(isBackupField);
   let cookiesToRestore: Required<IBackupData>["cookies"] | undefined;
+  const allowedCookieHosts = new Set<string>();
   if (restoreFields.includes("cookies")) {
     if (isRestorableCookies(restoreData.cookies)) {
       cookiesToRestore = restoreData.cookies;
+      try {
+        // 在写入任何备份字段前冻结本机允许域。否则同一份不可信备份可以先改 siteHostMap，
+        // 再借新加入的 host 写入 cookie。
+        const siteHostMap =
+          ((await sendMessage("getExtStoragePath", {
+            key: "metadata",
+            path: "siteHostMap",
+            defaultValue: {},
+          })) as Record<string, string>) ?? {};
+        for (const host of Object.keys(siteHostMap)) {
+          const normalized = normalizeHostname(host);
+          if (normalized) {
+            allowedCookieHosts.add(normalized);
+          }
+        }
+      } catch (e) {
+        cookiesToRestore = undefined;
+        report.skipped.push({
+          field: "cookies",
+          reason: `failed to read local site allowlist: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
     } else {
       report.skipped.push({ field: "cookies", reason: "invalid data in backup, local cookies kept" });
       logger({
@@ -561,7 +667,25 @@ export async function restoreBackupData(
         });
       }
     }
-    report.success = true;
+    /**
+     * OPTIONSSETTINGS-6：一个字段都没真正写成时不能无条件声称「恢复成功」。
+     *
+     * 之前这里无视 `report.restored` 直接置 `success = true`：UI 侧即便封住了「零勾选」，
+     * 只要调用方传进来的字段与备份 manifest 没有交集、或字段值全为空/全部未通过校验，
+     * 用户仍会看到「恢复成功」而实际上什么都没发生。这里只拦「本次没有任何可写入内容」；
+     * downloadHistory 的既有跳过语义保持不变。cookies 需要先进入后续逐条恢复阶段，
+     * 最终再依据是否真的写入过 cookie 决定 cookies-only 恢复是否成功。
+     */
+    const downloadHistoryAttempted = restoreFields.includes("downloadHistory");
+    if (report.restored.length > 0 || cookiesToRestore || downloadHistoryAttempted) {
+      report.success = true;
+    } else {
+      report.skipped.push({
+        field: "restore",
+        reason: "没有恢复任何字段：所选字段与备份内容没有交集，或全部未通过校验",
+      });
+      logger({ msg: "Restore finished without writing any field", level: "warn" });
+    }
   } catch (e) {
     logger({
       msg: `Failed to restore storage fields, rolling back ${written.length} written key(s)`,
@@ -601,25 +725,93 @@ export async function restoreBackupData(
     return report; // 写入失败（已回滚）：不再恢复 Cookie，避免在一个失败的恢复上继续叠加改动
   }
 
-  // 恢复已添加站点的Cookie
+  // 恢复已添加站点的Cookie（见 OFFSCREEN-4 / OFFSCREEN-5）
   if (cookiesToRestore) {
-    const now = new Date().getTime() / 1000;
+    try {
+      const now = new Date().getTime() / 1000;
 
-    const allCookies = Object.values(cookiesToRestore).flatMap((cookieData) => cookieData);
-    const COOKIE_RESTORE_CONCURRENCY = 8;
-    for (let i = 0; i < allCookies.length; i += COOKIE_RESTORE_CONCURRENCY) {
-      await Promise.all(
-        allCookies.slice(i, i + COOKIE_RESTORE_CONCURRENCY).map(async (cookie) => {
-          // 延长 cookie 过期时间
-          if (expandCookieMinutes > 0) {
-            cookie.expirationDate = Math.max(cookie.expirationDate ?? 0, now) + expandCookieMinutes * 60;
-          }
+      // OFFSCREEN-4：备份里的 cookie 只能落在恢复开始前「本机已配置站点」的 host 上。
+      // 导出侧（createBackupData）只收集 siteHostMap 里的 host，恢复侧原先不做任何过滤，
+      // 于是一份他人分享/被篡改的 zip 能在用户从未配置的任意 http(s) 域上写入 cookie、覆盖既有会话。
+      // 允许域已在任何 storage 写入前冻结，不能被本次备份里的 metadata.siteHostMap 扩展。
 
-          await sendMessage("setCookie", cookie as unknown as chrome.cookies.SetDetails);
-        }),
-      );
+      const allCookies = Object.values(cookiesToRestore).flatMap((cookieData) => cookieData);
+      const COOKIE_RESTORE_CONCURRENCY = 8;
+      let restoredCount = 0;
+      let invalidCount = 0;
+      let untrustedCount = 0;
+      let failedCount = 0;
+
+      for (let i = 0; i < allCookies.length; i += COOKIE_RESTORE_CONCURRENCY) {
+        await Promise.all(
+          allCookies.slice(i, i + COOKIE_RESTORE_CONCURRENCY).map(async (rawCookie) => {
+            const cookie = toCookieSetDetails(rawCookie);
+            if (!cookie) {
+              invalidCount++;
+              return;
+            }
+
+            const hostname = getCookieHostname(cookie);
+            if (!hostname || !isCookieHostTrusted(hostname, allowedCookieHosts)) {
+              untrustedCount++;
+              return;
+            }
+
+            // 延长 cookie 过期时间
+            if (expandCookieMinutes > 0) {
+              cookie.expirationDate = Math.max(cookie.expirationDate ?? 0, now) + expandCookieMinutes * 60;
+            }
+
+            // OFFSCREEN-5：单条 cookie 写入失败（background 构造 url/sameSite 抛错、chrome.cookies.set 拒绝等）
+            // 只计入报告，绝不能 reject 整个 restoreBackupData —— 否则 UI 会提示「恢复失败」，
+            // 而 userInfo/config/metadata 早已写入且不会回滚，report.sanitized 里的
+            // 「凭据已剥离 / 加密密钥未采用」等安全提示也全部看不到。
+            try {
+              if (await sendMessage("setCookie", cookie)) {
+                restoredCount++;
+              } else {
+                failedCount++;
+              }
+            } catch (e) {
+              failedCount++;
+              logger({
+                msg: `Failed to restore a cookie for ${hostname}: ${e instanceof Error ? e.message : String(e)}`,
+                level: "warn",
+              });
+            }
+          }),
+        );
+      }
+
+      // 只有真的写入过 cookie 才声称 cookies 已恢复，避免「一条都没写却报告成功」
+      if (restoredCount > 0) {
+        report.restored.push("cookies");
+      }
+
+      const cookieSkipReasons: string[] = [];
+      if (invalidCount > 0) cookieSkipReasons.push(`${invalidCount} 条结构非法`);
+      if (untrustedCount > 0) cookieSkipReasons.push(`${untrustedCount} 条不属于本机已配置站点`);
+      if (failedCount > 0) cookieSkipReasons.push(`${failedCount} 条写入失败`);
+      if (allCookies.length === 0) cookieSkipReasons.push("备份里没有 cookie 条目");
+      if (cookieSkipReasons.length > 0) {
+        report.skipped.push({ field: "cookies", reason: `部分 cookie 未恢复：${cookieSkipReasons.join("，")}` });
+      }
+    } catch (e) {
+      // OFFSCREEN-5 兜底：cookie 阶段任何意外异常都不能让报告丢失（函数必须始终返回 IRestoreReport）
+      report.skipped.push({
+        field: "cookies",
+        reason: `cookie 恢复阶段失败：${e instanceof Error ? e.message : String(e)}`,
+      });
+      logger({
+        msg: `Cookie restore phase failed: ${e instanceof Error ? e.message : String(e)}`,
+        level: "error",
+      });
     }
-    report.restored.push("cookies");
+
+    // cookies-only 恢复若一条都没有真正落地，不能继续声称整体成功。
+    if (report.restored.length === 0) {
+      report.success = false;
+    }
   }
 
   return report;

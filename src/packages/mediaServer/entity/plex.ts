@@ -115,20 +115,26 @@ interface IPlexSearchData<T = IPlexSearchItem> {
 }
 
 export default class Plex extends AbstractMediaServer<IPlexConfig> {
+  /**
+   * SERVERSSOCIAL-4（M-18 同根因）：锚定去掉 Plex 前端入口 `/web`（及其后的 index.html / hash 路由），
+   * 得到真正的 API 根地址。旧正则要求 `#` 后至少还有一个字符，
+   * 于是官方给出的 `http://ip:32400/web`、`/web/index.html`（无 hash）都不会被剥离：
+   * apiBaseUrl 变成 `…/web`（/identity 打到 /web/identity → 404），webBaseUrl 还会拼成 `…/web/web/index.html`。
+   */
+  private get serverAddress(): string {
+    return this.config.address
+      .trim()
+      .replace(/#.*$/, "")
+      .replace(/\/+$/, "")
+      .replace(/\/web(?:\/index\.html|\/web)?(?:\/.*)?$/i, "");
+  }
+
   get apiBaseUrl(): string {
-    let serverAddress = this.config.address;
-    if (serverAddress.includes("/web/index.html")) {
-      serverAddress = serverAddress.replace(/\/web\/index.html#.+/, "");
-    }
-    return serverAddress;
+    return this.serverAddress;
   }
 
   get webBaseUrl(): string {
-    let serverAddress = this.config.address;
-    if (serverAddress.includes("/web/index.html")) {
-      serverAddress = serverAddress.replace(/\/web\/index.html#.+/, "");
-    }
-    return serverAddress.replace(/\/$/, "") + "/web/index.html";
+    return `${this.serverAddress}/web/index.html`;
   }
 
   protected async request<T = any, D = any>(

@@ -134,7 +134,9 @@ export const siteMetadata: ISiteMetadata = {
       name: "Power Torrent Master",
       nameAka: ["Power TM"],
       interval: "P8W",
-      uniqueGroups: 500,
+      // DEFS2-10：原键名 uniqueGroups 不在 level.ts 的「≥」求值白名单里，门槛被静默忽略；
+      // GazelleJSONAPI 已采集 response.community.groups，改用 groups 门槛才真正参与判级
+      groups: 500,
       uploaded: "500GB",
       ratio: 1.05,
       isKept: true,

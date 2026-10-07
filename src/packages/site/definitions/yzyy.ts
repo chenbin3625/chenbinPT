@@ -182,7 +182,8 @@ export const siteMetadata: ISiteMetadata = {
     urlPattern: ["/forum\\.php\\?mod=viewthread", "/thread-\\d+-\\d+-\\d+\\.html"],
     selectors: {
       title: {
-        selector: ["#thread_subject", "h1#thread_subject", "html > body > title"],
+        // SITECORE-6：<title> 位于 <head>，`html > body > title` 恒不命中，主选择器失配时标题会静默变空串
+        selector: ["#thread_subject", "h1#thread_subject", "head > title"],
       },
       // 帖子页下载种子按钮
       link: {
@@ -251,7 +252,8 @@ export const siteMetadata: ISiteMetadata = {
     selectors: {
       id: {
         // 用户面板页无 uid 链接，用当前会话；从页面 URL 或 mybonus 推断
-        selector: "html > body > title",
+        // SITECORE-6：该字段实际由 elementProcess 固定返回空串，这里只顺带清掉恒不命中的死选择器（行为不变）
+        selector: "head > title",
         elementProcess: () => "",
         text: "",
       },

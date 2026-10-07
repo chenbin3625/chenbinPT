@@ -38,28 +38,25 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     keywordPath: "params.q",
     requestConfig: { url: "/" },
+    // D-2：站点已改版，旧选择器（div.full2 / torrents_small_* / a[nohref]）全部 0 命中，搜索恒为「无结果」。
+    // 以下按现布局 table.tl-table（与 Jackett anirena.yml 一致）
     selectors: {
-      rows: { selector: "div.full2:not([id]) table tr" },
+      rows: { selector: "table.tl-table > tbody > tr:not(:has(div.tl-empty-state))" },
       id: {
-        selector: "div.torrents_small_info_data1 a[nohref]",
-        attr: "onClick",
-        filters: [(q: string) => q.match(/details(\d+)/)?.[1]],
-      },
-      title: {
-        selector: "div.torrents_small_info_data1 a[nohref]",
-        attr: "title",
-      },
-      url: { text: "https://www.anirena.com/" }, // 这个站没有种子详情页面，都是直接加载到列表中的
-      link: {
-        selector: 'div.torrents_small_info_data2b a[title!="Report a torrent"]',
+        selector: "a[title='Download Torrent']",
         attr: "href",
+        // 站点没有独立的种子 id 字段：以下载链接里的数字（或整个链接）作为唯一标识
+        filters: [(href: string) => href?.match(/(\d+)(?!.*\d)/)?.[1] ?? href],
       },
-      // 发布时间 动态加载，不做获取
-      size: { selector: "td.torrents_small_size_data1" },
-      seeders: { selector: "td.torrents_small_seeders_data1" },
-      leechers: { selector: "td.torrents_small_leechers_data1" },
-      completed: { selector: "td.torrents_small_downloads_data1" },
-      category: { selector: "td.torrents_small_type_data1 img", attr: "title" },
+      title: { selector: "a.tl-torrent-name" },
+      url: { selector: "a.tl-torrent-name", attr: "href" },
+      link: { selector: "a[title='Download Torrent']", attr: "href" },
+      time: { selector: "td.col-date", filters: [{ name: "parseTime", args: ["yyyy-MM-dd HH:mm"] }] },
+      size: { selector: "td.col-size", filters: [{ name: "parseSize" }] },
+      seeders: { selector: "td.col-se" },
+      leechers: { selector: "td.col-le" },
+      completed: { selector: "td.col-dl" },
+      category: { selector: "td.col-cat", attr: "title" },
     },
   },
 };

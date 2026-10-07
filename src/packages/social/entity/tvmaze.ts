@@ -71,7 +71,10 @@ export async function fetchInformation(
   } as ISocialInformation;
 
   try {
-    const { data } = await axios.get<ITVMazeApiResp>(`https://api.tvmaze.com/shows/${id}`, {
+    // SERVERSSOCIAL-7：parse 的作用就是把「https://www.tvmaze.com/shows/1234/xxx」这类输入归一化成
+    // 数字 id；旧实现只把 realId 写进 resDict.id，请求仍用未归一化的原始 id，
+    // 拼出 /shows/https://… 必然 404 后静默返回空信息。与其余 5 个同族实现一致使用 realId。
+    const { data } = await axios.get<ITVMazeApiResp>(`https://api.tvmaze.com/shows/${realId}`, {
       timeout: config.timeout ?? 10e3,
       responseType: "json",
     });

@@ -232,10 +232,19 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="column.key === 'downloadStatus'">
-          <a-tag @click="() => viewDownloadDetail(record)"
-            ><component :is="downloadStatusMeta(record.downloadStatus).icon" style="margin-right: 4px" />
-            {{ downloadStatusMeta(record.downloadStatus).title }}
-          </a-tag>
+          <a-flex align="center" justify="center" :gap="4">
+            <a-tag @click="() => viewDownloadDetail(record)"
+              ><component :is="downloadStatusMeta(record.downloadStatus).icon" style="margin-right: 4px" />
+              {{ downloadStatusMeta(record.downloadStatus).title }}
+            </a-tag>
+            <!-- DOWNLOADER-8：成功但降级的记录在列表里也要可见。用 warning 色（浅色告警，不是 error 红）
+                 + tooltip 承载完整文案，避免把长文案塞进表格列把行撑高 -->
+            <a-tooltip v-if="record.warningMessage" :title="record.warningMessage">
+              <a-tag class="ptd-download-warning" color="warning" @click="() => viewDownloadDetail(record)"
+                ><WarningOutlined style="margin-right: 4px" />{{ t("DownloadHistory.warning") }}</a-tag
+              >
+            </a-tooltip>
+          </a-flex>
         </template>
 
         <template v-else-if="column.key === 'action'">
@@ -277,6 +286,22 @@ onUnmounted(() => {
   />
 
   <a-modal v-model:open="showDownloadDetailDialog" :footer="null" :width="800">
+    <!-- DOWNLOADER-8：告警与失败原因必须分开渲染 —— 降级记录 downloadStatus 仍是 completed，
+         用红色「失败原因」展示会让用户以为推送失败了 -->
+    <a-alert
+      v-if="downloadDetail.warningMessage"
+      type="warning"
+      show-icon
+      style="margin-bottom: 12px"
+      class="ptd-download-warning-detail"
+      ><template #icon><WarningOutlined /></template
+      ><template #description>
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px">
+          {{ t("DownloadHistory.detail.warningMessage") }}
+        </div>
+        <code style="font-size: 14px">{{ downloadDetail.warningMessage }}</code>
+      </template></a-alert
+    >
     <a-alert v-if="downloadDetail.errorMessage" type="error" show-icon style="margin-bottom: 12px"
       ><template #icon><WarningOutlined /></template
       ><template #description>

@@ -29,15 +29,11 @@ const detailPageSelectors = {
   time: {
     ...detailPageList!.selectors!.time!,
     selector: ["+ tr span.time[title]", "+ tr span.time"],
-    switchFilters: {
-      "+ tr span.time": [
-        (ts?: number) => {
-          const offsetMinutes = new Date().getTimezoneOffset();
-          const offsetMs = offsetMinutes * 60 * 1000;
-          return (ts ?? 0) + offsetMs;
-        },
-      ],
-    },
+    // SITECORE-1 / DEFS2-3：原来这里给 `"+ tr span.time"`（无 title 的相对时间）叠了
+    // `(ts) => ts + new Date().getTimezoneOffset() * 60000`。但 baseTimeSelector.elementProcess
+    // 对相对时间已返回绝对毫秒戳（parseTimeToLiveToDate），再叠加宿主偏移会让结果随运行主机漂移；
+    // 有 title 的墙上时间则由 parseWholeTorrentFromRow 的 parseTimeWithZone(..., metadata.timezoneOffset)
+    // 统一换算，本处不再需要任何过滤器。
   },
 };
 
@@ -185,14 +181,9 @@ export const siteMetadata: ISiteMetadata = {
         time: {
           text: 0,
           selector: "span.time",
-          filters: [
-            { name: "parseTTL" },
-            (ts: number) => {
-              const offsetMinutes = new Date().getTimezoneOffset();
-              const offsetMs = offsetMinutes * 60 * 1000;
-              return ts + offsetMs;
-            },
-          ],
+          // SITECORE-1 / DEFS2-3：span.time 是相对时间（如 "3 hours ago"），parseTTL 已产出绝对毫秒戳；
+          // 原实现再叠加宿主 `new Date().getTimezoneOffset()`，结果随运行主机漂移（+0800 宿主会早 8 小时）。
+          filters: [{ name: "parseTTL" }],
         },
       },
     },

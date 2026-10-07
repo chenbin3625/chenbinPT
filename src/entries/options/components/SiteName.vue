@@ -28,10 +28,25 @@ if (tagIs === "a") {
   renderProp.href = "#";
   renderProp.target = "_blank";
   renderProp.rel = "noopener noreferrer nofollow";
+}
 
-  metadataStore.getSiteUrl(props.siteId).then((url) => {
-    renderProp.href = url;
-  });
+/**
+ * OPTIONSSHELL-10：两个异步取值的统一写法 —— 回调里做当前性校验（实例可能被复用来渲染另一个站点，
+ * 旧请求后到会覆盖新站点信息），并补 .catch（站点定义已下线时 getSiteName/getSiteUrl 会 reject，
+ * 原先既没有 catch 也没有兜底，只会留下 unhandled rejection）。失败时保留 siteId / "#" 兜底值。
+ */
+function updateSiteLink(siteId: TSiteID) {
+  if (tagIs !== "a") return;
+  renderProp.href = "#";
+  metadataStore
+    .getSiteUrl(siteId)
+    .then((url) => {
+      if (props.siteId === siteId) renderProp.href = url;
+    })
+    .catch(() => {
+      // 失败时保持 "#" 兜底（本组件无日志通道；no-console 门禁禁止新增 console）
+      if (props.siteId === siteId) renderProp.href = "#";
+    });
 }
 
 function updateSiteName(siteId: TSiteID) {
@@ -44,16 +59,27 @@ function updateSiteName(siteId: TSiteID) {
     siteName.value = metadataStore.siteNameMap[siteId];
   } else {
     // 如果缓存中没有/或者没有生成缓存，则按之前的逻辑读取
-    metadataStore.getSiteName(siteId).then((name) => {
-      siteName.value = name;
-      if (explicitTitle === undefined) renderProp.title = name;
-    });
+    metadataStore
+      .getSiteName(siteId)
+      .then((name) => {
+        if (props.siteId !== siteId) return; // 站点已切换：丢弃迟到结果
+        siteName.value = name;
+        if (explicitTitle === undefined) renderProp.title = name;
+      })
+      .catch(() => {
+        // 站点定义已下线时 getSiteName 会 reject：保留 siteId 兜底，避免 unhandled rejection（不新增 console）
+        if (props.siteId === siteId) {
+          siteName.value = siteId;
+          if (explicitTitle === undefined) renderProp.title = siteId;
+        }
+      });
   }
 }
 
 watch(
   () => props.siteId,
   (newSiteId) => {
+    updateSiteLink(newSiteId);
     updateSiteName(newSiteId);
   },
   { immediate: true },

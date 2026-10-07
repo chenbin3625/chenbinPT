@@ -148,7 +148,9 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
       const pingResp = await this.request<string>("", { responseType: "text" });
       return pingResp.data?.includes("Hello World!API ROOT =") || false;
     } catch (e) {
-      console?.warn(e);
+      // SERVERSSOCIAL-3：与 addFile 对齐，失败必须记录原因。旧实现只 console.warn，
+      // 自动备份日志里只剩「returned false」，无法区分地址填错、服务不可达还是鉴权失败。
+      this.logBackupFailure("ping", e);
     }
     return false;
   }

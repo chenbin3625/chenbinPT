@@ -170,6 +170,15 @@
   pointer-events: auto;
 }
 
+/* CONTENTSCRIPT-1：antd message 的 holder 也是 popup host 的直接子节点，且 .ant-message 是
+   width:100% 的整条顶部区域；上面 `> *` 的 pointer-events:auto 与 antd 的
+   `.ant-message { pointer-events: none }` 同权重，谁生效取决于样式注入顺序。这里显式提高权重
+   覆盖回 none，保证消息条不会吞掉页面顶部的点击（消息气泡自身仍可点：antd 给 notice-content
+   设了 pointer-events: all）。 */
+.ptd-content-script-popup-host > .ant-message {
+  pointer-events: none;
+}
+
 .ptd-fade-enter {
   opacity: 0.3;
   transition: opacity 0.3s ease;
