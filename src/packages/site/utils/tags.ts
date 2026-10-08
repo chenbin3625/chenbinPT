@@ -1,5 +1,6 @@
-// P1-4：不再从 @ptd/site 桶入口自引用，直接指向 types 桶，减少类型图耦合
-import type { ITorrentTag } from "../types";
+// P1-4：不再从 @ptd/site 桶入口自引用；直接指向定义所在模块而非 ../types 桶，
+// 避开 utils/tags → types → types/search → utils/tags 的类型环
+import type { ITorrentTag } from "../types/torrent";
 
 interface IPreDefinedTorrentTag extends ITorrentTag {
   aka?: Array<string | RegExp>;
