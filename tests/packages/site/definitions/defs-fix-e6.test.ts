@@ -240,8 +240,23 @@ describe("E6 sunnypt：joinTime 类型、等级表与 API Key 作用域", () => 
     expect(typeof value).toBe("number");
   });
 
-  it("L-7 / Info-39：不再借用 NexusPHP 的通用等级表", () => {
-    expect(sunnypt.levelRequirements).toBeUndefined();
+  it("L-7 / Info-39：不再借用 NexusPHP 的通用等级表（改用上游 #1557 的站点专属等级表）", async () => {
+    const { xiaomloveDefaultUserLevelRequirements } = await import("@ptd/site/schemas/NexusPHP.ts");
+    const levels = sunnypt.levelRequirements!;
+    expect(levels).not.toEqual(xiaomloveDefaultUserLevelRequirements);
+    // 用户等级 id 与 data.class 原值一一对应（0 = Peasant 起），VIP/管理组按组别约定重新编号
+    expect(levels.find((level) => level.id === 5)?.name).toContain("Insane User");
+    expect(levels.find((level) => level.id === 100)?.groupType).toBe("vip");
+    expect(levels.filter((level) => level.groupType === "manager").map((level) => level.id)).toEqual([
+      200, 201, 202, 203, 204, 205,
+    ]);
+  });
+
+  it("#1557：levelId 把 data.class 换算到等级表的 id（用户等级原样，VIP/管理组重新编号）", async () => {
+    const query = (profileStep.selectors as any).levelId;
+    expect(await getField(sunnypt, { data: { class: 5 } }, query)).toBe(5);
+    expect(await getField(sunnypt, { data: { class: 10 } }, query)).toBe(100);
+    expect(await getField(sunnypt, { data: { class: 16 } }, query)).toBe(205);
   });
 
   it("Info-46：schema 指向真实基类", () => {
