@@ -155,7 +155,10 @@ export const siteMetadata: ISiteMetadata = {
         { name: "leeching", value: "leeching" },
         { name: "completed", value: "completed" },
         { name: "incomplete", value: "incomplete" },
-        { name: "notdownload", value: "notdownload" },
+        // cross 为 append + key:"" 时参数名取自选项值（types/search.ts:232），故这里必须用该站 API 的
+        // 参数名 notdownloaded（Jackett BeyondHDAPI.cs 与 moistari/bhdapi 均为 notdownloaded）；
+        // 原先的 notdownload 会被服务端当成未知参数忽略。
+        { name: "notdownloaded", value: "notdownloaded" },
       ],
       cross: { mode: "append", key: "" },
     },
