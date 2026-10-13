@@ -53,13 +53,15 @@ function makeMetadata(partial: Record<string, any>) {
 }
 
 describe("CS-1 · 页面类型推断（detectPageType）", () => {
-  it("回归样本：真实站点定义（learnflakes/anirena 无 list 声明）", async () => {
+  it("回归样本：真实站点定义（learnflakes 无 list 声明；anirena 已显式声明 list / detail）", async () => {
     const { siteMetadata: learnflakesMetadata } = await import("@ptd/site/definitions/learnflakes.ts");
     const { siteMetadata: anirenaMetadata } = await import("@ptd/site/definitions/anirena.ts");
 
-    // 这两个定义是 10-09 审查里 CS-1 的具体样本：都没有 metadata.list
+    // 这两个定义是 10-09 审查里 CS-1 的具体样本。learnflakes 仍没有 metadata.list；
+    // anirena 在上游 #1605 改版适配后显式声明了 list / detail（普通页与 /minimal 两套模板），
+    // 「无 list 声明」的 anirena 形态改由下方合成 metadata 的用例覆盖。
     expect(learnflakesMetadata.list).toBeUndefined();
-    expect(anirenaMetadata.list).toBeUndefined();
+    expect(anirenaMetadata.list?.length).toBeGreaterThan(0);
 
     // learnflakes：search url 是 "/"，detail 只有 urlPattern —— 详情页必须优先判为 detail
     expect(
@@ -72,9 +74,14 @@ describe("CS-1 · 页面类型推断（detectPageType）", () => {
       ),
     ).toBe("list");
 
-    // anirena：search url 也是 "/"，无 detail 声明 —— 根路径（含查询）判 list，其它页面不再被判 list
+    // anirena：根路径与 ?q= 判 list，/minimal 列表判 list（`$` 收尾，不吞掉 /minimal/torrent/<id>），
+    // 两套模板的详情页判 detail，其它页面不再被判 list
+    expect(detectPageType(anirenaMetadata as any, "https://anirena.com/")).toBe("list");
     expect(detectPageType(anirenaMetadata as any, "https://anirena.com/?q=naruto")).toBe("list");
-    expect(detectPageType(anirenaMetadata as any, "https://anirena.com/torrent/123")).toBe("unknown");
+    expect(detectPageType(anirenaMetadata as any, "https://anirena.com/minimal?q=naruto")).toBe("list");
+    expect(detectPageType(anirenaMetadata as any, "https://anirena.com/torrent/123")).toBe("detail");
+    expect(detectPageType(anirenaMetadata as any, "https://anirena.com/minimal/torrent/ab-12")).toBe("detail");
+    expect(detectPageType(anirenaMetadata as any, "https://anirena.com/rules")).toBe("unknown");
   });
 
   it("无 list 声明时 detail 优先于推断 list：learnflakes 详情页不再被判成列表页", () => {

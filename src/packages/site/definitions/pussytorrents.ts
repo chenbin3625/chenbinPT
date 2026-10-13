@@ -5,8 +5,16 @@
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import type { ISearchInput, ISiteMetadata, ITorrent, IUserInfo } from "../types";
 import { EResultParseStatus } from "../types";
-import { logMessage, parseSizeString, createDocument, siteErrorLogData } from "../utils";
+import { logMessage, parseSizeString, createDocument, restoreSecureLink, siteErrorLogData } from "../utils";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
+
+/**
+ * tags 含成人标记，站点地址按约定以 rot13 保存（上游由 vite/checkSiteDefinition.ts 强制校验）。
+ * 但 `Origin` / `Referer` 这类请求头不参与 rot13 还原（index.ts:53-59 只还原
+ * urls / legacyUrls / trackerUrls），所以这里由同一份 rot13 字面量显式还原出明文，
+ * 既保持请求头原值不变，又不让仓库里出现明文域名。
+ */
+const SITE_ORIGIN = restoreSecureLink("uggcf://chfflgbeeragf.bet/").replace(/\/+$/, "");
 
 interface SnatchListResponseData {
   aaData: [
@@ -103,8 +111,8 @@ export const siteMetadata: ISiteMetadata = {
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest",
             Accept: "application/json, text/javascript, */*; q=0.01",
-            Origin: "https://pussytorrents.org",
-            Referer: "https://pussytorrents.org/user/account/snatchlist",
+            Origin: SITE_ORIGIN,
+            Referer: `${SITE_ORIGIN}/user/account/snatchlist`,
           },
           data: {
             sEcho: 2,
@@ -176,8 +184,8 @@ export const siteMetadata: ISiteMetadata = {
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest",
             Accept: "application/json, text/javascript, */*; q=0.01",
-            Origin: "https://pussytorrents.org",
-            Referer: "https://pussytorrents.org/user/account/uploadedtorrents",
+            Origin: SITE_ORIGIN,
+            Referer: `${SITE_ORIGIN}/user/account/uploadedtorrents`,
           },
           data: {
             sEcho: 1,

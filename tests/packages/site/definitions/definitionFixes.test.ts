@@ -170,18 +170,23 @@ describe("anirena 现布局解析（D-2 / H-M1）", () => {
   it("table.tl-table 的行经真实 transformSearchPage 取到标题 / 下载链接 / 体积 / 做种数", async () => {
     // H-M1：原用例因为「happy-dom 下 Document 判据为假」而绕开 transformSearchPage，
     // 只逐个字段调用 getFieldData；Document 判据修好后（见 tests/helpers/happyDomDocument.ts）
-    // 这里改回真实入口，rows 选择器（含 `:not(:has(div.tl-empty-state))`）也一并受测。
+    // 这里改回真实入口，rows 选择器也一并受测。
     installHappyDomDocumentClass();
 
     const { default: BittorrentSite } = await import("@ptd/site/schemas/AbstractBittorrentSite.ts");
     const { siteMetadata } = await import("@ptd/site/definitions/anirena.ts");
+    // 按上游 #1605 真机核对过的布局：种子行带 data-torrent-id（页面另有一张搜索语法帮助表与空状态行），
+    // 时间是 data-utc 的 UTC 时间，做种/下载数包在 .tl-se / .tl-le 里，完成数可能带括号里的备用数字
     const doc = makeDoc(
-      `<table class="tl-table"><tbody>
-        <tr><td class="col-cat" title="Anime"></td>
+      `<table class="help"><tbody><tr><td>q=</td><td>search syntax</td></tr></tbody></table>
+      <table class="tl-table"><tbody>
+        <tr data-torrent-id="123"><td class="col-cat" title="Anime"></td>
           <td><a class="tl-torrent-name" href="/torrent/123">[Group] Show - 01 [1080p]</a>
               <a title="Download Torrent" href="/download/123.torrent">dl</a></td>
-          <td class="col-size">1.2 GiB</td><td class="col-date">2026-01-02 03:04</td>
-          <td class="col-se">10</td><td class="col-le">2</td><td class="col-dl">300</td></tr>
+          <td class="col-size">1.2 GiB</td>
+          <td class="col-date"><span data-utc="2026-01-02 03:04">2026-01-02 03:04</span></td>
+          <td class="col-se"><span class="tl-se">10</span></td><td class="col-le"><span class="tl-le">2</span></td>
+          <td class="col-dl">300(5)</td><td class="col-uploader"><a href="/?q=user%3Aalice">alice</a></td></tr>
         <tr><td><div class="tl-empty-state"></div></td></tr>
       </tbody></table>`,
     );
@@ -205,5 +210,8 @@ describe("anirena 现布局解析（D-2 / H-M1）", () => {
     expect(torrent.completed).toBe(300);
     expect(torrent.category).toBe("Anime");
     expect(torrent.size).toBeGreaterThan(1024 ** 3);
+    // data-utc 按 UTC 解析，与运行主机时区无关
+    expect(torrent.time).toBe(Date.UTC(2026, 0, 2, 3, 4));
+    expect(torrent.author).toBe("alice");
   });
 });

@@ -60,7 +60,8 @@ export const siteMetadata: ISiteMetadata = {
       subTitle: { selector: "p.sample" },
       url: { selector: "a", attr: "href" },
       // link 需要访问后获取
-      size: { selector: "td.td-size", filters: [{ name: "parseSize" }] },
+      size: { selector: "td.result-meta > div:not(.result-date)", filters: [{ name: "parseSize" }] },
+      time: { selector: "td.result-meta div.result-date", filters: [{ name: "parseTime", args: ["yyyy-MM-dd"] }] },
       // E1-A1：列表页没有分类选择器，不要硬编码成 "XXX"（会让每条结果都进成人分类）；
       // 归入 Other，等站点提供真实分类再按选择器解析（E1-A6 已记录 urlPattern 过宽，需真实页面确认）。
       category: { text: "Other" },
@@ -73,7 +74,15 @@ export const siteMetadata: ISiteMetadata = {
     urlPattern: ["/!"],
     selectors: {
       title: { selector: "h2.magnet-title" },
+      // 列表页的 id 就是 `/!xxxx` 这段相对路径（search.selectors.id 取的是 a[href]），
+      // 详情页没有等价链接元素，只能从 URL 里截出同一段，两边才会是同一个 id
+      id: {
+        selector: ":self",
+        elementProcess: (element: Document) => (element.URL ?? "").match(/\/![^/?#]+/)?.[0] ?? element.URL ?? "",
+      },
       link: { selector: "input#input-magnet", attr: "value" },
+      // 与列表页的 category 保持一致（E1-A1：不按成人站硬编码 XXX）
+      category: { text: "Other" },
       time: {
         selector: ["dt:contains('Date') + dd", "dt:contains('发布日期') + dd"],
         filters: [{ name: "parseTime" }],
