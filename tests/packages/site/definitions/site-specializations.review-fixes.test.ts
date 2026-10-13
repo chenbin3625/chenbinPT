@@ -111,6 +111,95 @@ describe("broadcasthenet IMDB 搜索", () => {
   });
 });
 
+describe("broadcasthenet API 搜索（上游 #1608）", () => {
+  const apiConfig = { inputSetting: { apiKey: " secret-key " } };
+
+  it("离线、禁用站点搜索、禁用入口、非 imdb 高级搜索与非拉丁关键词均跳过，不调用 API", async () => {
+    const { default: BroadcastTheNet, siteMetadata } = await import("@ptd/site/definitions/broadcasthenet.ts");
+    const { EResultParseStatus } = await import("@ptd/site/types.ts");
+    for (const [config, keywords, entry, statusMsg] of [
+      [{ ...apiConfig, isOffline: true }, "Show", {}, "i18n.siteNotEnabled"],
+      [{ ...apiConfig, allowSearch: false }, "imdb|tt1234567", {}, "i18n.siteNotEnabled"],
+      [apiConfig, "Show", { enabled: false }, "i18n.searchEntityNotEnabled"],
+      [apiConfig, "douban|1234567", {}, "i18n.noAdvanceParams"],
+      [apiConfig, "测试", {}, "i18n.noNonLatin"],
+    ] as const) {
+      const site = new BroadcastTheNet(siteMetadata, config);
+      const request = vi.spyOn(site, "request");
+      const result = await site.getSearchResult(keywords, entry);
+      expect(result.status, keywords).toBe(EResultParseStatus.passParse);
+      expect(result.statusMsg, keywords).toBe(statusMsg);
+      expect(request).not.toHaveBeenCalled();
+    }
+  });
+
+  it("按 getTorrents 发请求（imdb 关键词转为 { imdb }），并把结果映射为 ITorrent", async () => {
+    const { default: BroadcastTheNet, siteMetadata } = await import("@ptd/site/definitions/broadcasthenet.ts");
+    const { EResultParseStatus } = await import("@ptd/site/types.ts");
+    const site = new BroadcastTheNet(siteMetadata, apiConfig);
+    const request = vi.spyOn(site, "request").mockResolvedValue({
+      data: {
+        result: {
+          results: "1",
+          torrents: {
+            "77": {
+              TorrentID: "77",
+              GroupID: "12",
+              ReleaseName: "Show.S01E01.1080p.WEB-DL",
+              Series: "Show",
+              GroupName: "S01E01",
+              Category: "Episode",
+              Size: "1073741824",
+              Time: "1700000000",
+              Seeders: "5",
+              Leechers: "1",
+              Snatched: "9",
+              DownloadURL: "https://broadcasthe.net/torrents.php?action=download&id=77",
+            },
+          },
+        },
+      },
+    } as any);
+
+    const result = await site.getSearchResult("imdb|1234567");
+    const [config] = request.mock.calls[0] as any[];
+    expect(config.url).toBe("https://api.broadcasthe.net/");
+    expect(config.data.params).toMatchObject({ key: "secret-key", search: { imdb: "tt1234567" } });
+    expect(result.status).toBe(EResultParseStatus.success);
+    expect(result.data[0]).toMatchObject({
+      id: "77",
+      title: "Show.S01E01.1080p.WEB-DL",
+      subTitle: "Show / S01E01",
+      size: 1073741824,
+      time: 1700000000 * 1000,
+      seeders: 5,
+      leechers: 1,
+      completed: 9,
+    });
+    expect(result.data[0].url).toMatch(/torrents\.php\?id=12&torrentid=77$/);
+  });
+
+  it("API 错误码给出可读提示；请求异常不冒充无结果", async () => {
+    const { default: BroadcastTheNet, siteMetadata } = await import("@ptd/site/definitions/broadcasthenet.ts");
+    const { EResultParseStatus } = await import("@ptd/site/types.ts");
+    const site = new BroadcastTheNet(siteMetadata, apiConfig);
+    const request = vi
+      .spyOn(site, "request")
+      .mockResolvedValue({ data: { result: null, error: { code: -32001, message: "Invalid API Key" } } } as any);
+    const invalidKey = await site.getSearchResult("Show");
+    expect(invalidKey.status).toBe(EResultParseStatus.parseError);
+    expect(invalidKey.statusMsg).toContain("API Key 无效");
+
+    request.mockResolvedValue({ data: { result: { results: 0 } } } as any);
+    expect((await site.getSearchResult("Show")).status).toBe(EResultParseStatus.noResults);
+
+    request.mockRejectedValue(new Error("service unavailable"));
+    const failed = await site.getSearchResult("Show");
+    expect(failed.status).not.toBe(EResultParseStatus.noResults);
+    expect(failed.statusMsg).toContain("service unavailable");
+  });
+});
+
 describe("pussytorrents 用户列表初始化", () => {
   it("资料页取得 numericId 后，两个统计 POST 各自先执行同 userID 的 GET", async () => {
     const { default: PussyTorrents, siteMetadata } = await import("@ptd/site/definitions/pussytorrents.ts");

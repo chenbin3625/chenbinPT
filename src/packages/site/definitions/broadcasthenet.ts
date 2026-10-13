@@ -2,7 +2,8 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/BroadcasTheNet.cs
  */
 import type { ISiteMetadata, ISearchResult, ISearchEntryRequestConfig, ITorrent } from "../types.ts";
-import { toMerged } from "es-toolkit";
+import { toMerged, union } from "es-toolkit";
+import { supportSocialSite } from "@ptd/social/types.ts";
 import { isEmpty } from "es-toolkit/compat";
 import { SchemaMetadata } from "../schemas/Gazelle.ts";
 import Gazelle from "../schemas/Gazelle.ts";
@@ -14,6 +15,26 @@ import {
   parseTimeToLiveToDate,
   parseValidTimeStringInZone,
 } from "../utils";
+
+interface BTNTorrent {
+  TorrentID: string | number;
+  GroupID: string | number;
+  ReleaseName: string;
+  Series: string;
+  GroupName: string;
+  Category: string;
+  Size: string | number;
+  Time: string | number;
+  Seeders: string | number;
+  Leechers: string | number;
+  Snatched: string | number;
+  DownloadURL: string;
+}
+
+interface BTNSearchResponse {
+  result: { results: string | number; torrents?: Record<string, BTNTorrent> } | null;
+  error?: { code: number; message: string } | null;
+}
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
@@ -32,6 +53,15 @@ export const siteMetadata: ISiteMetadata = {
   schema: "Gazelle",
 
   urls: ["uggcf://oebnqpnfgur.arg/"],
+
+  userInputSettingMeta: [
+    {
+      name: "apiKey",
+      label: "API Key",
+      hint: "选填：填写后使用 API 搜索，否则使用网页搜索。请在 BTN 个人设置中生成；新 IP 需在站点通知中授权。",
+      required: false,
+    },
+  ],
 
   search: {
     ...SchemaMetadata.search,
@@ -322,6 +352,76 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class BroadcastTheNet extends Gazelle {
+  private async getAPISearchResult(keywords: string | undefined, apiKey: string): Promise<ISearchResult> {
+    try {
+      let search: string | { imdb: string } = keywords || "";
+      if (keywords?.startsWith("imdb|")) {
+        const imdbId = keywords.match(/^imdb\|(?:tt)?(\d+)$/)?.[1];
+        if (!imdbId) throw new Error("Invalid IMDb ID");
+        search = { imdb: `tt${imdbId}` };
+      }
+
+      const { data } = await this.request<BTNSearchResponse>(
+        {
+          url: "https://api.broadcasthe.net/",
+          method: "POST",
+          responseType: "json",
+          headers: { "Content-Type": "application/json" },
+          data: { id: 1, method: "getTorrents", params: { key: apiKey, search, results: 1000, offset: 0 } },
+        },
+        false,
+      );
+
+      if (data?.error) {
+        const messages: Record<number, string> = {
+          [-32001]: "API Key 无效，请检查 BTN 设置",
+          [-32002]: "API 调用次数已达限制，请稍后再试",
+          [-32003]: "BTN 账号已被禁用",
+          [-32004]: "当前 IP 未获授权，请在 BTN 站点通知中批准后重试",
+        };
+        return {
+          data: [],
+          status: EResultParseStatus.parseError,
+          statusMsg: messages[data.error.code] || `BTN API error ${data.error.code}: ${data.error.message}`,
+        };
+      }
+
+      if (!data?.result || !Number.isFinite(Number(data.result.results))) {
+        throw new Error("Invalid BTN API response");
+      }
+      if (Number(data.result.results) > 0 && !data.result.torrents) {
+        throw new Error("BTN API response is missing torrents");
+      }
+
+      const torrents = Object.values(data.result.torrents || {}).map((torrent): ITorrent => ({
+        site: this.metadata.id,
+        id: torrent.TorrentID,
+        title: torrent.ReleaseName,
+        subTitle: [torrent.Series, torrent.GroupName].filter(Boolean).join(" / "),
+        category: torrent.Category,
+        url: new URL(`torrents.php?id=${torrent.GroupID}&torrentid=${torrent.TorrentID}`, this.url).toString(),
+        link: torrent.DownloadURL,
+        size: Number(torrent.Size),
+        time: Number(torrent.Time) * 1000,
+        seeders: Number(torrent.Seeders),
+        leechers: Number(torrent.Leechers),
+        completed: Number(torrent.Snatched),
+        progress: 0,
+        status: ETorrentStatus.unknown,
+        tags: [{ name: "H&R", color: "red" }],
+      }));
+
+      return {
+        data: torrents,
+        status: torrents.length > 0 ? EResultParseStatus.success : EResultParseStatus.noResults,
+      };
+    } catch (error) {
+      // 与 imdb/series 分支一致：用 fork 统一的 classifySiteError 区分 CF 拦截 / 未登录 / 网络错误 / 解析错误
+      const { status, statusMsg } = classifySiteError(error);
+      return { data: [], status, statusMsg };
+    }
+  }
+
   private async getSeriesPageFromIMDB(imdbId: string): Promise<{ document: Document; pageUrl: string } | null> {
     const response = await this.request({
       url: `/torrents.php?imdb=${encodeURIComponent(imdbId)}`,
@@ -439,26 +539,48 @@ export default class BroadcastTheNet extends Gazelle {
     return torrents;
   }
 
+  /**
+   * 自定义搜索路径（API / imdb 系列页）发请求前的守卫：与父类 getSearchResult 的判定一致，
+   * 命中任一条件就交回父类，由父类返回对应的 passParse 状态（siteNotEnabled / searchEntityNotEnabled /
+   * noAdvanceParams / noNonLatin），且不发请求。
+   */
+  private shouldDelegateSearchToParent(keywords: string | undefined, searchEntry: ISearchEntryRequestConfig): boolean {
+    let effectiveEntry: ISearchEntryRequestConfig = searchEntry;
+    if (effectiveEntry.id) {
+      effectiveEntry = toMerged(this.metadata.searchEntry?.[effectiveEntry.id] ?? {}, effectiveEntry);
+    }
+    if (isEmpty(effectiveEntry) || effectiveEntry.merge !== false) {
+      effectiveEntry = toMerged(this.metadata.search!, effectiveEntry);
+    }
+
+    // imdb 以外的高级搜索前缀（douban| / bangumi| …，判定集合与父类一致）只有父类会处理：
+    // 交回父类按 advanceKeywordParams 改写或跳过，不能把带前缀的原串直接发给 API
+    const advanceFields = union(Object.keys(effectiveEntry.advanceKeywordParams ?? {}), supportSocialSite);
+    if (advanceFields.some((field) => field !== "imdb" && keywords?.startsWith(`${field}|`))) return true;
+
+    const imdbConfig = keywords?.startsWith("imdb|") ? effectiveEntry.advanceKeywordParams?.imdb : undefined;
+    return (
+      !this.allowSearch ||
+      effectiveEntry.enabled === false ||
+      imdbConfig === false ||
+      imdbConfig?.enabled === false ||
+      (effectiveEntry.skipNonLatinCharacters === true && !!keywords && hasNonLatinCharacters(keywords))
+    );
+  }
+
   public override async getSearchResult(
     keywords?: string,
     searchEntry: ISearchEntryRequestConfig = {},
   ): Promise<ISearchResult> {
+    const apiKey = this.userConfig.inputSetting?.apiKey?.trim();
+    // 上游 #1608：填写 API Key 时改走 API 搜索；离线 / 禁用搜索 / 禁用入口等情况仍按父类规则跳过，不发请求
+    if (apiKey) {
+      if (this.shouldDelegateSearchToParent(keywords, searchEntry)) return super.getSearchResult(keywords, searchEntry);
+      return this.getAPISearchResult(keywords, apiKey);
+    }
+
     if (keywords?.startsWith("imdb|")) {
-      let effectiveEntry: ISearchEntryRequestConfig = searchEntry;
-      if (effectiveEntry.id) {
-        effectiveEntry = toMerged(this.metadata.searchEntry?.[effectiveEntry.id] ?? {}, effectiveEntry);
-      }
-      if (isEmpty(effectiveEntry) || effectiveEntry.merge !== false) {
-        effectiveEntry = toMerged(this.metadata.search!, effectiveEntry);
-      }
-      const imdbConfig = effectiveEntry.advanceKeywordParams?.imdb;
-      if (
-        !this.allowSearch ||
-        effectiveEntry.enabled === false ||
-        imdbConfig === false ||
-        imdbConfig?.enabled === false ||
-        (effectiveEntry.skipNonLatinCharacters === true && hasNonLatinCharacters(keywords))
-      ) {
+      if (this.shouldDelegateSearchToParent(keywords, searchEntry)) {
         return super.getSearchResult(keywords, searchEntry);
       }
 
