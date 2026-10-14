@@ -473,6 +473,60 @@ describe("S-2：fixLink 协议白名单", () => {
   });
 });
 
+describe("上游 0d62ee64：种子的 category 不再被强制 tryToNumber", () => {
+  const site = new BittorrentSite({
+    id: "category-test",
+    name: "Category Test",
+    type: "public",
+    urls: ["https://example.com/"],
+  } as any);
+
+  // 与 B-1 组相同，用 JSON 上下文精确控制行内字段
+  const searchConfig = {
+    searchEntry: {
+      selectors: {
+        rows: { selector: "rows" },
+        id: { selector: "id" },
+        title: { selector: "title" },
+        link: { selector: "link" },
+        category: { selector: "category" },
+      },
+    },
+    requestConfig: { url: "https://example.com/torrents.php" },
+  } as any;
+
+  // 移除的是 parseWholeTorrentFromRow 末尾那一遍 tryToNumber；getFieldData 自身的
+  // 「纯数字且无前导零 → number」规则不变（"401" 仍会得到 401，与上游一致）。
+  // 受影响的是 getFieldData 刻意保留为字符串的值（前导零）与 tryToNumber 额外认的千分位写法。
+  it.each(["007", "1,234", "Movies"])("分类 %j 原样保留为字符串", async (category) => {
+    const doc = { rows: [{ id: 1, title: "t", link: "https://example.com/download/1", category }] };
+
+    const [torrent] = await site.transformSearchPage(doc, searchConfig);
+    expect(torrent.category).toBe(category);
+  });
+
+  it("parseTorrentRowForCategory 覆写返回的字符串分类不会被转成 number", async () => {
+    class OverrideSite extends BittorrentSite {
+      protected async parseTorrentRowForCategory(torrent: any) {
+        torrent.category = "0100";
+        return torrent;
+      }
+    }
+    const overrideSite = new OverrideSite({ ...site.metadata, id: "category-override" } as any);
+    const doc = { rows: [{ id: 1, title: "t", link: "https://example.com/download/1" }] };
+
+    const [torrent] = await overrideSite.transformSearchPage(doc, searchConfig);
+    expect(torrent.category).toBe("0100");
+  });
+
+  it("站点本身给出 number 的分类保持 number", async () => {
+    const doc = { rows: [{ id: 1, title: "t", link: "https://example.com/download/1", category: 401 }] };
+
+    const [torrent] = await site.transformSearchPage(doc, searchConfig);
+    expect(torrent.category).toBe(401);
+  });
+});
+
 describe("E-9：缺链接时明确失败，而不是拼出 undefined<后缀>", () => {
   class TestSite extends BittorrentSite {
     public async runGetLink(torrent: any) {

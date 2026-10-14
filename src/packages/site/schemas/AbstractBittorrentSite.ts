@@ -1216,7 +1216,8 @@ export default class BittorrentSite {
     typeof torrent.leechers != "undefined" && (torrent.leechers = tryToNumber(torrent.leechers));
     typeof torrent.completed != "undefined" && (torrent.completed = tryToNumber(torrent.completed));
     typeof torrent.comments != "undefined" && (torrent.comments = tryToNumber(torrent.comments));
-    typeof torrent.category != "undefined" && (torrent.category = tryToNumber(torrent.category));
+    // category 不做 tryToNumber（上游 0d62ee64）：它是分类名 / 分类标识，不是数值字段，
+    // 站点给出的 "401"、"007" 一类分类标识应原样保留，而不是被转成 401 / 7。
     // E19 补充：计数类字段（torrentCountFieldKeys）selector 零命中时 `getFieldData` 回落 `""`，
     // 直接写进种子对象会破坏 `ITorrent` 的 number 契约（排序/比较按字符串处理）。
     // 只在**组装种子对象**的这一步归 0（用 D2 的 normalizeNumericField），不改 `getFieldData` 的
