@@ -30,7 +30,7 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["uggcf://qnexcrref.bet/"],
   // E2-23：urls 用 rot13 隐藏域名的同时，明文 favicon 会把同一域名泄漏出去。
-  // favicon 不支持加密，此处删除该字段（缺失时由 utils/favicon 按站点地址动态获取）。
+  // favicon 不支持加密，此处删除该字段（使用本地 public/icons/site/darkpeers.png）。
 
   category: [
     {
