@@ -11,6 +11,7 @@ export const siteMetadata: ISiteMetadata = {
   version: 1,
   id: "pandapt",
   name: "PandaPT",
+  tags: ["综合", "影视", "音乐", "游戏", "有声书"],
   aka: ["熊猫高清"],
   description: "熊猫高清",
 

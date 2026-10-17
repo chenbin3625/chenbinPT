@@ -10,6 +10,7 @@ export const siteMetadata: ISiteMetadata = {
   version: 1,
   id: "alingpt",
   name: "alingPT",
+  tags: ["影视"],
   type: "private",
   schema: "NexusPHP",
   urls: ["https://pt.aling.de/"],
