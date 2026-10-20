@@ -2,10 +2,10 @@
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/52movie.json
  */
 import type { ISiteMetadata } from "../types";
-import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
+// import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
 
 export const siteMetadata: ISiteMetadata = {
-  ...SchemaMetadata,
+  // ...SchemaMetadata,
 
   version: 1,
   id: "52movie",
@@ -22,6 +22,9 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["uggcf://jjj.52zbivr.gbc/"],
 
+  isDead: true,
+
+  /**
   category: [
     {
       name: "分类",
@@ -124,6 +127,9 @@ export const siteMetadata: ISiteMetadata = {
       bonusPerHourMultiplier: 1, // selector 已能正确选中加倍后的时魔
     },
   },
+
+   */
+
   levelRequirements: [
     {
       id: 1,
