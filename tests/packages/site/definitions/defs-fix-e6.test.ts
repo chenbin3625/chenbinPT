@@ -607,12 +607,11 @@ describe("E6 zhixing：URL、分页上限/去重与失败语义", () => {
 // ---------------------------------------------------------------------------
 // yinguskg（L-38）
 // ---------------------------------------------------------------------------
-describe("E6 yinguskg：invites 配置内联后仍可用", () => {
-  it("userdetails.php 步骤声明 invites，且存在对应选择器", () => {
-    const step = (yinguskg.userInfo!.process as any[]).find((item) => item.requestConfig?.url === "/userdetails.php");
-    expect(step.fields).toContain("invites");
-    expect((yinguskg.userInfo!.selectors as any).invites.selector.length).toBeGreaterThan(0);
-    expect((yinguskg.userInfo!.selectors as any).invites.filters[0]("Available: 5")).toBe(5);
+describe("E6 yinguskg：已标记为死站", () => {
+  it("上游 2d8f1fab 标记 isDead 并注释掉其余配置后，不再依赖已死亡的 kunlun.ts", () => {
+    // 原 L-38 用例验证内联的 invites 配置；站点死亡后 userInfo 整体注释掉，改为断言死站状态
+    expect(yinguskg.isDead).toBe(true);
+    expect(yinguskg.userInfo).toBeUndefined();
   });
 });
 

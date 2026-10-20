@@ -4,67 +4,16 @@
  */
 import type { ISiteMetadata } from "../types";
 import {
-  CategoryInclbookmarked,
-  CategoryIncldead,
-  CategorySpstate,
-  SchemaMetadata,
+  //  CategoryInclbookmarked,
+  //  CategoryIncldead,
+  //  CategorySpstate,
+  //  SchemaMetadata,
   xiaomloveDefaultUserLevelRequirements,
 } from "../schemas/NexusPHP";
-
-/**
- * L-38：原先从已死亡站点 `kunlun.ts` 导入 `userInfoWithInvitesInUserDetailsPage`。
- * 死亡站点的约定是「注释或删除之后的所有配置项」，一旦有人照做，本文件的 import 就会断裂；
- * 且形成「死站文件承载活站配置」的隐性耦合。这里把共享片段内联到活站文件（内容与 kunlun 导出一致），
- * 站点可独立维护。
- */
-const userInfoWithInvitesInUserDetailsPage: ISiteMetadata["userInfo"] = {
-  ...SchemaMetadata.userInfo!,
-  selectors: {
-    ...SchemaMetadata.userInfo!.selectors!,
-    invites: {
-      selector: [
-        "td.rowhead:contains('邀请') + td",
-        "td.rowhead:contains('Invites') + td",
-        "td.rowhead:contains('Available') + td",
-        "td:contains('邀请')",
-        "td:contains('邀請')",
-        "td:contains('Invites')",
-        "td:contains('Available')",
-      ],
-      filters: [
-        (query: string) => {
-          if (!query?.trim()) return 0;
-          try {
-            // 匹配 "Available: 5" 格式
-            const availableMatch = query.match(/Available:\s*(\d+)/i);
-            if (availableMatch) return parseInt(availableMatch[1], 10) || 0;
-
-            // 匹配纯数字
-            const num = parseInt(query.match(/\d+/)?.[0] || "0", 10);
-            return isNaN(num) ? 0 : num;
-          } catch {
-            return 0;
-          }
-        },
-      ],
-    },
-  },
-  process: [
-    ...SchemaMetadata.userInfo!.process!.map((item) => {
-      // 在用户详情页面添加 invites 字段
-      if (item.requestConfig.url === "/userdetails.php") {
-        return {
-          ...item,
-          fields: [...(item.fields || []), "invites"],
-        };
-      }
-      return item;
-    }),
-  ],
-};
+//import { userInfoWithInvitesInUserDetailsPage } from "./kunlun.ts";
 
 export const siteMetadata: ISiteMetadata = {
-  ...SchemaMetadata,
+  //...SchemaMetadata,
 
   version: 1,
   id: "yinguskg",
@@ -79,6 +28,10 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["https://pt.ying.us.kg/"],
 
+  // dead at 2026-09-20 , from savept.icu
+  isDead: true,
+
+  /**
   category: [
     {
       name: "分类",
@@ -173,6 +126,8 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   userInfo: userInfoWithInvitesInUserDetailsPage,
+
+   */
 
   levelRequirements: [...xiaomloveDefaultUserLevelRequirements],
 };
