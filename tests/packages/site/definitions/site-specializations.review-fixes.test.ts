@@ -426,3 +426,47 @@ describe("搜索词编码及进度类型", () => {
     ).toBe(100);
   });
 });
+
+describe("dreadvault（上游 #1643，UNIT3D API）", () => {
+  it("url 取顶层 JSON:API id（D-15 同型），拍平形态回落 attributes.id", async () => {
+    const { siteMetadata } = await import("@ptd/site/definitions/dreadvault.ts");
+    const urlFilter = (siteMetadata.search!.selectors!.url as any).filters[0] as (row: object) => string;
+    expect(urlFilter({ id: 42, type: "torrents", attributes: { name: "x" } })).toBe("/torrents/42");
+    expect(urlFilter({ attributes: { id: 7 } })).toBe("/torrents/7");
+  });
+
+  it("不用宽匹配 urlPatterns 覆盖默认登录判据：搜索词含 login / verify 不误判未登录", async () => {
+    const { default: DreadVault, siteMetadata } = await import("@ptd/site/definitions/dreadvault.ts");
+    expect(siteMetadata.noLoginAssert?.urlPatterns).toBeUndefined();
+    const site: any = new DreadVault(siteMetadata);
+    const resWith = (responseURL: string) => ({ status: 200, headers: {}, data: {}, request: { responseURL } });
+    expect(site.loggedCheck(resWith("https://dreadvault.org/api/torrents/filter?name=The%20Login"))).toBe(true);
+    expect(site.loggedCheck(resWith("https://dreadvault.org/api/torrents/filter?name=verify"))).toBe(true);
+    expect(site.loggedCheck(resWith("https://dreadvault.org/login"))).toBe(false);
+  });
+
+  it("只给 /api/ 请求附带 Bearer Token", async () => {
+    const { default: DreadVault, siteMetadata } = await import("@ptd/site/definitions/dreadvault.ts");
+    const { default: Unit3D } = await import("@ptd/site/schemas/Unit3D.ts");
+    const superRequest = vi.spyOn(Unit3D.prototype, "request").mockResolvedValue({ data: {} } as any);
+    const site = new DreadVault(siteMetadata, { inputSetting: { token: "secret" } } as any);
+
+    await site.request({ url: "/api/user" });
+    expect((superRequest.mock.calls[0][0] as any).headers.Authorization).toBe("Bearer secret");
+    await site.request({ url: "/users/alice" });
+    expect((superRequest.mock.calls[1][0] as any).headers?.Authorization).toBeUndefined();
+  });
+
+  it("促销标签取自结构化字段，featured 等价于 Free + 2xUp，且全站 H&R", async () => {
+    const { default: DreadVault, siteMetadata } = await import("@ptd/site/definitions/dreadvault.ts");
+    const site: any = new DreadVault(siteMetadata);
+    const names = (row: object) => site.parseTorrentRowForTags({}, row, {}).tags.map((tag: any) => tag.name);
+    expect(names({ attributes: { featured: true } })).toEqual(["Free", "2xUp", "精选", "H&R"]);
+    expect(names({ attributes: { freeleech: "50%", double_upload: true, internal: true } })).toEqual([
+      "50%",
+      "2xUp",
+      "官方",
+      "H&R",
+    ]);
+  });
+});
