@@ -614,12 +614,33 @@ function containsText(elem: Element, text: string): boolean {
 }
 
 /**
+ * 单元素匹配用的上下文：元素所在树的根。
+ *
+ * E11：早期固定用 `elem.ownerDocument` 作上下文，而 `inScope` 要求 `context.contains(elem)`。
+ * 对游离 DOM（`rows.merge > 1` 会把 tr 移进一个未挂载的 wrapper，站点定义合并行即属此类）中
+ * 的元素，`document.contains(elem)` 恒为 false，导致 `matchesSelector` 对所有选择器都返回 false。
+ * 这里改用 `getRootNode()`：连通文档时仍是 Document，游离时是所在子树的根。
+ */
+function getElementMatchContext(elem: Element, doc: Document): ParentNode {
+  try {
+    const root = (typeof elem.getRootNode === "function" ? elem.getRootNode() : doc) as Node;
+    if (root && (root.nodeType === 1 || root.nodeType === 9 || root.nodeType === 11)) {
+      return root as unknown as ParentNode;
+    }
+  } catch {
+    // 取不到根节点时退回 ownerDocument（保持既有行为）
+  }
+  return doc;
+}
+
+/**
  * 元素是否命中某条选择器（用于 `:not(...)` 的扩展参数）。
  * 语义等价于 Sizzle 的 `compile(sel)([elem], null, xml, [])`，即「在文档范围内判断 elem 是否命中」。
  */
 function elementMatchesAnyScope(elem: Element, selector: string): boolean {
   const doc = elem.ownerDocument ?? document;
   const xml = isXmlContext(doc);
+  const context = getElementMatchContext(elem, doc);
   const groups = splitSelectorGroups(selector);
   for (const group of groups) {
     const tokens = parseGroupTokens(group);
@@ -627,12 +648,12 @@ function elementMatchesAnyScope(elem: Element, selector: string): boolean {
       continue;
     }
     if (tokens.some((token) => token.compound.hasPositional)) {
-      if (selectElements(selector, doc).includes(elem)) {
+      if (selectElements(selector, context).includes(elem)) {
         return true;
       }
       continue;
     }
-    if (matchesChain(elem, tokens, doc, xml)) {
+    if (matchesChain(elem, tokens, context, xml, true)) {
       return true;
     }
   }
@@ -669,10 +690,18 @@ function matchesCompound(elem: Element, compound: CompoundInfo): boolean {
   return true;
 }
 
-/** 左侧 token 与上下文的相对关系校验（对齐 Sizzle 的 base matcher） */
-function inScope(elem: Element, combinator: Combinator | null, context: ParentNode): boolean {
+/**
+ * 左侧 token 与上下文的相对关系校验（对齐 Sizzle 的 base matcher）。
+ *
+ * `allowContextSelf` 仅用于 `matchesSelector`：单元素匹配时元素本身可以就是上下文
+ * （游离 DOM 的根），而 `selectElements` 的上下文自身不能被计入结果。
+ */
+function inScope(elem: Element, combinator: Combinator | null, context: ParentNode, allowContextSelf = false): boolean {
   if (combinator === null || combinator === " ") {
-    return elem !== (context as unknown as Element) && (context as Node).contains(elem);
+    return (
+      (allowContextSelf && elem === (context as unknown as Element)) ||
+      (elem !== (context as unknown as Element) && (context as Node).contains(elem))
+    );
   }
   if (combinator === ">") {
     return elem.parentNode === (context as Node);
@@ -695,14 +724,21 @@ function inScope(elem: Element, combinator: Combinator | null, context: ParentNo
  * 自右向左校验整条链。
  *
  * `xml` 为 true 时跳过最左段与上下文的相对关系校验 —— 这是 Sizzle 在非 HTML 文档下的行为。
+ * `allowContextSelf` 语义见 `inScope`。
  */
-function matchesChain(elem: Element, tokens: GroupToken[], context: ParentNode, xml: boolean): boolean {
+function matchesChain(
+  elem: Element,
+  tokens: GroupToken[],
+  context: ParentNode,
+  xml: boolean,
+  allowContextSelf = false,
+): boolean {
   const step = (index: number, current: Element): boolean => {
     if (!matchesCompound(current, tokens[index].compound)) {
       return false;
     }
     if (index === 0) {
-      return xml || inScope(current, tokens[0].combinator, context);
+      return xml || inScope(current, tokens[0].combinator, context, allowContextSelf);
     }
     const combinator = tokens[index].combinator;
     if (combinator === ">") {
@@ -1205,6 +1241,8 @@ export function matchesSelector(elem: Element, selector: string): boolean {
   }
   const doc = elem.ownerDocument ?? document;
   const xml = isXmlContext(doc);
+  // E11：用元素所在子树的根作上下文，游离 DOM 也要能匹配（merge 行、clone 出来的解析片段）
+  const context = getElementMatchContext(elem, doc);
   const groups = splitSelectorGroups(selector);
   for (const group of groups) {
     const tokens = parseGroupTokens(group);
@@ -1213,7 +1251,7 @@ export function matchesSelector(elem: Element, selector: string): boolean {
     }
     const position = tokens.findIndex((token) => token.compound.hasPositional);
     if (position < 0) {
-      if (matchesChain(elem, tokens, doc, xml)) {
+      if (matchesChain(elem, tokens, context, xml, true)) {
         return true;
       }
       continue;
@@ -1230,7 +1268,7 @@ export function matchesSelector(elem: Element, selector: string): boolean {
         hasCustom: remainingPseudos.some((pseudo) => pseudo.kind === "custom"),
       },
     });
-    if (!matchesChain(elem, prefixTokens, doc, xml)) {
+    if (!matchesChain(elem, prefixTokens, context, xml, true)) {
       continue;
     }
     // seed 是单元素集合：位置伪类作用在 [elem] 上

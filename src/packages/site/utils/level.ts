@@ -13,8 +13,8 @@ import type { isoDuration } from "./datetime";
 export const MinVipLevelId = 100;
 export const MinManagerLevelId = 200;
 
-export function cleanLevelName(levelName: string): string {
-  return levelName.replace(/[\s _]+/g, "").toLowerCase();
+export function cleanLevelName(levelName?: string | null): string {
+  return (levelName ?? "").replace(/[\s _]+/g, "").toLowerCase();
 }
 
 const ratioCountMap = {
@@ -22,21 +22,35 @@ const ratioCountMap = {
   trueRatio: ["trueUploaded", "trueDownloaded"],
 } as const;
 
+/**
+ * 计算分享率。
+ *
+ * E15：部分站点把 `∞` 映射成哨兵值 `-1`（`Luminance.ts` / `TCG.ts`，因为 `Infinity`
+ * 无法通过 `sendMessage` 的结构化克隆）或 `0`（`Gazelle` 用 `parseNumber("∞")`）。
+ * 这类哨兵值只表示「无限分享率」，不能直接参与 `< minRequireRatio` 比较，否则
+ * 「只上传未下载」的用户会被判为分享率不达标。这里统一还原：
+ * - 显式 `-1`：**无条件**视为 `Infinity`（哨兵约定；前端 `realFormatRatio` 本来也把 -1
+ *   显示为 `∞`）。不能依赖 uploaded/downloaded 是否存在——用户画像可能只带 ratio 字段
+ *   （站点只采集了 ratio），此时若按「0/0 → -Infinity」处理仍会误判；
+ * - 显式 `0` 且下载为 0、上传 > 0：视为 `Infinity`。
+ */
 export function fixRatio(userInfo: Partial<IUserInfo>, ratioKey: "ratio" | "trueRatio" = "ratio"): number {
-  let ratio = -1;
-  if (typeof userInfo[ratioKey] === "undefined") {
-    const [uploadedKey, downloadedKey] = ratioCountMap[ratioKey];
-    const { [uploadedKey]: uploaded = 0, [downloadedKey]: downloaded = 0 } = userInfo;
+  const [uploadedKey, downloadedKey] = ratioCountMap[ratioKey];
+  const { [uploadedKey]: uploaded = 0, [downloadedKey]: downloaded = 0 } = userInfo;
 
+  if (typeof userInfo[ratioKey] === "undefined") {
     if (downloaded == 0 && uploaded == 0) {
       return -Infinity;
-    } else if (downloaded == 0 && uploaded > 0) {
-      ratio = Infinity; // 没有下载量时设置分享率为无限
-    } else if (downloaded > 0) {
-      ratio = uploaded / downloaded;
     }
-  } else {
-    ratio = userInfo[ratioKey];
+    return downloaded == 0 ? Infinity : uploaded / downloaded; // 没有下载量时设置分享率为无限
+  }
+
+  const ratio = userInfo[ratioKey] as number;
+  if (ratio === -1) {
+    return Infinity; // -1 是「∞」的哨兵值（见上）
+  }
+  if (ratio === 0 && downloaded == 0 && uploaded > 0) {
+    return Infinity;
   }
   return ratio;
 }
@@ -83,7 +97,14 @@ export function levelRequirementUnMet(
 
   // 比较加入时间
   if (levelRequirement.interval) {
-    const baseTimeInfo = userInfo.joinTime ?? currentTime;
+    // E16：joinTime 解析失败时可能是 0 / NaN / 字符串。早期实现直接把它交给
+    // convertIsoDurationToDate：0 被当成 1970 年加入（恒满足）、字符串得到 Invalid Date
+    // （NaN 比较恒 false → 也恒满足），于是新用户被误判为已满足时间门槛。
+    // 这里把「不可用的 joinTime」保守地当作「刚刚加入」（与原 joinTime 缺失时的行为一致），
+    // 保证 interval 门槛不会被静默跳过。
+    const rawJoinTime = userInfo.joinTime;
+    const baseTimeInfo =
+      typeof rawJoinTime === "number" && Number.isFinite(rawJoinTime) && rawJoinTime > 0 ? rawJoinTime : currentTime;
     const passTime = convertIsoDurationToDate(levelRequirement.interval, baseTimeInfo);
     if (passTime > currentTime) {
       // 计算通过时间与当前时间的时间差
@@ -116,8 +137,9 @@ export function levelRequirementUnMet(
   }
 
   for (const ratioKey of intersection(["ratio", "trueRatio"], levelRequirementKeys) as ("ratio" | "trueRatio")[]) {
-    // 计算并设置 ratio 或 trueRatio
-    userInfo[ratioKey] = fixRatio(userInfo, ratioKey);
+    // E08：不能在判级时写回调用方的 userInfo（会把 Infinity / -Infinity 注入响应式数据，
+    // 经 JSON 序列化后变成 null，并污染显示与后续持久化）。只用局部变量参与比较。
+    const currentRatio = fixRatio(userInfo, ratioKey);
 
     const requireRatio = levelRequirement[ratioKey];
 
@@ -126,7 +148,8 @@ export function levelRequirementUnMet(
 
     // [number, number]，分享率限制模式
     if (Array.isArray(requireRatio) && requireRatio.length === 2 && requireRatio.every((x) => typeof x === "number")) {
-      [minRequireRatio, maxRequireRatio] = requireRatio.sort((a, b) => a - b);
+      // E09：不能原地 sort 站点定义共享的 metadata.levelRequirements
+      [minRequireRatio, maxRequireRatio] = [...requireRatio].sort((a, b) => a - b);
       // number 格式 直接赋值
     } else if (typeof requireRatio === "number") {
       minRequireRatio = requireRatio;
@@ -138,11 +161,8 @@ export function levelRequirementUnMet(
     const [uploadedKey, downloadedKey] = ratioCountMap[ratioKey];
 
     // 获取当前数值
-    const {
-      [uploadedKey]: baseUploaded = 0,
-      [downloadedKey]: baseDownloaded = 0,
-      [ratioKey]: baseRatio = -1,
-    } = userInfo;
+    const { [uploadedKey]: baseUploaded = 0, [downloadedKey]: baseDownloaded = 0 } = userInfo;
+    const baseRatio = currentRatio;
 
     const requiredDownloaded =
       typeof levelRequirement[downloadedKey] === "string"
@@ -233,6 +253,7 @@ export function levelRequirementUnMet(
       "bonus",
       "bonusPerHour",
       "seedingBonus",
+      "seeding",
       "uploads",
       "leeching",
       "snatches",
@@ -380,18 +401,26 @@ export function getNextLevelUnMet(
 
 export function guessUserLevelId(userInfo: IUserInfo, levelRequirements: ILevelRequirement[]): TLevelId {
   // 首先尝试 levelName 的直接匹配，站点levelRequirements中配置的 name 一定要等于或包含 获取到的 levelName 中才会匹配成功
-  let level = levelRequirements.find((level) => {
-    const cleanedUserLevelName = cleanLevelName(userInfo.levelName!);
-    return [level.name, ...(level.nameAka ?? [])]
-      .map(cleanLevelName)
-      .some((name) => name.includes(cleanedUserLevelName));
-  });
+  const cleanedUserLevelName = cleanLevelName(userInfo.levelName);
+
+  // E10：必须先做「清洗后全等」匹配，再退回「包含」匹配。只做包含匹配时，较短的高等级名会被
+  // 排在前面的低等级名抢走（"Pornstar" 命中 "Pornstar Trainee"、"魔法师" 命中 "准魔法师"）。
+  // N5：levelName 缺失（undefined/null/空串）时直接跳过名称匹配，不能抛 TypeError。
+  const requirementNames = cleanedUserLevelName
+    ? (levelRequirements ?? []).map((level) => ({
+        level,
+        names: [level.name, ...(level.nameAka ?? [])].map((name) => cleanLevelName(name)).filter(Boolean),
+      }))
+    : [];
+  let level =
+    requirementNames.find(({ names }) => names.includes(cleanedUserLevelName))?.level ??
+    requirementNames.find(({ names }) => names.some((name) => name.includes(cleanedUserLevelName)))?.level;
   if (level) {
     return level.id;
   }
 
   // 再尝试判断 groupType
-  let groupType = guessUserLevelGroupType(userInfo.levelName!);
+  let groupType = guessUserLevelGroupType(userInfo.levelName ?? "");
   if (groupType !== "user") {
     level = levelRequirements.find((level) => level.groupType === groupType);
     if (level) {

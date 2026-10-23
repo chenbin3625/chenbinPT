@@ -4,13 +4,14 @@ import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import { intersection, pascalCase, pick, toMerged, uniq } from "es-toolkit";
 import { get, has, set } from "es-toolkit/compat";
 
-import BittorrentSite from "./AbstractBittorrentSite";
+import BittorrentSite, { isDocumentNode } from "./AbstractBittorrentSite";
 import { classifySiteError, guessUserLevelId, logMessage, siteErrorLogData } from "../utils";
 import {
   EResultParseStatus,
   type IElementQuery,
   type ISiteMetadata,
   type IUserInfo,
+  type ITorrent,
   type TLevelId,
   type TPatterns,
 } from "../types";
@@ -21,28 +22,135 @@ export const SchemaMetadata: Partial<ISiteMetadata> = {
   userInfo: {},
 };
 
+/**
+ * 默认「未登录」URL 判据（E13）。
+ *
+ * 旧实现用 `/doLogin|login|verify|checkpoint|returnto/gi` 直接 `test(responseURL)`：
+ * 搜索关键词（`?search=Checkpoint`）、Unit3D/Avistaz 用户名（`/users/verify`）都会命中，
+ * 导致正常页面被误判为「需要登录」。改为：
+ * - 只匹配 **pathname 的登录端点**（`/login.php`、`/takelogin.php`、`/doLogin`、`/verify`、`/checkpoint` 等）；
+ * - `returnto` 只认**查询参数名**（`?returnto=...`），不认 value / 普通关键词；
+ * - **查询串端点**（E13 补漏）：Discuz 未登录跳转是 `member.php?mod=logging&action=login`
+ *   （pathname 为 `member.php`，不等于 `/login`），phpBB 是 `ucp.php?mode=login`，
+ *   vBulletin/部分 NexusPHP fork 是 `?do=login` / `?page=login`。只看 pathname 会漏判
+ *   （实际受影响站点：skyeynow/Discuz 引擎回落 AbstractPrivateSite）。这里只认
+ *   「查询参数名为 `action`/`do`/`page`/`mode` 且值为 `login`」的精确形态，
+ *   搜索词/用户名位于其它参数（`?search=Checkpoint`、`?username=login`）时不会命中；
+ * - `/users/xxx`、`/profile/xxx` 这类「最后一段是用户名」的路径跳过端点匹配（用户名可以叫 verify/login）。
+ */
+const defaultNoLoginPathPattern =
+  /(?:^|\/)(?:doLogin|takelogin|login|verify|checkpoint|twofactor|two-step|two_step)(?:\.php)?\/?$/i;
+const defaultNoLoginReturntoPattern = /[?&]returnto=/i;
+const defaultNoLoginQueryPattern = /[?&](?:action|do|page|mode)=login(?:&|#|$)/i;
+const userProfilePathPattern = /^\/(?:users?|profile|member|members)(?:\/|$)/i;
+
+/**
+ * 默认「未登录」HTTP 状态码（E14）：只保留明确的鉴权失败码。
+ *
+ * 502/504 是 PT 站最常见的网关故障码，旧实现把它们也当成「需要登录」→ 上层拿到
+ * `needLogin, retryable:false`，用户看到「登录失效」且不会自动重试；现在交给 ServerError（可重试）。
+ * 确有站点用 502 表示未登录的，在定义的 `noLoginAssert.httpStatusCodes` 里单独声明。
+ */
+const defaultNoLoginHttpStatusCodes = [
+  401, // Unauthorized
+  403, // Forbidden
+];
+
+/** 未在 metadata.userInfo.criticalFields 中覆写时的默认关键字段（真实站点可用定义级逃生口排除） */
+const defaultUserInfoCriticalFields = ["uploaded", "downloaded"] as const;
+
 export default class PrivateSite extends BittorrentSite {
+  protected checkUserInfoSelectorMatches(
+    doc: Element | object,
+    selectors: Record<string, IElementQuery | undefined>,
+    fields: string[],
+    criticalFields?: readonly string[],
+  ): { declared: number; matched: number; matchedFields: Set<string> } {
+    // P2（第二轮审查）：关键字段硬失败需要 metadata 级逃生口。默认语义不变（uploaded/downloaded），
+    // 真实站点在部分账号/页面变体确实缺某个字段时，可在定义里覆写 `userInfo.criticalFields`。
+    const effectiveCriticalFields =
+      criticalFields ?? this.metadata.userInfo?.criticalFields ?? defaultUserInfoCriticalFields;
+    let declared = 0;
+    let matched = 0;
+    const matchedFields = new Set<string>();
+    const missingCritical: string[] = [];
+    for (const field of fields) {
+      const query = selectors[field];
+      if (!query?.selector) continue;
+      declared++;
+      if (this.hasFieldMatch(doc, query)) {
+        matched++;
+        matchedFields.add(field);
+      } else if (effectiveCriticalFields.includes(field)) {
+        missingCritical.push(field);
+      }
+    }
+    if (missingCritical.length) {
+      throw new Error(
+        `${matched === 0 ? "用户信息页未命中任何字段；" : ""}用户信息关键字段 ${missingCritical.join(", ")} 未命中，页面或接口可能已改版`,
+      );
+    }
+    // P2-D：把命中集合回传给调用方，避免写入循环在零命中字段上再次调用 hasFieldMatch
+    // （即同一 query 的第 3 次 getFieldData 求值）。
+    return { declared, matched, matchedFields };
+  }
+
   get allowQueryUserInfo(): boolean {
     return this.isOnline && !!this.metadata.userInfo && !(this.userConfig.allowQueryUserInfo === false);
   }
 
   protected get noLoginCheckHttpStatusCodes(): number[] | false {
-    return (
-      this.metadata.noLoginAssert?.httpStatusCodes ?? [
-        401, // Unauthorized
-        403, // Forbidden
-        502, // Bad Gateway
-        504, // Gateway Timeout
-      ]
-    );
+    return this.metadata.noLoginAssert?.httpStatusCodes ?? defaultNoLoginHttpStatusCodes;
   }
 
   protected get noLoginCheckUrlPatterns(): TPatterns | false {
-    return this.metadata.noLoginAssert?.urlPatterns ?? [/doLogin|login|verify|checkpoint|returnto/gi];
+    return this.metadata.noLoginAssert?.urlPatterns ?? [defaultNoLoginPathPattern];
   }
 
   protected get noLoginCheckRefreshHeaderPattern(): TPatterns | false {
     return this.metadata.noLoginAssert?.refreshHeaderPattern ?? this.noLoginCheckUrlPatterns;
+  }
+
+  /** 是否使用内置默认 URL 判据（自定义 urlPatterns 保持旧的全 URL 正则语义以兼容定义） */
+  private get usesDefaultNoLoginUrlPatterns(): boolean {
+    return !this.metadata.noLoginAssert?.urlPatterns;
+  }
+
+  /** 是否使用内置默认 Refresh 判据 */
+  private get usesDefaultNoLoginRefreshPattern(): boolean {
+    return !this.metadata.noLoginAssert?.refreshHeaderPattern && this.usesDefaultNoLoginUrlPatterns;
+  }
+
+  /**
+   * 判断一个「位置」（responseURL / refresh 重定向地址）是否像登录页。
+   * 默认判据只看 pathname、`returnto` 与查询串登录端点（见文件头部说明），
+   * 自定义 patterns 仍按旧语义对整串匹配。
+   */
+  private matchesNoLoginLocation(location: string, patterns: TPatterns, defaultSemantics: boolean): boolean {
+    if (defaultSemantics) {
+      let parsed: URL;
+      try {
+        parsed = new URL(location, this.url);
+      } catch {
+        return false;
+      }
+      // returnto 与「查询参数=login」都只检查 search，不受搜索关键词/用户名影响
+      if (defaultNoLoginReturntoPattern.test(parsed.search) || defaultNoLoginQueryPattern.test(parsed.search)) {
+        return true;
+      }
+      return !userProfilePathPattern.test(parsed.pathname) && defaultNoLoginPathPattern.test(parsed.pathname);
+    }
+
+    for (const pattern of patterns) {
+      try {
+        if (new RegExp(pattern).test(location)) {
+          return true;
+        }
+      } catch {
+        // 定义里的非法正则不应让登录检查整块崩掉（退化为不命中该条）
+      }
+    }
+    return false;
   }
 
   protected override loggedCheck(res: AxiosResponse): boolean {
@@ -53,11 +161,11 @@ export default class PrivateSite extends BittorrentSite {
         return false;
       }
 
-      if (this.noLoginCheckUrlPatterns) {
-        for (const noLoginCheckUrlPattern of this.noLoginCheckUrlPatterns) {
-          if (new RegExp(noLoginCheckUrlPattern).test(request.responseURL)) {
-            return false; // 检查URL是否匹配 noLoginCheckUrlPatterns 中的任意一个
-          }
+      const urlPatterns = this.noLoginCheckUrlPatterns;
+      if (urlPatterns) {
+        // E13：默认判据只匹配 pathname 上的登录端点，不再对完整 responseURL 做裸子串匹配
+        if (this.matchesNoLoginLocation(request.responseURL, urlPatterns, this.usesDefaultNoLoginUrlPatterns)) {
+          return false;
         }
       }
 
@@ -68,19 +176,22 @@ export default class PrivateSite extends BittorrentSite {
         const urlMatch = res.headers.refresh.match(urlPattern);
 
         if (urlMatch) {
-          let redirectUrl = urlMatch[1].trim();
-
-          for (const noLoginCheckRefreshHeaderPattern of this.noLoginCheckRefreshHeaderPattern) {
-            if (new RegExp(noLoginCheckRefreshHeaderPattern).test(redirectUrl)) {
-              return false; // 检查URL是否匹配 noLoginCheckRefreshHeaderPattern 中的任意一个
-            }
+          const redirectUrl = urlMatch[1].trim();
+          if (
+            this.matchesNoLoginLocation(
+              redirectUrl,
+              this.noLoginCheckRefreshHeaderPattern,
+              this.usesDefaultNoLoginRefreshPattern,
+            )
+          ) {
+            return false;
           }
         }
       }
 
       const noLoginAssertMatchSelectors = this.metadata.noLoginAssert?.matchSelectors ?? [];
       if (noLoginAssertMatchSelectors.length > 0) {
-        const matchFn = res.data instanceof Document ? (d: any, m: string) => selectElements(m, d).length > 0 : has;
+        const matchFn = isDocumentNode(res.data) ? (d: any, m: string) => selectElements(m, d).length > 0 : has;
         for (const matchSelector of noLoginAssertMatchSelectors) {
           if (matchFn(res.data, matchSelector)) {
             return false;
@@ -179,6 +290,19 @@ export default class PrivateSite extends BittorrentSite {
         await this.sleepAction(requestDelay);
 
         const { data: dataDocument } = await this.request<any>(requestConfig);
+        const selectorFields = processFields.filter((key) => {
+          const dynamicParseFuncKey = `parseUserInfoFor${pascalCase(key)}` as keyof this;
+          return !(dynamicParseFuncKey in this && typeof this[dynamicParseFuncKey] === "function");
+        });
+        const selectors = Object.fromEntries(
+          selectorFields.map((key) => [
+            key,
+            thisUserInfoProcess.selectors?.[key] ?? this.metadata.userInfo?.selectors?.[key],
+          ]),
+        );
+        const matches = this.checkUserInfoSelectorMatches(dataDocument, selectors, selectorFields);
+        declaredSelectorFields += matches.declared;
+        matchedSelectorFields += matches.matched;
 
         for (const key of processFields) {
           const dynamicParseFuncKey = `parseUserInfoFor${pascalCase(key)}` as keyof this;
@@ -186,13 +310,20 @@ export default class PrivateSite extends BittorrentSite {
             flushUserInfo = await this[dynamicParseFuncKey](flushUserInfo, dataDocument, requestConfig);
           } else {
             // 优先使用本步骤定义的选择器，如果没有则使用 userInfo 全局的选择器
-            let elementQuery = thisUserInfoProcess.selectors?.[key] ?? this.metadata.userInfo?.selectors?.[key];
+            const elementQuery = thisUserInfoProcess.selectors?.[key] ?? this.metadata.userInfo?.selectors?.[key];
             if (elementQuery) {
-              declaredSelectorFields++;
-              if (this.hasFieldMatch(dataDocument, elementQuery as IElementQuery)) {
-                matchedSelectorFields++;
+              // 传入字段名让 getFieldData 能区分文本字段（name 等不做数字强转，E18），
+              // 并只在该字段真正命中时写入（D1-6：零命中回落出来的 "" 不能覆盖已有/期望的数字值）。
+              const value = this.getFieldData(
+                dataDocument,
+                elementQuery as IElementQuery,
+                key as keyof Omit<ITorrent, "site">,
+              );
+              // P2-D：复用 checkUserInfoSelectorMatches 已经算出的命中结果，不再对同一 query 做第 3 次求值。
+              if (value === "" && !matches.matchedFields.has(key)) {
+                continue;
               }
-              flushUserInfo[key] = this.getFieldData(dataDocument, elementQuery as IElementQuery);
+              flushUserInfo[key] = value;
             } else {
               // noinspection ExceptionCaughtLocallyJS
               // throw new Error(`字段 ${key} 未设置 selector 或 ${String(dynamicParseFuncKey)} 方法`);

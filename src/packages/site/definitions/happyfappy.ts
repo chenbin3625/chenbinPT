@@ -41,6 +41,10 @@ export const siteMetadata: ISiteMetadata = {
         { name: "Retro", value: "8" },
         { name: "Transexual", value: "12" },
         { name: "VR", value: "7" },
+        // E3-5：Jackett happyfappy.yml 的 categorymappings 里还有 id 14 = Scat、15 = AI；
+        // 分类列表是搜索面板唯一入口，缺这两项会让用户无法按它们过滤。
+        { name: "Scat", value: "14" },
+        { name: "AI", value: "15" },
       ],
       cross: { mode: "appendQuote" },
     },
@@ -85,18 +89,9 @@ export const siteMetadata: ISiteMetadata = {
         perPage: 100,
       },
     },
-    advanceKeywordParams: {
-      // 支持站点的高级搜索
-      terms: {
-        requestConfigTransformer: ({ requestConfig: config }) => {
-          if (config?.params?.title) {
-            config.params.searchtext = config.params.title;
-            delete config.params.title;
-          }
-          return config!;
-        },
-      },
-    },
+    // E3-5：原 advanceKeywordParams.terms 是死配置 —— `terms` 不是任何 UI 会产出的关键词前缀
+    // （types/search.ts 只约定 imdb/douban/bangumi/anidb/tmdb/tvdb/mal），且 `searchtext` 不是
+    // Luminance 的搜索参数（该引擎的 keywordPath 就是 params.title），永远不会被触发，已删除。
     selectors: {
       ...SchemaMetadata!.search!.selectors!,
       category: {

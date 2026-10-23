@@ -44,7 +44,8 @@ const siteHistoryData = shallowRef<IShowUserInfo[]>([]);
 // 历史数据由 loadSiteHistoryData 异步读取；打开对话框时先绑定 loading，
 // 避免在数据返回前闪现「暂无数据」
 const isLoading = ref<boolean>(false);
-const tableHeader = [
+// F11：表头是 `t()` 求值的，若写成 setup 期常量，切语言后不会重新求值（列头停在旧语言）
+const tableHeader = computed<DataTableHeader[]>(() => [
   { title: t("common.date"), key: "date", align: "center" },
   { title: t("common.username"), key: "name", align: "center", sortable: false },
   { title: t("MyData.table.levelName"), key: "levelName", align: "start", sortable: false },
@@ -54,8 +55,8 @@ const tableHeader = [
   { title: t("levelRequirement.seedingSize"), key: "seedingSize", align: "end", sortable: false },
   { title: t("levelRequirement.bonus"), key: "bonus", align: "end", sortable: false },
   { title: t("common.action"), key: "action", align: "center", width: 90, sortable: false },
-] as DataTableHeader[];
-const tableColumns = computed(() => toAntdColumns(tableHeader, { sortBy: [{ key: "date", order: "desc" }] }));
+]);
+const tableColumns = computed(() => toAntdColumns(tableHeader.value, { sortBy: [{ key: "date", order: "desc" }] }));
 const tablePagination = computed(() =>
   toPagination(10, () => {
     /* 固定每页 10 条 */

@@ -276,7 +276,7 @@ interface ProtocolMap {
  * 确认 offscreen 已创建；否则扩展刚重载、SW 刚唤醒或首次创建发生竞态时，
  * Chrome 会以 "The message port closed before a response was received" 结束调用。
  */
-const offscreenMessageTypes = new Set<keyof ProtocolMap>([
+export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "logger",
   "getLogger",
   "clearLogger",
@@ -352,7 +352,7 @@ const messageMaps: Partial<ProtocolMap> = {};
 // TESTS-2：checkAndExtendCookies 在用户开启 autoExtendCookies 时会真的写 cookie，
 // 因此同样登记；它只由 background 自身注册（background/utils/cookies.ts）、只被 offscreen
 // （扩展页，isExtensionPageSender 放行）调用，登记后这两条路径行为不变。
-const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
+export const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "getExtStorage",
   "setExtStorage",
   "patchExtStoragePath",
@@ -397,9 +397,10 @@ const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
  * 内容脚本只能使用这组明确列出的能力。
  *
  * 内容脚本运行在任意站点页面的渲染进程中，不能把「没列入管理黑名单」当成授权。
- * `getSiteUserConfig` 会在下方进一步剥离 inputSetting，避免把 passkey/token 送进页面侧。
+ * `getSiteUserConfig` 会在下方按**字段白名单**投影（A1：剥离 inputSetting / runtimeSettings 等凭据）。
  */
-const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
+export const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
+  "ensureOffscreenDocument",
   "getContentScriptBootstrapData",
   "getExtStoragePath",
   "patchExtStoragePath",
@@ -410,22 +411,76 @@ const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
   "openOptionsPage",
 ]);
 
+/**
+ * 判断发送方是否为**扩展自身的可信上下文**（options / offscreen / background 等）。
+ *
+ * 判据（2026-10-24 复检 L2 + 并行审查 P1-1）：
+ * 1. `sender.id` 必须等于本扩展 id —— 其它扩展 / 网页的发送方 id 不同，一律不可信；
+ * 2. 有 `sender.url` 时必须是扩展页 URL（chrome-extension://<id>/... 或 moz-extension://...）；
+ * 3. **没有** `sender.url` 时（典型：MV3 service worker 发送方；Chrome 直到 M140 才给 SW 填 url，
+ *    见 chromium CL 58b5566e / w3c/webextensions#851）按「没有 tab」判定：
+ *    内容脚本一定会带 `sender.tab`（Chrome/Firefox 文档均如此），所以 `!sender.tab` 只可能是
+ *    扩展自身上下文。这样后台 → offscreen 的受信消息在旧版浏览器上不会被误拒，同时不会放宽内容脚本。
+ *
+ * 注意：不能反过来把「有 `sender.tab`」当成不可信的唯一判据 —— 在标签页里打开的扩展页面同样带 tab，
+ * 因此有 url 时仍必须先走扩展 URL 判定。
+ */
 function isExtensionPageSender(sender: chrome.runtime.MessageSender | undefined): boolean {
-  const extensionBase = chrome.runtime.getURL("");
-  return sender?.id === chrome.runtime.id && typeof sender.url === "string" && sender.url.startsWith(extensionBase);
+  if (!sender || sender.id !== chrome.runtime.id) {
+    return false;
+  }
+  if (typeof sender.url === "string" && sender.url.length > 0) {
+    return sender.url.startsWith(chrome.runtime.getURL(""));
+  }
+  // url 缺失：只有不带 tab 的才是扩展自身上下文（service worker 等）；带 tab 的按内容脚本处理（fail-closed）
+  return sender.tab === undefined || sender.tab === null;
 }
 
-function isContentScriptSender(sender: chrome.runtime.MessageSender | undefined): boolean {
-  const extensionBase = chrome.runtime.getURL("");
-  return sender?.id === chrome.runtime.id && typeof sender.url === "string" && !sender.url.startsWith(extensionBase);
-}
+/**
+ * 内容脚本可安全拿到的站点配置字段白名单（A1）。
+ *
+ * 为什么必须是**白名单**而不是「删掉 inputSetting」的黑名单：`ISiteUserConfig` 里同时存在两份凭据—
+ * - `inputSetting`：站点要求用户填写的 username/password/passkey/token/API key；
+ * - `runtimeSettings`：站点实例运行期缓存的凭据（`GazelleJSONAPI.ts` 的 authkey/passkey、
+ *   `Rartracker.ts` 的 passkey、`AvistazNetwork.ts` 的 authToken、`animebytes.ts` 的 passkey 等），
+ *   经 `AbstractBittorrentSite.storeRuntimeSettings()` → `packages/site/utils/adapter.ts` 的 `store()` 落库。
+ * 旧实现只删 inputSetting，`getSiteUserConfig` 仍会把 runtimeSettings 送回页面侧。
+ *
+ * 白名单只保留内容脚本真正用到的字段：
+ * - `createSiteInstance(siteId, userConfig)` 会合并 `merge` 并用 `url`；
+ * - 页面类型判断读 `isOffline` / `allowSearch` / `timeout` / `downloadInterval` / `downloadLinkAppendix`；
+ * - 侧边栏展示/排序读 `id` / `sortIndex` / `groups` / `allowContentScript` / `allowQueryUserInfo`；
+ * - `uploadSpeedLimit` 与下载器设置有关（内容脚本的推送入口会读它）。
+ *
+ * 新增字段时：若内容脚本要用，必须显式加进这里；否则默认不下发（fail-closed）。
+ */
+const contentScriptSafeSiteUserConfigFields = [
+  "id",
+  "sortIndex",
+  "url",
+  "isOffline",
+  "allowSearch",
+  "allowQueryUserInfo",
+  "groups",
+  "timeout",
+  "downloadInterval",
+  "uploadSpeedLimit",
+  "allowContentScript",
+  "downloadLinkAppendix",
+  "merge",
+] as const;
 
-function sanitizeContentScriptSiteUserConfig(value: unknown): unknown {
+function projectSiteUserConfigForContentScript(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return value;
   }
-  const safe = { ...(value as Record<string, unknown>) };
-  delete safe.inputSetting;
+  const source = value as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  for (const field of contentScriptSafeSiteUserConfigFields) {
+    if (Object.hasOwn(source, field)) {
+      safe[field] = source[field];
+    }
+  }
   return safe;
 }
 
@@ -590,21 +645,51 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     // @ts-expect-error
     messageMaps[type] = handler;
     original.onMessage(type, (message) => {
-      const contentScriptSender = isContentScriptSender(message.sender);
-      if (contentScriptSender && !contentScriptAllowedMessages.has(type as keyof ProtocolMap)) {
-        throw new Error(`Permission denied for message sender: ${String(type)}`);
-      }
+      /**
+       * N2：发送方分类必须 fail-closed。
+       *
+       * 旧实现用「正识别内容脚本」（`sender.url` 是字符串且不是扩展 URL）来决定是否走白名单/脱敏；
+       * 若某类发送方的 `sender.url` 缺失，就同时不被判为扩展页、也不被判为内容脚本 → 对
+       * 非 extensionPageOnlyMessages 的消息直接放行，`getSiteUserConfig` 也不会投影（凭据泄漏）。
+       * 现在改为：**只有能证明是扩展页的发送方才可信**，其余一律按不可信处理（走内容脚本白名单 + 投影）。
+       */
+      const trustedSender = isExtensionPageSender(message.sender);
       const messageType = type as keyof ProtocolMap;
       const isStoragePathMessage = messageType === "getExtStoragePath" || messageType === "patchExtStoragePath";
       const storagePathAllowed = isStoragePathMessage && isContentScriptStoragePathAllowed(messageType, message.data);
-      const requiresExtensionPage =
-        extensionPageOnlyMessages.has(messageType) || (isStoragePathMessage && !storagePathAllowed);
-      if (requiresExtensionPage && !storagePathAllowed && !isExtensionPageSender(message.sender)) {
-        throw new Error(`Permission denied for message sender: ${String(type)}`);
+
+      if (!trustedSender) {
+        // 不可信发送方：先过内容脚本白名单，再过 storage 路径白名单；extensionPageOnlyMessages 作为纵深防御再兜一层。
+        if (!contentScriptAllowedMessages.has(messageType)) {
+          throw new Error(`Permission denied for message sender: ${String(type)}`);
+        }
+        if (isStoragePathMessage && !storagePathAllowed) {
+          throw new Error(`Permission denied for message sender: ${String(type)}`);
+        }
+        // P1-2：`getExtStoragePath` / `patchExtStoragePath` 允许内容脚本在**路径白名单**内使用，
+        // 它们同时登记在 extensionPageOnlyMessages 里（用于整份拒绝的兜底语义）。这里必须给
+        // storagePathAllowed 留出豁免，否则内容脚本写 `config.contentScript.position`（悬浮球位置）
+        // 会被无条件拒绝；旧实现（`requiresExtensionPage && !storagePathAllowed`）正是这个语义。
+        if (extensionPageOnlyMessages.has(messageType) && !(isStoragePathMessage && storagePathAllowed)) {
+          throw new Error(`Permission denied for message sender: ${String(type)}`);
+        }
       }
+
+      // A2 纵深防御：必须在调用 handler **之前**改写（handler 会同步读取 message.data）。
+      if (!trustedSender && messageType === "downloadTorrent") {
+        /**
+         * 主修在 offscreen 侧（sender→site 绑定，B1）。消息层不依赖 offscreen 的 sender 判定：
+         * `allowSiteLessLink` 是「扩展页/右键菜单发起」才允许的无站点直链开关，对不可信发送方直接置 false。
+         */
+        const downloadData = message.data as { allowSiteLessLink?: boolean } | undefined;
+        if (downloadData && typeof downloadData === "object" && downloadData.allowSiteLessLink === true) {
+          message.data = { ...downloadData, allowSiteLessLink: false } as typeof message.data;
+        }
+      }
+
       const result = handler(message);
-      if (contentScriptSender && type === "getSiteUserConfig") {
-        return Promise.resolve(result).then(sanitizeContentScriptSiteUserConfig) as ReturnType<typeof handler>;
+      if (!trustedSender && messageType === "getSiteUserConfig") {
+        return Promise.resolve(result).then(projectSiteUserConfigForContentScript) as ReturnType<typeof handler>;
       }
       return result;
     });

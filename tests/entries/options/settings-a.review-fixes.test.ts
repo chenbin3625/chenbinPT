@@ -288,3 +288,107 @@ describe("OPTIONSSETTINGS-8：站点编辑器必填提示走 i18n", () => {
     }
   });
 });
+
+// ── F2-Low-07 / Low-08：SetSite 编辑器的排序号与跨次打开残留 ────────────────────
+
+describe("F2-Low-07：排序号 0 不被当成未填写", () => {
+  it("sortIndex=0 时既没有必填错误，也不会把「确定」置灰", async () => {
+    const pinia = prepareOptionsPinia();
+    meta.getSiteMetadata.mockResolvedValue(SITE_A_METADATA);
+    meta.getSiteUserConfig.mockResolvedValue({
+      url: "https://a.example/",
+      sortIndex: 0,
+      inputSetting: { passkey: "key" },
+    });
+
+    const { default: Editor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const draft = ref<any>({ url: "https://a.example/", sortIndex: 0, inputSetting: { passkey: "key" } });
+    let formValid: boolean | undefined;
+    const Root = defineComponent({
+      setup() {
+        provide("storedSiteUserConfig", draft);
+        return () =>
+          h(Editor as any, {
+            modelValue: "site-a",
+            "onUpdate:formValid": (v: boolean) => (formValid = v),
+          });
+      },
+    });
+
+    const view = mountOptionsView(Root, { pinia });
+    try {
+      await view.settle(150);
+
+      const sortItem = Array.from(view.host.querySelectorAll(".ant-form-item")).find(
+        (node) => node.querySelector("label")?.textContent?.trim() === i18nInstance.global.t("common.sortIndex"),
+      );
+      expect(sortItem, "应渲染出排序号表单项").toBeDefined();
+      expect(sortItem!.querySelector(".ant-form-item-explain")?.textContent ?? "", "排序号 0 不应触发必填错误").toBe(
+        "",
+      );
+      expect(formValid, "sortIndex=0 时表单应合法").toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe("F2-Low-08：再次打开编辑对话框时重置自定义 URL 草稿", () => {
+  it("上次输入到一半的非法自定义 URL 不会残留到下一次打开（确定不会莫名置灰）", async () => {
+    const pinia = prepareOptionsPinia();
+    const stored = {
+      url: "https://custom.example/",
+      sortIndex: 100,
+      // SITE_A_METADATA 的 passkey 是必填项；给齐值，让本用例只关注自定义 URL 的残留
+      inputSetting: { passkey: "key" },
+    };
+    meta.sites["site-a"] = stored;
+    meta.getSiteMetadata.mockResolvedValue(SITE_A_METADATA);
+    meta.getSiteUserConfig.mockImplementation(async (siteId: string) => meta.sites[siteId] ?? { inputSetting: {} });
+
+    const open = ref(false);
+    const { default: EditDialog } = await import("@/options/views/Settings/SetSite/EditDialog.vue");
+    const Root = defineComponent({
+      setup: () => () =>
+        h(EditDialog as any, {
+          modelValue: open.value,
+          "onUpdate:modelValue": (v: boolean) => (open.value = v),
+          siteId: "site-a",
+        }),
+    });
+
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const customUrlInput = () =>
+      Array.from(document.querySelectorAll<HTMLInputElement>(".ant-modal input.ant-input")).find(
+        (input) => input.placeholder === i18nInstance.global.t("SetSite.editor.customUrlPlaceholder"),
+      );
+    const okButton = () => document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!;
+
+    const view = mountOptionsView(Root, { pinia });
+    try {
+      open.value = true;
+      await view.settle(200);
+      expect(customUrlInput(), "应渲染出自定义 URL 输入框").toBeDefined();
+      expect(customUrlInput()!.value, "第一次打开应回显已保存的自定义 URL").toBe("https://custom.example/");
+
+      // 输入一半的非法值
+      customUrlInput()!.value = "not-a-url";
+      customUrlInput()!.dispatchEvent(new Event("input", { bubbles: true }));
+      await view.settle(100);
+      expect(okButton().disabled, "非法自定义 URL 时确定应禁用").toBe(true);
+
+      open.value = false;
+      await view.settle(150);
+      open.value = true;
+      await view.settle(200);
+
+      expect(customUrlInput()!.value, "再次打开时应回到已保存的 URL，而不是上次的残留值").toBe(
+        "https://custom.example/",
+      );
+      expect(okButton().disabled, "残留的非法草稿不应让确定一直置灰").toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+});

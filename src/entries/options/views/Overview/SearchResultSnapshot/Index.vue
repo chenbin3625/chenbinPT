@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { DeleteOutlined, EditOutlined, FileSearchOutlined, MinusOutlined } from "@ant-design/icons-vue";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { refDebounced } from "@vueuse/core";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
-import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
+import { formatDateTimeForTable } from "@/options/utils.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
@@ -30,7 +30,8 @@ const isStoreHydrating = useStoreHydrating(metadataStore);
 const showEditNameDialog = ref<boolean>(false);
 const showDeleteDialog = ref<boolean>(false);
 
-const tableHeader = [
+// F11：表头是 `t()` 求值的，若写成 setup 期常量，切语言后不会重新求值（页面其它文案会变、列头停在旧语言）
+const tableHeader = computed<DataTableHeader[]>(() => [
   {
     title: t("SearchResultSnapshot.table.header.name"),
     key: "name",
@@ -55,28 +56,48 @@ const tableHeader = [
     sortable: false,
     alwaysShow: true,
   },
-] as DataTableHeader[];
+]);
 const tableSelected = ref<TSearchSnapshotKey[]>([]);
 const tableWaitFilter = ref("");
 const tableFilter = refDebounced(tableWaitFilter, 500); // 延迟搜索过滤词的生成
 
 const columns = computed(() =>
-  toAntdColumns(tableHeader, {
+  toAntdColumns(tableHeader.value, {
     sortBy: configStore.tableBehavior.SearchResultSnapshot.sortBy,
     multiSort: configStore.enableTableMultiSort,
   }),
 );
 const tableData = computed(() =>
-  metadataStore.getSearchSnapshotList.filter((item) => matchesHeaders(item, tableFilter.value, tableHeader)),
+  metadataStore.getSearchSnapshotList.filter((item) => matchesHeaders(item, tableFilter.value, tableHeader.value)),
 );
 const pagination = computed(() =>
-  toPagination(configStore.tableBehavior.SearchResultSnapshot.itemsPerPage, (v) =>
-    configStore.updateTableBehavior("SearchResultSnapshot", "itemsPerPage", v),
+  // F16：历史配置里的 itemsPerPage = -1 会让 a-table 完全不渲染分页器（连「每页条数」都改不回来），
+  // 与 SearchEntity 保持一致：不允许「不分页」这个历史取值。
+  toPagination(
+    configStore.tableBehavior.SearchResultSnapshot.itemsPerPage,
+    (v) => configStore.updateTableBehavior("SearchResultSnapshot", "itemsPerPage", v),
+    { allowUnpaginated: false },
   ),
 );
 
 function onSelectionChange(keys: (string | number)[]) {
   tableSelected.value = keys as TSearchSnapshotKey[];
+}
+
+// F4：删除（单条/批量/其他标签页）成功后，选择集里不能残留已不存在的 id；
+// 否则底部「移除」按钮仍可用，并对已删除的快照再次发送删除消息。
+watch(
+  () => metadataStore.getSearchSnapshotList.map((item) => item.id),
+  (snapshotIds) => {
+    if (tableSelected.value.length === 0) return;
+    const existing = new Set(snapshotIds);
+    const nextSelected = tableSelected.value.filter((id) => existing.has(id));
+    if (nextSelected.length !== tableSelected.value.length) tableSelected.value = nextSelected;
+  },
+);
+
+function clearTableSelection() {
+  tableSelected.value = [];
 }
 
 function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
@@ -136,7 +157,12 @@ async function confirmDeleteSearchSnapshot(searchSnapshotId: TSearchSnapshotKey)
       :loading="isStoreHydrating"
       :pagination="pagination"
       :row-key="'id'"
-      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
+      :row-selection="{
+        selectedRowKeys: tableSelected,
+        onChange: onSelectionChange,
+        // F4：筛选改变 dataSource 后，antd 默认会丢弃「不在当前 dataSource 里」的已选 key
+        preserveSelectedRowKeys: true,
+      }"
       class="table-stripe table-header-no-wrap"
       @change="onTableChange"
     >
@@ -173,5 +199,10 @@ async function confirmDeleteSearchSnapshot(searchSnapshotId: TSearchSnapshotKey)
   </a-card>
 
   <EditNameDialog v-model="showEditNameDialog" :edit-id="toEditId!" />
-  <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteSearchSnapshot" />
+  <DeleteDialog
+    v-model="showDeleteDialog"
+    :to-delete-ids="toDeleteIds"
+    :confirm-delete="confirmDeleteSearchSnapshot"
+    @all-delete="clearTableSelection"
+  />
 </template>

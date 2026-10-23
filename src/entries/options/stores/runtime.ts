@@ -24,6 +24,7 @@
 
 import { defineStore } from "pinia";
 import { message } from "ant-design-vue";
+import type { EResultParseStatus } from "@ptd/site";
 import type { IRuntimePiniaStorageSchema, ISearchData, SnackbarMessageOptions } from "@/shared/types.ts";
 
 const RUNTIME_STORE_KEY = "__ptd_runtime_store"; // 内容脚本侧退化为纯内存（见下方 B-19 说明），该 key 只用于扩展页面
@@ -104,11 +105,110 @@ function copySafeRecord(raw: Record<string, any>): Record<string, any> {
 }
 
 /**
+ * D2-High-01：恢复时「收尾」那些不可能还有对应任务的 in-flight 标记。
+ *
+ * 搜索队列（PQueue）、用户信息刷新任务都只活在内存里：页面刷新 / 换上下文后，
+ * 持久化到 sessionStorage 的 `isSearching`、`searchPlan[*].status = waiting|working`、
+ * `userInfo.flushPlan[site] = true` 都成了「永远等不到结果」的僵尸状态
+ * （顶栏搜索按钮被禁用、状态弹窗里计划永远停在 waiting、MyData 顶部显示「取消刷新」）。
+ *
+ * 这里在恢复阶段直接把它们改写成终态：
+ * - `isSearching` 一律置 false（恢复出来的搜索结果仍然保留，见 runtimeStorePersistence 用例）；
+ * - `searchPlan` 里 waiting/working 的计划改写为 passParse + `i18n.userCancel`（与
+ *   `SearchEntity/utils/search.ts` 的 `cancelSearchQueue()` 收尾语义一致）；
+ * - `flushPlan` 一律置 false。
+ *
+ * 用字面量而不是从 `@ptd/site` import 枚举：runtime store 会被 content-script 引用，而
+ * runtimeStore*.test.ts 不加载站点包的构建期常量；类型上仍以 `EResultParseStatus` 约束，
+ * 枚举顺序变化会在类型检查阶段报错。
+ */
+const SEARCH_PLAN_STATUS_WAITING: EResultParseStatus.waiting = 1;
+const SEARCH_PLAN_STATUS_WORKING: EResultParseStatus.working = 2;
+const SEARCH_PLAN_STATUS_PASS_PARSE: EResultParseStatus.passParse = 5;
+
+/** 本次恢复是否把某些「进行中」状态收尾了（供 UI/测试判断要不要提示用户） */
+export interface IRuntimeRestoreInterruptions {
+  search: boolean;
+  mediaServerSearch: boolean;
+  userInfo: boolean;
+}
+
+const restoreInterruptions: IRuntimeRestoreInterruptions = {
+  search: false,
+  mediaServerSearch: false,
+  userInfo: false,
+};
+
+export function getRuntimeRestoreInterruptions(): IRuntimeRestoreInterruptions {
+  return { ...restoreInterruptions };
+}
+
+/**
+ * OUI-2：取走某一类「恢复时被收尾」的中断标记（消费后置 false，同一会话只提示一次）。
+ *
+ * 背景：`sanitizeSearchData` / `sanitizeUserInfo` 会在页面加载时把恢复出来的 in-flight 状态
+ * 收尾为终态，并在这里记下「发生过中断」。此前生产代码没有任何调用者，用户刷新页面后看到的是
+ * 「部分结果 + 共找到 N 条」，不知道上次搜索其实被中断了。
+ *
+ * 返回本次消费前是否处于「中断」状态；调用方据此决定是否给一次可见提示。
+ */
+export function consumeRuntimeRestoreInterruption(kind: keyof IRuntimeRestoreInterruptions): boolean {
+  if (!restoreInterruptions[kind]) return false;
+  restoreInterruptions[kind] = false;
+  return true;
+}
+
+/**
+ * 把**单个**搜索计划收尾（waiting/working → passParse + `i18n.userCancel`）。
+ * 就地把传入对象改到终态，返回是否真的改写过。
+ *
+ * 恢复阶段（`normalizeRestoredSearchPlan`，操作的是从 JSON 解析出来的普通对象）与
+ * UI 侧协作 API（`reconcileRuntimeInFlightState`，操作的是 store 里的响应式对象）共用这一份规则。
+ */
+function markSearchPlanInterrupted(item: Record<string, any>): boolean {
+  if (!isPlainRecord(item)) return false;
+  if (item.status !== SEARCH_PLAN_STATUS_WAITING && item.status !== SEARCH_PLAN_STATUS_WORKING) return false;
+
+  item.status = SEARCH_PLAN_STATUS_PASS_PARSE;
+  item.statusMsg = typeof item.statusMsg === "string" && item.statusMsg ? item.statusMsg : "i18n.userCancel";
+  if (!(typeof item.endAt === "number" && item.endAt > 0)) {
+    item.endAt = Date.now();
+  }
+  return true;
+}
+
+/**
+ * 把 searchPlan 里的 waiting/working 计划改写为「已取消」终态。
+ * 返回是否真的改写过（用于决定要不要提示用户「上次搜索已被中断」）。
+ */
+function normalizeRestoredSearchPlan(rawPlan: Record<string, any>): {
+  plan: Record<string, any>;
+  interrupted: boolean;
+} {
+  const plan = copySafeRecord(rawPlan);
+  let interrupted = false;
+
+  for (const [key, item] of Object.entries(plan)) {
+    if (!isPlainRecord(item)) continue;
+    const nextItem = { ...item };
+    if (markSearchPlanInterrupted(nextItem)) {
+      interrupted = true;
+      plan[key] = nextItem;
+    }
+  }
+
+  return { plan, interrupted };
+}
+
+/**
  * B-19：恢复前做形状校验。
  *
  * 修复前只判断 `typeof parsed === "object"`，于是宿主页面预置的任意 JSON（字段类型完全不对、
  * 甚至带原型污染键）都会被直接塞进 store。这里只接受类型正确的已知字段：
  * 关键字段（searchKey / searchResult）类型不对就整体视为无效，回落到初始值。
+ *
+ * D2-High-01：`isSearching` **不再**按持久化值恢复 —— 搜索队列是纯内存对象，
+ * 恢复出来的 true 没有任何任务会把它改回 false（见 normalizeRestoredSearchPlan 的说明）。
  */
 function sanitizeSearchData(raw: unknown): ISearchData | undefined {
   if (!isPlainRecord(raw)) return undefined;
@@ -118,13 +218,16 @@ function sanitizeSearchData(raw: unknown): ISearchData | undefined {
   data.searchKey = raw.searchKey;
   data.searchResult = raw.searchResult;
   if (typeof raw.snapshot === "string") data.snapshot = raw.snapshot;
-  if (typeof raw.isSearching === "boolean") data.isSearching = raw.isSearching;
   if (typeof raw.startAt === "number") data.startAt = raw.startAt;
   if (typeof raw.endAt === "number") data.endAt = raw.endAt;
   if (typeof raw.searchPlanKey === "string") data.searchPlanKey = raw.searchPlanKey;
   if (isPlainRecord(raw.searchPlan)) {
-    data.searchPlan = copySafeRecord(raw.searchPlan);
+    const { plan, interrupted } = normalizeRestoredSearchPlan(raw.searchPlan);
+    data.searchPlan = plan;
+    restoreInterruptions.search = interrupted;
   }
+  // 无论持久化值是什么，恢复后都没有在跑的搜索任务
+  data.isSearching = false;
   return data;
 }
 
@@ -135,7 +238,11 @@ function sanitizeMediaServerSearchData(raw: unknown): IRuntimePiniaStorageSchema
   const data = initialMediaServerSearchData();
   data.searchKey = raw.searchKey;
   data.searchResult = raw.searchResult;
-  if (typeof raw.isSearching === "boolean") data.isSearching = raw.isSearching;
+  // D2-High-01 孪生：媒体服务器搜索同样是纯内存队列
+  if (raw.isSearching === true) {
+    restoreInterruptions.mediaServerSearch = true;
+  }
+  data.isSearching = false;
   if (isPlainRecord(raw.searchStatus)) {
     data.searchStatus = copySafeRecord(raw.searchStatus);
   }
@@ -148,7 +255,11 @@ function sanitizeUserInfo(raw: unknown): IRuntimePiniaStorageSchema["userInfo"] 
   const flushPlan: Record<string, boolean> = {};
   for (const [siteId, value] of Object.entries(raw.flushPlan)) {
     if (typeof value === "boolean") {
-      flushPlan[siteId] = value;
+      // F1-04：刷新任务在内存里，恢复出来的 true 永远等不到 finally 置 false
+      if (value) {
+        restoreInterruptions.userInfo = true;
+      }
+      flushPlan[siteId] = false;
     }
   }
   return { flushPlan: copySafeRecord(flushPlan) };
@@ -322,4 +433,52 @@ export function setupRuntimeStorePersistence(store: ReturnType<typeof useRuntime
     },
     { detached: true, flush: "post" },
   );
+}
+
+/**
+ * D2-High-01 / F17 协作 API：把**当前 store 实例**里不可能还有对应任务的 in-flight 标记收尾。
+ *
+ * 恢复阶段（`sanitizeSearchData` / `sanitizeUserInfo`）已经自动做过一次；这里导出成显式函数，
+ * 供 UI（F3 的 SearchEntity 在进入搜索页、或 `$onReady` 之后再调一次）兜底 ——
+ * 覆盖「同一页面会话里队列被意外清空 / 其它上下文把状态写回」等恢复阶段之外的情形。
+ *
+ * 幂等：没有可收尾的状态时返回 `{search:false, mediaServerSearch:false, userInfo:false}`，不产生写入。
+ *
+ * 收尾语义（与 `SearchEntity/utils/search.ts` 的 `cancelSearchQueue()` 一致）：
+ * - `search.isSearching → false`；
+ * - `search.searchPlan[*]` 中 waiting/working → `passParse` + `statusMsg: "i18n.userCancel"`，并补 `endAt`；
+ * - `mediaServerSearch.isSearching → false`；
+ * - `userInfo.flushPlan[*]` 全部 → false。
+ *
+ * @param runtimeStore 目标 store 实例；省略时取当前 active pinia 的 runtime store。
+ * @returns 每一块是否发生了改写（调用方可据此提示「上次搜索/刷新已被中断」）。
+ */
+export function reconcileRuntimeInFlightState(
+  runtimeStore: ReturnType<typeof useRuntimeStore> = useRuntimeStore(),
+): IRuntimeRestoreInterruptions {
+  const result: IRuntimeRestoreInterruptions = { search: false, mediaServerSearch: false, userInfo: false };
+
+  for (const plan of Object.values(runtimeStore.search.searchPlan ?? {})) {
+    if (markSearchPlanInterrupted(plan as Record<string, any>)) {
+      result.search = true;
+    }
+  }
+  if (runtimeStore.search.isSearching) {
+    runtimeStore.search.isSearching = false;
+    result.search = true;
+  }
+
+  if (runtimeStore.mediaServerSearch.isSearching) {
+    runtimeStore.mediaServerSearch.isSearching = false;
+    result.mediaServerSearch = true;
+  }
+
+  for (const [siteId, isFlushing] of Object.entries(runtimeStore.userInfo.flushPlan ?? {})) {
+    if (isFlushing) {
+      runtimeStore.userInfo.flushPlan[siteId] = false;
+      result.userInfo = true;
+    }
+  }
+
+  return result;
 }

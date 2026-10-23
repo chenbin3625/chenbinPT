@@ -32,8 +32,12 @@ export const siteMetadata: ISiteMetadata = {
         { name: "MV/演唱会", value: 406 },
         { name: "Sports/体育", value: 407 },
         { name: "Music/音乐", value: 409 },
-        { name: "Othes/其他", value: 410 },
+        // L9（延期）：站点分类 id 从 407 直接跳到 409/410，缺 408；未取得站点真实分类列表前不臆测 408 的含义。
+        // L9：原为 "Othes/其他"（拼写笔误，会随搜索方案导出被用户照抄）
+        { name: "Others/其他", value: 410 },
       ],
+      // L1：与同文件 team 及 NexusPHP 主流约定一致（cat<id>=1，且支持多选）
+      cross: { mode: "append" },
     },
     {
       name: "制作组",

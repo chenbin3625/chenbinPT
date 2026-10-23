@@ -3,7 +3,7 @@ import { cloneDeep } from "es-toolkit";
 export * from "./types";
 export * from "./utils";
 
-import { getHostFromUrl, restoreSecureLink } from "./utils/html.ts";
+import { restoreSecureLink } from "./utils/html.ts";
 import type { ISiteMetadata, ISiteUserConfig, TSiteID } from "./types";
 import type BittorrentSite from "./schemas/AbstractBittorrentSite";
 import type PrivateSite from "./schemas/AbstractPrivateSite";
@@ -101,12 +101,19 @@ export async function getSite<TYPE extends "private" | "public">(
     SiteClass = schemaModule.default;
   }
 
-  // 补全 userConfig 中可能缺失的内容
-  userConfig.allowSearch ??= checkSiteMetadataAllow(siteMetadata, "search");
-  userConfig.allowQueryUserInfo ??= checkSiteMetadataAllow(siteMetadata, "userInfo");
-  userConfig.showMessageCount ??= checkSiteMetadataAllow(siteMetadata, "userInfo");
+  /**
+   * 补全 userConfig 中可能缺失的内容。
+   *
+   * N1：必须写到副本上，不能原地修改调用方对象 —— content-script 传入的是 Pinia store action
+   * 直接返回的 state 引用（`getSiteUserConfig` 未命中 flush 分支时返回 `state.sites[siteId]`），
+   * 原地写会变成 action 之外的 state 变更（且这些默认值不会持久化，UI 与 offscreen 读到不同值）。
+   * 同时删除了从未被任何代码读取的 `showMessageCount` 死字段。
+   */
+  const config: ISiteUserConfig = { ...userConfig };
+  config.allowSearch ??= checkSiteMetadataAllow(siteMetadata, "search");
+  config.allowQueryUserInfo ??= checkSiteMetadataAllow(siteMetadata, "userInfo");
 
   // @ts-expect-error
   // 原因：SiteClass 来自动态 import 的 schema/definition 模块，其构造签名在联合类型下无法被静态收窄
-  return new SiteClass(siteMetadata, userConfig);
+  return new SiteClass(siteMetadata, config);
 }

@@ -268,14 +268,24 @@ export interface ISiteMetadata {
    */
   noLoginAssert?: {
     /**
-     * HTTP 状态码，表示未登录的状态码，未设置时默认 [401, 403, 502, 504]
-     * 如果站点响应的状态码在该数组中，则认为未登录
+     * HTTP 状态码，表示未登录的状态码，未设置时默认 [401, 403]。
+     * 如果站点响应的状态码在该数组中，则认为未登录。
+     *
+     * 历史默认值曾包含 502/504，导致网关抖动被判成「登录失效」且不重试（E14）；现在 5xx 交给
+     * `ServerError`（可重试）。确有站点用 502 表示未登录的，请在该站点定义里显式声明。
      */
     httpStatusCodes?: number[] | false;
 
     /**
-     * 返回的 responseURL 中，哪些 URL 模式表示未登录，未设置时默认为 [/doLogin|login|verify|checkpoint|returnto/gi]
-     * 如果请求的 URL 匹配该数组中的任意一个，则认为未登录
+     * 未登录 URL 判据，未设置时使用内置默认值：
+     * - 匹配 **pathname 上的登录端点**（`/login.php`、`/takelogin.php`、`/doLogin`、`/verify`、`/checkpoint` 等）；
+     * - 匹配 **查询串登录端点**（`?action=login`、`?do=login`、`?page=login`、`?mode=login`，覆盖 Discuz
+     *   `member.php?mod=logging&action=login`、phpBB `ucp.php?mode=login` 等 pathname 不含 login 的形态）；
+     * - 匹配 `returnto` 查询参数；
+     * - `/users/xxx`、`/profile/xxx` 这类「最后一段是用户名」的路径跳过 pathname 端点匹配。
+     *
+     * 显式配置该字段时保持旧语义：对完整 responseURL 做正则匹配（站点自定义负责避免误判）。
+     * 历史默认值是对完整 responseURL 的裸子串匹配，搜索关键词/用户名包含 login 等词会误判（E13）。
      */
     urlPatterns?: TPatterns | false;
 
@@ -358,6 +368,19 @@ export interface ISiteMetadata {
      * 此处的 requestDelay 仅用于 process 中未定义时的回落，或部分 schemas 额外步骤中使用
      */
     requestDelay?: number;
+
+    /**
+     * 「关键字段」白名单：声明了 selector 的这些字段若在页面/接口上**部分失配**（不是全量失配），
+     * 也视为页面改版/软错误页，整次用户信息刷新报 parseError，而不是把字段回写成 0/""。
+     *
+     * 不设置时默认为 `["uploaded", "downloaded"]`（见 AbstractPrivateSite.checkUserInfoSelectorMatches）。
+     * 这是给真实站点的**逃生口**：若某站点确实会在某些账号/页面变体上缺少其中某个字段，
+     * 可在定义里覆写该数组排除它（不要通过删除默认语义来放宽其它站点）。
+     *
+     * 注意：影响基于 `AbstractPrivateSite` 的 process 流程，以及显式调用 checkUserInfoSelectorMatches
+     * 的自定义用户信息路径（Unit3D / GazelleJSONAPI）。
+     */
+    criticalFields?: string[];
 
     /**
      * donorConfig 配置捐赠者（黄星）的特殊权限

@@ -47,6 +47,51 @@ interface DnrRuleEntry {
 const dnrRuleCache = new Map<string, DnrRuleEntry>();
 
 /**
+ * 已发出、尚未确认完成的「按 id 删除规则」promise（缺陷清单 G2）。
+ *
+ * 为什么需要它：`releaseDnrRule` 的删除是 fire-and-forget，而「同一内容的下一条请求重新安装」
+ * 是另一条独立的 runtime 消息。旧实现隐式依赖「消息通道严格 FIFO、background 的 remove 一定
+ * 早于后续 update」，一旦乱序，规则会被删掉而本地缓存已清空 installing ⇒ 不会重装，
+ * 该请求就静默少了 Referer/Origin/User-Agent（表现为 CSRF 随机失败/站点 403）。
+ * 现在删除 promise 按 ruleId 记录下来，安装前 `await` 同 id 的删除，顺序由代码显式保证。
+ *
+ * 规则 id 由 cacheKey（含上下文标识）确定性派生，因此跨上下文不会撞 id，
+ * 这张表只可能被本上下文自己填。
+ */
+const pendingRuleRemovals = new Map<number, Promise<void>>();
+
+/**
+ * 按 id 删除会话规则，并把删除 promise 串进 {@link pendingRuleRemovals}。
+ *
+ * 同 id 没有在途删除时**同步**发出消息（保持原有「请求结束即发删除」的时序，避免把删除推迟
+ * 到微任务之后）；只有上一次删除还没完成时才排在其后。
+ *
+ * 删除失败不改变控制流（规则会随会话结束清理），但保留可诊断日志；
+ * 返回的 promise 永不 reject，供安装侧无条件 `await`。
+ */
+function scheduleDnrRuleRemoval(ruleId: number): Promise<void> {
+  const previous = pendingRuleRemovals.get(ruleId);
+  const removal: Promise<void> = (
+    previous
+      ? previous.then(() => sendMessage("removeDNRSessionRuleById", ruleId))
+      : sendMessage("removeDNRSessionRuleById", ruleId)
+  )
+    .then(
+      () => undefined,
+      (e) => {
+        console.warn(`[PTD] failed to remove DNR session rule ${ruleId}:`, e);
+      },
+    )
+    .finally(() => {
+      if (pendingRuleRemovals.get(ruleId) === removal) {
+        pendingRuleRemovals.delete(ruleId);
+      }
+    });
+  pendingRuleRemovals.set(ruleId, removal);
+  return removal;
+}
+
+/**
  * 当前 JS 上下文的唯一标识（缺陷清单 EXTENDSI18N-3）。
  *
  * 为什么必须把它并进 cacheKey：DNR **会话规则是扩展级共享**的（background 的
@@ -121,30 +166,68 @@ export function dnrRuleIdForCacheKey(cacheKey: string): number {
 export function toExactUrlRegexFilter(url: string): string {
   let normalized: string;
   try {
-    normalized = new URL(url).href;
+    const parsed = new URL(url);
+    parsed.hash = "";
+    normalized = parsed.href;
   } catch {
-    normalized = encodeURI(url);
+    normalized = encodeURI(url.split("#", 1)[0]);
   }
   const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return `^${escaped}(?:[?&#].*)?$`;
 }
 
+/**
+ * 等「同 id 的在途删除」最多 5s（G2 的活性兜底）。
+ *
+ * 串行化本身依赖一条 runtime 消息完成；若消息通道卡住（background 被杀/端口挂起），
+ * 无限等待会把「安装」也永久挂住 —— 与 G1 的租约问题是同一类活性缺陷。
+ * 超时后放行安装：此时删除可能晚到并删掉刚装的规则（退化为 G2 原来的风险窗口），
+ * 但这只发生在消息通道已经异常的情况下，优于永久不带任何请求头。
+ */
+const DNR_RULE_REMOVAL_WAIT_TIMEOUT = 5_000;
+
+function waitForPendingRuleRemoval(ruleId: number): Promise<void> {
+  const pending = pendingRuleRemovals.get(ruleId);
+  if (!pending) {
+    return Promise.resolve();
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    pending,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, DNR_RULE_REMOVAL_WAIT_TIMEOUT);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  });
+}
+
 function installDnrRule(cacheKey: string, rule: chrome.declarativeNetRequest.Rule): Promise<number> {
-  const entry: DnrRuleEntry = { ruleId: rule.id as number, inflight: 1, installing: null };
-  const installing = sendMessage("updateDNRSessionRules", { rule }).then(
-    () => {
-      entry.installing = null;
-    },
-    (e) => {
-      // 安装失败：立刻清掉缓存项，后续请求会重新安装。
-      // （旧实现先写缓存再 await 安装，失败后 30s 内命中缓存直接返回 → unsafe header 静默丢失）
-      dnrRuleCache.delete(cacheKey);
-      throw e;
-    },
-  );
+  const ruleId = rule.id as number;
+  const entry: DnrRuleEntry = { ruleId, inflight: 1, installing: null };
+  // 先等这条 id 上已经发出的删除完成（缺陷清单 G2）：删除与「同一内容的下一条请求重新安装」
+  // 是两条独立的 runtime 消息，若 background 处理 remove 晚于 update，规则会被删掉，
+  // 而本地缓存此时已把 installing 清空、inflight > 0 ⇒ 不会重装 ⇒ 该请求静默丢掉被剥离的请求头。
+  // 这里把「安装」串行化在同 id 的删除之后，顺序不再依赖消息通道的隐式 FIFO；
+  // 等待有上限（见 waitForPendingRuleRemoval），消息通道卡住时不会把安装永久挂住。
+  const installing = waitForPendingRuleRemoval(ruleId)
+    .then(() => sendMessage("updateDNRSessionRules", { rule }))
+    .then(
+      () => {
+        entry.installing = null;
+      },
+      (e) => {
+        // 安装失败：立刻清掉缓存项，后续请求会重新安装。
+        // （旧实现先写缓存再 await 安装，失败后 30s 内命中缓存直接返回 → unsafe header 静默丢失）
+        dnrRuleCache.delete(cacheKey);
+        throw e;
+      },
+    );
   entry.installing = installing;
   dnrRuleCache.set(cacheKey, entry);
-  return installing.then(() => entry.ruleId);
+  return installing.then(() => ruleId);
 }
 
 async function acquireDnrRule(cacheKey: string, rule: chrome.declarativeNetRequest.Rule): Promise<number> {
@@ -167,6 +250,9 @@ async function acquireDnrRule(cacheKey: string, rule: chrome.declarativeNetReque
  * 请求结束/失败后释放一次在途计数：最后一个在途请求结束即按 id 删除规则。
  * 规则不再靠 30s 空闲 TTL 存活，避免会话级规则长期改写所有匹配的扩展请求；
  * 并发批量请求仍共享同一条规则（P1-9 的复用收益保留）。
+ *
+ * 删除 promise 会登记到 {@link pendingRuleRemovals}（G2）：同 id 的下一次安装会先等它完成，
+ * 因此「删除 → 重装」不再是两条靠消息通道顺序兜底的并发消息。
  */
 function releaseDnrRule(config: AxiosRequestConfig | undefined): void {
   const cacheKey = (config as { dnrRuleCacheKey?: string } | undefined)?.dnrRuleCacheKey;
@@ -182,10 +268,7 @@ function releaseDnrRule(config: AxiosRequestConfig | undefined): void {
     return;
   }
   dnrRuleCache.delete(cacheKey);
-  // 删除失败不改变控制流（规则会随会话结束清理），但保留可诊断日志
-  sendMessage("removeDNRSessionRuleById", entry.ruleId).catch((e) =>
-    console.warn(`[PTD] failed to remove DNR session rule ${entry.ruleId}:`, e),
-  );
+  void scheduleDnrRuleRemoval(entry.ruleId);
 }
 
 export function setupReplaceUnsafeHeader(axios: AxiosInstance): AxiosAllowUnsafeHeaderInstance {

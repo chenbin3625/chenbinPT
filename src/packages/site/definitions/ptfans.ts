@@ -130,8 +130,8 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata.search,
     selectors: {
       ...SchemaMetadata.search!.selectors,
-      tags: [...SchemaMetadata.search!.selectors!.tags!, { name: "H&R", selector: "img.hitandrun" }],
-      // 虽然提供了 imdb, douban 的评分，但是没有 id 或者 url
+      // I5：NexusPHP 默认 tags 已包含 `img.hitandrun`（H&R），此处重复追加会让列表页解析产出两个同名标签。
+      // 虽然搜索后处理会 uniqBy，但 content-script 的列表页解析不走去重，故直接复用引擎默认值。
     },
   },
 
@@ -146,11 +146,23 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.userInfo!.selectors,
       hnrUnsatisfied: {
         selector: ['a[href*="myhr.php?userid="]'],
-        filters: [(query: string) => parseInt(query.split("/")?.[1] ?? "0")],
+        // E5-13：链接文本通常形如 `H&R: 2/1/5`，split("/") 后直接 parseInt 会得到 NaN。
+        // 与 NexusPHP 引擎默认实现保持一致用正则：未满足取第二个数字。
+        filters: [
+          (query: string | number) => {
+            const queryMatch = String(query ?? "").match(/\d+\s*\/\s*(\d+)/);
+            return queryMatch && queryMatch.length >= 2 ? parseInt(queryMatch[1], 10) : 0;
+          },
+        ],
       },
       hnrPreWarning: {
         selector: ['a[href*="myhr.php?userid="]'],
-        filters: [(query: string) => parseInt(query.split("/")?.[0] ?? "0")],
+        filters: [
+          (query: string | number) => {
+            const queryMatch = String(query ?? "").match(/\d+/);
+            return queryMatch && queryMatch.length >= 1 ? parseInt(queryMatch[0], 10) : 0;
+          },
+        ],
       },
     },
   },

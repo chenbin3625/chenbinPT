@@ -2,6 +2,7 @@
 import {
   CheckOutlined,
   CloseOutlined,
+  MinusOutlined,
   PlusOutlined,
   QuestionOutlined,
   SaveOutlined,
@@ -52,6 +53,15 @@ const verifiedItemsOrder = ref<string[]>([]); // 保持顺序
 const baseTorrent = ref<ITorrentInfoForVerification | null>(null);
 const verifiedCount = ref(0);
 const creating = ref(false);
+
+/**
+ * F5：`verifiedCount` 改为「按当前条目重算」而不是 `++/--`。
+ * 移除基准项会触发整批重新校验，同一项可能因为旧一轮的迟到回调被再次验证；
+ * 累加式计数会出现「已选择 N 项」与实际勾选数不一致（进而误禁用/误启用创建任务）。
+ */
+function recalcVerifiedCount() {
+  verifiedCount.value = Array.from(verifiedItems.value.values()).filter((item) => item.verified).length;
+}
 
 // 下载选项
 const selectedDownloaderId = ref<string>("");
@@ -169,7 +179,6 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
         item.torrent = torrent;
         item.verified = true;
         item.status = "downloaded";
-        verifiedCount.value++;
       } else {
         item.verified = false;
         item.status = "failed";
@@ -229,9 +238,6 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
     }
 
     result.torrent = torrent;
-    if (result.verified) {
-      verifiedCount.value++;
-    }
 
     if (!result.status) {
       result.status = result.verified ? "success" : "failed";
@@ -239,6 +245,8 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
 
     Object.assign(item, result);
   }
+
+  recalcVerifiedCount();
 }
 
 async function addToVerified(id: string) {
@@ -246,19 +254,48 @@ async function addToVerified(id: string) {
     const item = verifiedItems.value.get(id);
     if (item) {
       item.verified = true;
-      verifiedCount.value++;
+      recalcVerifiedCount();
     }
+  }
+}
+
+/**
+ * F5：移除基准项（index 0）后，其余条目是针对「旧基准」得出的验证结果，不能继续沿用 ——
+ * 否则新 index 0 会被标成「基准种子」，但其它条目的对比结果与创建出的辅种任务仍基于旧基准。
+ * 这里清空 baseTorrent 并按新顺序重新触发整批校验（新 index 0 自动成为基准）。
+ */
+function restartVerification() {
+  baseTorrent.value = null;
+  verifiedCount.value = 0;
+
+  for (const id of [...verifiedItemsOrder.value]) {
+    const item = verifiedItems.value.get(id);
+    if (!item) continue;
+
+    item.loading = true;
+    item.verified = false;
+    item.torrent = null;
+    item.error = false;
+    item.status = "downloading";
+
+    getTorrent(item.data, id)
+      .then((result) => verification(result, id))
+      .catch(() => verification(null, id));
   }
 }
 
 function removeVerifiedItem(id: string) {
   const item = verifiedItems.value.get(id);
   if (!item) return;
-  if (item.verified) {
-    verifiedCount.value--;
-  }
+
+  const wasBase = verifiedItemsOrder.value[0] === id;
   verifiedItems.value.delete(id);
   verifiedItemsOrder.value = verifiedItemsOrder.value.filter((itemId) => itemId !== id);
+  recalcVerifiedCount();
+
+  if (wasBase && verifiedItemsOrder.value.length > 0) {
+    restartVerification();
+  }
 }
 
 function reDownload(id: string) {
@@ -419,18 +456,22 @@ async function createKeepUploadTask() {
               <SyncOutlined style="color: var(--ptd-success)" />
             </a-button>
 
+            <!-- F5：状态图标 + 独立的移除入口。修复前 X 只在未通过验证时显示，
+                 已校验（含手动「+」加入）的条目无法移除，用户只能关掉弹窗重来。 -->
             <a-button
               :loading="verifiedItems.get(id)!.loading"
               :title="statusText[verifiedItems.get(id)!.status]"
               type="text"
             >
               <CheckOutlined v-if="verifiedItems.get(id)!.verified" style="color: var(--ptd-success)" />
-              <CloseOutlined
-                v-else
-                :title="t('SearchEntity.KeepUploadDialog.removeFromKeepUpload')"
-                @click.stop="removeVerifiedItem(id)"
-                style="color: var(--ptd-danger)"
-              />
+              <CloseOutlined v-else style="color: var(--ptd-danger)" />
+            </a-button>
+            <a-button
+              :title="t('SearchEntity.KeepUploadDialog.removeFromKeepUpload')"
+              type="text"
+              @click.stop="removeVerifiedItem(id)"
+            >
+              <MinusOutlined />
             </a-button>
           </div>
         </a-list-item>

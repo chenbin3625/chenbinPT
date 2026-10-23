@@ -47,10 +47,10 @@ export default tseslint.config(
       // 文档与临时工作目录
       "docs/**",
       ".tmp-*/**",
-      // 构建脚本：vite/** 是 Node 侧的一次性构建工具，没有站点日志通道，console 是其正常输出手段；
-      // 因此整体 ignore，而不是逐条 override 打开 no-console。
-      "vite/**",
       "coverage/**",
+      // 注意：vite/** 不再整体忽略（G11）。它过去因 no-console 被整体 ignore，
+      // 代价是 generateWebextLocales.ts 这类「构建期会写文件」的插件也失去 no-empty 保护；
+      // 现在由下面的 ptd/node-scripts 块在「允许 console、保留 no-empty」的前提下覆盖。
     ],
   },
 
@@ -114,6 +114,85 @@ export default tseslint.config(
       vue,
     },
     rules: enabledRules,
+  },
+
+  /**
+   * 构建脚本 / vite 插件 / 测试的覆盖（G11）。
+   *
+   * 旧配置只对 src 目录启用规则：scripts、tests、`.mjs` 配置与 `.mts` 完全不参与 lint，
+   * `vite/**` 又被整体 ignore（为了 no-console）—— 而这几个位置恰好是
+   * `no-floating-promises`（`vi.waitFor`、异步断言、脚本入口）与 `no-empty`（静默吞错）
+   * 最容易踩的地方。
+   *
+   * 覆盖策略（不新增豁免）：这些上下文允许 console（命令行/构建工具的正常输出手段），
+   * 因此 `no-console: off`；`no-empty` 保持 error。
+   *
+   * 类型感知规则只加在**属于 tsconfig program** 的文件上：
+   * - vite 目录下的 `.ts` 与 `vite.config.ts` 在 `tsconfig.node.json` 里，可以启用 `no-floating-promises`；
+   * - `vitest.config.ts` 在 `tsconfig.json` 里；
+   * - scripts 下的 `.mjs` 与 tests 目前不在任何 program 内，给它们建 project 属测试体系重构，
+   *   因此只做非类型规则覆盖（见 docs/review-2026-10-23/fix-reports/g-tooling.md 的延期项）。
+   * 注意：**不要**对有 `.mjs` 的块设置 `projectService` —— typescript-eslint 会把这些文件
+   * 当成「不属于任何 project」直接报解析错误。
+   */
+  {
+    name: "ptd/node-scripts",
+    files: ["scripts/**/*.mjs", "*.config.mjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      parser: tseslint.parser,
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      "no-console": "off",
+      "no-empty": "error",
+    },
+  },
+  {
+    name: "ptd/vite-ts",
+    files: ["vite/**/*.ts", "vite.config.ts", "vitest.config.ts"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      parser: tseslint.parser,
+      globals: {
+        ...globals.node,
+      },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir,
+      },
+    },
+    plugins: {
+      "@typescript-eslint": tseslint.plugin,
+    },
+    rules: {
+      "no-console": "off",
+      "no-empty": "error",
+      "@typescript-eslint/no-floating-promises": "error",
+    },
+  },
+  {
+    name: "ptd/tests",
+    // task-12：`.mjs` 测试脚本（如 tests/entries/content-script/advanceListDialog.browser.mjs、
+    // tests/packages/site/utils/oracle/selector-oracle.mjs）此前不在任何 lint 配置里，
+    // 空 catch / 其它错误只能靠人眼发现；这里一并覆盖（`.mjs` 无类型信息，不启用类型感知规则）。
+    files: ["tests/**/*.ts", "tests/**/*.mts", "tests/**/*.mjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      parser: tseslint.parser,
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      "no-console": "off",
+      "no-empty": "error",
+    },
   },
 
   // 用 @eslint/js 的 recommended 规则集约束「lint 配置自身」：

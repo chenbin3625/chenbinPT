@@ -7,8 +7,9 @@ import {
   ISocialSitePageInformation,
   TSupportSocialSitePageParserMatches,
 } from "../types";
+import { normalizeSocialPosterUrl } from "../utils.ts";
 
-const imdbUrlPattern = /^(?:https?:\/\/)?(?:www\.)?imdb\.com\/title\/(tt\d+)\/?/;
+const imdbUrlPattern = /^(?:https?:\/\/)?(?:[\w-]+\.)?imdb\.com\/title\/(tt\d+)\/?/;
 
 export function build(id: string): string {
   return `https://www.imdb.com/title/${id}/`;
@@ -83,7 +84,7 @@ export function transformPtGen(data: IImdbPtGen): ISocialInformation {
     site: "imdb",
     id: parse(data.sid),
     title: titles.join(" / "),
-    poster: data.poster ?? "",
+    poster: normalizeSocialPosterUrl(data.poster) ?? "",
     ratingScore: data.imdb_rating_average ?? 0,
     ratingCount: data.imdb_votes ?? 0,
     createAt: +Date.now(),

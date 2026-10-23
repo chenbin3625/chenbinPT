@@ -6,8 +6,11 @@ import {
   type ISiteMetadata,
   type ITorrent,
   type ITorrentTag,
+  type IUserInfo,
+  type TLevelId,
 } from "../types";
 import Unit3D, { SchemaMetadata } from "../schemas/Unit3D.ts";
+import { cleanLevelName } from "../utils";
 import { get, set } from "es-toolkit/compat";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
@@ -261,10 +264,10 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
-  noLoginAssert: {
-    ...SchemaMetadata.noLoginAssert,
-    urlPatterns: [/doLogin|login|verify|checkpoint|returnto|twofactor/gi],
-  },
+  // E13：不再覆写 noLoginAssert.urlPatterns（旧值为对完整 responseURL 的裸子串匹配
+  // `/doLogin|login|verify|checkpoint|returnto|twofactor/gi`，Unit3D 的 `/users/{name}`、
+  // 搜索关键词里出现 login/verify 都会被误判未登录）。使用 AbstractPrivateSite 的默认判据：
+  // pathname 登录端点（含 twofactor）+ returnto 查询参数，401/403 状态码。
 
   userInfo: {
     pickLast: ["name", "id"],
@@ -313,18 +316,25 @@ export const siteMetadata: ISiteMetadata = {
       messageCount: {
         text: 0,
         selector: ["div.ds-user-stats a[href*='/hub/messages'] > span.ds-count"],
+        // E3-17：不再用魔数 11 表示「10+」。站点用 FontAwesome `fa-square-0..9` 表示未读数，
+        // 10+ / 改版后可能渲染成 `fa-square-plus`、`fa-square` 或数字角标文本：
+        // - 认得出的 0..9 直接取数字；
+        // - 明确的 plus 形态按 10 计（UI 无法在 schema 层加 "+"，但不再长期固定显示 11）；
+        // - 完全认不出时回落到元素文本里第一个数字，仍没有则 0（不能凭空显示 10+）。
         elementProcess: (element: Element) => {
           const icon = element.querySelector("i");
-          if (!icon) {
-            return 0;
+          const iconClass = icon ? Array.from(icon.classList).join(" ") : "";
+          const squareClass = iconClass.split(/\s+/).find((cls) => /^fa-square-\d+$/.test(cls));
+          if (squareClass) {
+            return parseInt(squareClass.replace("fa-square-", ""), 10) || 0;
           }
 
-          const squareClass = Array.from(icon.classList).find((cls) => /^fa-square-\d+$/.test(cls));
-          if (!squareClass) {
-            return 11;
+          if (iconClass && /fa-square(-plus)?\b|fa-plus\b/.test(iconClass)) {
+            return 10;
           }
 
-          return parseInt(squareClass.replace("fa-square-", ""), 10) || 11;
+          const textCount = String(element.textContent ?? "").match(/\d+/)?.[0];
+          return textCount ? parseInt(textCount, 10) : 0;
         },
       },
 
@@ -410,6 +420,29 @@ const HUNO_CHINESE_SHORT_RE = /Chinese|Mandarin|Cantonese|中文|中字|简体|�
 const HUNO_DUBBED_RE = /DUBBED/i;
 
 export default class Huno extends Unit3D {
+  /**
+   * E3b-B3：HUNO 的 6 个 levelRequirements 都只有 name/privilege、没有任何可判定门槛。
+   *
+   * `utils/level.ts` 的兜底在「整条阶梯都无可判定门槛」时会返回最高 user 等级，
+   * 因此只要站点把组名改成 `Silent Sister` / `Iron Fleet (New)` / 加图标前缀 / 返回本地化名称，
+   * 任何用户都会被判成最高级 Targaryen（等级徽标、「距下一级」、按等级筛选全部错）。
+   *
+   * 这里覆写为：名称（含 nameAka）去空白/小写后**全等**匹配已知等级；匹配不到返回 -1（未知），
+   * 不再走「无门槛 → 最高级」的兜底。站点真实 promotion 门槛未收录前，宁可显示未知也不冒认顶级。
+   */
+  protected override guessUserLevelId(userInfo: IUserInfo): TLevelId {
+    const cleanedUserLevelName = userInfo.levelName ? cleanLevelName(String(userInfo.levelName)) : "";
+    if (!cleanedUserLevelName) {
+      return -1;
+    }
+
+    const matchedLevel = (this.metadata.levelRequirements ?? []).find((level) =>
+      [level.name, ...(level.nameAka ?? [])].some((name) => cleanLevelName(name) === cleanedUserLevelName),
+    );
+
+    return matchedLevel ? matchedLevel.id : -1;
+  }
+
   protected override parseTorrentRowForTags(
     torrent: Partial<ITorrent>,
     row: object,
@@ -551,13 +584,25 @@ export default class Huno extends Unit3D {
       throw new NoUserInputError("Token"); // 未填写 Token 时直接拦截，避免请求被误判为需要登录
     }
 
-    // add token to headers
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      "X-Api-Token": token,
-      origin: this.url,
+    // E3-1：旧实现对所有请求**无条件**注入 X-Api-Token。导入的搜索方案可以把 requestConfig.url
+    // 设成任意外站地址（axios 对绝对 URL 会忽略 baseURL），token 就被直接送到攻击者服务器。
+    // 现在先解析最终目标，只有落在本站允许主机内才注入；外站绝对 URL 在发请求前直接失败。
+    const targetUrl = this.resolveRequestTarget(axiosConfig);
+    if (!this.isTrustedSiteUrl(targetUrl)) {
+      throw new Error(`[PTD] site '${this.metadata.id}' blocked request to untrusted host (huno api token)`);
+    }
+
+    // add token to headers（拷贝 config/headers，避免污染调用方对象或共享配置）
+    // 不再设置 `origin`：Origin 是浏览器禁止脚本设置的请求头（XHR/fetch 会直接丢弃），
+    // 保留它只会给人「已带 Origin」的错觉（E3b I-4）。
+    const config: AxiosRequestConfig = {
+      ...axiosConfig,
+      headers: {
+        ...(axiosConfig.headers ?? {}),
+        "X-Api-Token": token,
+      },
     };
 
-    return super.request<T>(axiosConfig, checkLogin);
+    return super.request<T>(config, checkLogin);
   }
 }

@@ -58,7 +58,6 @@ const ptdIcon = chrome.runtime.getURL("icons/logo/64.png");
 const ptdData = inject<IPtdData>("ptd_data", {});
 
 const el = useTemplateRef<HTMLElement>("el");
-provide("app", el);
 
 // 记录一下与右边界和下边界的距离
 const rightX = ref<number>(0);
@@ -109,8 +108,9 @@ void configStore
 
     // A-8：SPA 站点（Unit3D/Livewire 等）列表 → 详情是 pushState 导航，内容脚本不会重新执行，
     // 必须订阅 URL 变化并重新求值 pageType/站点实例（在 store 就绪后再装，避免水合竞态）。
+    // CS-2：只有悬浮菜单处于展开状态时才求值；收起时不白建站点实例，展开时由点击处理用当前 URL 求值。
     stopUrlWatcher?.(); // 幂等：$onReady 若重复触发，先释放上一轮的订阅，避免监听器累积
-    stopUrlWatcher = installPageTypeUrlWatcher(ptdData);
+    stopUrlWatcher = installPageTypeUrlWatcher(ptdData, { isActive: () => openSpeedDial.value });
 
     let { x: storeX = -100, y: storeY = -100 } = configStore.contentScript?.position ?? {};
     let { clientWidth, clientHeight } = document.documentElement;

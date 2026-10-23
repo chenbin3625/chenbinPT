@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import { computed, onUnmounted, ref, watch } from "vue";
-import PQueue from "p-queue";
 import { useI18n } from "vue-i18n";
 import { FireOutlined, ReloadOutlined, StarFilled } from "@ant-design/icons-vue";
 import type { ISocialRecommendationItem, TSocialRecommendationCategory } from "@ptd/social";
@@ -8,6 +7,11 @@ import type { ISocialRecommendationItem, TSocialRecommendationCategory } from "@
 import { sendMessage } from "@/messages.ts";
 import { EMPTY_PLACEHOLDER_IMAGE } from "@/options/plugins/antd.ts";
 import { resolveColor } from "@/shared/colors.ts";
+
+import {
+  createRecommendationEnrichmentQueue,
+  type IRecommendationEnrichmentQueue,
+} from "./recommendationEnrichmentQueue.ts";
 
 const { disabled } = defineProps<{
   disabled?: boolean;
@@ -143,6 +147,8 @@ onUnmounted(() => {
     flushEnrichedTimer = undefined;
   }
   pendingEnrichedItems.clear();
+  // I-6：组件卸载后不再继续发富化请求
+  stopEnrichmentQueue();
 });
 
 function getVisibleRecommendationItems() {
@@ -161,6 +167,23 @@ function getVisibleRecommendationItems() {
   return visibleItems;
 }
 
+/**
+ * 当前正在跑的富化队列（I-6）。面板关闭/组件卸载时停止尚未开始的任务：
+ * 旧实现只靠任务内的 `isRecommendationMenuOpen` 丢弃**写入**，已经排队的
+ * `getSocialRecommendationItem` 请求仍会一条条发完（最多 4 类 × 10 项 × 2 轮）。
+ *
+ * L3（复检）：`PQueue.clear()` 不会 settle 被丢弃任务的 `add()` promise，导致
+ * `await Promise.all(...)` 永久挂起。这里改用可中止的队列封装
+ * （`recommendationEnrichmentQueue.ts`），stop 时通过 AbortSignal 让所有 add promise settle。
+ */
+let activeEnrichmentQueue: IRecommendationEnrichmentQueue | null = null;
+
+function stopEnrichmentQueue() {
+  if (!activeEnrichmentQueue) return;
+  activeEnrichmentQueue.stop();
+  activeEnrichmentQueue = null;
+}
+
 async function enrichRecommendationItems(
   requestId: number,
   items: ISocialRecommendationItem[],
@@ -170,10 +193,11 @@ async function enrichRecommendationItems(
     return;
   }
 
-  const enrichmentQueue = new PQueue({ concurrency: recommendationItemEnrichmentConcurrency });
-  await Promise.all(
-    items.map((item) =>
-      enrichmentQueue.add(async () => {
+  const enrichmentQueue = createRecommendationEnrichmentQueue(recommendationItemEnrichmentConcurrency);
+  activeEnrichmentQueue = enrichmentQueue;
+  try {
+    for (const item of items) {
+      void enrichmentQueue.add(async () => {
         try {
           const result = await sendMessage("getSocialRecommendationItem", { item, enrichment });
           if (requestId !== recommendationRequestId || !isRecommendationMenuOpen.value) {
@@ -183,9 +207,14 @@ async function enrichRecommendationItems(
         } catch (error) {
           console.error("Failed to enrich social recommendation item", item, error);
         }
-      }),
-    ),
-  );
+      });
+    }
+    await enrichmentQueue.onIdle();
+  } finally {
+    if (activeEnrichmentQueue === enrichmentQueue) {
+      activeEnrichmentQueue = null;
+    }
+  }
 }
 
 async function enrichRecommendations(requestId: number) {
@@ -211,10 +240,12 @@ function getRecommendationPosterSrc(item: ISocialRecommendationItem) {
 
 watch(isRecommendationMenuOpen, (isOpen) => {
   if (isOpen) {
-    loadRecommendations();
+    void loadRecommendations();
   } else {
     // 关闭时把已到达的富化结果落盘，避免残留的定时器在下次打开时写入旧下标
     flushEnrichedRecommendationItems();
+    // I-6：取消尚未开始的富化请求，关闭面板后不再继续占用后台消息通道
+    stopEnrichmentQueue();
   }
 });
 </script>

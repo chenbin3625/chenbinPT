@@ -25,6 +25,14 @@ const BACKUP_KDF_ITERATIONS = 100_000;
 const RESTORE_FILE_CONCURRENCY = 4;
 
 /**
+ * 恢复上限（复检 P2-G）：备份 zip 是不可信输入（可能来自他人分享/被篡改/被替换成 zip bomb）。
+ * manifest 可以声明任意多条目，解压后也可能远超上传体积；这里给「条目数」与「累计解压体积」两个硬上限，
+ * 超过即拒绝整次恢复（而不是把 offscreen 内存打爆）。
+ */
+const MAX_BACKUP_FILE_ENTRIES = 512;
+const MAX_BACKUP_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
+
+/**
  * 备份服务器请求的默认超时（毫秒）。
  * 各 entity 之前都没有设置 timeout（axios 默认 0 = 永不超时），慢链路/对端挂死时会让备份流程永久 pending。
  */
@@ -97,7 +105,7 @@ export function hasBackupRetentionToApply(retention?: IBackupRetention): boolean
 }
 
 /**
- * 备份文件名：`PTD_backup_<yyyyMMddTHHmm>.zip`（本地时间，精确到分钟）。
+ * 旧备份名精确到分钟；新备份添加 UUID，避免同一分钟内覆盖同名对象。
  *
  * 生成（`getBackupFilename`）与保留策略过滤（`isBackupFilename`）必须共用这里的同一份格式定义：
  * 历史实现中生成用 `formatDate(..., "yyyyMMdd'T'HHmm")`（13 位、含字母 T），
@@ -110,7 +118,7 @@ const BACKUP_FILENAME_DATE_FORMAT = "yyyyMMdd'T'HHmm";
 
 /** 按约定的格式生成备份文件名 */
 export function getBackupFilename(date: Date = new Date()): string {
-  return `${BACKUP_FILENAME_PREFIX}${formatDate(date, BACKUP_FILENAME_DATE_FORMAT)}${BACKUP_FILENAME_SUFFIX}`;
+  return `${BACKUP_FILENAME_PREFIX}${formatDate(date, BACKUP_FILENAME_DATE_FORMAT)}_${crypto.randomUUID()}${BACKUP_FILENAME_SUFFIX}`;
 }
 
 /**
@@ -125,8 +133,10 @@ export function isBackupFilename(filename: string): boolean {
   }
 
   const datePart = filename.slice(BACKUP_FILENAME_PREFIX.length, filename.length - BACKUP_FILENAME_SUFFIX.length);
-  const parsed = parse(datePart, BACKUP_FILENAME_DATE_FORMAT, new Date(0));
-  return isValid(parsed) && formatDate(parsed, BACKUP_FILENAME_DATE_FORMAT) === datePart;
+  const match = /^(\d{8}T\d{4})(?:_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/.exec(datePart);
+  if (!match) return false;
+  const parsed = parse(match[1], BACKUP_FILENAME_DATE_FORMAT, new Date(0));
+  return isValid(parsed) && formatDate(parsed, BACKUP_FILENAME_DATE_FORMAT) === match[1];
 }
 
 /**
@@ -156,6 +166,13 @@ export function pruneBackupFiles(
       keptFiles.push(file);
     }
   };
+
+  /**
+   * 复检 P2（数据破坏优先）：`file.time` 非有限值（后端未返回/无法解析 `LastModified` 等）时，
+   * 该文件不满足任何 `time > plan.keepAfter` / 窗口匹配 / 数量前 N 条件，会被当成「过期」进入删除
+   * 候选。无法判断时间时**一律保留**（宁可多留一份备份，也不能误删用户唯一的历史备份）。
+   */
+  files.filter((file) => !Number.isFinite(file.time)).forEach(keep);
 
   for (const plan of plans) {
     if (plan.type === "age") {
@@ -205,7 +222,11 @@ export class BackupDowngradeError extends Error {
   }
 }
 
-function macMatches(actual: string, expected: string): boolean {
+/**
+ * 常量时间比较两个 hex MAC（先校验长度/形状，避免 `!==` 的提前返回泄露前缀匹配长度）。
+ * 复检 P2：CookieCloud 的 integrity 校验也复用本函数。
+ */
+export function macMatches(actual: string, expected: string): boolean {
   if (!/^[0-9a-f]{64}$/.test(expected)) return false;
   let difference = 0;
   for (let i = 0; i < expected.length; i++) {
@@ -390,14 +411,15 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
     files: {},
   } as IBackupFileManifest;
 
-  delete data.manifest; // 确保 manifest 不会被重复添加到 zip 中
-
+  // C2-I-B1：不再就地 `delete data.manifest`（会悄悄丢弃调用方对象上的 manifest，
+  // 若同一份 backupData 先用于本地导出、再用于远端上传就会丢数据）。这里用白名单迭代。
+  const backupEntries = Object.entries(omit(data, ["manifest"]));
   /**
    * 逐条目产出（生成器 = 惰性）：边加密边产出，调用方决定是立即写进 zip 流
    * 还是交给 JSZip 持有。manifest 必须最后产出（它的 files[*].hash 依赖前面每个条目的内容）。
    */
   function* buildZipEntries(): Generator<{ name: string; content: string }> {
-    for (const [key, value] of Object.entries(data)) {
+    for (const [key, value] of backupEntries) {
       const fileName = `${key}.json`;
       const fileContent =
         backupKeys && backupSaltBase64
@@ -532,7 +554,17 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
         saltBase64,
       };
     } else if (manifest.encryption === true) {
-      decryptOptions = { allowLegacy: false };
+      /**
+       * C2-B1：老版本（引入 `PTD-AES-HMAC-v1:` 之前）的加密备份同样是 `encryption: true`，
+       * 但条目是 CryptoJS OpenSSL 格式（无封套、无 MAC）。原先这里传 `allowLegacy: false`，
+       * 于是这批历史备份在恢复时一律抛 BackupDowngradeError（输对密钥也没用），
+       * 与 `decryptData` 文档「legacy AES/OpenSSL payloads remain readable」及 Gist 恢复路径
+       * （`Gist.ts` 的 decryptData 未禁止 legacy）矛盾。
+       *
+       * 这里不禁止 legacy：v1/v2 条目由各自的封套分支处理并强制校验 MAC（无法降级伪造），
+       * 只有真正无封套的历史条目才会走 legacy 解密；`!manifest.encryption && encryptionKey`
+       * 的降级拒绝仍然保留在上方。
+       */
     }
 
     // 只解出 manifest 中记录的其他文件；多文件的解压/解密/校验改为有界并发
@@ -540,6 +572,15 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
     const decryptedFiles: Record<string, any> = {};
     const queue = new PQueue({ concurrency: RESTORE_FILE_CONCURRENCY });
     const warnings: string[] = [];
+
+    // 复检 P2（G）：条目数上限（manifest 是不可信输入，可以声明任意多条）
+    if (manifestFiles.length > MAX_BACKUP_FILE_ENTRIES) {
+      throw new Error(
+        `备份条目数超过上限（${manifestFiles.length} > ${MAX_BACKUP_FILE_ENTRIES}），已拒绝恢复以防止内存耗尽`,
+      );
+    }
+    /** 累计解压体积（UTF-16 字符数 × 2 近似字节；只用于防御 zip bomb，不需要精确） */
+    let restoredBytes = 0;
 
     await Promise.all(
       manifestFiles.map(([fileKey, manifestFileData]) =>
@@ -551,8 +592,17 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
           }
           const { name: fileName, hash: manifestFileHash } = manifestFileData;
           const fileContent = await zipContent.file(fileName)?.async("string");
-          if (!fileContent) {
+          if (fileContent === undefined || fileContent === "") {
+            // 复检 P2（H）：与 Gist 路径统一为「warning + 跳过」，而不是整份恢复失败
+            warnings.push(`${fileKey}：备份中缺少文件 ${fileName}（或内容为空），已跳过该条目`);
             return;
+          }
+
+          restoredBytes += fileContent.length * 2;
+          if (restoredBytes > MAX_BACKUP_UNCOMPRESSED_BYTES) {
+            throw new Error(
+              `备份解压体积超过上限（> ${Math.round(MAX_BACKUP_UNCOMPRESSED_BYTES / 1024 / 1024)}MB），已拒绝恢复`,
+            );
           }
 
           const fileContentHash = CryptoJS.MD5(fileContent).toString();
@@ -564,7 +614,24 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
           try {
             payload = decryptData(fileContent, encryptionKey, fileKey, decryptOptions);
           } catch (e) {
+            // 复检 P2：降级保护的可操作错误不能被通用文案吞掉（与 Gist 路径对齐）
+            if (e instanceof BackupDowngradeError) {
+              throw e;
+            }
             throw new Error(`Failed to decrypt file: ${fileName}`);
+          }
+
+          /**
+           * 复检 P2（G）：legacy（无封套、无 MAC）条目恢复成功时必须提示「完整性未校验」，
+           * 否则用户会误以为这份旧备份和 v1/v2 一样「未被动过」。v1/v2 条目已在 decryptData 里强制 MAC。
+           */
+          if (
+            manifest.encryption === true &&
+            decryptOptions.allowLegacy !== false &&
+            !fileContent.startsWith(BACKUP_CIPHER_PREFIX) &&
+            !fileContent.startsWith(BACKUP_CIPHER_PREFIX_V2)
+          ) {
+            warnings.push(`${fileName}：使用旧版无 MAC 加密格式恢复（未做完整性校验，建议重新导出加密备份）`);
           }
 
           // S-1：结构校验。形状不符的条目直接丢弃并记录原因，避免把不可信结构写进
@@ -640,7 +707,8 @@ export function localSort(files: IBackupFileInfo[], options: IBackupFileListOpti
     const orderMode: EListOrderMode = options.orderMode ?? EListOrderMode.desc;
     const orderBy: EListOrderBy = options.orderBy ?? EListOrderBy.time;
 
-    files.sort((a, b) => {
+    // C2-B-8：返回副本，不就地修改调用方数组（避免以后把 store/UI 的历史列表传进来时被静默改序）
+    return [...files].sort((a, b) => {
       let compareRep = 0;
       switch (orderBy) {
         case EListOrderBy.name:

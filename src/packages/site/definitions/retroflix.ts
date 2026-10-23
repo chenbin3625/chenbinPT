@@ -202,6 +202,9 @@ export const siteMetadata: ISiteMetadata = {
           "hnrUnsatisfied",
           "hnrPreWarning",
           "lastAccessAt",
+          // E5b-5：NexusPHP 默认 process 的字段表末尾有 isDonor，本文件重写 process 时漏掉，
+          // 导致 donorConfig.bonusPerHourMultiplier 永远不会生效（捐赠者时魔不乘 2）。
+          "isDonor",
         ],
       },
       {

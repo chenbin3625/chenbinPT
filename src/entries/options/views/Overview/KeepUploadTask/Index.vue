@@ -6,13 +6,14 @@ import type { CAddTorrentOptions } from "@ptd/downloader";
 
 import type { IKeepUploadTask, TKeepUploadTaskKey } from "@/shared/types.ts";
 import { sendMessage } from "@/messages.ts";
-import { formatDate, formatDateTimeForTable, formatSize } from "@/options/utils.ts";
+import { formatDate, formatDateTimeForTable, formatSize, sanitizeDynamicReplaceValue } from "@/options/utils.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import { confirmModal } from "../utils/antdConfirm.ts";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import { summarizeKeepUploadSendOutcomes, type TKeepUploadSendOutcome } from "./utils.ts";
 
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
@@ -23,7 +24,6 @@ const tasks = ref<IKeepUploadTask[]>([]);
 const selectedTasks = ref<TKeepUploadTaskKey[]>([]);
 const expanded = ref<string[]>([]);
 const loading = ref(false);
-const tableKey = ref(0); // 用于强制刷新表格
 
 const columns = [
   { title: t("KeepUploadTask.table.site"), dataIndex: "site", key: "site", align: "center" as const },
@@ -64,6 +64,8 @@ async function deleteTask(task: IKeepUploadTask) {
   try {
     await sendMessage("deleteKeepUploadTask", task.id);
     tasks.value = tasks.value.filter((t) => t.id !== task.id);
+    // N13：删掉的任务必须从选中集合里移除，否则「删除所选」仍高亮、还会对不存在的 id 再发删除消息
+    selectedTasks.value = selectedTasks.value.filter((id) => id !== task.id);
     runtimeStore.showSnakebar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
   } catch (e) {
     runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: "error" });
@@ -74,15 +76,24 @@ async function deleteSelectedTasks() {
   if (selectedTasks.value.length === 0) return;
   if (!(await confirmModal(t("KeepUploadTask.deleteSelectedConfirm", { count: selectedTasks.value.length })))) return;
 
-  try {
-    for (const taskId of selectedTasks.value) {
-      await sendMessage("deleteKeepUploadTask", taskId);
-    }
-    tasks.value = tasks.value.filter((t) => !selectedTasks.value.includes(t.id));
-    selectedTasks.value = [];
+  // N13：逐项删除并收集结果。原先顺序 await，中途失败会让「已删掉的记录仍留在列表里」，
+  // 内存与存储不一致；这里按实际成功集合更新列表，失败项保留并继续选中，方便重试。
+  const targetIds = [...selectedTasks.value];
+  const results = await Promise.allSettled(targetIds.map((taskId) => sendMessage("deleteKeepUploadTask", taskId)));
+  const deletedIds = targetIds.filter((_, index) => results[index]?.status === "fulfilled");
+  const failedIds = targetIds.filter((taskId) => !deletedIds.includes(taskId));
+
+  if (deletedIds.length > 0) {
+    const deletedSet = new Set(deletedIds);
+    tasks.value = tasks.value.filter((t) => !deletedSet.has(t.id));
+    expanded.value = expanded.value.filter((key) => !deletedSet.has(key as TKeepUploadTaskKey));
+  }
+  selectedTasks.value = failedIds;
+
+  if (failedIds.length === 0) {
     runtimeStore.showSnakebar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
-  } catch (e) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: "error" });
+  } else {
+    runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: deletedIds.length > 0 ? "warning" : "error" });
   }
 }
 
@@ -92,6 +103,9 @@ async function clearAllTasks() {
   try {
     await sendMessage("clearKeepUploadTasks", undefined);
     tasks.value = [];
+    // N13：清空后选中集合与展开态也要复位，否则「删除所选」按钮仍可点、指向已不存在的任务
+    selectedTasks.value = [];
+    expanded.value = [];
     runtimeStore.showSnakebar(t("KeepUploadTask.clearSuccess"), { color: "success" });
   } catch (e) {
     runtimeStore.showSnakebar(t("KeepUploadTask.clearError"), { color: "error" });
@@ -108,15 +122,28 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
     return;
   }
 
-  try {
-    for (const item of items) {
+  const outcomes: TKeepUploadSendOutcome[] = [];
+
+  const normalizeReason = (reason: string): string => {
+    const trimmed = reason.trim();
+    // qBittorrent 旧版 WebAPI 只回 "Fails."，换成可操作的提示
+    return trimmed === "Fails." ? t("KeepUploadTask.qBittorrentLegacyFails") : trimmed;
+  };
+
+  // N11：逐项收集结果，某一项失败不能中止后续项（原先 `for + await` + 抛错，第 3 项失败会让 4~N 项
+  // 根本不发送，用户重试时前 2 项又被重复推送）。
+  for (const item of items) {
+    try {
       const now = new Date();
+      // OUI-4：替换值来自站点页面解析（标题/副标题/分类），会拼进下载器的 savePath / label。
+      // 复用「发送到下载器」同一套路径安全化（Info8）：剥掉 `/`、`\`、`..`、控制字符与
+      // Windows 非法字符，否则恶意/被污染的站点标题可让用户配置的下载目录被逃出。
       const replacements: Record<string, string> = {
-        "torrent.title": item.title,
-        "torrent.subTitle": item.subTitle ?? "",
-        "torrent.category": String(item.category ?? ""),
-        "torrent.site": item.site,
-        "torrent.siteName": await metadataStore.getSiteName(item.site),
+        "torrent.title": sanitizeDynamicReplaceValue(item.title),
+        "torrent.subTitle": sanitizeDynamicReplaceValue(item.subTitle ?? ""),
+        "torrent.category": sanitizeDynamicReplaceValue(item.category ?? ""),
+        "torrent.site": sanitizeDynamicReplaceValue(item.site),
+        "torrent.siteName": sanitizeDynamicReplaceValue(await metadataStore.getSiteName(item.site)),
         "date:YYYY": formatDate(now, "yyyy"),
         "date:MM": formatDate(now, "MM"),
         "date:DD": formatDate(now, "dd"),
@@ -149,16 +176,82 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
         downloaderId: task.downloadOptions.downloaderId,
         addTorrentOptions,
       });
-      if (result.downloadStatus === "failed") {
-        throw new Error(result.errorMessage || item.title);
+      if (result?.downloadStatus === "failed") {
+        outcomes.push({ status: "failed", reason: normalizeReason(result.errorMessage || item.title) });
+      } else if (result?.downloadStatus === "pending") {
+        // pending = 站点下载间隔未到，后台会排程稍后重发（offscreen/utils/download.ts），
+        // 既不是「已发送成功」也不是「失败」，单独计数
+        outcomes.push({ status: "pending" });
+      } else {
+        // DOWNLOADER-8：推送成功但下载器降级（部分设置未生效）时结果里是 warningMessage
+        outcomes.push({ status: "success", warningMessage: result?.warningMessage });
       }
+    } catch (e) {
+      outcomes.push({ status: "failed", reason: normalizeReason(e instanceof Error ? e.message : String(e)) });
     }
-    runtimeStore.showSnakebar(t("KeepUploadTask.sendSingleSuccess"), { color: "success" });
-  } catch (e) {
-    const rawReason = e instanceof Error ? e.message : String(e);
-    const reason = rawReason.trim() === "Fails." ? t("KeepUploadTask.qBittorrentLegacyFails") : rawReason;
-    runtimeStore.showSnakebar(t("KeepUploadTask.sendSingleErrorWithReason", { reason }), { color: "error" });
   }
+
+  const { succeeded, failed, pending, warned, firstFailureReason, firstWarningMessage } =
+    summarizeKeepUploadSendOutcomes(outcomes);
+
+  if (items.length === 1) {
+    // D（REVIEW-FINDINGS options-2）：单条发送与批量路径对齐 —— pending（站点下载间隔未到）不是
+    // 成功；warned（下载器降级、部分设置未生效）也必须提示，否则用户只看到绿色的「发送成功」。
+    if (failed > 0) {
+      runtimeStore.showSnakebar(t("KeepUploadTask.sendSingleErrorWithReason", { reason: firstFailureReason ?? "" }), {
+        color: "error",
+      });
+    } else {
+      let singleMessage = t("KeepUploadTask.sendSingleSuccess");
+      if (pending > 0) {
+        singleMessage += t("SentToDownloaderDialog.sendSummaryPending", { count: pending });
+      }
+      if (warned > 0) {
+        singleMessage += t("SentToDownloaderDialog.sendSummaryWarning", { count: warned });
+        if (firstWarningMessage) {
+          singleMessage += ` (${t("DownloadHistory.detail.warningMessage")}: ${firstWarningMessage})`;
+        }
+      }
+      runtimeStore.showSnakebar(singleMessage, {
+        color: pending > 0 || warned > 0 ? "warning" : "success",
+      });
+    }
+    return;
+  }
+
+  // L2（F1）：全部成功时用 KeepUploadTask 专用文案，不再借用「发送到下载器」的汇总 key；
+  // 有 pending / warned / failed 时仍用带计数的汇总，便于用户判断下一步操作。
+  if (failed === 0 && pending === 0 && warned === 0) {
+    runtimeStore.showSnakebar(t("KeepUploadTask.sendSummary"), { color: "success" });
+    return;
+  }
+
+  const pendingText = pending > 0 ? t("SentToDownloaderDialog.sendSummaryPending", { count: pending }) : "";
+  const failedText = failed > 0 ? t("SentToDownloaderDialog.sendSummaryFailed", { count: failed }) : "";
+  let summary = t("SentToDownloaderDialog.sendSummary", {
+    success: succeeded,
+    pending: pendingText,
+    failed: failedText,
+  });
+  if (warned > 0) {
+    summary += t("SentToDownloaderDialog.sendSummaryWarning", { count: warned });
+    if (firstWarningMessage) {
+      summary += ` (${t("DownloadHistory.detail.warningMessage")}: ${firstWarningMessage})`;
+    }
+  }
+  if (firstFailureReason) {
+    summary += ` (${t("DownloadHistory.detail.errorMessage")}: ${firstFailureReason})`;
+  }
+  runtimeStore.showSnakebar(summary, {
+    color:
+      failed === 0
+        ? pending > 0 || warned > 0
+          ? "warning"
+          : "success"
+        : succeeded > 0 || pending > 0
+          ? "warning"
+          : "error",
+  });
 }
 
 // 设为基准种子（移动到第一位并更新存储）
@@ -167,15 +260,17 @@ async function setAsBaseTorrent(task: IKeepUploadTask, itemIndex: number) {
     return;
   }
 
-  // 将选中的种子移动到第一位
-  const item = task.items.splice(itemIndex, 1)[0];
-  task.items.unshift(item);
+  // N12：先构造新顺序并持久化，成功后才改内存 —— 原先先 splice/unshift 再 await，
+  // 存储写入失败时内存顺序已经变了且不回滚，「发送基准种子」会以未持久化的顺序为准。
+  const nextItems = [...task.items];
+  const [item] = nextItems.splice(itemIndex, 1);
+  nextItems.unshift(item);
 
-  // 更新任务存储
   try {
-    await sendMessage("updateKeepUploadTask", task);
-    // 强制刷新表格
-    tableKey.value++;
+    await sendMessage("updateKeepUploadTask", { ...task, items: nextItems });
+    // 持久化成功后再更新内存；表格按 row-key 复用行，不需要 tableKey 整表重挂载
+    // （重挂载会丢失展开行 / 滚动位置）。
+    task.items = nextItems;
     runtimeStore.showSnakebar(t("KeepUploadTask.setBaseSuccess"), { color: "success" });
   } catch (e) {
     runtimeStore.showSnakebar(t("KeepUploadTask.setBaseError"), { color: "error" });
@@ -230,7 +325,6 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
     </a-typography-text>
 
     <a-table
-      :key="tableKey"
       :columns="columns"
       :data-source="tasks"
       :loading="loading"

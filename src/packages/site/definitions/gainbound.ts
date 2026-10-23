@@ -18,6 +18,9 @@ export const siteMetadata: ISiteMetadata = {
   // refs: https://github.com/chenbin3625/PT-Plugin-Plus/commit/43a47b75a1a24523e9788a7ffca83a5407dfa5d6
   isDead: true,
 
+  // E2b-04：死站不再保留生效的等级表（避免静态工具把死站当成有判级能力的活跃站），
+  // 历史等级表仅留档在注释中（与 cnscg/concen 的做法一致）。
+  /*
   levelRequirements: [
     {
       id: 0,
@@ -102,4 +105,5 @@ export const siteMetadata: ISiteMetadata = {
       privilege: "得到5个邀请名额。",
     },
   ],
+  */
 };

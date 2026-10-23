@@ -13,6 +13,7 @@ import {
   getCategoryName,
   getCategoryOptionName,
   getSiteMetaCategory,
+  sanitizeSearchEntryRequestConfig,
   type TSelectCategory,
 } from "./utils.ts";
 
@@ -26,7 +27,12 @@ const { siteId, selectCategory, saveGeneratedSolution } = defineProps<{
   saveGeneratedSolution: (searchSolution: ISearchSolution) => void;
 }>();
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+
+/** 新增文案尚未进入语言包时回退英文（keys 见 fix report 的「需 G/F1 跟进」） */
+function tWithFallback(key: string, fallback: string, args?: Record<string, unknown>): string {
+  return te(key) ? t(key, args as any) : fallback;
+}
 
 const searchSolution = ref<ISearchSolution>({} as ISearchSolution);
 const searchSolutionEntryRequestConfig = ref<string>("");
@@ -35,6 +41,22 @@ const nameRules = [formValidateRules.require()];
 const requestConfigRules = [
   formValidateRules.require(),
   (v: any) => isJSON(v) || t("SetSearchSolution.CustomSolutionDialog.requestConfigJsonError"),
+  // F2-High-14 / N5：自定义请求配置同样只允许 params / data。
+  // 站点层会把 requestConfig `toMerged` 进 axios 配置，`url` / `baseURL` / `headers` 等于把
+  // 带凭据的请求改写到任意地址（手工输入也应被拦下，而不是等到导入时才处理）。
+  (v: any) => {
+    try {
+      const { removedKeys } = sanitizeSearchEntryRequestConfig(JSON.parse(v));
+      if (removedKeys.length === 0) return true;
+      return tWithFallback(
+        "SetSearchSolution.CustomSolutionDialog.requestConfigUnsafeFields",
+        'Request config may only contain "params" / "data". Remove: {fields}',
+        { fields: removedKeys.join(", ") },
+      );
+    } catch {
+      return true; // JSON 语法错误由上面的规则提示，避免同一输入框报两种错
+    }
+  },
 ];
 
 function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
@@ -84,12 +106,16 @@ async function onEnter() {
 function doSubmit() {
   if (!formValid.value) return;
 
-  // 解析 requestConfig
+  // 解析 requestConfig（纵深防御：即使绕过表单校验，也绝不会把 url / baseURL / headers 写入方案）
   try {
-    const requestConfig = JSON.parse(searchSolutionEntryRequestConfig.value);
+    const { requestConfig, removedKeys } = sanitizeSearchEntryRequestConfig(
+      JSON.parse(searchSolutionEntryRequestConfig.value),
+    );
+    if (removedKeys.length > 0) return;
+
     if (searchSolution.value.searchEntries && searchSolution.value.id) {
       searchSolution.value.searchEntries[searchSolution.value.id] ??= {}; // 防止 default 情况下无法赋值
-      searchSolution.value.searchEntries[searchSolution.value.id].requestConfig = requestConfig;
+      searchSolution.value.searchEntries[searchSolution.value.id].requestConfig = requestConfig ?? {};
     }
   } catch (e) {
     console.error("请求配置 JSON 解析失败", e);

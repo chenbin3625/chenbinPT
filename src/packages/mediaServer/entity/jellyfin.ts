@@ -15,6 +15,8 @@ import {
 import { EResultParseStatus } from "@ptd/site";
 import { toMerged } from "es-toolkit";
 import urlJoin from "url-join";
+import { mapWithConcurrency } from "@ptd/site/utils/helper.ts";
+import { blobToDataUrl } from "../utils.ts";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "Jellyfin 是一个由志愿者开发的开源媒体系统，可让用户自由管理和流式传输个人媒体内容，支持多平台多语言",
@@ -87,6 +89,17 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
     return axios.request<T>(config);
   }
 
+  private async getPoster(id: string): Promise<string> {
+    try {
+      const response = await this.request<Blob>(`/Items/${encodeURIComponent(id)}/Images/Primary`, {
+        responseType: "blob",
+      });
+      return await blobToDataUrl(response.data);
+    } catch {
+      return "";
+    }
+  }
+
   public async ping(): Promise<boolean> {
     try {
       const response = await this.request<IJellyfinSystemInfo>("/System/Info", { responseType: "json" });
@@ -141,7 +154,7 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
         const {
           data: { Items = [] },
         } = response;
-        for (const item of Items) {
+        result.items = await mapWithConcurrency(Items, 5, async (item) => {
           // 处理搜索结果
 
           const mediaItem: IMediaServerItem<IJellyfinQueryItem> = {
@@ -153,7 +166,7 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
             format: item.Container,
             size: item.MediaSources?.[0]?.Size,
             duration: item.RunTimeTicks / 10000000, // 10000 ticks = 1 ms, 10000 ms = 1 s
-            poster: urlJoin(this.baseUrl, `/Items/${item.Id}/Images/Primary`),
+            poster: await this.getPoster(item.Id),
             tags: item.GenreItems?.map((tag) => ({
               name: tag.Name,
               url: urlJoin(this.baseUrl, `/web/#/list.html?genreId=${tag.Id}&serverId=${item.ServerId}`),
@@ -170,13 +183,13 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
             },
             raw: item,
           };
-          result.items.push(mediaItem);
-        }
+          return mediaItem;
+        });
         result.options = config;
         result.status = EResultParseStatus.success;
-      } else {
-        result.status = EResultParseStatus.needLogin;
       }
+      // C2-M-7：axios 默认 validateStatus 只放行 2xx，非 2xx 会走下面的 catch；
+      // 这里不再保留不可达的 `else { needLogin }`，401→needLogin / 其它→parseError 的映射集中在 catch。
     } catch (e) {
       // 401 是认证问题（needLogin），其余（超时、网络不可达、解析异常等）不是认证问题，
       // 需要把真实错误带回去，避免 UI 统一提示「请检查认证信息」误导排障（#1396）

@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@ptd/downloader/utils.ts", () => ({
   getRemoteTorrentFile: vi.fn(),
+  sanitizeDownloadUrlForLog: vi.fn((url: string) => String(url)),
 }));
 
 vi.mock("@ptd/site/utils/adapter.ts", () => ({
@@ -22,6 +23,21 @@ vi.mock("@ptd/site/utils/adapter.ts", () => ({
 import Transmission from "@ptd/downloader/entity/Transmission.ts";
 
 const MAGNET = "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+describe("Transmission RPC 地址", () => {
+  it("主机名含 rpc 时仍补上路径，同时保留自定义 rpc 路径", () => {
+    expect((new Transmission({ address: "https://rpc.example.com/" }) as any).address).toBe(
+      "https://rpc.example.com/transmission/rpc",
+    );
+    expect((new Transmission({ address: "https://host.example/custom/rpc" }) as any).address).toBe(
+      "https://host.example/custom/rpc",
+    );
+  });
+
+  it("非法地址不会让构造函数抛 TypeError（复检：对齐 uTorrent N-2）", () => {
+    expect(() => new Transmission({ address: "not a valid url" })).not.toThrow();
+  });
+});
 
 /** 用 stub 掉 request 的实例，只验证「发出去的参数」 */
 function createClient(response?: any) {
@@ -150,5 +166,124 @@ describe("Transmission：各版本的重复种子响应（L-12）", () => {
 
     const result = await client.addTorrent(MAGNET, { addAtPaused: false });
     expect(result.success).toBe(false);
+  });
+});
+
+/** C1 修复轮回归：TR-1 / TR-2 / TR-3 / TR-4 / SEC-1 */
+describe("Transmission：C1 修复轮", () => {
+  const baseTorrent = (overrides: Record<string, any> = {}) => ({
+    addedDate: 1,
+    id: 1,
+    hashString: "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+    isFinished: false,
+    name: "n",
+    percentDone: 0,
+    uploadRatio: 0,
+    downloadDir: "/d",
+    status: 4,
+    totalSize: 1,
+    leftUntilDone: 1,
+    labels: [],
+    rateDownload: 0,
+    rateUpload: 0,
+    uploadedEver: 0,
+    downloadedEver: 0,
+    trackers: [],
+    ...overrides,
+  });
+
+  function torrentClient(torrents: any[]) {
+    const { client, requestMock } = createClient();
+    requestMock.mockResolvedValue({ data: { result: "success", arguments: { torrents } } });
+    return { client, requestMock };
+  }
+
+  const trackerStat = (overrides: Record<string, any> = {}) => ({
+    announce: "https://tracker.local/announce",
+    announceState: 0,
+    hasAnnounced: false,
+    isBackup: false,
+    lastAnnounceSucceeded: false,
+    ...overrides,
+  });
+
+  it("TR-1：从未 announce 过的 tracker 是 unknown，而不是 error", async () => {
+    const { client } = torrentClient([{ trackerStats: [trackerStat()] }]);
+    const [tracker] = await client.getTorrentTrackersDetail("HASH");
+    expect(tracker.status).toBe("unknown");
+  });
+
+  it("TR-1：备用 tracker 是 disabled", async () => {
+    const { client } = torrentClient([{ trackerStats: [trackerStat({ isBackup: true })] }]);
+    const [tracker] = await client.getTorrentTrackersDetail("HASH");
+    expect(tracker.status).toBe("disabled");
+  });
+
+  it("TR-1：已 announce 且失败才是 error", async () => {
+    const { client } = torrentClient([
+      { trackerStats: [trackerStat({ hasAnnounced: true, lastAnnounceSucceeded: false })] },
+    ]);
+    const [tracker] = await client.getTorrentTrackersDetail("HASH");
+    expect(tracker.status).toBe("error");
+  });
+
+  it("TR-2：removeTorrentTracker 先查 tracker id，再传整数数组给 trackerRemove", async () => {
+    const { client, requestMock } = createClient();
+    requestMock
+      .mockResolvedValueOnce({
+        data: {
+          result: "success",
+          arguments: { torrents: [{ trackerStats: [{ announce: "https://a/announce", id: 7 }] }] },
+        },
+      })
+      .mockResolvedValueOnce({ data: { result: "success" } });
+
+    await expect(client.removeTorrentTracker("HASH", "https://a/announce")).resolves.toBe(true);
+
+    expect(requestMock.mock.calls[0][0]).toBe("torrent-get");
+    expect(requestMock.mock.calls[1][0]).toBe("torrent-set");
+    expect(requestMock.mock.calls[1][1]).toEqual({ ids: "HASH", trackerRemove: [7] });
+  });
+
+  it("TR-3：status=1（排队等待校验）映射为 checking", async () => {
+    const { client } = torrentClient([baseTorrent({ status: 1 })]);
+    const [torrent] = await client.getTorrentsBy({});
+    expect(torrent.state).toBe("checking");
+  });
+
+  it("TR-3：tr_stat.error>=2 映射为 error，error=1（tracker warning）不算", async () => {
+    const { client } = torrentClient([baseTorrent({ error: 2 }), baseTorrent({ error: 1 })]);
+    const [withError, withWarning] = await client.getTorrentsBy({});
+    expect(withError.state).toBe("error");
+    expect(withWarning.state).toBe("downloading");
+  });
+
+  it("TR-4：磁链未获取元数据时 isCompleted 为 false", async () => {
+    const { client } = torrentClient([
+      baseTorrent({ percentDone: 0, leftUntilDone: 0 }),
+      baseTorrent({ percentDone: 1, leftUntilDone: 0, isFinished: true }),
+    ]);
+    const [magnet, completed] = await client.getTorrentsBy({});
+    expect(magnet.isCompleted).toBe(false);
+    expect(completed.isCompleted).toBe(true);
+  });
+
+  it("SEC-1：添加失败日志里的 URL 已脱敏（不含 passkey）", async () => {
+    const { logMessage } = await import("@ptd/site/utils/adapter.ts");
+    const { sanitizeDownloadUrlForLog } = await import("@ptd/downloader/utils.ts");
+    // 本文件的 sanitize 被 mock 成 passthrough；这里换成「去掉 query」的实现来验证调用点确实做了脱敏
+    vi.mocked(sanitizeDownloadUrlForLog).mockImplementation((url: any) => String(url).split("?")[0]);
+    const { client } = createClient();
+    (client as any).request = vi.fn().mockRejectedValue(new Error("offline"));
+    (vi.mocked(logMessage) as any).mockClear();
+
+    await client.addTorrent("https://pt.example/download.php?id=1&passkey=SECRET", {
+      addAtPaused: false,
+      localDownload: false,
+    });
+
+    const failureLog = vi.mocked(logMessage).mock.calls.find((call) => String(call[0]).includes("添加种子失败"));
+    expect(failureLog).toBeDefined();
+    expect(JSON.stringify(failureLog![1])).not.toContain("SECRET");
   });
 });

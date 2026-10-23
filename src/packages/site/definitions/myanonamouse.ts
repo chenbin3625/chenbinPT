@@ -236,11 +236,10 @@ export const siteMetadata: ISiteMetadata = {
           selector: "fl_vip",
           color: "yellow",
         },
-        {
-          name: "H&R",
-          selector: "id", // 一个一定会出现的字段，这里用于添加 HR tag
-          color: "red",
-        },
+        // M2：原先这里还有一条 { name: "H&R", selector: "id" }。`id` 是每行 JSON 必然存在的字段，
+        // 行级判定 `if (get(row, selector))` 恒真 → 全部搜索结果被打上 H&R（DEFS2-2 同根因），
+        // 且 `torrent.tags = tags` 会覆盖引擎/自定义标签。MAM 的 H&R 是账号维度
+        // （jsonLoad.php?snatch_summary 的 seedHnr/seedUnsat），不应在行级恒真打标。
       ],
     },
   },

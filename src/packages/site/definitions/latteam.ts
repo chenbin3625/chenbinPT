@@ -28,7 +28,9 @@ export const siteMetadata: ISiteMetadata = {
   name: "LAT-Team",
   description: "LAT-Team is a UNIT3D Private Torrent Tracker for Latin content.",
   tags: ["西班牙语"],
-  timezoneOffset: "+0800",
+  // L2：原为 "+0800"（中文站模板残留）。Unit3D 默认按 +0000 解释墙上时间，LAT-Team 是拉美/西语站，
+  // +0800 明显不成立；未取得站点真实时区前回落到引擎默认 +0000（误差远小于 8h），
+  // 待用真实 profile 页面核对 Registration date / Last login 后再显式声明。
 
   type: "private",
   schema: "Unit3D",

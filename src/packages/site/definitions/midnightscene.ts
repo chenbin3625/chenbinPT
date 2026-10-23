@@ -43,7 +43,8 @@ export const siteMetadata: ISiteMetadata = {
       category: {
         selector: ":self",
         data: "categoryId",
-        filters: [(query: string) => categoryMap[Number(query)]],
+        // L5：categoryMap 未命中时不要留下 undefined（分类列变空且无告警），回落到原始 id。
+        filters: [(query: number | string) => categoryMap[Number(query)] ?? (query === "" ? undefined : query)],
       },
     },
   },

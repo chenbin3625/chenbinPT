@@ -13,12 +13,15 @@
 import CryptoJS from "crypto-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("axios", () => ({ default: { request: vi.fn() } }));
+vi.mock("axios", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("axios")>();
+  return { ...actual, default: { ...actual.default, request: vi.fn() } };
+});
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
 
 import axios from "axios";
 
-import CookieCloud from "@ptd/backupServer/entity/CookieCloud.ts";
+import CookieCloud, { serverMetaData } from "@ptd/backupServer/entity/CookieCloud.ts";
 
 const serverConfig = {
   id: "cookiecloud-test",
@@ -110,6 +113,23 @@ describe("CookieCloud.addFile：不修改传入的备份数据对象", () => {
   });
 });
 
+describe("CookieCloud 自定义认证 Headers", () => {
+  it("保留值中的冒号、修剪空白，并声明 Headers 为敏感字段", async () => {
+    const server = new CookieCloudCtor({
+      ...serverConfig,
+      config: { ...serverConfig.config, headers: " Authorization : Bearer one:two:three\r\nX-Api-Key: abc:def" },
+    });
+    vi.mocked(axios.request).mockResolvedValue({ data: "Hello World!API ROOT =" } as any);
+
+    expect(await server.ping()).toBe(true);
+    expect(vi.mocked(axios.request).mock.calls[0][0].headers).toMatchObject({
+      Authorization: "Bearer one:two:three",
+      "X-Api-Key": "abc:def",
+    });
+    expect(serverMetaData.requiredField.find((field) => field.key === "headers")?.secret).toBe(true);
+  });
+});
+
 describe("CookieCloud 恢复不可信 JSON", () => {
   it("解密时剥离嵌套 __proto__ 键", async () => {
     const raw =
@@ -142,5 +162,43 @@ describe("CookieCloud 恢复不可信 JSON", () => {
     const server = createServer();
     await server.addFile("name", makeBackupData());
     await expect(server.getFile("")).rejects.toThrow(/integrity/i);
+  });
+});
+
+/**
+ * 复检 P2（E）：uuid 归一化/编码、MAC 常量时间比较。
+ */
+describe("CookieCloud：uuid 校验与编码", () => {
+  it("uuid 会进入 /get 路径且做 encodeURIComponent（含 / ? # 时不改变路由）", async () => {
+    const server = new CookieCloudCtor({
+      ...serverConfig,
+      config: { ...serverConfig.config, uuid: "a/b?c#d" },
+    });
+    vi.mocked(axios.request).mockResolvedValue({ data: { encrypted: "" }, headers: {} } as any);
+
+    await expect(server.getFile("")).rejects.toThrow(/No data found/);
+
+    const requestConfig = vi.mocked(axios.request).mock.calls[0]![0] as any;
+    expect(requestConfig.url).toBe(`/get/${encodeURIComponent("a/b?c#d")}`);
+  });
+
+  it("uuid 为空时给出明确错误，且不发起请求", async () => {
+    const server = new CookieCloudCtor({
+      ...serverConfig,
+      config: { ...serverConfig.config, uuid: "   " },
+    });
+
+    await expect(server.getFile("")).rejects.toThrow(/uuid/i);
+    expect(vi.mocked(axios.request)).not.toHaveBeenCalled();
+  });
+
+  it("uuid 含控制字符时拒绝", async () => {
+    const server = new CookieCloudCtor({
+      ...serverConfig,
+      config: { ...serverConfig.config, uuid: "bad\u0000uuid" },
+    });
+
+    await expect(server.addFile("name", makeBackupData())).resolves.toBe(false);
+    expect(vi.mocked(axios.request)).not.toHaveBeenCalled();
   });
 });

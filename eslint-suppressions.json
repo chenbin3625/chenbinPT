@@ -19,7 +19,7 @@
   },
   "src/entries/background/utils/contextMenus.ts": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 4
+      "count": 2
     },
     "no-console": {
       "count": 5
@@ -63,11 +63,6 @@
       "count": 3
     }
   },
-  "src/entries/offscreen/utils/socialRecommendations.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
   "src/entries/options/App.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
@@ -83,23 +78,13 @@
       "count": 3
     }
   },
-  "src/entries/options/components/TorrentTitleTd.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/entries/options/stores/config.ts": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 3
+      "count": 2
     }
   },
   "src/entries/options/stores/runtime.ts": {
     "no-console": {
-      "count": 1
-    }
-  },
-  "src/entries/options/views/ContextMenuLinkPush.vue": {
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },
@@ -109,16 +94,8 @@
     }
   },
   "src/entries/options/views/Layout/RecommendationMenu.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "no-console": {
       "count": 2
-    }
-  },
-  "src/entries/options/views/Layout/Topbar.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
     }
   },
   "src/entries/options/views/Overview/DownloadHistory/AdvanceFilterGenerateDialog.vue": {
@@ -228,9 +205,6 @@
     }
   },
   "src/entries/options/views/Overview/SearchEntity/Index.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "no-console": {
       "count": 2
     }
@@ -262,7 +236,7 @@
   },
   "src/entries/options/views/Settings/SetBackup/EditDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Settings/SetBackup/HistoryDialog.vue": {
@@ -280,7 +254,7 @@
   },
   "src/entries/options/views/Settings/SetBackup/RestoreDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     },
     "no-console": {
       "count": 3
@@ -311,11 +285,6 @@
       "count": 1
     }
   },
-  "src/entries/options/views/Settings/SetDownloader/PathAndTagSuggestDialog.vue": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "src/entries/options/views/Settings/SetDownloader/SiteFilterDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 2
@@ -323,7 +292,7 @@
   },
   "src/entries/options/views/Settings/SetMediaServer/EditDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Settings/SetSearchSolution/CustomSolutionDialog.vue": {
@@ -337,14 +306,6 @@
   "src/entries/options/views/Settings/SetSearchSolution/EditDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 3
-    }
-  },
-  "src/entries/options/views/Settings/SetSearchSolution/Index.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 3
-    },
-    "no-console": {
-      "count": 1
     }
   },
   "src/entries/options/views/Settings/SetSite/AddDialog.vue": {
@@ -380,15 +341,7 @@
       "count": 2
     }
   },
-  "src/extends/axios/retryWhenCloudflareBlock.ts": {
-    "no-console": {
-      "count": 3
-    }
-  },
   "src/extends/pinia/webExtPersistence.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "no-console": {
       "count": 3
     }
@@ -401,11 +354,6 @@
   "src/packages/site/definitions/audiobookbay.ts": {
     "no-console": {
       "count": 1
-    }
-  },
-  "src/packages/site/definitions/broadcasthenet.ts": {
-    "no-console": {
-      "count": 2
     }
   },
   "src/packages/site/definitions/mteam.ts": {
@@ -425,17 +373,12 @@
   },
   "src/packages/site/schemas/AbstractBittorrentSite.ts": {
     "no-console": {
-      "count": 8
+      "count": 7
     }
   },
   "src/packages/site/schemas/AbstractPrivateSite.ts": {
     "no-console": {
       "count": 1
-    }
-  },
-  "src/packages/site/schemas/AvistazNetwork.ts": {
-    "no-console": {
-      "count": 5
     }
   },
   "src/packages/site/schemas/Gazelle.ts": {

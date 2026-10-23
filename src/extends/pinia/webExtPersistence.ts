@@ -88,15 +88,24 @@ async function writeSerializedSnapshot<T>(key: string, serialized: T, storage: c
 }
 
 /**
- * 普通对象判定（不含数组 / null / 类实例）。
+ * 普通对象判定（原型是 `Object.prototype` 或 `null`，不含数组 / null / 类实例）。
  * 「最小 patch」与「落盘前合并」的递归边界都由它决定：数组与其它值一律当作不可再分的叶子。
+ *
+ * 为什么必须判原型（缺陷清单 G4）：旧实现只判 `typeof === "object" && !Array.isArray`，
+ * 于是 `Date` / `Map` / `Set` / `RegExp` 也被当成普通对象 —— 它们的 `Object.keys()` 都是 `[]`，
+ * 两个不同时间的 `Date` 会被 `isDeepEqual` 判成相等，`collectPathChanges` 也不产生任何 patch
+ * （外部对这些字段的改动被静默丢弃，本地一直显示旧值）。
  *
  * 同时作为**类型谓词**：`chrome.storage.get()` 读回来的是 `unknown`（见 mergeBeforeWrite），
  * 落盘前合并要就地改写这棵对象树，必须在调用处完成收窄 —— 判定与收窄共用同一个函数，
  * 不额外引入 `as any` 这类会骗过编译器的断言。
  */
 function isPlain(value: any): value is Record<string, any> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /**
@@ -119,17 +128,39 @@ function hasUnsafePathSegment(path: string[]): boolean {
 }
 
 /**
- * 结构相等（JSON 语义：普通对象 / 数组 / 原始值；持久化的 store state 都是无环 JSON 数据）。
+ * 结构相等（JSON 语义：普通对象 / 数组 / 原始值，外加 Date / RegExp / Map / Set / URL 的按值比较）。
  *
  * 为什么不能用引用比较：`chrome.storage` 读回来的是**新反序列化**的对象树 ——
  * 数组与嵌套对象每次都是新引用。用引用比较会把「内容根本没变」误判成「外部改动了」，
  * 于是每次 `$save()` 都走合并路径、每次 onChanged 都产生一棵庞大的嵌套 patch
  * （正是 P0-3 要消除的级联重算）。
+ *
+ * 非普通对象必须按类型比较（G4）：`Date` 比时间戳、`RegExp` 比 `source+flags`、
+ * `Map`/`Set` 比内容、`URL` 比 `href`。否则它们的 `Object.keys()` 全为空，
+ * 会被错误地判成「相等」。未知的类实例（例如类型化数组）不再按自有键展开比较 ——
+ * 它们会被判成「不等」，最坏结果是一次多余的重写，而不是静默丢改动。
  */
 function isDeepEqual(a: any, b: any): boolean {
   if (Object.is(a, b)) {
     return true;
   }
+
+  if (a instanceof Date || b instanceof Date) {
+    return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+  }
+  if (a instanceof RegExp || b instanceof RegExp) {
+    return a instanceof RegExp && b instanceof RegExp && a.source === b.source && a.flags === b.flags;
+  }
+  if (a instanceof Map || b instanceof Map) {
+    return mapIsDeepEqual(a, b);
+  }
+  if (a instanceof Set || b instanceof Set) {
+    return setIsDeepEqual(a, b);
+  }
+  if (a instanceof URL || b instanceof URL) {
+    return a instanceof URL && b instanceof URL && a.href === b.href;
+  }
+
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) {
       return false;
@@ -154,6 +185,42 @@ function isDeepEqual(a: any, b: any): boolean {
     return true;
   }
   return false;
+}
+
+/** `Map` 的按值比较（与键序无关；键可能是对象，因此键也走 isDeepEqual） */
+function mapIsDeepEqual(a: any, b: any): boolean {
+  if (!(a instanceof Map) || !(b instanceof Map) || a.size !== b.size) {
+    return false;
+  }
+  const bEntries = [...b.entries()];
+  const used = new Set<number>();
+  for (const [aKey, aValue] of a.entries()) {
+    const index = bEntries.findIndex(
+      ([bKey, bValue], i) => !used.has(i) && isDeepEqual(aKey, bKey) && isDeepEqual(aValue, bValue),
+    );
+    if (index === -1) {
+      return false;
+    }
+    used.add(index);
+  }
+  return true;
+}
+
+/** `Set` 的按值比较（与插入顺序无关） */
+function setIsDeepEqual(a: any, b: any): boolean {
+  if (!(a instanceof Set) || !(b instanceof Set) || a.size !== b.size) {
+    return false;
+  }
+  const bValues = [...b.values()];
+  const used = new Set<number>();
+  for (const aValue of a.values()) {
+    const index = bValues.findIndex((bValue, i) => !used.has(i) && isDeepEqual(aValue, bValue));
+    if (index === -1) {
+      return false;
+    }
+    used.add(index);
+  }
+  return true;
 }
 
 /**
@@ -235,6 +302,23 @@ function resolvePathContainer(root: Record<string, any>, path: string[]): Record
     }
   }
   return cursor;
+}
+
+function readOwnPath(root: Record<string, any>, path: string[]): { exists: boolean; value?: any } {
+  let cursor: any = root;
+  for (const segment of path) {
+    if (!isPlain(cursor) || !Object.hasOwn(cursor, segment)) {
+      return { exists: false };
+    }
+    cursor = cursor[segment];
+  }
+  return { exists: true, value: cursor };
+}
+
+function hasLocalChangeAtPath(base: Record<string, any>, current: Record<string, any>, path: string[]): boolean {
+  const before = readOwnPath(base, path);
+  const now = readOwnPath(current, path);
+  return before.exists !== now.exists || (before.exists && !isDeepEqual(before.value, now.value));
 }
 
 /**
@@ -425,10 +509,10 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
 
   const $onReady = async (callback?: () => void) => {
     const promise = restorePromise || Promise.resolve();
-    if (callback) {
-      promise.then(callback);
-    }
-    return promise;
+    // 返回 callback 之后的 promise（G12/lint）：旧写法 `promise.then(callback)` 既没被 await
+    // 也没被 void，是一条静默的 floating promise（callback 抛错只会变成未处理拒绝）。
+    // 现有调用点都 `void` 这个返回值，语义不变。
+    return callback ? promise.then(callback) : promise;
   };
 
   /**
@@ -565,24 +649,26 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
     }
   }
 
-  function isSelfWriteEcho(newValue: any): boolean {
+  function isSelfWriteEcho(newValue: any): number {
     if (!isWithinSelfWriteEchoWindow()) {
       selfWriteSnapshots = [];
-      return false; // 窗口外：只可能是外部写入
+      return -1; // 窗口外：只可能是外部写入
     }
 
     if (selfWriteSnapshots.length === 0) {
-      return false; // 窗口内但没有待比对的自身写入 → 只能是外部写入，绝不能吞
+      return -1; // 窗口内但没有待比对的自身写入 → 只能是外部写入，绝不能吞
     }
 
-    for (let i = 0; i < selfWriteSnapshots.length; i++) {
-      const snapshot = selfWriteSnapshots[i];
-      if (isDeepEqual(snapshot.value, newValue)) {
-        return true;
+    // 从后往前找：匹配到「最新一次自身写入」才允许更新基线。更早写入的**迟到回声**
+    // （M / REVIEW-FINDINGS stores-2：写盘超时后迟到完成的旧写入 / 慢 onChanged）内容更旧，
+    // 若用它覆盖 syncedSnapshot，会把已确认的新基线回退，下一次 $save 的合并就基于错误的基线。
+    for (let i = selfWriteSnapshots.length - 1; i >= 0; i--) {
+      if (isDeepEqual(selfWriteSnapshots[i].value, newValue)) {
+        return i;
       }
     }
 
-    return false;
+    return -1;
   }
 
   function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
@@ -593,9 +679,13 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
     const previousBase = syncedSnapshot;
     const newValue = changes[key].newValue;
 
-    if (isSelfWriteEcho(newValue)) {
-      // 自身写入的回声：内容与本上下文一致，无需 patch
-      syncedSnapshot = newValue;
+    const echoIndex = isSelfWriteEcho(newValue);
+    if (echoIndex >= 0) {
+      // 自身写入的回声：内容与本上下文一致，无需 patch。
+      // 只有最新一次自身写入的回声才能刷新基线；更早写入的迟到回声不得把更新的基线回退。
+      if (echoIndex === selfWriteSnapshots.length - 1 || syncedSnapshot === null) {
+        syncedSnapshot = newValue;
+      }
       return;
     }
 
@@ -606,11 +696,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       const externalChanges: IPathChange[] = [];
       collectPathChanges(previousBase, newValue, [], externalChanges);
       if (externalChanges.length > 0) {
-        applyExternalChangesToStore(externalChanges);
-      } else {
-        // A late external echo may contain the same snapshot as the baseline,
-        // but it is still an external event once the self-write window ended.
-        applyMinimalPatch(newValue);
+        applyExternalChangesToStore(externalChanges, previousBase);
       }
       syncedSnapshot = newValue;
       return;
@@ -628,10 +714,13 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    *   因此不会覆盖用户正在编辑的内容；
    * - 与 applyMinimalPatch 一样保持容器对象身份、避免整棵子树重建。
    */
-  function applyExternalChangesToStore(changes: IPathChange[]) {
+  function applyExternalChangesToStore(changes: IPathChange[], base?: Record<string, any>) {
     store.$patch((state) => {
       const stateRecord = state as unknown as Record<string, any>;
       for (const change of changes) {
+        if (base && hasLocalChangeAtPath(base, stateRecord, change.path)) {
+          continue;
+        }
         const container = resolvePathContainer(stateRecord, change.path);
         if (!container) {
           // 本地结构已变成别的形状，或路径含原型链段（见 resolvePathContainer）：以本地为准
@@ -661,6 +750,14 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    * - 同一路径既被外部改又被本地改 → **本地改动优先**（用户当前操作可见，冲突可预期）；
    * - 合并结果与本地 state 的差异会回灌到 store，避免下一次 `$save()` 把这次保住的外部改动
    *   误判成「本地删除」再写回去（那样只是把回滚推迟一轮）。
+   *
+   * 删除语义（G6，Info 级观察，明确记录而不是留白）：**本地删除同样算「本地改动」并优先**。
+   * 若用户在 options 页删除了站点 A（本地 state 已无 A），而 SW 刚为 A 写入了新的 `lastUserInfo`，
+   * `localChanges` 会包含 `{path:[A], remove}` 并重放到 storage 现值上 —— 那一轮外部更新随删除一起消失。
+   * 这是有意的取舍：用户主动删站时该轮数据本来就该一起消失，且「删除也本地优先」与「赋值本地优先」
+   * 是同一条规则，不会产生「删了又复活」的更坏结果。若将来产品要求「删除遇到外部改动时延后一轮」，
+   * 需在这里区分 `remove` 与赋值两种冲突策略（当前不做，避免在无产品裁决时改变破坏性操作的语义）。
+   * 未加 console.warn：本层没有稳定的日志通道，且该语义是预期行为而非异常。
    *
    * 残留窗口（如实说明）：`get` 与 `set` 之间到达的外部写入仍可能被覆盖 ——
    * 窗口从「本页上次读取 storage 到本次写盘」（可能横跨整个页面会话）缩短为一次 get + set，
@@ -768,19 +865,79 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
   let queuedSkipMerge = false;
   let queuedWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
 
+  /**
+   * 单次写盘（落盘前合并 + `storage.set`）的最长耗时（缺陷清单 G5）。
+   *
+   * `chrome.storage.local.set` 在极端情况（巨大对象、配额/浏览器 bug）可能长时间不 resolve：
+   * 旧实现下 `inFlight` 永不清空，其后所有 `$save()`（含 `pagehide` 的紧急保存）都排进
+   * `queuedWaiters` 且永不 resolve，`doWrite` 的错误提示也永远不会触发。
+   *
+   * 超时后本次 `$save()` reject（走既有的 message.open 提示），`inFlight` 随之清空，
+   * 排队的最新状态仍会在尾部写里重试一次 —— 不会把「保存中」永久挂住。
+   */
+  const WRITE_TIMEOUT = 10_000;
+
+  function withWriteTimeout(task: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `[PTD] persistence write for store "${store.$id}" (storage key: ${key}) timed out after ${WRITE_TIMEOUT}ms`,
+          ),
+        );
+      }, WRITE_TIMEOUT);
+    });
+    return Promise.race([task, timeout]).finally(() => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    });
+  }
+
+  /**
+   * M（REVIEW-FINDINGS stores-1）：写盘代际号。
+   *
+   * G5 的 `withWriteTimeout` 只让 `$save()` 的 promise 及时 reject，**底层的写盘任务仍在继续**：
+   * 超时后 `inFlight` 被清空，下一轮 `$save()` 会立刻开始新的 doWrite。若旧任务随后完成，
+   * 它仍会（a）把旧内容写进 storage、（b）把 `syncedSnapshot` 覆盖成旧值 —— 新基线/新写入被回退。
+   * 这里给每次 doWrite 分配代际号：迟到的旧写入在真正 `set` 之前与完成之后都校验代际，
+   * 已过期则丢弃（只记一条 warn 便于诊断）。
+   */
+  let writeGeneration = 0;
+
   async function doWrite(getState: () => any, skipMerge = false) {
+    const generation = ++writeGeneration;
     // 标记"接下来的写入是本上下文发起的"，并**在写盘之前**登记本次写入的内容快照：
     // chrome.storage.set 可能在 promise resolve 之前就触发 onChanged，
     // 登记晚了会把自己的回声误判成外部写入（进而白 patch 一遍，正是 P0-3 要消除的级联）。
     selfWriteUntil = Date.now() + SELF_WRITE_ECHO_WINDOW;
     try {
-      const snapshot = toWriteSnapshot(getState());
-      // 落盘前先与 storage 现值合并（B-10）：真正写下的内容可能包含其它上下文的并发改动，
-      // 因此回声快照必须登记**合并后**的内容（否则对方改动带来的 onChanged 会被当成外部写入）。
-      const toWrite = skipMerge ? snapshot : await mergeBeforeWrite(snapshot);
-      rememberSelfWrite(toWrite);
-      await writeSerializedSnapshot(key, toWrite, storageArea);
-      syncedSnapshot = toWrite;
+      await withWriteTimeout(
+        (async () => {
+          const snapshot = toWriteSnapshot(getState());
+          // 落盘前先与 storage 现值合并（B-10）：真正写下的内容可能包含其它上下文的并发改动，
+          // 因此回声快照必须登记**合并后**的内容（否则对方改动带来的 onChanged 会被当成外部写入）。
+          const toWrite = skipMerge ? snapshot : await mergeBeforeWrite(snapshot);
+
+          // 合并期间可能已超时并由更新的一代接手：丢弃这次迟到的写入，避免旧内容覆盖新内容。
+          if (generation !== writeGeneration) {
+            console.warn(
+              `[PTD] stale persistence write discarded for store "${store.$id}" (storage key: ${key}): generation ${generation} < ${writeGeneration}`,
+            );
+            return;
+          }
+
+          rememberSelfWrite(toWrite);
+          await writeSerializedSnapshot(key, toWrite, storageArea);
+
+          // set 期间又出现了更新的一代：基线由新代在完成后写入，这里不能把 syncedSnapshot 回退成旧内容。
+          if (generation !== writeGeneration) {
+            return;
+          }
+          syncedSnapshot = toWrite;
+        })(),
+      );
       selfWriteUntil = Date.now() + SELF_WRITE_ECHO_WINDOW;
     } catch (error) {
       // 修复 P1-5「保存失败完全静默」：给出可诊断信息（store id + storage key）。
@@ -840,7 +997,6 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
 
   if (autoSaveType && Array.isArray(autoSaveType)) {
     store.$subscribe((mutation, state: any) => {
-      console?.log("Store `" + store.$id + "` change subscribed: ", mutation);
       if (autoSaveType.includes(mutation.type)) {
         void $save(state).catch(() => undefined);
       }

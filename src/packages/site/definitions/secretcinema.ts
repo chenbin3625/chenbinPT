@@ -17,7 +17,7 @@ import GazelleJSONAPI, {
   torrentBrowseResult,
   browseJsonResponse,
 } from "../schemas/GazelleJSONAPI";
-import BittorrentSite from "../schemas/AbstractBittorrentSite";
+import BittorrentSite, { isDocumentNode } from "../schemas/AbstractBittorrentSite";
 import { unset, set } from "es-toolkit/compat";
 
 const movieCats = ["SD", "720p", "1080p", "2160p", "4k", "DVD-R", "BDMV"];
@@ -181,8 +181,14 @@ export default class SecretCinema extends GazelleJSONAPI {
         (torrent.remastered ? ` / ${torrent.remasterYear}` : "") +
         (torrent.remasterTitle ? ` / ${extractContent(torrent.remasterTitle)}` : "") +
         (torrent.scene ? " / Scene" : ""),
-      url: `${this.url}torrents.php?id=${group.groupId}&torrentid=${torrent.torrentId}`,
-      link: `${this.url}torrents.php?action=download&id=${torrent.torrentId}&authkey=${authkey}&torrent_pass=${passkey}`,
+      // E17 同型：用 siteUrl()（new URL(path, this.url)）而非字符串拼接，兼容无尾斜杠的自定义地址；
+      // authkey / torrent_pass 是凭据，按 siteUrl 模板同样 encodeURIComponent 后再拼进 query。
+      url: this.siteUrl(`torrents.php?id=${group.groupId}&torrentid=${torrent.torrentId}`),
+      link: this.siteUrl(
+        `torrents.php?action=download&id=${torrent.torrentId}&authkey=${encodeURIComponent(
+          authkey,
+        )}&torrent_pass=${encodeURIComponent(passkey)}`,
+      ),
       time: parseTimeWithZone(torrent.time, this.metadata.timezoneOffset),
       size: torrent.size,
       seeders: torrent.seeders,
@@ -199,7 +205,7 @@ export default class SecretCinema extends GazelleJSONAPI {
     doc: browseJsonResponse | any,
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
-    if (doc instanceof Document) {
+    if (isDocumentNode(doc)) {
       return BittorrentSite.prototype.transformSearchPage.call(this, doc, searchConfig);
     }
     return super.transformSearchPage(doc, searchConfig);

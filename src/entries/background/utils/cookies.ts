@@ -58,6 +58,7 @@ export async function setCookie(cookie: CookieSetDetails, force: boolean = false
       "httpOnly",
       "sameSite",
       "expirationDate",
+      "storeId",
     ] as (keyof chrome.cookies.SetDetails)[]
   ).forEach((key) => {
     if (key == "sameSite" && cookie[key] && cookie[key].toLowerCase() == "unspecified" && __BROWSER__ === "firefox") {

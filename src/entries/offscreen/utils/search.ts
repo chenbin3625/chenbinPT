@@ -6,7 +6,7 @@ import { onMessage, sendMessage } from "@/messages.ts";
 import type { IMetadataPiniaStorageSchema, TSearchResultSnapshotStorageSchema } from "@/shared/types.ts";
 
 import { logger } from "./logger.ts";
-import { getSiteInstance } from "./site.ts";
+import { getSiteInstance, runSiteOperation } from "./site.ts";
 
 /** 把站点定义里的 pattern（string | RegExp）预编译成正则，避免逐行 eval（见 docs/performance-audit.md P1 搜索热路径） */
 function compilePatterns(patterns: TPatterns): RegExp[] {
@@ -47,7 +47,10 @@ onMessage(
     });
     const site = await getSiteInstance<"public">(siteId);
 
-    let searchResult = await site.getSearchResult(keyword, searchEntry);
+    // OS-5：站点实例已按 siteId 缓存复用；搜索会重置实例内的行级解析状态
+    // （`_searchRowFailures` / `_rowElementQueryCache`），同一站点的并发搜索必须串行，
+    // 否则两个请求会互相重置计数，导致「全部行解析失败」的判据失效/误报。
+    let searchResult = await runSiteOperation(siteId, () => site.getSearchResult(keyword, searchEntry));
 
     if (searchResult.data.length > 0) {
       let officialGroupPatterns: RegExp[] = [];

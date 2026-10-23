@@ -298,12 +298,15 @@ describe("S-2 · 站点已知 host 集合", () => {
 
   it("isTrustedTorrentLink：协议白名单 + 相对链接/空串语义", () => {
     const trusted = ["pt.example.com"];
+    const base = "https://pt.example.com/";
 
     expect(isTrustedTorrentLink("https://pt.example.com/dl?id=1", trusted)).toBe(true);
     expect(isTrustedTorrentLink("magnet:?xt=urn:btih:abc", trusted)).toBe(true);
-    // 相对链接只能由站点自身的 base 解析，不构成跨站请求
-    expect(isTrustedTorrentLink("download.php?id=1", trusted)).toBe(true);
-    expect(isTrustedTorrentLink("/dl/1", trusted)).toBe(true);
+    // B2-6：相对链接会由站点层用站点基址解析，必须按同一语义解析后再校验 host
+    expect(isTrustedTorrentLink("download.php?id=1", trusted, base)).toBe(true);
+    expect(isTrustedTorrentLink("/dl/1", trusted, base)).toBe(true);
+    // 没有站点基址时无法判断相对链接的落点，保守拒绝（生产调用方总是能提供站点实例的 url）
+    expect(isTrustedTorrentLink("download.php?id=1", trusted)).toBe(false);
     // fixLink 对危险 scheme 返回空串：它不是可请求地址，交由站点层明确失败
     expect(isTrustedTorrentLink("", trusted)).toBe(true);
     expect(isTrustedTorrentLink(undefined, trusted)).toBe(true);
@@ -312,6 +315,10 @@ describe("S-2 · 站点已知 host 集合", () => {
     expect(isTrustedTorrentLink("http://evil.tld/x", trusted)).toBe(false);
     // 协议相对链接会指向任意主机
     expect(isTrustedTorrentLink("//evil.tld/x", trusted)).toBe(false);
+    // URL.parse 返回 null 的畸形相对串在 `new URL(value, siteBase)` 下会解析到异站，必须拒绝
+    for (const malformed of ["///evil.tld/x", "/\\evil.tld/x", "\\\\evil.tld/x"]) {
+      expect(isTrustedTorrentLink(malformed, trusted, base), malformed).toBe(false);
+    }
     expect(isTrustedTorrentLink("javascript:alert(1)", trusted)).toBe(false);
     expect(isTrustedTorrentLink("data:text/html,x", trusted)).toBe(false);
     expect(isTrustedTorrentLink("file:///etc/passwd", trusted)).toBe(false);

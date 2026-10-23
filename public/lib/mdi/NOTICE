@@ -1,0 +1,35 @@
+Material Design Icons（子集）第三方声明
+=====================================
+
+## 来源
+
+- 上游项目：Material Design Icons / `@mdi/font`（Pictogrammers，原 Austin Andrews）
+  <https://materialdesignicons.com/> · <https://github.com/Templarian/MaterialDesign-Webfont>
+- 本目录的 `webfont.woff2` 是上游 `mdi@7.4.47` 字体的**子集化副本**（192 glyph / 191 cmap 项），
+  由本仓库自行用 fonttools/pyftsubset 生成，CSS 引用处版本串为 `?v=7.4.47-subset1`。
+- 引用方：`src/entries/options/views/Overview/MyData/UserDataTimeline/mdi-canvas-font.css`
+  与同目录下的 `Index.vue`（Konva canvas 里的 `account-circle` / `trophy` / `weather-sunset-down`）。
+
+## 许可
+
+- 许可证：SIL Open Font License 1.1（OFL-1.1），全文见同目录 `LICENSE`。
+- 版权：`Copyright (c) 2014, Austin Andrews (http://materialdesignicons.com/), with Reserved Font Name
+  Material Design Icons.`，并包含 Google 的 Material Design Icons 部分
+  （<https://github.com/google/material-design-icons/blob/master/LICENSE>）。
+- 上游许可原文：<https://unpkg.com/mdi@1.7.22/license.md>。
+
+## 合规状态（2026-10-23 审查 H-L8）
+
+- OFL 条件 2（每份副本随附版权声明与许可证）：**已满足** —— 本 `LICENSE` 与本 `NOTICE` 随
+  `webfont.woff2` 一起分发；构建产物 `dist-*` 会把 `public/` 原样复制，因此扩展包内同样带有这两个文件。
+- OFL 条件 3（Modified Version 不得使用 Reserved Font Name）：**待处理** —— 子集化属于
+  「Modified Version」，而字体 `name` 表的 nameID 1/3/4 仍是 `Material Design Icons`，
+  CSS 的 `font-family: "Material Design Icons For PTD"` 也包含保留名。
+  合规做法二选一（改动都在 `src/`，不在本次测试/许可修复范围内）：
+
+  1. 用 fonttools 把子集字体的 nameID 1/3/4（以及 16/17 排版名）改名为不含保留名的名字，
+     例如 `PTD Canvas Icons`，并同步 `mdi-canvas-font.css` 的 `font-family` 与 `Index.vue`
+     里 `ctx.font` 的字体名；
+  2. 向 Pictogrammers 取得保留原名的书面许可，并把许可邮件/链接追加到本文件。
+
+  完成任一方案后，请把本节改为「已满足」并写明采用的方式与（若适用）许可出处。

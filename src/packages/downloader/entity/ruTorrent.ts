@@ -20,7 +20,8 @@ import {
   TorrentFilePriority,
 } from "../types";
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
-import { getRemoteTorrentFile } from "../utils";
+import { getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: TorrentClientConfig = {
   type: "ruTorrent",
@@ -117,13 +118,6 @@ type torrentData = [
   string, // multi_file
 ];
 
-type statusData = [
-  string, // up_total
-  string, // down_total
-  string, // upload_rate
-  string, // download_rate
-];
-
 interface ListResponse {
   t: {
     [infoHash: string]: torrentData;
@@ -131,7 +125,7 @@ interface ListResponse {
   cid: number;
 }
 
-function iv(val: string | null): number {
+function iv(val: string | null | undefined): number {
   const v = val == null ? 0 : parseInt(val + "");
   return isNaN(v) ? 0 : v;
 }
@@ -397,9 +391,20 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   }
 
   override async getClientStatus(): Promise<TorrentClientStatus> {
-    const postData = new URLSearchParams({ mode: "ttl" });
-    const { data } = await this.requestHttpRpc<statusData>(postData);
-    const [upData, dlData, upSpeed, dlSpeed] = data.map(iv);
+    /**
+     * RT-3：`ttl` 模式的第 3/4 项是 rTorrent 的 `get_upload_rate`/`get_download_rate`，
+     * 在 rTorrent 里对应 throttle 的**限速上限**，不是实时速度（未设限速时恒为 0）。
+     * 这里通过 httprpc 的 `cmd=` 追加真正的实时命令 `get_up_rate` / `get_down_rate`
+     * （upstream action.php 的 ttl 模式会把 $add 追加在 4 个基础命令之后）。
+     */
+    const postData = new URLSearchParams();
+    postData.append("mode", "ttl");
+    postData.append("cmd", "get_up_rate");
+    postData.append("cmd", "get_down_rate");
+    const { data } = await this.requestHttpRpc<string[]>(postData);
+    const [upData, dlData] = data.map(iv);
+    const upSpeed = data.length > 4 ? iv(data[4]) : iv(data[2]);
+    const dlSpeed = data.length > 5 ? iv(data[5]) : iv(data[3]);
 
     return {
       upData,
@@ -410,62 +415,83 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   }
 
   override async getClientFreeSpace(): Promise<number | "N/A"> {
-    const {
-      data: { free },
-    } = await this.request<{ total: number; free: number }>({
-      // 与其它端点一致：baseURL 已包含 `/rutorrent` 前缀，这里不能重复拼接
-      url: "/plugins/diskspace/action.php",
-    });
-    return free;
+    try {
+      const {
+        data: { free },
+      } = await this.request<{ total: number; free: number }>({
+        // 与其它端点一致：baseURL 已包含 `/rutorrent` 前缀，这里不能重复拼接
+        url: "/plugins/diskspace/action.php",
+      });
+      return free;
+    } catch (e) {
+      // 未安装/未启用 diskspace 插件时该端点 404；基类契约是返回 "N/A" 而不是抛错
+      return "N/A";
+    }
   }
 
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    let postData: URLSearchParams | FormData;
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      postData = new URLSearchParams();
-      postData.append("url", url);
-    } else {
-      postData = new FormData();
+    try {
+      let postData: URLSearchParams | FormData;
+      if (url.startsWith("magnet:") || !options.localDownload) {
+        postData = new URLSearchParams();
+        postData.append("url", url);
+      } else {
+        postData = new FormData();
 
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption || {}),
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption || {}),
+        });
+
+        postData.append("torrent_file", torrent.metadata.blob(), torrent.name);
+      }
+
+      postData.append("json", "1"); // 让ruTorrent返回json
+      // postData.append('fast_resume', '1') // 快速恢复，默认禁用
+
+      if (options.savePath) {
+        postData.append("dir_edit", options.savePath);
+      }
+
+      // PKG-4：addtorrent.php 用「是否存在 torrents_start_stopped」决定不启动，
+      // 不带该参数即强制启动（不存在“开始”参数），因此 addAtPaused=false 时不追加即可。
+      if (options.addAtPaused) {
+        postData.append("torrents_start_stopped", "1");
+      }
+
+      if (options.label) {
+        postData.append("label", options.label);
+      }
+
+      // Note: ruTorrent's addtorrent.php does not support upload_rate parameter
+      // The uploadSpeedLimit feature is not implemented as it's not supported by the API
+
+      const { data } = await this.request<{
+        result: "Success" | "Failed" | "FailedFile";
+      }>({
+        method: "post",
+        url: "/php/addtorrent.php",
+        data: postData,
       });
 
-      postData.append("torrent_file", torrent.metadata.blob(), torrent.name);
-    }
-
-    postData.append("json", "1"); // 让ruTorrent返回json
-    // postData.append('fast_resume', '1') // 快速恢复，默认禁用
-
-    if (options.savePath) {
-      postData.append("dir_edit", options.savePath);
-    }
-
-    if (options.addAtPaused) {
-      postData.append("torrents_start_stopped", "1");
-    }
-
-    if (options.label) {
-      postData.append("label", options.label);
-    }
-
-    // Note: ruTorrent's addtorrent.php does not support upload_rate parameter
-    // The uploadSpeedLimit feature is not implemented as it's not supported by the API
-
-    const { data } = await this.request<{
-      result: "Success" | "Failed" | "FailedFile";
-    }>({
-      method: "post",
-      url: "/php/addtorrent.php",
-      data: postData,
-    });
-
-    addResult.success = data.result === "Success";
-    if (!addResult.success) {
-      addResult.message = data;
+      addResult.success = data.result === "Success";
+      if (!addResult.success) {
+        addResult.message = data;
+      } else {
+        this.invalidateSuggestListCache();
+      }
+    } catch (e) {
+      // N-5：把 HTTP 失败转成 CAddTorrentResult，而不是让 addTorrent 直接 reject。
+      // SEC-1：URL 脱敏后再写日志（PT 站下载链接通常带 passkey）。
+      addResult.success = false;
+      addResult.message = e instanceof Error ? e.message : String(e);
+      logMessage(
+        "[ruTorrent] 添加种子失败",
+        { url: sanitizeDownloadUrlForLog(url), error: addResult.message },
+        "error",
+      );
     }
 
     return addResult;
@@ -473,6 +499,9 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
 
   async getAllTorrents(): Promise<CTorrent[]> {
     const postData = new URLSearchParams({ mode: "list" });
+    // RT-4：mode=list 支持用 cmd= 追加自定义命令，返回值按行追加在 34 个基础字段之后；
+    // 用它取真正的添加时间 d.custom=addtime（[21] 是 state_changed，每次启停都会变）。
+    postData.append("cmd", "d.custom=addtime");
     const { data } = await this.requestHttpRpc<ListResponse>(postData);
 
     return Object.keys(data.t).map((infoHash: string) => {
@@ -498,8 +527,10 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
       // 任何**带 comment 的种子在停止后**（is_open=0 且 [29] 为空）都会被误判为 error。
       const torrentMsg = String(rawTorrent[29] ?? "");
 
+      const sizeChunks = iv(rawTorrent[7]);
       const chunksProcessing = isHashChecking === 0 ? iv(rawTorrent[6]) : iv(rawTorrent[24]);
-      const TorrentDone = Math.floor((chunksProcessing / iv(rawTorrent[7])) * 1000);
+      // RT-7：磁链未取到元数据时 size_chunks=0，直接除会得到 NaN/Infinity。
+      const TorrentDone = sizeChunks > 0 ? Math.floor((chunksProcessing / sizeChunks) * 1000) : 0;
       const isCompleted = TorrentDone >= 1000;
 
       const basePath = rawTorrent[25];
@@ -520,14 +551,35 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
         state = CTorrentState.checking;
       } else if (torrentMsg.length && torrentMsg !== "Tracker: [Tried all trackers.]") {
         state = CTorrentState.error;
+      } else {
+        // RT-1：is_open=0 且没有校验/错误消息 = ruTorrent 的「停止」（d.stop + d.close，
+        // 或添加时的 torrents_start_stopped=1），此前一律 unknown，导致暂停/恢复按钮判断失效。
+        state = CTorrentState.paused;
       }
+
+      /**
+       * RT-4 / 复检 RB-6：追加的 `cmd=d.custom=addtime` 值位于**最后一个**字段。
+       *
+       * httprpc 的 list 模式把 `cmd=` 追加在基础 `d.multicall` 字段之后：ruTorrent ≤ v5.2.0 的基础
+       * 字段是 35 个（含 hash，hash 单独作为 key）→ 追加值下标 34；而 ruTorrent master 新增了
+       * `d.is_partially_done`（36 个）→ 追加值下标 35。硬编码 `[34]` 在 master 上会读到
+       * `is_partially_done`（完成种子 = "1"）→ dateAdded 变成 1970-01-01。
+       * 这里改为「取数组最后一项」，并用「像不像 unix 秒」做一次合理性判定：
+       * 服务端忽略 cmd（没有追加列）或字段语义变化时回退到 state_changed（[21]）。
+       */
+      const appendedFieldIndex = (rawTorrent as unknown as string[]).length - 1;
+      const appendedAddTime =
+        appendedFieldIndex >= 34 ? iv((rawTorrent as unknown as string[])[appendedFieldIndex]) : 0;
+      const isPlausibleUnixSeconds = (value: number) =>
+        value >= 1_000_000_000 && value <= Math.floor(Date.now() / 1000) + 86400 * 366;
+      const dateAdded = isPlausibleUnixSeconds(appendedAddTime) ? appendedAddTime : parseInt(rawTorrent[21]) || 0;
 
       return {
         id: infoHash.toLowerCase(),
         infoHash,
         name: rawTorrent[4],
         state,
-        dateAdded: parseInt(rawTorrent[21]),
+        dateAdded,
         isCompleted,
         progress: TorrentDone / 10,
         // torrent_label = 14（15 是 peers_actual，此前会把 peer 数当成标签）
@@ -550,42 +602,60 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   }
 
   async pauseTorrent(id: any): Promise<boolean> {
-    const postData = new URLSearchParams({
-      mode: "pause",
-      hash: id.toUpperCase(),
-    });
-    const { data } = await this.requestHttpRpc(postData);
-    return this.isHttpRpcSuccess(data);
+    try {
+      const postData = new URLSearchParams({
+        mode: "pause",
+        hash: id.toUpperCase(),
+      });
+      const { data } = await this.requestHttpRpc(postData);
+      return this.isHttpRpcSuccess(data);
+    } catch (e) {
+      return false;
+    }
   }
 
   async removeTorrent(id: any, removeData: boolean = false): Promise<boolean> {
-    const upId = id.toUpperCase();
+    try {
+      const upId = id.toUpperCase();
 
-    let postData: string | URLSearchParams;
-    if (removeData) {
-      postData = buildRequestXML([
-        ["d.custom5.set", [upId, 1]],
-        ["d.delete_tied", [upId]],
-        ["d.erase", [upId]],
-      ]);
-    } else {
-      postData = new URLSearchParams({
-        mode: "remove",
-        hash: upId,
-      });
+      let postData: string | URLSearchParams;
+      if (removeData) {
+        postData = buildRequestXML([
+          ["d.custom5.set", [upId, 1]],
+          ["d.delete_tied", [upId]],
+          ["d.erase", [upId]],
+        ]);
+      } else {
+        postData = new URLSearchParams({
+          mode: "remove",
+          hash: upId,
+        });
+      }
+
+      const { data } = await this.requestHttpRpc(postData);
+      const success = this.isHttpRpcSuccess(data);
+      if (success) {
+        this.invalidateSuggestListCache();
+      }
+      return success;
+    } catch (e) {
+      return false;
     }
-
-    const { data } = await this.requestHttpRpc(postData);
-    return this.isHttpRpcSuccess(data);
   }
 
   async resumeTorrent(id: string): Promise<boolean> {
-    const postData = new URLSearchParams({
-      mode: "unpause",
-      hash: id.toUpperCase(),
-    });
-    const { data } = await this.requestHttpRpc(postData);
-    return this.isHttpRpcSuccess(data);
+    try {
+      // RT-2：ruTorrent 的 stop = d.stop + d.close（is_open=0），仅 d.start 不能重新打开；
+      // upstream action.php 的 `start` 模式是 d.open + d.start + d.resume，才能恢复「已停止」的种子。
+      const postData = new URLSearchParams({
+        mode: "start",
+        hash: id.toUpperCase(),
+      });
+      const { data } = await this.requestHttpRpc(postData);
+      return this.isHttpRpcSuccess(data);
+    } catch (e) {
+      return false;
+    }
   }
 
   async getTorrentTrackers(_torrent: string | CTorrent): Promise<string[]> {
@@ -595,17 +665,29 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
 
   // 重新校验种子（rTorrent: d.check_hash）
   override async recheckTorrent(id: any): Promise<boolean> {
-    const postData = buildRequestXML([["d.check_hash", [id.toUpperCase()]]]);
-    const { data } = await this.requestHttpRpc(postData);
-    return this.isHttpRpcSuccess(data);
+    try {
+      const postData = buildRequestXML([["d.check_hash", [id.toUpperCase()]]]);
+      const { data } = await this.requestHttpRpc(postData);
+      return this.isHttpRpcSuccess(data);
+    } catch (e) {
+      return false;
+    }
   }
 
   // 设置单个种子的标签（rTorrent: d.custom1.set）
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
-    const postData = buildRequestXML([["d.custom1.set", [id.toUpperCase(), label]]]);
-    const { data: responseXML } = await this.requestHttpRpc<string>(postData);
-    // 返回真实结果：httprpc 以 HTTP 200 + fault 报文返回失败，硬编码 true 会让「标签没设置上」显示成功
-    return this.isHttpRpcSuccess(responseXML);
+    try {
+      const postData = buildRequestXML([["d.custom1.set", [id.toUpperCase(), label]]]);
+      const { data: responseXML } = await this.requestHttpRpc<string>(postData);
+      // 返回真实结果：httprpc 以 HTTP 200 + fault 报文返回失败，硬编码 true 会让「标签没设置上」显示成功
+      const success = this.isHttpRpcSuccess(responseXML);
+      if (success) {
+        this.invalidateSuggestListCache();
+      }
+      return success;
+    } catch (e) {
+      return false;
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -662,8 +744,12 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     }));
 
     const postData = buildSystemMulticallXML(calls);
-    const { data } = await this.requestHttpRpc(postData);
-    return this.isHttpRpcSuccess(data);
+    try {
+      const { data } = await this.requestHttpRpc(postData);
+      return this.isHttpRpcSuccess(data);
+    } catch (e) {
+      return false;
+    }
   }
 
   // peer 列表: p.multicall

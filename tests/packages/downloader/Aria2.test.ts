@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@ptd/downloader/utils.ts", () => ({
   getRemoteTorrentFile: vi.fn(),
+  sanitizeDownloadUrlForLog: vi.fn((url: string) => String(url)),
 }));
 
 vi.mock("@ptd/site/utils/adapter.ts", () => ({
@@ -103,6 +104,26 @@ function lastSocket(): FakeWebSocket {
   return FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
 }
 
+describe("Aria2 RPC 地址", () => {
+  it("主机名含 jsonrpc 时仍补上路径，同时保留自定义端点", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const defaultPath = new Aria2({ address: "https://jsonrpc.example.com/" });
+    expect(lastSocket().url).toBe("wss://jsonrpc.example.com/jsonrpc");
+    lastSocket().open();
+    defaultPath.dispose();
+
+    const customPath = new Aria2({ address: "https://host.example/custom/jsonrpc" });
+    expect(lastSocket().url).toBe("wss://host.example/custom/jsonrpc");
+    lastSocket().open();
+    customPath.dispose();
+  });
+
+  it("非法地址不会让构造函数抛 TypeError（复检：对齐 uTorrent N-2）", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    expect(() => new Aria2({ address: "not a valid url" })).not.toThrow();
+  });
+});
+
 async function createClient(timeout = 5000) {
   const client = new Aria2({ address: "http://127.0.0.1:6800/jsonrpc", password: "secret", timeout });
   const ws = lastSocket();
@@ -158,7 +179,8 @@ describe("Aria2：system.multicall 解包 / 进度单位 / 上传限速 GID", ()
     expect(changeRequest.params[2]).toEqual({ "max-upload-limit": "102400K" });
 
     ws.respond({ id: changeRequest.id, jsonrpc: "2.0", result: "OK" });
-    await expect(promise).resolves.toMatchObject({ success: true });
+    // AR-2：addTorrent 必须把 gid 回填到 addResult.id
+    await expect(promise).resolves.toMatchObject({ success: true, id: "gid-abc" });
   });
 
   it("getAllTorrents 兼容 JSON-RPC 的 { result: [...] } 形状", async () => {
@@ -454,5 +476,50 @@ describe("Aria2：连接状态自愈（D-1）", () => {
     await expect(client.getClientStatus()).rejects.toThrow(/timeout/);
     // 必须在 timeout 量级内失败（而不是等 OS 的 TCP 超时）
     expect(Date.now() - startedAt).toBeLessThan(2000);
+  });
+});
+
+/** C1 修复轮回归：AR-1 */
+describe("Aria2：C1 修复轮", () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  it("AR-1：removed 状态映射为 unknown，而不是 error", async () => {
+    const { client, ws } = await createClient();
+    const promise = client.getAllTorrents();
+    const request = await waitForRequest(ws, 1);
+
+    ws.respond({
+      id: request.id,
+      jsonrpc: "2.0",
+      result: [{ result: [makeRawTask({ gid: "g-removed", status: "removed" })] }, { result: [] }, { result: [] }],
+    });
+
+    const [torrent] = await promise;
+    expect(torrent.state).toBe("unknown");
+  });
+
+  it("AR-1：waiting/stopped 第一页满载 1000 项时继续翻页", async () => {
+    const { client, ws } = await createClient();
+    const promise = client.getAllTorrents();
+    const request = await waitForRequest(ws, 1);
+
+    const page = Array.from({ length: 1000 }, (_, index) => makeRawTask({ gid: `g-${index}` }));
+    ws.respond({
+      id: request.id,
+      jsonrpc: "2.0",
+      result: [{ result: page }, { result: page }, { result: [] }],
+    });
+
+    // 第二页请求：aria2.tellWaiting(1000, 1000)
+    const nextPageRequest = await waitForRequest(ws, 2);
+    expect(nextPageRequest.method).toBe("aria2.tellWaiting");
+    expect(nextPageRequest.params.slice(1)).toEqual([1000, 1000]);
+    ws.respond({ id: nextPageRequest.id, jsonrpc: "2.0", result: [] });
+
+    const torrents = await promise;
+    expect(torrents).toHaveLength(2000);
   });
 });

@@ -6,13 +6,14 @@ import {
   ISocialSitePageInformation,
   TSupportSocialSitePageParserMatches,
 } from "../types";
+import { normalizeSocialPosterUrl } from "../utils.ts";
 
 function isNonEmptyString(value: string | undefined): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
 const tmdbUrlPattern =
-  /^(?:https?:\/\/)?(?:www\.)?themoviedb\.org\/((?:movie|tv)\/\d+(?:-[^/?#]+)?(?:\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?.*)?$/;
+  /^(?:https?:\/\/)?(?:[\w-]+\.)?themoviedb\.org\/((?:movie|tv)\/\d+(?:-[^/?#]+)?(?:\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?.*)?$/;
 
 export function build(id: string): string {
   return `https://www.themoviedb.org/${parse(id)}`;
@@ -25,7 +26,7 @@ export function parse(query: string | number | undefined): string {
 
   const normalizedQuery = String(query).trim();
   const match = normalizedQuery.match(
-    /(?:https?:\/\/)?(?:www\.)?themoviedb\.org\/((movie|tv)\/\d+)(?:-[^/?#]+)?((?:\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?.*)?$/,
+    /(?:https?:\/\/)?(?:[\w-]+\.)?themoviedb\.org\/((movie|tv)\/\d+)(?:-[^/?#]+)?((?:\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?.*)?$/,
   );
 
   if (match) {
@@ -343,7 +344,7 @@ export async function fetchInformation(
     const firstPageInfo = Array.isArray(pageInfo) ? pageInfo[0] : pageInfo;
 
     resDict.title = firstPageInfo?.titles.join(" / ") || ldJson.name || "";
-    resDict.poster = ldJson.image ?? "";
+    resDict.poster = normalizeSocialPosterUrl(ldJson.image) ?? "";
     resDict.summary = ldJson.description ?? "";
     resDict.releaseYear = (ldJson.startDate ?? ldJson.datePublished ?? "").slice(0, 4);
     resDict.region = ldJson.countryOfOrigin?.[0]?.name ?? "";

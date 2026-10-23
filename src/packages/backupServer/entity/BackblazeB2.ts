@@ -75,6 +75,12 @@ interface B2ListFileNamesResponse {
   nextFileName: string | null;
 }
 
+interface B2ListFileVersionsResponse {
+  files: B2FileEntry[];
+  nextFileName: string | null;
+  nextFileId: string | null;
+}
+
 interface B2GetUploadUrlResponse {
   uploadUrl: string;
   authorizationToken: string;
@@ -227,24 +233,18 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
   }
 
   async addFile(fileName: string, file: IBackupData): Promise<boolean> {
-    const bucketId = await this.getBucketId();
-
-    // Step 1: 获取上传 URL
-    const { data: uploadData } = await axios.post<B2GetUploadUrlResponse>(
-      `${this.apiUrl}/b2api/v2/b2_get_upload_url`,
-      { bucketId },
-      { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
-    );
-
-    // Step 2: 构建 zip blob
-    const fileBlob = await this.backupDataToJSZipBlob(file);
-    // B2 的 X-Bz-Content-Sha1 需要整包 SHA1，必须完整读一次 Blob；这里只读一次，
-    // 且上传时直接复用同一个 ArrayBuffer，不做第二次整包复制。
-    const fileBuffer = await fileBlob.arrayBuffer();
-    const sha1 = await sha1Hex(fileBuffer);
-
-    // Step 3: 上传文件
     try {
+      const bucketId = await this.getBucketId();
+      const { data: uploadData } = await axios.post<B2GetUploadUrlResponse>(
+        `${this.apiUrl}/b2api/v2/b2_get_upload_url`,
+        { bucketId },
+        { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
+      );
+
+      const fileBlob = await this.backupDataToJSZipBlob(file);
+      const fileBuffer = await fileBlob.arrayBuffer();
+      const sha1 = await sha1Hex(fileBuffer);
+
       const { status } = await axios.post(uploadData.uploadUrl, fileBuffer, {
         headers: {
           Authorization: uploadData.authorizationToken,
@@ -278,30 +278,42 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
   }
 
   async deleteFile(path: string): Promise<boolean> {
-    const bucketId = await this.getBucketId();
-
     try {
-      // 通过文件名精确查找 fileId
-      const { data: listData } = await axios.post<B2ListFileNamesResponse>(
-        `${this.apiUrl}/b2api/v2/b2_list_file_names`,
-        {
-          bucketId,
-          prefix: path,
-          maxFileCount: 1,
-        },
-        { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
-      );
+      const bucketId = await this.getBucketId();
+      let startFileName: string | null = null;
+      let startFileId: string | null = null;
+      let deleted = false;
 
-      const file = listData.files.find((f) => f.fileName === path);
-      if (!file) return false;
+      do {
+        let page: B2ListFileVersionsResponse;
+        page = (
+          await axios.post<B2ListFileVersionsResponse>(
+            `${this.apiUrl}/b2api/v2/b2_list_file_versions`,
+            {
+              bucketId,
+              prefix: path,
+              maxFileCount: 1000,
+              ...(startFileName ? { startFileName, startFileId } : {}),
+            },
+            { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
+          )
+        ).data;
 
-      const { data: deleteData } = await axios.post<B2DeleteFileResponse>(
-        `${this.apiUrl}/b2api/v2/b2_delete_file_version`,
-        { fileName: path, fileId: file.fileId },
-        { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
-      );
+        for (const file of page.files) {
+          if (file.fileName !== path) continue;
+          const { data: result } = await axios.post<B2DeleteFileResponse>(
+            `${this.apiUrl}/b2api/v2/b2_delete_file_version`,
+            { fileName: path, fileId: file.fileId },
+            { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
+          );
+          if (result.fileId !== file.fileId) throw new Error(`Failed to delete B2 file version ${file.fileId}`);
+          deleted = true;
+        }
+        startFileName = page.nextFileName;
+        startFileId = page.nextFileId;
+      } while (startFileName != null && startFileId != null);
 
-      return !!deleteData.fileId;
+      return deleted;
     } catch (e) {
       // SERVERSSOCIAL-3（P1-5）：删除失败要能看到原因（权限不足、对象已被清理等）
       this.logBackupFailure("deleteFile", e);

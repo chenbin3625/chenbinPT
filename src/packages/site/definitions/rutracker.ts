@@ -63,7 +63,9 @@ export const siteMetadata: ISiteMetadata = {
       if (keywords) {
         delete requestConfig!.params?.keywords; // 移除 AbstractBittorrentSite 自动添加的 keywords 参数
 
-        let { title: searchStr, season, episode } = parseSeasonEpisode(keywords.replace("-", ""));
+        // E5-6：replace 传字符串只替换第一处；RuTracker 搜索对连字符敏感，
+        // 多连字符片名（Spider-Man-No-Way-Home）必须全部替换，且要在 parseSeasonEpisode 之前做。
+        let { title: searchStr, season, episode } = parseSeasonEpisode(keywords.replace(/-/g, " "));
         if (season) searchStr += ` ТВ | Сезон: ${season}`;
         if (episode) searchStr += ` Серии: ${episode}`;
         set(requestConfig!, "params.nm", searchStr);

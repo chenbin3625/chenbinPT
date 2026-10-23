@@ -6,16 +6,20 @@ import { ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { resolveColor } from "@/shared/colors.ts";
-import { useConfigStore } from "@/options/stores/config.ts";
+
+import { useSetBaseConfigDraft } from "./configDraft.ts";
 
 const { t } = useI18n();
-const configStore = useConfigStore();
+const config = useSetBaseConfigDraft();
 
 const showEncryptionKey = ref<boolean>(false);
-const encryptionKey = shallowRef<string>(configStore.backup.encryptionKey);
+// F2-N1：输入框绑定本地草稿（含撤销历史），不再逐键写回 configStore。
+// 只有点 SetBase 的「保存」才会经 Index.vue 的草稿合并写回 store 并落盘；
+// 这样其它页面任何一次 `$save()`（如表格排序）都不会把用户没确认的新密钥静默写进 storage。
+const encryptionKey = shallowRef<string>(config.value.backup.encryptionKey);
 const { history, undo: undoEncryptionKey } = useThrottledRefHistory(encryptionKey, { throttle: 50 });
 watch(encryptionKey, (newValue) => {
-  configStore.backup.encryptionKey = newValue; // 将 encryptionKey 同步回 configStore
+  config.value.backup.encryptionKey = newValue;
 });
 
 function randomEncryptionKey() {

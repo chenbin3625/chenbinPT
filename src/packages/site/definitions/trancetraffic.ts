@@ -45,6 +45,10 @@ export const siteMetadata: ISiteMetadata = {
   name: "TranceTraffic",
   description: "TranceTraffic is a Private Torrent Tracker for MUSIC（Trance 电子音乐）",
   tags: ["音乐"],
+  // L-23【待验证】：站点为国际站，但发布时间看起来会按账号 profile 的时区设置展示
+  //（Jackett trancetraffic.yml 对 date 字段注明 "auto adjusted by site account profile"），
+  // 因此固定偏移无法覆盖所有用户。`+0800` 沿用上游 PTPP 配置（该上游同写 +0800），
+  // 没有真实页面时钟可核对前不改成 UTC（改成 +0000 同样可能是猜）。
   timezoneOffset: "+0800",
 
   type: "private",

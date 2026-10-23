@@ -20,7 +20,7 @@ import {
 } from "../types";
 import urlJoin from "url-join";
 import axios, { type AxiosResponse, isAxiosError } from "axios";
-import { getRemoteTorrentFile } from "../utils";
+import { getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: TorrentClientConfig = {
@@ -109,6 +109,13 @@ interface rawTorrent {
    * Byte count of all the non-corrupt data you've ever downloaded for this torrent. If you deleted the files and downloaded a second time, this will be 2*totalSize.
    */
   downloadedEver: number;
+
+  /**
+   * tr_stat.error：0=OK, 1=tracker warning, 2=tracker error, 3=local error。
+   * 只有 >= 2 才算真的出错（1 只是 tracker 警告，误判会让大量正常种子变红）。
+   */
+  error?: number;
+  errorString?: string;
 
   trackers: Array<{
     announce: string;
@@ -310,12 +317,21 @@ function mapTransmissionFilePriority(priority: number, wanted: boolean): Torrent
   }
 }
 
-// Transmission trackerStats: announceState 0=inactive 1=waiting 2=queued 3=active; lastAnnounceSucceeded 标志错误
+// Transmission trackerStats: announceState 0=inactive 1=waiting 2=queued 3=active
+// TR-1：`lastAnnounceSucceeded` 在「从未 announce 过」时同样是 false（trackerStats.hasAnnounced=false），
+// 备用 tracker（isBackup）也从不 announce；因此必须先判 hasAnnounced / isBackup，否则新种子与备用 tracker 全被标红。
 function mapTransmissionTrackerState(tracker: {
   announceState: number;
+  hasAnnounced?: boolean;
   lastAnnounceSucceeded: boolean;
   isBackup: boolean;
 }): CTrackerState {
+  if (tracker.isBackup) {
+    return CTrackerState.disabled;
+  }
+  if (tracker.hasAnnounced === false) {
+    return CTrackerState.unknown;
+  }
   if (tracker.lastAnnounceSucceeded === false) {
     return CTrackerState.error;
   }
@@ -324,9 +340,6 @@ function mapTransmissionTrackerState(tracker: {
   }
   if (tracker.announceState === 1 || tracker.announceState === 2) {
     return CTrackerState.updating;
-  }
-  if (tracker.isBackup) {
-    return CTrackerState.disabled;
   }
   return CTrackerState.unknown;
 }
@@ -349,6 +362,9 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     "leftUntilDone",
     "labels",
     "trackers",
+    // TR-3：error/errorString 用于把「数据丢失 / tracker error」映射成 CTorrentState.error
+    "error",
+    "errorString",
     // 上传/下载速度与总量
     "rateDownload",
     "rateUpload",
@@ -364,9 +380,15 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   constructor(options: Partial<TorrentClientConfig> = {}) {
     super({ ...clientConfig, ...options });
 
-    // 修正服务器地址
+    // 修正服务器地址（复检 RB：非法 URL 不能抛 TypeError 让实例构造失败；解析失败按「无路径」处理）
     let address = this.config.address;
-    if (address.indexOf("rpc") === -1) {
+    let pathname = "";
+    try {
+      pathname = new URL(address).pathname.toLowerCase();
+    } catch {
+      pathname = "";
+    }
+    if (!pathname.includes("rpc")) {
       address = urlJoin(address, "/transmission/rpc");
     }
     this.address = address;
@@ -436,39 +458,38 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    const addTorrentOptions: Partial<TransmissionAddTorrentOptions> = {
-      paused: options.addAtPaused ?? false,
-    };
-
-    const clientVersion = await this.getClientVersion();
-    let supportLabelAtAdd = parseInt(clientVersion.match(/RPC (\d+)/)?.[1] || "0", 10) >= 17;
-
-    // 处理链接
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      addTorrentOptions.filename = url;
-    } else {
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption || {}),
-      });
-
-      addTorrentOptions.metainfo = torrent.metadata.base64();
-    }
-
-    if (options.savePath) {
-      addTorrentOptions["download-dir"] = options.savePath;
-    }
-
-    let labels: string[] | undefined = undefined;
-    if (options.label) {
-      labels = options.label.split(",").map((label) => label.trim());
-    }
-
-    if (labels && supportLabelAtAdd) {
-      addTorrentOptions.labels = labels;
-    }
-
     try {
+      const addTorrentOptions: Partial<TransmissionAddTorrentOptions> = {
+        paused: options.addAtPaused ?? false,
+      };
+
+      const clientVersion = await this.getClientVersion();
+      const supportLabelAtAdd = parseInt(clientVersion.match(/RPC (\d+)/)?.[1] || "0", 10) >= 17;
+
+      // 处理链接
+      if (url.startsWith("magnet:") || !options.localDownload) {
+        addTorrentOptions.filename = url;
+      } else {
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption || {}),
+        });
+
+        addTorrentOptions.metainfo = torrent.metadata.base64();
+      }
+
+      if (options.savePath) {
+        addTorrentOptions["download-dir"] = options.savePath;
+      }
+
+      // PKG-4：label 语义统一为「单一标签」——添加时与 setTorrentLabel 一样只写一个 label，
+      // 不再按逗号拆成多个（拆分会让 addTorrent 与 setTorrentLabel 的语义不一致）。
+      const labels: string[] | undefined = options.label?.trim() ? [options.label.trim()] : undefined;
+
+      if (labels && supportLabelAtAdd) {
+        addTorrentOptions.labels = labels;
+      }
+
       const { data } = await this.request<AddTorrentResponse>("torrent-add", addTorrentOptions, 1, {
         // 重复种子会以 result: "duplicate torrent" 返回，需由下面的逻辑判读，不能被 request 当成失败（DOWNLOADER-6）
         allowResultError: true,
@@ -529,10 +550,19 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       if (!addResult.success) {
         addResult.message = data;
       }
+
+      if (addResult.success) {
+        this.invalidateSuggestListCache();
+      }
     } catch (e) {
-      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败
+      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败。
+      // SEC-1：日志里的 URL 必须脱敏（PT 站下载链接通常带 passkey）。
       addResult.message = e instanceof Error ? e.message : String(e);
-      logMessage("[Transmission] 添加种子失败", { url, error: addResult.message }, "error");
+      logMessage(
+        "[Transmission] 添加种子失败",
+        { url: sanitizeDownloadUrlForLog(url), error: addResult.message },
+        "error",
+      );
     }
 
     return addResult;
@@ -561,10 +591,19 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         state = CTorrentState.downloading;
       } else if (torrent.status === 0) {
         state = CTorrentState.paused;
+      } else if (torrent.status === 1) {
+        // TR-3：1 = queued to verify local data（排队等待校验），以前落成 unknown
+        state = CTorrentState.checking;
       } else if (torrent.status === 2) {
         state = CTorrentState.checking;
       } else if (torrent.status === 3 || torrent.status === 5) {
         state = CTorrentState.queued;
+      }
+
+      // TR-3：error/errorString。tr_stat.error: 0=OK, 1=tracker warning, 2=tracker error, 3=local error；
+      // 只有 >=2 才是真的出错（warning 不该把种子标红）。
+      if (typeof torrent.error === "number" && torrent.error >= 2) {
+        state = CTorrentState.error;
       }
 
       return {
@@ -572,7 +611,8 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         infoHash: torrent.hashString,
         name: torrent.name,
         progress: torrent.percentDone * 100,
-        isCompleted: torrent.leftUntilDone < 1,
+        // TR-4：磁链在获取元数据前 leftUntilDone 也是 0，必须同时要求 percentDone 完成
+        isCompleted: torrent.leftUntilDone < 1 && torrent.percentDone === 1,
         ratio: torrent.uploadRatio,
         dateAdded: torrent.addedDate,
         savePath: torrent.downloadDir,
@@ -595,29 +635,42 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     return returnTorrents;
   }
 
-  async pauseTorrent(id: any): Promise<any> {
-    const args: TransmissionTorrentArguments = {
-      ids: id,
-    };
-    await this.request("torrent-stop", args);
-    return true;
+  async pauseTorrent(id: any): Promise<boolean> {
+    try {
+      const args: TransmissionTorrentArguments = {
+        ids: id,
+      };
+      await this.request("torrent-stop", args);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
-  async removeTorrent(id: number, removeData: boolean | undefined): Promise<boolean> {
-    const args: TransmissionTorrentRemoveArguments = {
-      ids: id,
-      "delete-local-data": removeData,
-    };
-    await this.request("torrent-remove", args);
-    return true;
+  async removeTorrent(id: any, removeData?: boolean): Promise<boolean> {
+    try {
+      const args: TransmissionTorrentRemoveArguments = {
+        ids: id,
+        "delete-local-data": removeData,
+      };
+      await this.request("torrent-remove", args);
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async resumeTorrent(id: any): Promise<boolean> {
-    const args: TransmissionTorrentArguments = {
-      ids: id,
-    };
-    await this.request("torrent-start", args);
-    return true;
+    try {
+      const args: TransmissionTorrentArguments = {
+        ids: id,
+      };
+      await this.request("torrent-start", args);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async getTorrentTrackers(torrent: CTorrent): Promise<string[]> {
@@ -639,26 +692,34 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
 
   // 重新校验种子（Transmission RPC: torrent-verify）
   override async recheckTorrent(id: any): Promise<boolean> {
-    const args: TransmissionTorrentArguments = {
-      ids: id,
-    };
-    await this.request("torrent-verify", args);
-    return true;
+    try {
+      const args: TransmissionTorrentArguments = {
+        ids: id,
+      };
+      await this.request("torrent-verify", args);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 调整种子在队列中的位置（Transmission RPC: queue-move-*）
   override async moveTorrentInQueue(id: any, direction: TorrentQueueDirection): Promise<boolean> {
-    const methodMap: Record<TorrentQueueDirection, TransmissionRequestMethod> = {
-      top: "queue-move-top",
-      up: "queue-move-up",
-      down: "queue-move-down",
-      bottom: "queue-move-bottom",
-    };
-    const args: TransmissionTorrentArguments = {
-      ids: id,
-    };
-    await this.request(methodMap[direction], args);
-    return true;
+    try {
+      const methodMap: Record<TorrentQueueDirection, TransmissionRequestMethod> = {
+        top: "queue-move-top",
+        up: "queue-move-up",
+        down: "queue-move-down",
+        bottom: "queue-move-bottom",
+      };
+      const args: TransmissionTorrentArguments = {
+        ids: id,
+      };
+      await this.request(methodMap[direction], args);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 设置单个种子的速度限制（单位 KiB/s，0 表示不限速；Transmission 使用 KB/s）
@@ -688,18 +749,27 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       args.downloadLimited = limits.download > 0;
     }
 
-    await this.request("torrent-set", args);
-    return true;
+    try {
+      await this.request("torrent-set", args);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 设置单个种子的标签
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
-    const args = {
-      ids: id,
-      labels: [label],
-    };
-    await this.request("torrent-set", args);
-    return true;
+    try {
+      const args = {
+        ids: id,
+        labels: [label],
+      };
+      await this.request("torrent-set", args);
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -837,6 +907,10 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
             announce: string;
             announceState: number;
             downloadCount?: number;
+            /** TR-2：trackerRemove 需要的是 tracker id（整数），不是 URL */
+            id?: number;
+            /** TR-1：从未 announce 过时 lastAnnounceSucceeded 也是 false */
+            hasAnnounced?: boolean;
             isBackup: boolean;
             lastAnnounceResult?: string;
             lastAnnounceSucceeded: boolean;
@@ -870,20 +944,52 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
 
   // 新增 tracker: torrent-set trackerAdd
   override async addTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    await this.request("torrent-set", {
-      ids: this.getTorrentId(torrent),
-      trackerAdd: [url],
-    });
-    return true;
+    try {
+      await this.request("torrent-set", {
+        ids: this.getTorrentId(torrent),
+        trackerAdd: [url],
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
-  // 删除 tracker: torrent-set trackerRemove（接受 url 或 tracker id 字符串）
+  /**
+   * 删除 tracker: torrent-set trackerRemove（TR-2）。
+   *
+   * rpc-spec 里 `trackerRemove` 是 **array of tracker ids（整数）**，不是 URL；
+   * 以前传 URL 时服务端仍返回 success，但实际什么都没删，UI 静默无效果。
+   * 这里先读 trackerStats 找到目标 tracker 的 id 再传。
+   */
   override async removeTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    await this.request("torrent-set", {
-      ids: this.getTorrentId(torrent),
-      trackerRemove: [url],
-    });
-    return true;
+    try {
+      const ids = this.getTorrentId(torrent);
+      const {
+        data: { arguments: args },
+      } = await this.request<
+        TransmissionBaseResponse<{
+          torrents: Array<{ trackerStats: Array<{ announce: string; id?: number }> }>;
+        }>
+      >("torrent-get", {
+        ids: [ids],
+        fields: ["trackerStats"],
+      });
+
+      const tracker = args.torrents?.[0]?.trackerStats?.find((item) => item.announce === url);
+      // 不存在视为已删除（幂等）
+      if (!tracker || typeof tracker.id !== "number") {
+        return true;
+      }
+
+      await this.request("torrent-set", {
+        ids,
+        trackerRemove: [tracker.id],
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   /**

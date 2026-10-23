@@ -9,9 +9,9 @@ import {
 } from "../types";
 import { uniq } from "es-toolkit";
 import { parse as parseImdb } from "./imdb.ts";
-import { commonParseFactory } from "../utils.ts";
+import { commonParseFactory, normalizeSocialPosterUrl } from "../utils.ts";
 
-const doubanUrlPattern = /^(?:https?:\/\/)?(?:movie\.|www\.)?douban\.com\/subject\/(\d+)\/?/;
+const doubanUrlPattern = /^(?:https?:\/\/)?(?:[\w-]+\.)?douban\.com\/subject\/(\d+)\/?/;
 
 export function build(id: string): string {
   return `https://movie.douban.com/subject/${id}/`;
@@ -147,7 +147,7 @@ export function transformPtGen(data: IDoubanPtGen): ISocialInformation {
     site: "douban",
     id: data.sid,
     title: titles.join(" / "),
-    poster: data.poster ?? "",
+    poster: normalizeSocialPosterUrl(data.poster) ?? "",
     summary: data.summary ?? data.descr ?? data.description ?? data.introduction ?? "",
     releaseYear: data.year ?? "",
     region: data.region?.[0] ?? "",
@@ -188,9 +188,10 @@ export async function fetchInformation(
 
     resDict.title = pageParser$1(data).titles.join(" / ");
 
-    resDict.poster = (ld_json.image ?? "")
-      .replace(/s(_ratio_poster|pic)/g, "l$1")
-      .replace(/img\d(.doubanio.com)/g, "img1$1");
+    resDict.poster =
+      normalizeSocialPosterUrl(
+        (ld_json.image ?? "").replace(/s(_ratio_poster|pic)/g, "l$1").replace(/img\d(.doubanio.com)/g, "img1$1"),
+      ) ?? "";
 
     resDict.ratingScore = ld_json?.aggregateRating?.ratingValue ?? 0;
     resDict.ratingCount = ld_json?.aggregateRating?.ratingCount ?? 0;

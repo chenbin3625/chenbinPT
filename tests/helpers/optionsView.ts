@@ -147,6 +147,12 @@ export function mountOptionsView(component: Component, options: IMountOptions = 
   const app = createApp(component as any, options.props ?? {});
   const pinia = options.pinia ?? prepareOptionsPinia();
 
+  // 显式把要挂载的 pinia 设为 active（G34 的防御性修正）：模块级 store 在求值期通过
+  // `useXxxStore()` 绑定 active pinia，而调用方经常先 `prepareOptionsPinia()` 再挂载其它用例 ——
+  // 期间 active pinia 可能已被别的用例换掉。这里在挂载前对齐，避免「传入的 pinia」与
+  // 「模块级 store 实际绑定的 pinia」不一致时断言落到错误实例。
+  setActivePinia(pinia);
+
   app.use(pinia);
   app.use(i18nInstance);
   app.use(Antd as any);

@@ -32,6 +32,7 @@ vi.mock("@/shared/storagePath.ts", () => ({
 }));
 
 const session = new Map<string, unknown>();
+let holdNextTrackingSet: (() => Promise<void>) | null = null;
 
 vi.stubGlobal("chrome", {
   downloads: {
@@ -47,7 +48,13 @@ vi.stubGlobal("chrome", {
     session: {
       get: async (key: string) => (session.has(key) ? { [key]: session.get(key) } : {}),
       set: async (items: Record<string, unknown>) => {
-        Object.entries(items).forEach(([key, value]) => session.set(key, structuredClone(value)));
+        const snapshot = structuredClone(items);
+        if (Object.hasOwn(snapshot, "ptd_downloadTracking") && holdNextTrackingSet) {
+          const hold = holdNextTrackingSet;
+          holdNextTrackingSet = null;
+          await hold();
+        }
+        Object.entries(snapshot).forEach(([key, value]) => session.set(key, value));
       },
     },
     onChanged: { addListener: vi.fn() },
@@ -68,6 +75,7 @@ for (const [type, handler] of mocks.onMessage.mock.calls) {
 describe("service worker 下载追踪", () => {
   beforeEach(() => {
     session.clear();
+    holdNextTrackingSet = null;
     mocks.sendMessage.mockReset();
     mocks.sendMessage.mockResolvedValue(undefined);
     mocks.downloadSearch.mockReset();
@@ -126,5 +134,26 @@ describe("service worker 下载追踪", () => {
     await expect(get({ data: "siteA" })).resolves.toBe(100);
     await rollback({ data: { site: "siteA", at: 100, previous: 0 } });
     await expect(get({ data: "siteA" })).resolves.toBe(0);
+  });
+
+  it("两个并发登记即使首次存储写入挂起，也不会被旧快照覆盖", async () => {
+    const register = handlers.get("registerDownloadTracking");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    holdNextTrackingSet = () => gate;
+
+    const first = register({ data: { chromeDownloadId: 81, downloadId: 11 } });
+    await vi.waitFor(() => expect(holdNextTrackingSet).toBeNull());
+    const second = register({ data: { chromeDownloadId: 82, downloadId: 12 } });
+    release();
+    await Promise.all([first, second]);
+
+    expect(session.get("ptd_downloadTracking")).toMatchObject({
+      81: { downloadId: 11 },
+      82: { downloadId: 12 },
+    });
+    mocks.downloadChanged!({ id: 81, state: { current: "complete" } });
+    mocks.downloadChanged!({ id: 82, state: { current: "complete" } });
+    await vi.waitFor(() => expect(session.get("ptd_downloadTracking")).toEqual({}));
   });
 });

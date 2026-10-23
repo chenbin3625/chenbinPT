@@ -11,7 +11,9 @@ export const siteMetadata: ISiteMetadata = {
   name: "0Magnet",
   aka: ["ØMagnet", "无极磁链"],
   description: "ØMagnet 是一个专注于高清电影和电视剧的私人种子站点，提供高质量的影视资源下载服务。",
-  tags: ["成人", "XXX"],
+  // E1-A1：本站是综合磁力搜索（同一文件的列表/详情选择器都按影视站描述），不是成人站；
+  // 原先 tags 与搜索行的 category 都被硬编码成 "XXX"，会让所有结果被当成成人内容。
+  tags: ["磁力", "影视"],
 
   type: "public",
 
@@ -59,7 +61,9 @@ export const siteMetadata: ISiteMetadata = {
       url: { selector: "a", attr: "href" },
       // link 需要访问后获取
       size: { selector: "td.td-size", filters: [{ name: "parseSize" }] },
-      category: { text: "XXX" },
+      // E1-A1：列表页没有分类选择器，不要硬编码成 "XXX"（会让每条结果都进成人分类）；
+      // 归入 Other，等站点提供真实分类再按选择器解析（E1-A6 已记录 urlPattern 过宽，需真实页面确认）。
+      category: { text: "Other" },
     },
   },
 

@@ -95,4 +95,21 @@ describe("extractTextExcluding：`>` 直接子选择器与旧写法等价（P2-1
       legacyExtractTextExcluding(element, ">span, div.torrent_info"),
     );
   });
+
+  it("N3：选择器内部的逗号（属性值 / :not 列表）不会被当成列表分隔符", () => {
+    const quoted = makeElement('<div class="group_info"><span title="a,b">A</span><span>B</span>tail</div>');
+    expect(extractTextExcluding(quoted, 'span[title="a,b"]')).toBe("Btail");
+
+    // 旧实现会拆成 "span:not(.x" 与 ".y)" 两个非法选择器（matches 抛错/不匹配），结果一个都不排除
+    const notList = makeElement(
+      '<div><span class="x">X</span><span class="y">Y</span><span class="z">Z</span>keep</div>',
+    );
+    expect(extractTextExcluding(notList, "span:not(.x, .y)")).toBe("XYkeep");
+    expect(extractTextExcluding(notList, "span:not(.z)")).toBe("Zkeep");
+  });
+
+  it("N3：非法选择器不让整行解析抛错（按不匹配处理）", () => {
+    const element = makeElement("<div><span>A</span>keep</div>");
+    expect(extractTextExcluding(element, "span::definitely-not-a-pseudo")).toBe("Akeep");
+  });
 });

@@ -4,7 +4,6 @@
  * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  */
 import type { ISiteMetadata } from "../types";
-import PrivateSite from "../schemas/AbstractPrivateSite";
 
 // 站点分类非常多（U-232/AEON 系），此处只列出常用的影视主分类；其余分类可由用户在站点内筛选
 const categoryMap: Record<number, string> = {
@@ -142,12 +141,20 @@ export const siteMetadata: ISiteMetadata = {
       },
       time: {
         selector: "td:nth-child(5)",
-        filters: [{ name: "parseTime", args: ["dd-MM-yyyyHH:mm:ss"] }],
+        filters: [
+          // E2-08：单元格的日期与时间之间可能以空格/<br> 分隔（getFieldData 会把换行归一成空格），
+          // 原格式串 `dd-MM-yyyyHH:mm:ss` 缺空格会解析失败并回落到原生 Date，
+          // 而 V8 会把 `10-03-2024` 当成 MM-DD-YYYY（日/月颠倒）。这里先归一成「日期 时间」再按站点时区解析。
+          (query: string) => query.trim().replace(/^(\d{2}-\d{2}-\d{4})\s*(\d{2}:\d{2}:\d{2})/, "$1 $2"),
+          { name: "parseTime", args: ["dd-MM-yyyy HH:mm:ss"] },
+        ],
       },
       size: { selector: "td:nth-child(6)" },
       seeders: { selector: "td:nth-child(8)" },
       leechers: { selector: "td:nth-child(9)" },
-      completed: { selector: "td:nth-child(9)" },
+      // E2-01：原实现与 leechers 取同一列（td:nth-child(9)），「完成数」恒等于「下载者数」，
+      // 比缺失更误导（Jackett 的 grabs 也是同一列，属上游同源错误）。真实表头列号尚未确认，
+      // 这里不再猜测列号：先不声明 completed，等拿到登录态页面表头后再补正确的列。
       tags: [
         {
           name: "Free",
@@ -207,6 +214,8 @@ export const siteMetadata: ISiteMetadata = {
   levelRequirements: [
     { id: 1, name: "User" },
     { id: 2, name: "Power User" },
-    { id: 3, name: "VIP" },
+    // E2-16：VIP 属于 vip 组（types/userinfo.ts 约定 vip=100-199），放在 id 3（user 组区间）
+    // 会让 VIP 用户被当成普通第 3 级显示，也会被 getMaxUserLevelId 算进 user 阶梯。
+    { id: 100, name: "VIP", groupType: "vip" },
   ],
 };

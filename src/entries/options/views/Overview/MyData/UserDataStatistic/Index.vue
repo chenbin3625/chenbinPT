@@ -39,7 +39,15 @@ import CheckSwitchButton from "@/options/components/CheckSwitchButton.vue";
 import PageSkeleton from "@/options/components/PageSkeleton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
-import { type IUserDataStatistic, loadFullData, setSubDate, sumUserInfoFieldByDate, toNumber } from "./utils.ts";
+import {
+  buildPerSiteTooltipFormatter,
+  escapeHtml,
+  type IUserDataStatistic,
+  loadFullData,
+  setSubDate,
+  sumUserInfoFieldByDate,
+  toNumber,
+} from "./utils.ts";
 import { allAddedSiteMetadata, loadAllAddedSiteMetadata } from "../utils/siteMetadata.ts";
 
 type EChartsLineChartOption = ComposeOption<
@@ -57,6 +65,7 @@ const route = useRoute();
 const router = useRouter();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 const chartContainerRef = useTemplateRef<HTMLDivElement>("chartContainer");
 const { width: containerWidth } = useElementSize(chartContainerRef);
 const perChartHeight = computed(() => 400);
@@ -96,14 +105,15 @@ const formatDict = {
 
 function createTotalInfoTooltipFormatter(type: (keyof typeof formatDict)[]) {
   return function (params: any) {
-    let result = "<div>" + params[0].name + "</div>";
+    // F1：tooltip 字符串按 HTML 插入，日期/系列名统一转义（与分站点 tooltip 同一口径）
+    let result = "<div>" + escapeHtml(params[0]?.name ?? "") + "</div>";
     params.forEach(function (param: any) {
       const formatFunction = formatDict[type[param.seriesIndex] ?? "number"];
 
       result +=
-        `<div style='color: ${param.color}'>` +
+        `<div style='color: ${escapeHtml(param.color)}'>` +
         param.marker +
-        param.seriesName +
+        escapeHtml(param.seriesName) +
         ": " +
         formatFunction(param.value) +
         "</div>";
@@ -262,58 +272,15 @@ const createPerSiteChartOptionsFn = (
         axisPointer: {
           type: "shadow",
         },
-        formatter: (params: any[]) => {
-          let ret = "";
-          const date = params?.[0]?.name ?? "No Date"; // 从params 中拿到日期
-          ret += `<span style="font-weight: 600">${date}</span><br>`;
-
-          const hasData = params.some((x) => Number(x.data));
-          const totalCount = params.reduce((acc, cur) => acc + (Number(cur.data) || 0), 0); // 算出总和
-          let thresholdSite = 0; // 低于阈值的站点数量
-
-          if (hasData) {
-            ret += '<table style="width: 100%;">';
-            ret += `<tr style="border-bottom: 1pt solid black;; font-weight: 600"><td style="padding-right: 12px">${t("UserDataStatistic.chart.totalLabel")}</td><td style="text-align: right; padding-right: 12px">${formatDict[format](totalCount)}</td><td style="text-align: right">100%</td></tr>`;
-
-            const sortedParams = params.sort((a, b) => b.data - a.data);
-
-            for (const data of sortedParams) {
-              const dataValue = Number(data.data) || 0;
-
-              if (dataValue === 0) continue; // 跳过无数据的站点
-              const site = data.seriesName;
-              const siteName = allAddedSiteMetadata[site]?.siteName ?? site;
-              const siteFavicon = allAddedSiteMetadata[site]?.faviconSrc ?? NO_IMAGE;
-              const precentValue = (dataValue / totalCount) * 100;
-              const isHighlightSite = lastHoveredSeriesIndex.value === data.seriesIndex; // 是否高亮此行
-
-              // 跳过低于阈值且没有高亮的站点
-              if (
-                !isHighlightSite &&
-                Math.abs(precentValue) < (configStore.userStatisticControl.hidePerSitePrecentThreshold ?? 0)
-              ) {
-                thresholdSite++;
-                continue;
-              }
-
-              ret += `<tr style='${isHighlightSite ? `color: ${data.color};` : ""}'>
-<td style="padding-right: 12px"><div style="display: inline-flex; align-items: center"><img src="${siteFavicon}" style="width:16px; height: 16px; ; margin-right: 4px" alt="${siteName}">${siteName}</div></td>
-<td style="text-align: right; padding-right: 12px">${formatDict[format](data.value)}</td>
-<td style="text-align: right">${precentValue.toFixed(2)}%</td>
-</tr>`;
-            }
-
-            if (thresholdSite > 0) {
-              ret += `<tr><td colspan="3" style="text-align: right">${t("UserDataStatistic.chart.hiddenSites", { count: thresholdSite })}</td></tr>`;
-            }
-
-            ret += "</table>";
-          } else {
-            ret += `${t("UserDataStatistic.chart.noData")}`;
-          }
-
-          return ret;
-        },
+        // F1：站点名/favicon 均来自用户可编辑（或从备份恢复）的数据，拼入 HTML 前必须转义
+        formatter: buildPerSiteTooltipFormatter({
+          formatValue: (value) => String(formatDict[format](value)),
+          siteName: (site) => allAddedSiteMetadata[site]?.siteName ?? site,
+          siteFavicon: (site) => allAddedSiteMetadata[site]?.faviconSrc ?? NO_IMAGE,
+          translate: (key, params) => t(key, params ?? {}),
+          isHighlighted: (seriesIndex) => lastHoveredSeriesIndex.value === seriesIndex,
+          hideThreshold: configStore.userStatisticControl.hidePerSitePrecentThreshold ?? 0,
+        }),
       },
       legend: {
         data: seriesTotal.sort((a, b) => b.value - a.value).map((x) => x.name),
@@ -415,7 +382,14 @@ onMounted(async () => {
 async function exportStatisticImg() {
   const createdAt = formatDate(new Date());
   const mainCanvas = document.createElement("canvas");
-  const chartsCanvas = document.querySelectorAll("#chartContainer canvas");
+  const chartsCanvas = document.querySelectorAll<HTMLCanvasElement>("#chartContainer canvas");
+
+  // F15：首帧布局前 containerWidth 为 0、全部图表被关闭（或在骨架屏阶段）时 canvas 为空，
+  // 修复前会导出一张 0 宽/空白图片。这里先校验再导出，失败时给出提示。
+  if (containerWidth.value <= 0 || chartsCanvas.length === 0) {
+    runtimeStore.showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+    return;
+  }
 
   mainCanvas.width = containerWidth.value;
   mainCanvas.height = (perChartHeight.value + 10) * chartsCanvas.length + 10;
@@ -444,17 +418,19 @@ async function exportStatisticImg() {
 
   // 导出图片
   mainCanvas.toBlob((blob) => {
-    saveAs(
-      blob!,
-      t("UserDataStatistic.chart.exportFilename", { name: configStore.userName, date: createdAt }) + ".png",
-    );
+    // toBlob 在极端情况下会回传 null（内存不足等），旧实现 `saveAs(blob!)` 会抛错且无提示
+    if (!blob) {
+      runtimeStore.showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+      return;
+    }
+    saveAs(blob, t("UserDataStatistic.chart.exportFilename", { name: configStore.userName, date: createdAt }) + ".png");
   });
 }
 
 function saveControl() {
   configStore.userStatisticControl.selectedSites = selectedSites.value;
   configStore.$save();
-  useRuntimeStore().showSnakebar(t("common.saveSuccess"), { color: "success" });
+  runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
 }
 </script>
 

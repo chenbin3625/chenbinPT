@@ -6,23 +6,24 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { EJobType } from "@/background/utils/alarms.ts";
-import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { formatDate } from "@/options/utils.ts";
 
+import { useSetBaseConfigDraft } from "./configDraft.ts";
+
 const { t } = useI18n();
-const configStore = useConfigStore();
+const config = useSetBaseConfigDraft();
 const metadataStore = useMetadataStore();
 
 const nextFlushUserInfoAt = ref<number>(0);
 
 const afterTimeValue = computed<Dayjs | undefined>({
   get() {
-    const value = configStore.userInfo.autoReflush.afterTime;
+    const value = config.value.userInfo.autoReflush.afterTime;
     return value ? dayjs(value, "HH:mm") : undefined;
   },
   set(value) {
-    configStore.userInfo.autoReflush.afterTime = value ? value.format("HH:mm") : "";
+    config.value.userInfo.autoReflush.afterTime = value ? value.format("HH:mm") : "";
   },
 });
 
@@ -38,7 +39,7 @@ async function getNextFlushUserInfoAt() {
 }
 
 async function save() {
-  if (configStore.userInfo.autoReflush.enabled) {
+  if (config.value.userInfo.autoReflush.enabled) {
     // noinspection ES6MissingAwait
     getNextFlushUserInfoAt();
   } else {
@@ -66,7 +67,7 @@ onMounted(async () => {
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("userInfo.queueConcurrency") }}</a-typography-text>
         <a-input-number
-          v-model:value="configStore.userInfo.queueConcurrency"
+          v-model:value="config.userInfo.queueConcurrency"
           :max="25"
           :min="1"
           style="width: min(100%, 420px)"
@@ -75,15 +76,15 @@ onMounted(async () => {
 
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("userInfo.alwaysPickLastUserInfo") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.userInfo.alwaysPickLastUserInfo" />
+        <a-switch v-model:checked="config.userInfo.alwaysPickLastUserInfo" />
       </div>
 
       <!-- 自动刷新 -->
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("userInfo.enableAutoRefresh") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.userInfo.autoReflush.enabled" />
+        <a-switch v-model:checked="config.userInfo.autoReflush.enabled" />
       </div>
-      <div v-if="configStore.userInfo.autoReflush.enabled" class="ptd-setting-note">
+      <div v-if="config.userInfo.autoReflush.enabled" class="ptd-setting-note">
         <a-flex align="center" :gap="8" style="white-space: nowrap; margin-bottom: 8px">
           <span>• {{ t("SetBase.userInfo.afterTime") }}</span>
           <a-time-picker v-model:value="afterTimeValue" format="HH:mm" />
@@ -91,7 +92,7 @@ onMounted(async () => {
                改用 SetBase.userInfo.afterTimeSuffix（键由 extends-i18n 包补进两个语言包，见 cross_package_needs） -->
           <span>{{ t("SetBase.userInfo.afterTimeSuffix") }}{{ t("userInfo.autoRefresh.every") }}</span>
           <a-select
-            v-model:value="configStore.userInfo.autoReflush.interval"
+            v-model:value="config.userInfo.autoReflush.interval"
             :options="rangeOptions(1, 24)"
             style="width: 88px"
           />
@@ -102,13 +103,13 @@ onMounted(async () => {
         <a-flex align="center" :gap="8" style="white-space: nowrap">
           <span>• {{ t("userInfo.autoRefresh.retryOnFail") }}</span>
           <a-select
-            v-model:value="configStore.userInfo.autoReflush.retry.max"
+            v-model:value="config.userInfo.autoReflush.retry.max"
             :options="rangeOptions(0, 6)"
             style="width: 88px"
           />
           <span>{{ t("userInfo.autoRefresh.times") }}</span>
           <a-select
-            v-model:value="configStore.userInfo.autoReflush.retry.interval"
+            v-model:value="config.userInfo.autoReflush.retry.interval"
             :options="rangeOptions(1, 11)"
             style="width: 88px"
           />
@@ -136,20 +137,20 @@ onMounted(async () => {
       <!-- 自动延长cookies -->
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("userInfo.autoExtendCookies.enabled") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.autoExtendCookies.enabled" />
+        <a-switch v-model:checked="config.autoExtendCookies.enabled" />
       </div>
-      <div v-if="configStore.autoExtendCookies.enabled" class="ptd-setting-note">
+      <div v-if="config.autoExtendCookies.enabled" class="ptd-setting-note">
         <a-flex align="center" :gap="8" style="white-space: nowrap">
           <span>{{ t("userInfo.autoExtendCookies.triggerThreshold") }}:</span>
           <a-select
-            v-model:value="configStore.autoExtendCookies.triggerThreshold"
+            v-model:value="config.autoExtendCookies.triggerThreshold"
             :options="rangeOptions(1, 4)"
             style="width: 88px"
           />
           <span>{{ t("userInfo.autoExtendCookies.weeks") }}</span>
           <span>{{ t("userInfo.autoExtendCookies.extensionDuration") }}:</span>
           <a-select
-            v-model:value="configStore.autoExtendCookies.extensionDuration"
+            v-model:value="config.autoExtendCookies.extensionDuration"
             :options="rangeOptions(1, 13)"
             style="width: 88px"
           />
@@ -165,11 +166,11 @@ onMounted(async () => {
 
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("userInfo.showDeadSite") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.userInfo.showDeadSiteInOverview" />
+        <a-switch v-model:checked="config.userInfo.showDeadSiteInOverview" />
       </div>
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("userInfo.showPassedSite") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.userInfo.showPassedSiteInOverview" />
+        <a-switch v-model:checked="config.userInfo.showPassedSiteInOverview" />
       </div>
     </section>
   </div>

@@ -6,7 +6,6 @@ export const siteMetadata: ISiteMetadata = {
   name: "DHTCLUB PT",
   description: "The Ultimate File Sharing Experience",
   tags: ["综合"],
-  timezoneOffset: "+0800",
 
   type: "private",
   schema: "NexusPHP",
@@ -17,6 +16,9 @@ export const siteMetadata: ISiteMetadata = {
 
   isDead: true,
 
+  // E2b-04：死站不再保留生效的等级表（避免静态工具把死站当成有判级能力的活跃站），
+  // 历史等级表仅留档在注释中（与 cnscg/concen 的做法一致）。
+  /*
   levelRequirements: [
     {
       id: 0,
@@ -93,4 +95,5 @@ export const siteMetadata: ISiteMetadata = {
       privilege: "得到十个邀请名额。",
     },
   ],
+  */
 };

@@ -94,7 +94,10 @@ export const siteMetadata: ISiteMetadata = {
       name: "Ultimate User",
       interval: "P60W",
       downloaded: "1.5TB",
-      ratio: 5.05,
+      // L6：原为 5.05，比下一级 Nexus Master 的 4.55 还高（门槛非单调，会让「距下一级」显示倒挂）。
+      // NexusPHP 标准阶梯为 Veteran 3.05 → Extreme 3.55 → Ultimate 4.05 → Nexus Master 4.55，
+      // 本文件相邻两级正是 3.55/4.55，故此处应为 4.05（5.05 系 4.05 的笔误）。
+      ratio: 4.05,
       privilege: "得到五個邀請名額。",
     },
     {

@@ -324,23 +324,45 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class HDBits extends PrivateSite {
   override async request<T>(axiosConfig: AxiosRequestConfig, checkLogin: boolean = true): Promise<AxiosResponse<T>> {
-    // 为通过 api 方式请求的接口添加用户名和 passkey
-    if (axiosConfig.url && axiosConfig.url.includes("/api/")) {
-      axiosConfig.method = "POST";
-      axiosConfig.responseType = "json";
-      axiosConfig.data ??= {};
-      axiosConfig.data.username = this.userConfig.inputSetting?.username ?? "";
-      axiosConfig.data.passkey = this.userConfig.inputSetting?.passkey ?? "";
+    // E3-1：凭据注入必须同时满足「同源 + 站内 /api/ 路径」。
+    // 旧实现只看 `url.includes("/api/")`：导入的搜索方案可以把 requestConfig.url 设成
+    // `https://attacker.example/api/collect`，HDBits 的 username+passkey 就会被 POST 到攻击者服务器。
+    // 判据：先把请求解析成绝对 URL，主机必须在站点允许列表内（this.isTrustedSiteUrl，含子域），
+    // 再要求 pathname 以 /api/ 开头；外站绝对 URL 直接抛错，不发请求、不注入凭据。
+    const targetUrl = this.resolveRequestTarget(axiosConfig);
+    if (!this.isTrustedSiteUrl(targetUrl)) {
+      throw new Error(`[PTD] site '${this.metadata.id}' blocked request to untrusted host (hdbits api)`);
     }
 
-    return super.request(axiosConfig, checkLogin);
+    const config: AxiosRequestConfig = { ...axiosConfig };
+    const targetPath = new URL(targetUrl!).pathname;
+    if (targetPath.startsWith("/api/")) {
+      // 为通过 api 方式请求的接口添加用户名和 passkey（拷贝 data，避免污染调用方/共享配置）
+      config.method = "POST";
+      config.responseType = "json";
+      config.data = {
+        ...(config.data ?? {}),
+        username: this.userConfig.inputSetting?.username ?? "",
+        passkey: this.userConfig.inputSetting?.passkey ?? "",
+      };
+    }
+
+    return super.request(config, checkLogin);
   }
 
   protected override loggedCheck(res: AxiosResponse<IHDBitsApiResponse>): boolean {
     const baseCheck = super.loggedCheck(res);
     if (baseCheck) {
       const { config: requestConfig, data: resData = { status: -1 } } = res;
-      if (requestConfig.url?.includes("/api/") && resData.status !== 0) {
+      // E3-1 同类判据：只有真正打到本站 /api/ 的响应才用 API status 判定登录
+      const requestUrl = requestConfig?.url;
+      let requestPath = "";
+      try {
+        requestPath = requestUrl ? new URL(requestUrl, this.url).pathname : "";
+      } catch {
+        requestPath = "";
+      }
+      if (requestPath.startsWith("/api/") && resData.status !== 0) {
         return false; // 如果状态码不是0，表示请求失败
       }
     }

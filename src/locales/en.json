@@ -17,6 +17,7 @@
       "warningMessage": "Some settings were not applied"
     },
     "filterPlaceholder": "Filter download history",
+    "loadError": "Failed to load download history. Please retry.",
     "pollingError": "Failed to refresh download status. Some tasks may not update automatically.",
     "reDownload": "Re-download",
     "refresh": "Refresh download history list",
@@ -65,6 +66,7 @@
     "sendSingleErrorWithReason": "Failed to send: {reason}",
     "sendSingleSuccess": "Sent",
     "sendSuccess": "Sent successfully",
+    "sendSummary": "Sending complete",
     "setAsBaseTorrent": "Set as base torrent",
     "setBaseError": "Failed to set as base torrent",
     "setBaseSuccess": "Set as base torrent successfully",
@@ -101,6 +103,7 @@
       "updateFailed": "Media server {name} [{address}] failed to update: {reason}"
     },
     "loadMore": "Load More",
+    "noServerSelected": "Please select a media server first",
     "noItems": "No Items, use Search Input or Load More Button to Load",
     "searchPlaceholder": "Search term"
   },
@@ -138,6 +141,10 @@
       "stopDownloader": "Stop auto-refresh for this downloader",
       "suspendedTip": "This client has been suspended due to 3 consecutive failures. Click the alert icon to resume."
     },
+    "batch": {
+      "partialFailure": "Some tasks failed",
+      "unsupported": "This downloader does not support this batch operation"
+    },
     "clientStatusDialog": {
       "openBtn": "All Downloaders Status",
       "openClient": "Open Downloader",
@@ -151,7 +158,9 @@
       "addTrackerSuccess": "Tracker added",
       "addTrackerTitle": "Add Tracker",
       "copyHash": "Copy Hash",
+      "copyHashSuccess": "Hash copied",
       "copyMagnet": "Copy Magnet Link",
+      "copyMagnetSuccess": "Magnet link copied",
       "fileColumnName": "File",
       "fileColumnPriority": "Priority",
       "fileColumnProgress": "Progress",
@@ -192,7 +201,8 @@
       "updateFilePrioritySuccess": "File priority updated"
     },
     "dialog": {
-      "removeData": "Also remove data"
+      "removeData": "Also remove data",
+      "removeDataUnsupported": "This downloader does not support \"Also remove data\""
     },
     "label": {
       "batchBtn": "Set Label",
@@ -409,7 +419,7 @@
         "siteNotEnabled": "The site not enabled",
         "userCancel": "You Cancel this search"
       },
-      "successMsg": "Find {0} results in {0}s",
+      "successMsg": "Find {0} results in {1}s",
       "title": "Search Status of [{0}]"
     },
     "index": {
@@ -441,7 +451,8 @@
         "searchProgress": "Received {0} results, search is still in progress...",
         "searchStatus": "Search Status",
         "searching": "Searching...",
-        "snapshot": "Search Snapshot"
+        "snapshot": "Search Snapshot",
+        "searchInterrupted": "The previous search was interrupted; showing partial results. Please search again."
       },
       "clearSelection": "Clear Selection",
       "filterLabel": "Filter search results",
@@ -477,6 +488,9 @@
       "showTorrentSubtitle": "Show Torrent Subtitle",
       "showTorrentTag": "Show Torrent Tags",
       "socialInformationSearchOnNewTab": "Open Media Rating Search in a New Tab",
+      "tagClickToFilter": "Click torrent tags to filter",
+      "tagFilterActiveHint": "Filtering by tag \"{0}\"; click to clear",
+      "tagFilterHint": "Click to filter by tag \"{0}\"",
       "table": {
         "category": "Category",
         "comments": "Comments",
@@ -554,7 +568,8 @@
       "clearRetention": "Clear retention policy (never clean up historical backups)",
       "nameTip": "Pick a nice and recognizable name for this Backup Server",
       "retention": "Backup Retention Policy",
-      "serverConfig": "Server Configuration"
+      "serverConfig": "Server Configuration",
+      "encryptionKeyRequired": "No backup encryption key is set; remote backups cannot include cookies / metadata / downloadHistory (local export is unaffected)."
     },
     "RetentionDialog": {
       "count": {
@@ -602,7 +617,8 @@
       "title": "Backup History for {name}"
     },
     "LocalExportConfirmDialog": {
-      "title": "Select content to export locally"
+      "title": "Select content to export locally",
+      "plaintextWarning": "No encryption key set: this export is plaintext (including the selected sensitive fields). Keep the file safe."
     },
     "RestoreDialog": {
       "decryptKey": "Decryption Key",
@@ -643,6 +659,8 @@
     "localImport": "Local Import",
     "snackbar": {
       "failure": "Backup failed",
+      "failureWithReason": "Backup failed: {reason}",
+      "encryptionKeyRequiredHint": "Without a backup encryption key, remote backups cannot include cookies / metadata / downloadHistory. Generate a key under Settings → Basic → Backup, uncheck these fields, or use local export.",
       "success": "Backup successful",
       "successWithRetention": "Backup successful, expired backups cleaned up"
     },
@@ -732,6 +750,7 @@
       "showHotRecommendations": "Show hot recommendations button in the search box",
       "siteQueueConcurrency": "Request Queue Concurrency",
       "siteSearchConfig": "Site Search Configuration",
+      "tagClickToFilter": "Click torrent tags to filter search results",
       "tagLabel": "Tags Filter",
       "treatTTQueryAsImdbSearch": "Treat tt\\d\\{7,8\\} search terms directly as IMDb search"
     },
@@ -959,6 +978,7 @@
       "title": "Customize @:SetSearchSolution.solution"
     },
     "newSolutionNamePrompt": "Please enter the new search plan name",
+    "categoryDropped": "After a site definition update, some selected categories no longer exist and were removed: {detail}",
     "import": {
       "invalidFile": "Invalid search solution file: expected an array of solutions",
       "success": "Imported {count} search solution(s)",
@@ -1165,6 +1185,9 @@
     "total": "TOT "
   },
   "common": {
+    "refreshPageHint": "Try refreshing the page and retry",
+    "unexpectedError": "An unexpected error occurred",
+
     "AdvanceFilterGenerateDialog": {
       "date": "Date",
       "dateUnit": {
@@ -1383,6 +1406,7 @@
     "extDesc": "chenbinPT",
     "extName": "chenbinPT",
     "notificationSendLinkToDownloaderFailure": "Failed to send the link to the downloader [$1]",
+    "notificationAutoBackupFailure": "Auto backup failed for [$1]: $2",
     "notificationSendLinkToDownloaderSuccess": "Successfully sent the link to the downloader [$1]",
     "omniboxSearch": "Search $2 in [ $1 ]",
     "searchPlanAll": "All Sites",
@@ -1393,7 +1417,7 @@
     "basicConfig": "Basic Configuration",
     "encryptionKeyLabel": "Backup file encryption/decryption key",
     "randomGenTitle": "Generate Randomly",
-    "saveKeyNotice": "Note: The key is only saved in the current browser and will not be backed up, please keep it safe; data cannot be recovered if the key is lost after encryption. Leave blank for no encryption.",
+    "saveKeyNotice": "Note: The key is only saved in the current browser and will not be backed up, please keep it safe; data cannot be recovered if the key is lost after encryption. Leave blank for no encryption; remote backups containing cookies / metadata / downloadHistory then cannot be uploaded (local export is still allowed; set a key before remote backup).",
     "undoKeyTitle": "Restore previous key"
   },
   "resultParseStatus": {

@@ -68,7 +68,7 @@ const categoryMap: Record<number, string> = {
 export const siteMetadata: ISiteMetadata = {
   version: 1,
   id: "torrentday",
-  name: "TorrentsTD",
+  name: "TorrentDay",
   aka: ["TorrentDay", "TD"],
   description: "TorrentDay (TD) is a Private site for TV / MOVIES / GENERAL",
   tags: ["综合"],
@@ -213,6 +213,8 @@ export const siteMetadata: ISiteMetadata = {
   levelRequirements: [
     { id: 1, name: "User" },
     { id: 2, name: "Power User" },
-    { id: 3, name: "VIP" },
+    // L-21 / Info-40：VIP 属非 user 组，按 types/userinfo.ts 的 MinNonUserLevelId=100 约定从 100 起，
+    // 避免 guessUserLevelId 把它当成第 3 级普通用户、getMaxUserLevelId 把 3 当成最高 user 级。
+    { id: 100, name: "VIP", groupType: "vip" },
   ],
 };

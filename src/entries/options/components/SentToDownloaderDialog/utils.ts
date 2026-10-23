@@ -4,7 +4,7 @@ import type { ITorrent } from "@ptd/site";
 import type { IDownloadTorrentResult } from "@/shared/types.ts";
 import type { TDownloaderKey } from "@/shared/types/storages/metadata.ts";
 import type { CAddTorrentOptions } from "@ptd/downloader";
-import { formatDate } from "@/options/utils.ts";
+import { formatDate, sanitizeDynamicReplaceValue } from "@/options/utils.ts";
 import { i18n } from "@/options/plugins/i18n.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -46,6 +46,13 @@ export function createDynamicReplacePrompter(modal: ModalApi): TDynamicReplacePr
     });
 }
 
+/**
+ * Info8（B2 移交）：动态替换值的路径安全化实现已抽到 `@/options/utils.ts`，供
+ * 「发送到下载器」与「辅种任务发送」两处共用（OUI-4：KeepUploadTask 原先是第二份未清洗的实现）。
+ * 这里保留 re-export，避免历史 import 路径失效。
+ */
+export { sanitizeDynamicReplaceValue } from "@/options/utils.ts";
+
 export async function sendTorrentToDownloader(
   torrentItems: ITorrent[],
   downloaderId: TDownloaderKey,
@@ -56,19 +63,24 @@ export async function sendTorrentToDownloader(
   const runtimeStore = useRuntimeStore();
   const metadataStore = useMetadataStore();
 
+  // F1-08：`<...>` 的替换结果写进**局部副本**，不再直接改写调用方（对话框 ref）里的对象 ——
+  // 旧实现会就地改 `addTorrentOptions`，用户取消输入后已经替换掉的那部分仍留在对话框状态里。
+  // 同时补 `typeof === "string"` 守卫：`lastDownloader.options` 合并进来时字段可能是 undefined。
+  const preparedAddTorrentOptions: CAddTorrentOptions = { ...addTorrentOptions };
+
   // 预处理自定义输入
-  for (const key of ["savePath", "label"] as (keyof typeof addTorrentOptions)[]) {
-    if ((addTorrentOptions[key] as string).includes("<...>")) {
-      // 此处允许空字符 ""， 但不允许用户取消（即取消动态替换操作则认为取消推送任务）
-      const userInput = await promptReplace(key);
-      if (userInput !== null) {
-        // @ts-expect-error 原因：key 来自 Object.keys 的字符串字段名，CAddTorrentOptions 各字段类型不同，无法按索引赋 string
-        addTorrentOptions[key] = (addTorrentOptions[key] as string).replace("<...>", userInput.trim());
-      } else {
-        // 用户取消输入，则停止该任务；调用方（Index.vue）会 catch 并给出可区分的提示（V-3）
-        return Promise.reject(i18n.t("SentToDownloaderDialog.dynamicReplaceCancelled", [key]));
-      }
+  for (const key of ["savePath", "label"] as (keyof typeof preparedAddTorrentOptions)[]) {
+    const rawValue = preparedAddTorrentOptions[key] as unknown;
+    if (typeof rawValue !== "string" || !rawValue.includes("<...>")) continue;
+
+    // 此处允许空字符 ""， 但不允许用户取消（即取消动态替换操作则认为取消推送任务）
+    const userInput = await promptReplace(key);
+    if (userInput === null) {
+      // 用户取消输入，则停止该任务；调用方（Index.vue）会 catch 并给出可区分的提示（V-3）
+      return Promise.reject(i18n.t("SentToDownloaderDialog.dynamicReplaceCancelled", [key]));
     }
+    // @ts-expect-error 原因：key 来自字符串字面量数组，CAddTorrentOptions 各字段类型不同，无法按索引赋 string
+    preparedAddTorrentOptions[key] = rawValue.replace("<...>", userInput.trim());
   }
 
   // 预构造动态替换映射表
@@ -79,43 +91,50 @@ export async function sendTorrentToDownloader(
     "date:DD": formatDate(nowDate, "dd"),
   };
 
-  // 搜索相关动态替换
+  // 搜索相关动态替换（Info8：替换值会进保存路径 / 标签，先做路径安全化）
   if (runtimeStore.search.searchKey !== "") {
-    baseReplaceMap["search:keyword"] = runtimeStore.search.searchKey;
+    baseReplaceMap["search:keyword"] = sanitizeDynamicReplaceValue(runtimeStore.search.searchKey);
   }
 
   if (runtimeStore.search.searchPlanKey !== "") {
-    baseReplaceMap["search:plan"] = metadataStore.getSearchSolutionName(runtimeStore.search.searchPlanKey);
+    baseReplaceMap["search:plan"] = sanitizeDynamicReplaceValue(
+      metadataStore.getSearchSolutionName(runtimeStore.search.searchPlanKey),
+    );
   }
 
   const promises = [];
 
   for (const torrent of torrentItems) {
-    const realAddTorrentOptions: Partial<CAddTorrentOptions> = { ...addTorrentOptions };
+    const realAddTorrentOptions: Partial<CAddTorrentOptions> = { ...preparedAddTorrentOptions };
 
+    // Info8：标题 / 副标题 / 分类来自站点页面，同样按「替换值」清理后再拼进 savePath/label
     const replaceMap: Record<string, string> = {
-      "torrent.title": torrent.title ?? "",
-      "torrent.subTitle": torrent.subTitle ?? "",
-      "torrent.category": (torrent.category as string) ?? "",
+      "torrent.title": sanitizeDynamicReplaceValue(torrent.title),
+      "torrent.subTitle": sanitizeDynamicReplaceValue(torrent.subTitle),
+      "torrent.category": sanitizeDynamicReplaceValue(torrent.category),
       ...baseReplaceMap,
     };
 
     if (torrent.site) {
-      replaceMap["torrent.site"] = torrent.site;
-      replaceMap["torrent.siteName"] = await metadataStore.getSiteName(torrent.site);
+      replaceMap["torrent.site"] = sanitizeDynamicReplaceValue(torrent.site);
+      replaceMap["torrent.siteName"] = sanitizeDynamicReplaceValue(await metadataStore.getSiteName(torrent.site));
     }
 
+    // F1-08：空串/缺失的 savePath、label 直接从下发给下载器的配置里删掉（语义 = 使用下载器默认值）。
+    // 旧实现外层 `if (值)` 已排除空串，内层 `if (值 === "")` 是永远不成立的死分支，于是 `savePath: ""`
+    // 会被原样传给下载器（各实体对空串的解释不一致）。
     for (const key of ["savePath", "label"] as (keyof typeof realAddTorrentOptions)[]) {
-      if (realAddTorrentOptions[key]) {
-        if (realAddTorrentOptions[key] === "") {
-          delete realAddTorrentOptions[key];
-        } else {
-          for (const [replaceKey, value] of Object.entries(replaceMap)) {
-            // @ts-expect-error 原因：同上，按动态字段名对字符串字段做占位符替换
-            realAddTorrentOptions[key] = (realAddTorrentOptions[key]! as string).replace(`$${replaceKey}$`, value);
-          }
-        }
+      const rawValue = realAddTorrentOptions[key];
+      if (typeof rawValue !== "string" || rawValue === "") {
+        delete realAddTorrentOptions[key];
+        continue;
       }
+      let replaced = rawValue;
+      for (const [replaceKey, value] of Object.entries(replaceMap)) {
+        replaced = replaced.replaceAll(`$${replaceKey}$`, value);
+      }
+      // @ts-expect-error 原因：同上，按动态字段名对字符串字段做占位符替换
+      realAddTorrentOptions[key] = replaced;
     }
 
     promises.push(

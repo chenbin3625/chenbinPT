@@ -17,6 +17,7 @@
       "warningMessage": "设置未全部生效"
     },
     "filterPlaceholder": "过滤下载记录",
+    "loadError": "加载下载记录失败，请重试",
     "pollingError": "刷新下载状态失败，部分任务的状态可能不会自动更新",
     "reDownload": "重新下载",
     "refresh": "刷新下载记录列表",
@@ -65,6 +66,7 @@
     "sendSingleErrorWithReason": "发送失败：{reason}",
     "sendSingleSuccess": "发送成功",
     "sendSuccess": "发送成功",
+    "sendSummary": "发送完成",
     "setAsBaseTorrent": "设为基准种子",
     "setBaseError": "设置失败",
     "setBaseSuccess": "已设为基准种子",
@@ -101,6 +103,7 @@
       "updateFailed": "媒体服务器 {name} [{address}] 更新失败：{reason}"
     },
     "loadMore": "加载更多",
+    "noServerSelected": "请先选择媒体服务器",
     "noItems": "暂无内容，请使用搜索框或点击加载更多按钮",
     "searchPlaceholder": "搜索词"
   },
@@ -138,6 +141,10 @@
       "stopDownloader": "停止该下载器的自动刷新",
       "suspendedTip": "该下载器已因连续失败 3 次而被暂停。点击感叹号图标可恢复。"
     },
+    "batch": {
+      "partialFailure": "部分任务操作失败",
+      "unsupported": "当前下载器不支持该批量操作"
+    },
     "clientStatusDialog": {
       "openBtn": "全部下载器状态",
       "openClient": "打开下载器",
@@ -151,7 +158,9 @@
       "addTrackerSuccess": "已添加 Tracker",
       "addTrackerTitle": "添加 Tracker",
       "copyHash": "复制 Hash",
+      "copyHashSuccess": "已复制 Hash",
       "copyMagnet": "复制磁力链接",
+      "copyMagnetSuccess": "已复制磁力链接",
       "fileColumnName": "文件名",
       "fileColumnPriority": "优先级",
       "fileColumnProgress": "进度",
@@ -192,7 +201,8 @@
       "updateFilePrioritySuccess": "已更新文件优先级"
     },
     "dialog": {
-      "removeData": "同时删除数据"
+      "removeData": "同时删除数据",
+      "removeDataUnsupported": "当前下载器不支持「同时删除数据」"
     },
     "label": {
       "batchBtn": "批量设置标签",
@@ -409,7 +419,7 @@
         "siteNotEnabled": "该站点未启用",
         "userCancel": "用户取消该搜索请求"
       },
-      "successMsg": "共找到 {0} 条结果，用时 {0}s",
+      "successMsg": "共找到 {0} 条结果，用时 {1}s",
       "title": "方案 [{0}] 搜索状态"
     },
     "index": {
@@ -441,7 +451,8 @@
         "searchProgress": "已接收 {0} 条结果，搜索仍在进行……",
         "searchStatus": "搜索情况",
         "searching": "搜索中…",
-        "snapshot": "搜索快照"
+        "snapshot": "搜索快照",
+        "searchInterrupted": "上次搜索被中断，当前显示的是部分结果，请重新搜索"
       },
       "clearSelection": "取消选择",
       "filterLabel": "过滤搜索结果",
@@ -477,6 +488,9 @@
       "showTorrentSubtitle": "显示种子副标题",
       "showTorrentTag": "显示种子标签",
       "socialInformationSearchOnNewTab": "媒体评价信息搜索在新标签页中打开",
+      "tagClickToFilter": "点击种子标签快速筛选",
+      "tagFilterActiveHint": "已按标签「{0}」筛选，点击取消",
+      "tagFilterHint": "点击按标签「{0}」筛选",
       "table": {
         "category": "分类",
         "comments": "评论",
@@ -554,7 +568,8 @@
       "clearRetention": "清空保留策略（不自动清理历史备份）",
       "nameTip": "为这个备份服务器取一个便于识别的好名字",
       "retention": "备份保留策略",
-      "serverConfig": "服务器配置"
+      "serverConfig": "服务器配置",
+      "encryptionKeyRequired": "未设置备份加密密钥，远端备份将无法包含 cookies / metadata / downloadHistory（本地导出不受影响）。"
     },
     "RetentionDialog": {
       "count": {
@@ -602,7 +617,8 @@
       "title": "{name} 的历史备份"
     },
     "LocalExportConfirmDialog": {
-      "title": "请选择本地需要导出的内容"
+      "title": "请选择本地需要导出的内容",
+      "plaintextWarning": "未设置加密密钥：本次导出的文件为明文（含所选敏感字段），请妥善保管。"
     },
     "RestoreDialog": {
       "decryptKey": "解密密钥",
@@ -643,6 +659,8 @@
     "localImport": "本地导入",
     "snackbar": {
       "failure": "备份失败",
+      "failureWithReason": "备份失败：{reason}",
+      "encryptionKeyRequiredHint": "未设置备份加密密钥时，远端备份不能包含 cookies / metadata / downloadHistory。可前往「基础设置 → 备份」生成密钥、取消勾选这些字段，或改用「导出到本地」。",
       "success": "备份成功",
       "successWithRetention": "备份成功，已清理过期备份"
     },
@@ -732,6 +750,7 @@
       "showHotRecommendations": "在搜索框中显示热门推荐按钮",
       "siteQueueConcurrency": "请求队列长度",
       "siteSearchConfig": "站点搜索配置",
+      "tagClickToFilter": "点击种子标签快速筛选搜索结果",
       "tagLabel": "标签筛选",
       "treatTTQueryAsImdbSearch": "是否将 tt\\d\\{7,8\\} 的搜索词直接视为 IMDb 搜索"
     },
@@ -959,6 +978,7 @@
       "title": "自定义 @:SetSearchSolution.solution"
     },
     "newSolutionNamePrompt": "请输入新搜索方案名称",
+    "categoryDropped": "站点定义更新后，部分搜索方案中已选分类已不存在，已自动移除：{detail}",
     "import": {
       "invalidFile": "搜索方案文件无效：预期内容为方案数组",
       "success": "已导入 {count} 个搜索方案",
@@ -1162,6 +1182,9 @@
     "total": "总"
   },
   "common": {
+    "refreshPageHint": "尝试刷新页面后重试",
+    "unexpectedError": "发生意外错误",
+
     "AdvanceFilterGenerateDialog": {
       "date": "日期",
       "dateUnit": {
@@ -1380,6 +1403,7 @@
     "extDesc": "chenbinPT",
     "extName": "chenbinPT",
     "notificationSendLinkToDownloaderFailure": "将链接发送到下载器 [$1] 失败",
+    "notificationAutoBackupFailure": "自动备份失败：[$1] $2",
     "notificationSendLinkToDownloaderSuccess": "已成功将链接发送到下载器 [$1]",
     "omniboxSearch": "在 [ $1 ] 中搜索 $2",
     "searchPlanAll": "全部站点",
@@ -1390,7 +1414,7 @@
     "basicConfig": "基本配置",
     "encryptionKeyLabel": "备份文件加密、解密密钥",
     "randomGenTitle": "随机生成",
-    "saveKeyNotice": "注意：密钥仅保存在当前浏览器，不会备份，请妥善保存；加密后如密钥丢失将无法恢复数据。留空表示不做加密。",
+    "saveKeyNotice": "注意：密钥仅保存在当前浏览器，不会备份，请妥善保存；加密后如密钥丢失将无法恢复数据。留空表示不做加密，此时无法上传含 cookies / metadata / downloadHistory 等敏感字段的备份到远端（可导出到本地；如需远端备份请先设置密钥）。",
     "undoKeyTitle": "恢复上一个密钥"
   },
   "resultParseStatus": {

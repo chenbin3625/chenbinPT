@@ -49,6 +49,19 @@ function normalizeFrenchRelativeTime(text: string): string {
     .trim();
 }
 
+/**
+ * M-27：WiHD 界面为法语，体积单位写作 `Go` / `To` / `Mo` / `Ko`（对应 GB / TB / MB / KB）。
+ * 旧实现写的是 `.replace(/o/i, "B")`：没有 `g`，只会替换文本里**第一个** `o`；
+ * 而选择器用 `:contains('Upload'/'Download')` 限定元素，第一个 `o` 恰恰在标签文字里
+ * （`Upload 1,5 Go` → `UplBad 1,5 Go`），单位没被换成 `GB`，随后 parseSize 匹配不到以 B 结尾的
+ * 片段便返回 0 —— 上传/下载量静默归零。
+ * 这里按「独立单词」替换单位字母中的 `o`，不触碰 Upload/Download 标签里的字母。
+ */
+function normalizeFrenchSizeUnit(text: string): string | undefined {
+  const normalized = text.replace(/\b(Go|To|Mo|Ko)\b/gi, (unit) => `${unit[0]}B`).trim();
+  return normalized || undefined;
+}
+
 export const siteMetadata: ISiteMetadata = {
   version: 1,
   id: "wihd",
@@ -137,12 +150,12 @@ export const siteMetadata: ISiteMetadata = {
         selectors: {
           uploaded: {
             selector: "div.stats a.btn:contains('Upload')",
-            elementProcess: (element: HTMLElement) => (element.textContent ?? "").replace(/o/i, "B") || undefined,
+            elementProcess: (element: HTMLElement) => normalizeFrenchSizeUnit(element.textContent ?? ""),
             filters: [{ name: "parseSize" }],
           },
           downloaded: {
             selector: "div.stats a.btn:contains('Download')",
-            elementProcess: (element: HTMLElement) => (element.textContent ?? "").replace(/o/i, "B") || undefined,
+            elementProcess: (element: HTMLElement) => normalizeFrenchSizeUnit(element.textContent ?? ""),
             filters: [{ name: "parseSize" }],
           },
           levelName: { selector: "span.class" },

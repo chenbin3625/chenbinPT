@@ -43,7 +43,8 @@ export const siteMetadata: ISiteMetadata = {
   description: "皇后，专一的音乐类PT站，是目前国内最大的无损音乐PT",
   tags: ["音乐"],
 
-  collaborator: ["*", "cnsunyour"],
+  // L9：原为 ["*", "cnsunyour"]，"*" 是模板残留占位，会在「贡献者」列表里显示无意义项。
+  collaborator: ["cnsunyour"],
 
   type: "private",
   schema: "NexusPHP",

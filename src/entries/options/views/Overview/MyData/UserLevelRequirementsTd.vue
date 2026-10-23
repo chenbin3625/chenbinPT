@@ -34,6 +34,15 @@ const siteLevelMetadata = computed(() => getSiteLevelMetadata(userInfo.site));
 
 const userLevelRequirements = computed(() => siteLevelMetadata.value.levelRequirements);
 
+/**
+ * F9：只有「元数据已加载完成」且「该站确实配置了等级要求」时，`nextLevelUnMet` 为空才能解释为
+ * 「已满足下一级条件」。修复前 `levelRequirements` 为空数组（未加载完 / 站点无等级要求 / 加载失败）
+ * 也会被当成「已满级」，在表格里显示一个绿色的「已达下一级」勾。
+ */
+const levelRequirementsLoaded = computed(
+  () => siteLevelMetadata.value.loaded !== false && userLevelRequirements.value.length > 0,
+);
+
 const userInfoMetadata = computed(() => siteLevelMetadata.value.userInfo);
 
 const matchedLevelRequirements = computed(() => {
@@ -165,6 +174,7 @@ const userLevelGroupIcon = computed(() => {
           v-if="
             configStore.myDataTableControl.showNextLevelInTable &&
             userLevelGroupType === 'user' &&
+            levelRequirementsLoaded &&
             isEmpty(nextLevelUnMet)
           "
           style="margin-left: 4px; color: var(--ptd-success)"

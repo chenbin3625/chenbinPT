@@ -125,6 +125,22 @@ describe("mapWithConcurrency", () => {
       }),
     ).rejects.toBe(boom);
   });
+
+  it("N6：某个任务失败后不再领取新任务（避免失败后继续发请求）", async () => {
+    const started: number[] = [];
+    const boom = new Error("boom");
+
+    await expect(
+      mapWithConcurrency([0, 1, 2, 3, 4, 5], 1, async (item) => {
+        started.push(item);
+        if (item === 1) throw boom;
+        return item;
+      }),
+    ).rejects.toBe(boom);
+
+    // 串行（并发 1）时：失败发生在 item=1，后续 item 不得再启动
+    expect(started).toEqual([0, 1]);
+  });
 });
 
 describe("hasNonLatinCharacters", () => {

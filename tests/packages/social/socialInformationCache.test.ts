@@ -37,7 +37,7 @@ vi.stubGlobal("chrome", {
   declarativeNetRequest: { updateSessionRules: () => Promise.resolve() },
 });
 
-const { getSocialSiteInformation } = await import("@ptd/social");
+const { getSocialSiteInformation, matchSocialPageUrl } = await import("@ptd/social");
 
 const SITE = "imdb";
 const endpointA = "https://ptgen-a.example/<site>/<sid>.json";
@@ -51,7 +51,9 @@ let requestedUrls: string[] = [];
 let namePrefix = "v1";
 
 function ptGenRequests(): string[] {
-  return requestedUrls.filter((url) => !url.includes("ourhelp.club"));
+  // C2-S-2 修复后，PtGen 候选集包含**全部**内置端点（OurHelp CDN / OurHelp API / Github Pages），
+  // 断言只关心「用户配置的 ptGenEndpoint」是否被请求，因此过滤掉所有内置端点。
+  return requestedUrls.filter((url) => !url.includes("ourhelp.club") && !url.includes("ourbits.github.io"));
 }
 
 beforeEach(() => {
@@ -139,5 +141,25 @@ describe("getSocialSiteInformation 缓存键", () => {
 
     expect(requestedUrls).toEqual([]);
     expect(afterForce?.title).toBe(`v2:${expand(endpointA, id)}`);
+  });
+
+  it("内置抓取失败返回空对象时不缓存，下一次请求会重新抓取", async () => {
+    const id = "tt0000005";
+    vi.spyOn(axios, "get").mockRejectedValueOnce(new Error("offline"));
+    await getSocialSiteInformation(SITE, id, { preferPtGen: false });
+    requestedUrls = [];
+
+    await getSocialSiteInformation(SITE, id, { preferPtGen: false });
+    expect(requestedUrls).toHaveLength(1);
+  });
+});
+
+describe("社交页面预筛", () => {
+  it("只匹配真实页面主机及路径，不匹配其他网站的跳转参数", () => {
+    expect(matchSocialPageUrl("https://movie.douban.com/top250")).toBe("douban");
+    expect(matchSocialPageUrl("https://bgm.tv/subject/123")).toBe("bangumi");
+    expect(matchSocialPageUrl("https://elsewhere.example/?next=https://movie.douban.com/top250")).toBeNull();
+    expect(matchSocialPageUrl("https://movie.douban.com/other?next=/top250")).toBeNull();
+    expect(matchSocialPageUrl("https://movie.douban.com.evil.example/top250")).toBeNull();
   });
 });

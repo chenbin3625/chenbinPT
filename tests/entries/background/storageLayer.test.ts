@@ -14,6 +14,8 @@ type StorageChange = Record<string, { oldValue?: unknown; newValue?: unknown }>;
 
 const backing = new Map<string, unknown>();
 const changeListeners: Array<(changes: StorageChange, areaName: string) => void> = [];
+/** N1：chrome.runtime.onStartup 监听器（storage.ts 顶层注册，浏览器启动时补一次 storage 访问级别收紧） */
+const startupListeners: Array<() => void> = [];
 let getCallCount = 0;
 
 function emitChanges(changes: StorageChange) {
@@ -64,6 +66,7 @@ const chromeMock = {
   runtime: {
     id: "test-extension-id",
     onMessage: { addListener: () => undefined, removeListener: () => undefined },
+    onStartup: { addListener: (fn: () => void) => startupListeners.push(fn) },
     sendMessage: () => Promise.resolve(undefined),
     getURL: (path: string) => `chrome-extension://test/${path}`,
   },
@@ -100,6 +103,38 @@ describe("service worker 存储层（读缓存 + 路径读写）", () => {
     vi.resetModules();
     await import("@/storage.ts");
     expect(storageLocal.setAccessLevel).toHaveBeenCalledWith({ accessLevel: "TRUSTED_CONTEXTS" });
+  });
+
+  it("N1：runtime.onStartup 会再次收紧 storage.local（访问级别不保证跨浏览器重启保留）", async () => {
+    startupListeners.length = 0;
+    vi.resetModules();
+    await import("@/storage.ts");
+
+    expect(startupListeners.length, "storage.ts 必须在顶层注册 runtime.onStartup 兜底").toBeGreaterThan(0);
+
+    storageLocal.setAccessLevel.mockClear();
+    for (const listener of [...startupListeners]) {
+      listener();
+    }
+    expect(storageLocal.setAccessLevel).toHaveBeenCalledWith({ accessLevel: "TRUSTED_CONTEXTS" });
+  });
+
+  it("N1：不支持 setAccessLevel 的浏览器必须告警，而不是静默降级", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const originalLocal = chromeMock.storage.local;
+    const withoutSetAccessLevel: any = { ...originalLocal };
+    delete withoutSetAccessLevel.setAccessLevel;
+    (chromeMock.storage as any).local = withoutSetAccessLevel;
+    try {
+      vi.resetModules();
+      await import("@/storage.ts");
+      expect(warnSpy.mock.calls.some(([message]) => String(message).includes("setAccessLevel is unavailable"))).toBe(
+        true,
+      );
+    } finally {
+      (chromeMock.storage as any).local = originalLocal;
+      warnSpy.mockRestore();
+    }
   });
 
   it("读缓存：同一 key 连续读取只反序列化一次", async () => {

@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { nextTick, ref, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { BackupFields, TBackupFields } from "@/shared/types.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { sendMessage } from "@/messages.ts";
+
+import { getBackupFailureReason, needsBackupEncryptionKeyHint } from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
+const configStore = useConfigStore();
 
 const backupFields = ref<TBackupFields[]>([]);
 const isExporting = ref(false);
+
+/**
+ * H-2：本地导出在库侧是允许明文的（fail-closed 只针对远端存储），因此这里**不**拦截导出；
+ * 但当「未设置密钥 + 勾选了敏感字段」时，必须在确认框里明确告知这次产出的是明文 zip。
+ */
+const showsPlaintextWarning = computed(() =>
+  needsBackupEncryptionKeyHint(backupFields.value, configStore.backup.encryptionKey),
+);
 
 /**
  * L-11：antd Modal 的 ok 只 emit，不会自动关闭；同类弹窗（ExportUserInfoDialog / RestoreDialog）都显式关闭。
@@ -35,8 +47,11 @@ async function doLocalExport() {
       return;
     }
     showDialog.value = false;
-  } catch {
-    runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+  } catch (e) {
+    // H-2：透出库侧 message（本地导出失败时通常是文件系统/下载被拒，用户需要看到原因）
+    const reason = getBackupFailureReason(e);
+    const message = reason ? t("SetBackup.snackbar.failureWithReason", { reason }) : t("SetBackup.snackbar.failure");
+    runtimeStore.showSnakebar(message, { color: "error" });
   } finally {
     isExporting.value = false;
   }
@@ -70,6 +85,22 @@ watch(
     :width="600"
     @ok="() => doLocalExport()"
   >
+    <!-- F2-Medium-13：未设置加密密钥时导出的备份是明文，必须显式提示（密钥设置入口在基础设置的备份页签） -->
+    <a-alert
+      v-if="!configStore.backup.encryptionKey"
+      show-icon
+      style="margin-bottom: 12px"
+      type="warning"
+      :message="t('ptppSettings.saveKeyNotice')"
+    />
+    <!-- H-2：本地导出允许明文（库侧只拦远端），但含敏感字段时必须明确告知这是一份明文备份 -->
+    <a-alert
+      v-if="showsPlaintextWarning"
+      show-icon
+      style="margin-bottom: 12px"
+      type="warning"
+      :message="t('SetBackup.LocalExportConfirmDialog.plaintextWarning')"
+    />
     <a-checkbox-group v-model:value="backupFields" style="width: 100%">
       <a-row :gutter="[0, 8]">
         <a-col v-for="backupField in BackupFields" :key="backupField" :md="12" :xs="24">

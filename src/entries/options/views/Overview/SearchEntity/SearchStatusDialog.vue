@@ -16,12 +16,20 @@ import SolutionDetail from "@/options/components/SolutionDetail.vue";
 import ResultParseStatus from "@/options/components/ResultParseStatus.vue";
 
 import { doSearchEntity, raiseSearchPriority } from "./utils/search.ts";
+import { getSearchSolutionDisplayName } from "./utils/planName.ts";
 
 const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
+
+/** 快照视图的数据来自快照：单方案重搜/调队列都会把实时结果混进来（D2-04） */
+const inSnapshotView = computed(() => Boolean(runtimeStore.search.snapshot));
+
+function searchSolutionName(planKey: string) {
+  return getSearchSolutionDisplayName(planKey, (key) => metadataStore.getSearchSolutionName(key));
+}
 
 function getSearchSolution(planKey: string, entryName: string) {
   return metadataStore.solutions[planKey]?.solutions.find((x) => x.id === entryName)!;
@@ -67,11 +75,7 @@ const filteredSearchPlan = computed(() => {
 <template>
   <a-modal v-model:open="showDialog" :footer="null" :width="800">
     <template #title>
-      {{
-        t("SearchEntity.SearchStatusDialog.title", [
-          metadataStore.getSearchSolutionName(runtimeStore.search.searchPlanKey),
-        ])
-      }}
+      {{ t("SearchEntity.SearchStatusDialog.title", [searchSolutionName(runtimeStore.search.searchPlanKey)]) }}
       <br />
       <p style="font-size: 12px"><{{ runtimeStore.search.searchPlanKey }}></p>
     </template>
@@ -151,6 +155,7 @@ const filteredSearchPlan = computed(() => {
           <a-button
             v-if="searchPlan.status === EResultParseStatus.waiting"
             type="text"
+            :disabled="inSnapshotView"
             :title="t('SearchEntity.SearchStatusDialog.moveUp')"
             @click="() => raiseSearchPriority(solutionKey)"
           >
@@ -160,6 +165,7 @@ const filteredSearchPlan = computed(() => {
           <a-button
             v-else
             danger
+            :disabled="inSnapshotView"
             :title="t('SearchEntity.SearchStatusDialog.searchAgain')"
             :loading="searchPlan.status === EResultParseStatus.working"
             @click="() => doSearchEntity(searchPlan.siteId, searchPlan.searchEntryName, searchPlan.searchEntry, true)"

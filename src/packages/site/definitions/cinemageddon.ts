@@ -73,8 +73,12 @@ export const siteMetadata: ISiteMetadata = {
       time: {
         selector: "td:nth-child(4)",
         filters: [
-          { name: "append", args: [" -07:00"] },
-          { name: "parseTime", args: ["yyyy-MM-ddHH:mm:ss XXX"] },
+          // E2-08/E2-34：单元格日期与时间之间以空格/<br> 分隔（getFieldData 会把换行归一成空格），
+          // 原格式串 `yyyy-MM-ddHH:mm:ss XXX` 缺空格永远解析失败，只是靠「手工追加 -07:00 后走
+          // 显式时区后缀分支」碰巧得到正确结果。这里改为「归一化 + 具名 parseTime」，
+          // 时区只由 metadata.timezoneOffset（-0700，与 Jackett 的 `append " -07:00"` 一致）提供。
+          (query: string) => query.trim().replace(/^(\d{4}-\d{2}-\d{2})\s*(\d{2}:\d{2}:\d{2})/, "$1 $2"),
+          { name: "parseTime", args: ["yyyy-MM-dd HH:mm:ss"] },
         ],
       },
       size: { selector: "td:nth-child(5)", filters: [{ name: "parseSize" }] },
@@ -149,7 +153,10 @@ export const siteMetadata: ISiteMetadata = {
             },
           },
           seedingSize: {
-            selector: ["div#ka2 table:first tr:not(:eq(0))"],
+            // E2-02：这里必须定位到 <table> 本身（与上面的 seeding 相同）。原 selector
+            // `div#ka2 table:first tr:not(:eq(0))` 的首个命中是 <tr>，elementProcess 里
+            // `selectElements("tr:gt(0)", tr)` 找不到后代行，做种体积恒为 0。
+            selector: ["div#ka2 table:first"],
             elementProcess: (table: HTMLTableElement) => {
               let seedingSize = 0;
               const trAnothers = selectElements("tr:gt(0)", table);
@@ -169,6 +176,13 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   levelRequirements: [
+    // E2-15：站点默认等级（新用户）没有条目时，levelName 匹配失败又因 id1 带门槛而落到 -1「未知等级」，
+    // 等级面板与「距下一级」都失效。这里补一个无门槛的入口级；后续等级 id 顺延保持单调。
+    {
+      id: 0,
+      name: "User",
+      privilege: "所有新用户的默认等级",
+    },
     {
       id: 1,
       name: "Power User",

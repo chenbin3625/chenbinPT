@@ -57,6 +57,8 @@ async function updateStoredDownloaderConfigByDefault(type: string) {
 }
 
 async function saveStoredDownloaderConfig() {
+  // F2-Medium-03：表单校验未通过时不得保存（「确定」按钮已禁用，这里再挡一次）
+  if (!isDownloaderConfigValid.value) return;
   try {
     await metadataStore.addDownloader(storedDownloaderConfig.value as IDownloaderMetadata);
 

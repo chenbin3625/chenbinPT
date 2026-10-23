@@ -6,6 +6,10 @@
  */
 import { type ISiteMetadata } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP.ts";
+// E3-15【待验证，延期】：这四个符号来自 HDHome，其中 progress/status 是按「绝对列序」（> td:eq(8)）写的
+// 选择器，只对 HDHome 的列表布局成立；同一份代码里 hddolby 自己的 seeders/leechers/completed 都走 NexusPHP
+// 默认推断，只有 progress/status 被钉在别的站点列号上。要改必须拿到一张 HD DOLBY 列表页 DOM（或用表头文本
+// 定位，参考 karagarga.ts 的 getHeaderColumnIndex），在没有真实证据前不动选择器，避免把当前可能正确的取值改坏。
 import { allCustomTags, allTagSelectors, selectorSearchProgress, selectorSearchStatus } from "./hdhome.ts";
 import { set } from "es-toolkit/compat";
 

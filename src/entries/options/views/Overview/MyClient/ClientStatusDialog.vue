@@ -116,8 +116,18 @@ watch(showDialog, (open) => {
             >
               {{ clientVersions[d.id] }}
             </span>
+            <!-- N6：文案提示「点击感叹号图标可恢复」，原先这个图标只有 tooltip、点不动。
+                 改成按钮，点击即恢复该下载器的自动刷新。 -->
             <a-tooltip v-if="suspendedDownloaders.has(d.id)" :title="t('MyClient.autoRefresh.suspendedTip')">
-              <ExclamationCircleOutlined class="ptd-icon-sm" style="margin-left: 4px; color: var(--ptd-danger)" />
+              <a-button
+                :title="t('MyClient.autoRefresh.resumeDownloader')"
+                type="text"
+                danger
+                size="small"
+                @click.stop="resumeDownloaderRefresh(d.id)"
+              >
+                <template #icon><ExclamationCircleOutlined class="ptd-icon-sm" /></template>
+              </a-button>
             </a-tooltip>
           </template>
           <template #description>

@@ -157,7 +157,8 @@ export const siteMetadata: ISiteMetadata = {
     {
       id: 9,
       name: "养老族(Retiree)",
-      nameAka: ["养老，散仙"],
+      // E2b-25：nameAka 的每个元素是一个独立别名，全角逗号写成一个字符串会导致两个别名都匹配不上
+      nameAka: ["养老", "散仙"],
       privilege: "散仙等级，享受养老待遇",
     },
   ],

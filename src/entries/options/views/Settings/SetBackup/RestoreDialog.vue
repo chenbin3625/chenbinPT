@@ -81,14 +81,20 @@ function buildBackupOptions() {
  */
 
 const backupFile = shallowRef<File>();
+let backupLoadToken = 0;
 function loadLocalBackupFile() {
+  const loadToken = ++backupLoadToken;
+  restoreData.value = undefined;
+  isDecryptKeyValid.value = true;
   jsZipBlobToBackupData(backupFile.value as Blob, decryptKey.value)
     .then((data) => {
+      if (loadToken !== backupLoadToken || !showDialog.value) return;
       restoreData.value = data;
       isDecryptKeyValid.value = true;
       buildBackupOptions();
     })
     .catch((err) => {
+      if (loadToken !== backupLoadToken || !showDialog.value) return;
       console.error(err);
       restoreData.value = undefined;
       isDecryptKeyValid.value = false;
@@ -106,6 +112,9 @@ function beforeLoadLocalBackupFile(file: any) {
 const isLoadingRemoteBackupFile = ref<boolean>(false);
 function loadRemoteBackupFile() {
   if (restoreMetadata.type === "remote") {
+    const loadToken = ++backupLoadToken;
+    restoreData.value = undefined;
+    isDecryptKeyValid.value = true;
     isLoadingRemoteBackupFile.value = true;
     sendMessage("getRemoteBackupData", {
       backupServerId: restoreMetadata.server,
@@ -113,16 +122,18 @@ function loadRemoteBackupFile() {
       decryptKey: decryptKey.value,
     })
       .then((data) => {
+        if (loadToken !== backupLoadToken || !showDialog.value) return;
         restoreData.value = data;
         buildBackupOptions();
       })
       .catch((err) => {
+        if (loadToken !== backupLoadToken || !showDialog.value) return;
         runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.loadFailure", { error: err }), { color: "error" });
         console.error(err);
         isDecryptKeyValid.value = false;
       })
       .finally(() => {
-        isLoadingRemoteBackupFile.value = false;
+        if (loadToken === backupLoadToken) isLoadingRemoteBackupFile.value = false;
       });
   }
 }
@@ -226,6 +237,9 @@ function convertIsoDurationToMinutes(duration: string): number {
 }
 
 function resetDialog() {
+  backupLoadToken++;
+  isLoadingRemoteBackupFile.value = false;
+  isDecryptKeyValid.value = true;
   currentStep.value = restoreMetadata.type;
   decryptKey.value = configStore.backup.encryptionKey ?? "";
 
@@ -244,7 +258,27 @@ function goToPtppImport() {
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
 watch(showDialog, (open) => {
-  if (open) nextTick(resetDialog);
+  const openToken = ++backupLoadToken;
+  if (open)
+    void nextTick(() => {
+      if (showDialog.value && openToken === backupLoadToken) resetDialog();
+    });
+});
+/**
+ * F2-N4：按**值**而不是 props 引用监听 `restoreMetadata`。
+ *
+ * 旧实现 `watch(() => restoreMetadata)` 依赖对象身份：父组件模板里写内联字面量 `{ type: "file" }` 时，
+ * 父组件任何一次重渲染都会产生新引用 → 这里的 watcher 触发 → 已解析的备份被清空、步骤被打回第一步
+ * （远程路径还会重新下载一次）。改成拼成的字符串后，只有 type/server/path 真正变化才重置。
+ */
+const restoreMetadataKey = computed(() =>
+  restoreMetadata.type === "remote"
+    ? `remote|${restoreMetadata.server}|${restoreMetadata.path}`
+    : String(restoreMetadata.type),
+);
+
+watch(restoreMetadataKey, () => {
+  if (showDialog.value) resetDialog();
 });
 </script>
 

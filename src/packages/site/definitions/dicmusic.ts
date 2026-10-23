@@ -3,7 +3,7 @@
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/dicmusic.com/config.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/dicmusic.json
  */
-import { buildCategoryOptionsFromList } from "../utils";
+import { buildCategoryOptionsFromList, logMessage, siteErrorLogData } from "../utils";
 import { type IUserInfo, type ITorrent, type ISiteMetadata } from "../types";
 import GazelleJSONAPI, {
   SchemaMetadata,
@@ -178,10 +178,10 @@ export const siteMetadata: ISiteMetadata = {
         selector: ["div#content > div.header > h3"],
         filters: [{ name: "parseNumber" }],
       },
-      seedingSize: {
-        selector: ["table#bprates_overview > tbody > tr > td:eq(1)"],
-        filters: [{ name: "parseSize" }],
-      },
+      // E2-05/E2b-10：原先这里把 seedingSize 也指向 bprates 表的同一个单元格
+      // （`td:eq(1)` = 首行第二格，bprates 是「每小时收益」表，该格是速率），用 parseSize 解释
+      // 会得到「0.5 字节」这类错值，并与 bonusPerHour 互相矛盾。做种体积改由 getSeedingSize
+      // 走父类的 torrents.php?type=seeding 分页统计，这里不再声明 seedingSize 选择器。
     },
   },
 
@@ -370,18 +370,36 @@ export interface dicGroupTorrent extends groupTorrent {
 }
 
 export default class DICMusic extends GazelleJSONAPI {
+  /**
+   * E2-05/E2b-10：bprates 页（`/bonus.php?action=bprates`）是「每小时收益」表，无法同时提供做种体积。
+   * 这里只从该页取 bonusPerHour / bonus，做种体积交回父类按 `torrents.php?type=seeding` 分页统计，
+   * 避免两个字段读同一单元格、至少一个是错值。
+   */
   protected override async getSeedingSize(userId: number, sizeIndex: number = 0): Promise<Partial<IUserInfo>> {
+    let seedingSizeInfo: Partial<IUserInfo> = {};
+    try {
+      seedingSizeInfo = await super.getSeedingSize(userId, sizeIndex);
+    } catch (e) {
+      // 做种列表统计失败不应连累 bonusPerHour / bonus，父类 mergeSeedingSizeSafely 里还有兜底
+      logMessage(
+        `[Site] ${this.name} seeding size statistics failed, keep other user info`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
+    }
+
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
     const { data: bonusPage } = await this.request<Document>({
       url: "/bonus.php?action=bprates",
       responseType: "document",
     });
-    return this.getFieldsData(bonusPage, this.metadata.userInfo!.selectors!, [
-      "seedingSize",
+    const bonusInfo = this.getFieldsData(bonusPage, this.metadata.userInfo!.selectors!, [
       "bonus",
       "bonusPerHour",
     ] as (keyof Partial<IUserInfo>)[]) as Partial<IUserInfo>;
+
+    return { ...seedingSizeInfo, ...bonusInfo };
   }
 
   // 该站点提供禁转标签

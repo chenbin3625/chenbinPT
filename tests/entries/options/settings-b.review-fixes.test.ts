@@ -107,6 +107,19 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
+/**
+ * metadata store 的 `simplePatch` / 删除类 action 会 500ms 后 `$save()`；单测没有持久化插件，
+ * 若不给 `$save` 补一个替身，去抖计时器会在**用例结束后**抛出 `store.$save is not a function`
+ * （vitest 记为 unhandled error）。这里统一给每个 store 补空实现。
+ */
+function prepareOptionsPiniaWithSave() {
+  const pinia = prepareOptionsPinia();
+  pinia.use(({ store }) => {
+    (store as any).$save = async () => {};
+  });
+  return pinia;
+}
+
 afterEach(() => {
   sendMessageMock.mockReset();
   saveAsMock.mockReset();
@@ -126,7 +139,7 @@ const backupServerRow = {
 
 describe("OPTIONSSETTINGS-2：从未备份的服务器显示译文", () => {
   it("「最后备份时间」列渲染 SetBackup.table.notBackup，而不是字面量 notBackup", async () => {
-    const pinia = prepareOptionsPinia();
+    const pinia = prepareOptionsPiniaWithSave();
     const metadataStore = useMetadataStore(pinia);
     (metadataStore as any).$ready = true;
     metadataStore.backupServers = { dav: backupServerRow } as any;
@@ -150,7 +163,7 @@ describe("OPTIONSSETTINGS-2：从未备份的服务器显示译文", () => {
 
 describe("OPTIONSSETTINGS-3：本地导出失败不再静默", () => {
   const mountLocalExport = async () => {
-    const pinia = prepareOptionsPinia();
+    const pinia = prepareOptionsPiniaWithSave();
     const runtimeStore = useRuntimeStore(pinia);
     const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
 
@@ -178,7 +191,10 @@ describe("OPTIONSSETTINGS-3：本地导出失败不再静默", () => {
       ok.click();
       await view.settle(120);
 
-      expect(snackbar).toHaveBeenCalledWith(i18nInstance.global.t("SetBackup.snackbar.failure"), { color: "error" });
+      expect(snackbar).toHaveBeenCalledWith(
+        i18nInstance.global.t("SetBackup.snackbar.failureWithReason", { reason: "download rejected" }),
+        { color: "error" },
+      );
       expect(open.value, "失败时不能关闭弹窗（否则用户以为导出成功）").toBe(true);
       expect(ok.disabled).toBe(false);
     } finally {
@@ -227,7 +243,7 @@ describe("OPTIONSSETTINGS-6：恢复时零字段不再提示「恢复成功」",
   };
 
   it("取消勾选全部恢复字段后确定按钮被禁用，且不会发出 restoreBackupData", async () => {
-    const pinia = prepareOptionsPinia();
+    const pinia = prepareOptionsPiniaWithSave();
     sendMessageMock.mockImplementation(async (type: string) => (type === "getRemoteBackupData" ? remoteBackup : true));
 
     const { default: RestoreDialog } = await import("@/options/views/Settings/SetBackup/RestoreDialog.vue");
@@ -282,7 +298,7 @@ describe("OPTIONSSETTINGS-7：自动刷新文案不再硬编码中文", () => {
   const AFTER_TIME_SUFFIX_KEY = "SetBase.userInfo.afterTimeSuffix";
 
   it("英文界面下没有任何中文字符，后缀来自 i18n 键而不是硬编码「后，」", async () => {
-    const pinia = prepareOptionsPinia();
+    const pinia = prepareOptionsPiniaWithSave();
     const configStore = useConfigStore(pinia);
     configStore.userInfo.autoReflush.enabled = true;
 
@@ -322,7 +338,7 @@ describe("OPTIONSSETTINGS-9：导出不再混入空对象", () => {
   };
 
   const mountSolutions = async () => {
-    const pinia = prepareOptionsPinia();
+    const pinia = prepareOptionsPiniaWithSave();
     // SolutionLabel → SolutionDetail 会读站点元数据；给站点一份空 merge 配置，避免无关的 unhandled rejection
     sendMessageMock.mockImplementation(async (type: string) => (type === "getSiteUserConfig" ? { merge: {} } : true));
 
@@ -396,7 +412,7 @@ describe("OPTIONSSETTINGS-9：导出不再混入空对象", () => {
 
 describe("OPTIONSSETTINGS-10：站点被删除后编辑弹窗降级为禁用", () => {
   it("另一上下文删掉站点后，面板仍渲染且变为禁用，而不是渲染期 TypeError", async () => {
-    const pinia = prepareOptionsPinia();
+    const pinia = prepareOptionsPiniaWithSave();
     const metadataStore = useMetadataStore(pinia);
     (metadataStore as any).$ready = true;
     metadataStore.sites = {
@@ -438,6 +454,269 @@ describe("OPTIONSSETTINGS-10：站点被删除后编辑弹窗降级为禁用", (
       expect(panel()!.classList.contains("ant-collapse-item-disabled"), "找不到站点时面板应禁用").toBe(true);
     } finally {
       view.unmount();
+    }
+  });
+});
+
+// ── F2-Medium-12 / Medium-15 / Low-04 / Low-07：表单校验持续驱动保存门禁 ──────────
+
+/** 等客户端元数据（computedAsync 的动态 import）就绪：直到出现指定 label 的表单行 */
+async function waitForFormItem(label: string): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    const found = Array.from(document.querySelectorAll(".ant-form-item")).some(
+      (node) => node.querySelector("label")?.textContent?.trim() === label,
+    );
+    if (found) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`没有渲染出「${label}」表单项`);
+}
+
+describe("F2-Medium-12：备份服务器编辑器持续校验", () => {
+  async function mountBackupEditor(config: any) {
+    const { default: Editor } = await import("@/options/views/Settings/SetBackup/Editor.vue");
+    const model = ref<any>(config);
+    let valid: boolean | undefined;
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(Editor as any, {
+            modelValue: model.value,
+            "onUpdate:modelValue": (v: any) => (model.value = v),
+            "onUpdate:configValid": (v: boolean) => (valid = v),
+          }),
+      }),
+    );
+    return { view, model, getValid: () => valid };
+  }
+
+  const baseConfig = () => ({
+    id: "b1",
+    type: "WebDAV",
+    name: "my dav",
+    enabled: true,
+    backupFields: ["config"],
+    backupInterval: 0,
+    config: { address: "https://dav.example/dav", loginName: "", loginPwd: "", digest: false },
+  });
+
+  it("地址为空或不是 URL 时 configValid=false；恢复合法地址后=true", async () => {
+    const { view, model, getValid } = await mountBackupEditor(baseConfig());
+    try {
+      await waitForFormItem("地址");
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(getValid(), "合法默认配置应为 true").toBe(true);
+
+      model.value.config.address = "";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(getValid(), "地址为必填项").toBe(false);
+
+      model.value.config.address = "not-a-url";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(getValid(), "地址必须是合法 URL").toBe(false);
+
+      model.value.config.address = "https://dav.example/dav";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(getValid()).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("备份内容一项都不勾选时 configValid=false（防止上传空 zip）", async () => {
+    const { view, model, getValid } = await mountBackupEditor(baseConfig());
+    try {
+      await waitForFormItem("地址");
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(getValid()).toBe(true);
+
+      model.value.backupFields = [];
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(getValid(), "全不勾选必须阻止保存").toBe(false);
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe("F2-Medium-15 / Low-04 / Low-07：媒体服务器、下载器编辑器持续校验", () => {
+  it("媒体服务器：清空 apikey 后 configValid=false，填回后=true", async () => {
+    const { default: Editor } = await import("@/options/views/Settings/SetMediaServer/Editor.vue");
+    const model = ref<any>({
+      id: "m1",
+      type: "emby",
+      name: "emby",
+      address: "http://emby.local",
+      enabled: true,
+      auth: { apikey: "key" },
+    });
+    let valid: boolean | undefined;
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(Editor as any, {
+            modelValue: model.value,
+            "onUpdate:modelValue": (v: any) => (model.value = v),
+            "onUpdate:configValid": (v: boolean) => (valid = v),
+          }),
+      }),
+    );
+    try {
+      await waitForFormItem("apikey");
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(valid).toBe(true);
+
+      model.value.auth.apikey = "";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(valid, "必填鉴权字段为空时必须禁用保存").toBe(false);
+
+      model.value.auth.apikey = "key2";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(valid).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("下载器：sortIndex=0 视为已填写；清空名称后 configValid=false", async () => {
+    const { default: Editor } = await import("@/options/views/Settings/SetDownloader/Editor.vue");
+    const model = ref<any>({
+      id: "d1",
+      type: "qBittorrent",
+      name: "qb",
+      address: "http://qb.local",
+      sortIndex: 0,
+      enabled: true,
+      feature: {},
+      advanceAddTorrentOptions: {},
+    });
+    let valid: boolean | undefined;
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(Editor as any, {
+            modelValue: model.value,
+            "onUpdate:modelValue": (v: any) => (model.value = v),
+            "onUpdate:configValid": (v: boolean) => (valid = v),
+          }),
+      }),
+    );
+    try {
+      // 等 clientMeta / feature 开关渲染
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(valid, "sortIndex=0 不应被当成未填写（F2-Low-07）").toBe(true);
+
+      model.value.name = "";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(valid, "名称为必填项，清空后必须禁用保存（不再依赖测试连接）").toBe(false);
+
+      model.value.name = "qb2";
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(valid).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+// ── F2-N3 / N9 / Medium-13：备份列表的防御性修复 ──────────────────────────────
+
+describe("F2-N3 / N9 / Medium-13：备份列表", () => {
+  async function mountBackupIndex(backupServers: Record<string, any>, encryptionKey = "") {
+    const pinia = prepareOptionsPiniaWithSave();
+    const metadataStore = useMetadataStore(pinia);
+    (metadataStore as any).$ready = true;
+    metadataStore.backupServers = backupServers as any;
+    const configStore = useConfigStore(pinia);
+    configStore.backup.encryptionKey = encryptionKey;
+    const runtimeStore = useRuntimeStore(pinia);
+    const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
+
+    const { default: SetBackup } = await import("@/options/views/Settings/SetBackup/Index.vue");
+    const view = mountOptionsView(SetBackup, { pinia, router: true });
+    await view.settle(150);
+    return { view, metadataStore, snackbar };
+  }
+
+  it("备份内容全不勾选：不发 exportBackupData，并提示失败（F2-N3）", async () => {
+    sendMessageMock.mockResolvedValue(true);
+    const { view, snackbar } = await mountBackupIndex({
+      dav: { id: "dav", name: "dav", type: "WebDAV", enabled: true, backupFields: [], config: {} },
+    });
+    try {
+      view.$<HTMLButtonElement>(".table-action .ant-btn-primary")!.click();
+      await view.settle(80);
+
+      expect(sendMessageMock.mock.calls.some(([type]) => type === "exportBackupData")).toBe(false);
+      expect(snackbar).toHaveBeenCalledWith(expect.any(String), { color: "error" });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("服务器已被另一上下文删除：给出可诊断提示，不抛 TypeError（F2-N9）", async () => {
+    const { view, metadataStore, snackbar } = await mountBackupIndex({});
+    try {
+      const instance = (view.app as any)._instance;
+      await instance.setupState.doBackup("ghost");
+
+      expect(snackbar).toHaveBeenCalledWith(expect.any(String), { color: "error" });
+      expect(metadataStore.backupServers["ghost"]).toBeUndefined();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("删除备份服务器后清理选中项，不会残留幽灵 id（F2-N6）", async () => {
+    const { view } = await mountBackupIndex({
+      dav: { id: "dav", name: "dav", type: "WebDAV", enabled: true, backupFields: ["config"], config: {} },
+    });
+    try {
+      const rowCheckbox = view.$<HTMLInputElement>(".ant-table-tbody input[type='checkbox']")!;
+      rowCheckbox.click();
+      await view.settle(80);
+
+      const removeButton = () =>
+        view.$<HTMLButtonElement>(`.page-toolbar button[title="${i18nInstance.global.t("common.remove")}"]`) ??
+        view
+          .$$<HTMLButtonElement>(".page-toolbar button")
+          .find((button) => (button.textContent ?? "").includes(i18nInstance.global.t("common.remove")))!;
+      expect(removeButton().disabled, "选中后移除按钮应可用").toBe(false);
+
+      view.$<HTMLButtonElement>(".table-action .ant-btn-dangerous")!.click();
+      await view.settle(120);
+      document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-dangerous")!.click();
+      await view.settle(150);
+
+      expect(removeButton().disabled, "已删除的 id 不应继续留在选中态").toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("未设置加密密钥时显示明文备份警告；设置后不再显示（F2-Medium-13）", async () => {
+    const plain = await mountBackupIndex({}, "");
+    try {
+      const alert = plain.view.$(".ant-alert-warning");
+      expect(alert, "未加密时必须提示").not.toBeNull();
+      expect(alert!.textContent).toContain(i18nInstance.global.t("ptppSettings.saveKeyNotice"));
+    } finally {
+      plain.view.unmount();
+    }
+
+    const encrypted = await mountBackupIndex({}, "my-secret-key");
+    try {
+      expect(encrypted.view.$(".ant-alert-warning"), "已加密时不再显示警告").toBeNull();
+    } finally {
+      encrypted.view.unmount();
     }
   });
 });

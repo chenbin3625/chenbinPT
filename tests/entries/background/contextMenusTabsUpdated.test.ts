@@ -7,8 +7,12 @@
  *
  * 修复：新增 `chrome.tabs.onUpdated` 监听，且只在 `changeInfo.url` 存在时重建
  * （onUpdated 在标题/图标/加载状态变化时都会触发，不加判断会让每次页面加载都全量重建菜单）。
+ *
+ * TEST-5（2026-10-23 审查）：原实现让用例之间共享 currentTab / 过滤开关 / 排除列表 / 计数器，
+ * 依赖「上一个用例留下的状态」——单跑或调整顺序就会失败。现在每个用例都在 beforeEach 里
+ * 重置输入并重新求值模块（等价 SW 冷启动），互不依赖。
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -41,10 +45,14 @@ vi.mock("@/background/utils/base.ts", () => ({
 vi.stubGlobal("chrome", {
   contextMenus: {
     onClicked: { addListener: vi.fn() },
-    create: vi.fn((data: Record<string, any>) => mocks.createdMenus.push(data)),
+    create: vi.fn((data: Record<string, any>, callback?: () => void) => {
+      mocks.createdMenus.push(data);
+      callback?.();
+    }),
     remove: vi.fn(() => Promise.resolve()),
-    removeAll: vi.fn(() => {
+    removeAll: vi.fn((callback?: () => void) => {
       mocks.removeAllCount += 1;
+      callback?.();
       return Promise.resolve();
     }),
   },
@@ -69,6 +77,7 @@ vi.stubGlobal("chrome", {
     },
   },
   i18n: { getMessage: vi.fn((key: string) => key) },
+  runtime: { id: "test-extension-id", lastError: undefined as { message: string } | undefined },
 });
 
 const siteHostMap = { "mteam.example": "mteam", "btsite.example": "btsite" };
@@ -109,13 +118,24 @@ mocks.getExtStorageCached.mockImplementation(async (key: string) => {
   };
 });
 
-await import("@/background/utils/contextMenus.ts");
-
 /** 构建是异步链（多次 mock 的 storage 读取），这里把微任务/宏任务都排空 */
 async function flushBuild() {
   for (let i = 0; i < 6; i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+/** 重新求值模块 = 模拟 SW 冷启动：模块级 lastBuiltContextKey / 事件表 / 监听器都重建 */
+async function loadFreshModule() {
+  mocks.onActivatedListeners.length = 0;
+  mocks.onUpdatedListeners.length = 0;
+  mocks.onFocusChangedListeners.length = 0;
+  mocks.storageChangedListeners.length = 0;
+  mocks.createdMenus.length = 0;
+  mocks.removeAllCount = 0;
+  vi.resetModules();
+  await import("@/background/utils/contextMenus.ts");
+  await flushBuild();
 }
 
 /** 只取「从 fromIndex 起新建」的菜单标题：重建是新增一批菜单，而不是复用旧对象 */
@@ -133,14 +153,18 @@ function menuIds(fromIndex = 0): string[] {
 
 const QB_DOWNLOADER_MENU_ID = "chenbinPT-Context-Menus**Link-Download-Push**qb";
 
+beforeEach(async () => {
+  mocks.currentTab = { url: "https://mteam.example/browse" };
+  mocks.allowDownloaderFilterForSite = true;
+  mocks.excludedSites = [];
+  mocks.sendMessage.mockReset();
+  mocks.logBackgroundError.mockReset();
+  await loadFreshModule();
+});
+
 describe("右键菜单：同标签页导航后重建（L-2）", () => {
   it("changeInfo.url 触发重建；没有 url 的 onUpdated 不重建", async () => {
-    await flushBuild();
-
-    expect(mocks.onUpdatedListeners.length, "必须注册 tabs.onUpdated 监听").toBe(1);
-    expect(mocks.onActivatedListeners.length, "原有的 onActivated 监听应保留").toBe(1);
-
-    // 首次构建：按站点 A 解析 $torrent.site$
+    // 初始构建：按站点 A（mteam）解析 $torrent.site$
     expect(menuTitles()).toContain("-> /downloads/mteam");
     const buildsAfterInitial = mocks.removeAllCount;
     expect(buildsAfterInitial).toBeGreaterThan(0);
@@ -167,18 +191,17 @@ describe("右键菜单：同标签页导航后重建（L-2）", () => {
 
 describe("右键菜单：切换窗口后重建（M-16）", () => {
   it("windows.onFocusChanged 按新窗口的活动标签页重建；焦点移出浏览器（WINDOW_ID_NONE）不重建", async () => {
-    await flushBuild();
     expect(mocks.onFocusChangedListeners.length, "必须注册 windows.onFocusChanged 监听").toBe(1);
 
-    // 窗口 1 停在 B（上一个用例结束时的状态），切到停在 A 的窗口 2
-    mocks.currentTab.url = "https://mteam.example/browse";
+    // 切到停在 B 的另一个窗口
+    mocks.currentTab.url = "https://btsite.example/browse";
     const before = mocks.removeAllCount;
     const menusBefore = mocks.createdMenus.length;
     mocks.onFocusChangedListeners[0]!(2);
     await flushBuild();
 
     expect(mocks.removeAllCount).toBe(before + 1);
-    expect(menuTitles(menusBefore)).toContain("-> /downloads/mteam");
+    expect(menuTitles(menusBefore)).toContain("-> /downloads/btsite");
 
     mocks.onFocusChangedListeners[0]!(-1);
     await flushBuild();
@@ -188,7 +211,6 @@ describe("右键菜单：切换窗口后重建（M-16）", () => {
 
 describe("右键菜单：与菜单无关的 metadata 写入不触发重建（L-6）", () => {
   it("只改了 lastUserInfo 时摘要不变，1s 防抖后也不 removeAll", async () => {
-    await flushBuild();
     expect(mocks.storageChangedListeners.length).toBe(1);
     const before = mocks.removeAllCount;
 
@@ -218,9 +240,11 @@ describe("右键菜单：按站点排除下载器（BACKGROUNDSHARED-4）", () =
   it("开关打开且 excludedSites 命中当前站点 → 该下载器不再出现在菜单里", async () => {
     mocks.currentTab.url = "https://mteam.example/browse";
     mocks.allowDownloaderFilterForSite = true;
-    mocks.excludedSites = [];
-    await rebuildAtCurrentTab(); // 建立基线（不排除）
+    // 先制造一次与初始构建不同的摘要（排除列表变化）作为基线
+    mocks.excludedSites = ["other-site"];
+    await rebuildAtCurrentTab();
     const before = mocks.createdMenus.length;
+    expect(menuIds(0), "基线里应有 qb 的下载器菜单").toContain(QB_DOWNLOADER_MENU_ID);
 
     // 站点过滤里把 qb 排除出 mteam：与 options store 的 getEnabledDownloadersBySite 语义一致
     mocks.excludedSites = ["mteam"];
@@ -233,7 +257,7 @@ describe("右键菜单：按站点排除下载器（BACKGROUNDSHARED-4）", () =
   it("开关关闭时排除列表不生效（否则菜单会与设置页行为相反）", async () => {
     mocks.currentTab.url = "https://mteam.example/browse";
     mocks.excludedSites = ["mteam"];
-    mocks.allowDownloaderFilterForSite = false; // 上一个用例是 true → 摘要变化必然重建
+    mocks.allowDownloaderFilterForSite = false; // 与初始摘要不同 → 必然重建
     const before = mocks.createdMenus.length;
 
     await rebuildAtCurrentTab();

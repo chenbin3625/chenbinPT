@@ -68,6 +68,20 @@ describe("extractContent", () => {
     expect(extractContent("<span>你好</span>😀")).toBe("你好😀");
     expect(extractContent("e\u0301")).toBe("e\u0301"); // 分解形式的 e + 组合尖音符
   });
+
+  it("E07：不向当前活动文档注入节点（改用惰性 DOMParser 解析）", () => {
+    const createElementSpy = vi.spyOn(document, "createElement");
+    const before = document.querySelectorAll("*").length;
+
+    const text = extractContent(`<img src="https://evil.example/track.png" onerror="void 0"><b>安全文本</b>`);
+
+    expect(text).toBe("安全文本");
+    // 旧实现用 document.createElement("span").innerHTML = s，会创建挂在活动文档上的节点
+    expect(createElementSpy).not.toHaveBeenCalled();
+    expect(document.querySelectorAll("*").length).toBe(before);
+
+    createElementSpy.mockRestore();
+  });
 });
 
 describe("extractTextExcluding", () => {

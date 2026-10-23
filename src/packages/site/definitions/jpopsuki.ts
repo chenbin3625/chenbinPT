@@ -23,6 +23,7 @@ const userInfoMap: Record<"en" | "ja", Record<boxName | keyof IUserInfo, string>
     personal: "Personal",
     uploaded: "Uploaded",
     downloaded: "Downloaded",
+    ratio: "Ratio:",
     seeding: "Seeding:",
     bonus: "Bonus Points:",
     levelName: "Class:",
@@ -34,9 +35,15 @@ const userInfoMap: Record<"en" | "ja", Record<boxName | keyof IUserInfo, string>
     community: "コミュニティ",
     personal: "個人情報",
     uploaded: "アップロード数",
+    // E3-14（E3b 补强）：这几个字段此前在 ja 里缺失，genUserInfoSelector 会回落英文文案，
+    // 日文界面下 downloaded/joinTime/ratio/bonus 全部零命中（ratio 变空串 → 等级门槛的分享率条件恒不满足）。
+    // 文案按站点日文界面用语补全（`:contains` 是子串匹配，冒号有无均可）；待验证：需一次日文界面实测。
+    downloaded: "ダウンロード数",
+    ratio: "比率",
     seeding: "シード中",
     bonus: "ボーナスポイント",
     levelName: "階級:",
+    joinTime: "登録日",
     lastAccessAt: "最後にアクセスした時:",
   },
 };
@@ -189,6 +196,16 @@ export const siteMetadata: ISiteMetadata = {
       downloaded: {
         selector: genUserInfoSelector("stats", "downloaded"),
         filters: [{ name: "parseSize" }],
+      },
+      // E3b：ratio / bonus 原本落到 Gazelle 默认的英文 genStatBoxSelector，日文界面（統計情報）下零命中；
+      // 这里显式用站点的 en/ja 双栈选择器，英文界面的文案与 Gazelle 默认完全一致，行为不变。
+      ratio: {
+        selector: genUserInfoSelector("stats", "ratio"),
+        filters: [{ name: "parseNumber" }],
+      },
+      bonus: {
+        selector: genUserInfoSelector("stats", "bonus"),
+        filters: [{ name: "parseNumber" }],
       },
       seeding: {
         selector: genUserInfoSelector("community", "seeding"),

@@ -12,8 +12,9 @@ export const siteMetadata: ISiteMetadata = {
   id: "emuwarez",
   name: "eMuwarez",
   aka: ["eMz"],
-  description:
-    "eMuwarez（eMz）是一个西班牙私有站点，提供电影/剧集/音乐/游戏/软件资源。支持 Unit3D 官方 JSON API（api/torrents/filter）。",
+  // E2b-24：描述原先声称走 Unit3D 官方 JSON API，但下面的 search 仍是 `/torrents/` + document 抓取
+  // （requestConfig.url/responseType 未改），描述与实现漂移会误导排障方向，这里按实际实现描述。
+  description: "eMuwarez（eMz）是一个西班牙私有站点，提供电影/剧集/音乐/游戏/软件资源。",
   tags: ["影视", "音乐", "游戏", "软件", "综合"],
 
   type: "private",

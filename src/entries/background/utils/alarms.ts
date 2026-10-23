@@ -6,6 +6,7 @@ import { onMessage, sendMessage } from "@/messages.ts";
 import { IDownloadTorrentOption, type ITorrentDownloadMetadata } from "@/shared/types.ts";
 
 import { getExtStoragePathCached, logBackgroundError, patchExtStoragePathLocal } from "./base.ts";
+import { showNotificationSafely } from "./contextMenus.ts";
 import { setupOffscreenDocument } from "./offscreen.ts";
 
 export enum EJobType {
@@ -182,7 +183,7 @@ function isAbortError(error: unknown): boolean {
  * 它**不提供**跨 SW 的持久化能力，因此这里自建最小可行的一层：
  * - 排程前把任务的**参数**（而不是闭包）写入 chrome.storage.local；
  * - 本模块顶层注册 chrome.alarms.onAlarm，闹钟唤醒 SW 并重新求值本模块时即可读到参数；
- * - 触发时先"取走"（读取并删除）存储条目再执行，保证重复触发不会重复执行、执行后必然清理。
+ * - 触发时持久记录执行租期，完成后才写 consumed；SW 在执行前回收时可按租期恢复。
  *
  * 用 local 而不是 session：alarms 可能跨浏览器重启存活，而 session storage 会随浏览器退出清空，
  * 只有 local 才能保证"闹钟还在，参数就还在"。条目执行后删除 + 排程时顺带清理超期条目，
@@ -191,6 +192,15 @@ function isAbortError(error: unknown): boolean {
 const PENDING_ONCE_JOB_KEY = "ptd_pending_once_jobs";
 /** 超期条目兜底清理：浏览器被强杀导致 alarm 丢失时，避免存储里留下永久孤儿条目 */
 const PENDING_ONCE_JOB_TTL = 24 * 60 * 60 * 1000;
+const ONCE_JOB_LEASE_TTL = 5 * 60 * 1000;
+const ONCE_JOB_HEARTBEAT = 60 * 1000;
+/**
+ * 一次性任务在 SW 回收后的**重放**上限（不含首次执行）。
+ *
+ * `attempt` 语义：1 = 首次执行；2 = 第 1 次重放；……；`attempt - 1` 即「已重放次数」。
+ * 超过该次数仍未能完成的任务不再重放（重下任务标记 failed），避免一个必然失败/必然杀死 SW 的任务无限循环。
+ */
+const MAX_REPLAY_ATTEMPTS = 3;
 
 type TPendingFlushUserInfoRetry = {
   kind: "flushUserInfoRetry";
@@ -198,6 +208,8 @@ type TPendingFlushUserInfoRetry = {
   retryIndex: number;
   /** 计划执行时间，仅用于诊断与超期清理 */
   fireAt: number;
+  /** N7：因「上一轮刷新仍持锁」而重排的次数（有上限，避免无限重排） */
+  lockRescheduleCount?: number;
 };
 
 type TPendingReDownloadTorrent = {
@@ -209,7 +221,7 @@ type TPendingReDownloadTorrent = {
 };
 
 /**
- * H-11：已被取走执行的任务留下的墓碑。
+ * H-11：已完成任务留下的墓碑。
  *
  * 冷启动时 SW 往往正是被这个 alarm 唤醒的：onAlarm 触发时 `alarms.get` 已查不到它，而参数还没被取走，
  * 于是 rescheduleLostOnceJobAlarms 会把它当成「丢失的 alarm」重建一次。原 alarm 的处理随即取走并完成任务，
@@ -223,7 +235,15 @@ type TConsumedOnceJob = {
 };
 
 type TPendingOnceJob = TPendingFlushUserInfoRetry | TPendingReDownloadTorrent;
-type TStoredOnceJob = TPendingOnceJob | TConsumedOnceJob;
+type TRunningOnceJob = {
+  kind: "running";
+  job: TPendingOnceJob;
+  owner: string;
+  at: number;
+  fireAt: number;
+  attempt: number;
+};
+type TStoredOnceJob = TPendingOnceJob | TRunningOnceJob | TConsumedOnceJob;
 
 const RE_DOWNLOAD_ALARM_PREFIX = `${EJobType.ReDownloadTorrent}-`;
 const FLUSH_USER_INFO_RETRY_ALARM_PREFIX = `${EJobType.FlushUserInfo}-Retry-`;
@@ -298,8 +318,11 @@ async function removePendingJob(alarmName: string): Promise<void> {
   });
 }
 
-/** 取出并删除：先清理存储再执行，保证任务不会因执行失败/重复触发而重复运行 */
-async function takePendingJob(alarmName: string): Promise<TPendingOnceJob | "consumed" | undefined> {
+/** 执行中的 payload 保留在存储中；SW 回收后租期过期即可恢复。 */
+async function takePendingJob(
+  alarmName: string,
+  owner: string,
+): Promise<{ job: TPendingOnceJob; attempt: number } | "consumed" | "running" | undefined> {
   return enqueuePendingJobWrite(async () => {
     const jobs = await loadPendingJobs();
     const job = jobs[alarmName];
@@ -309,11 +332,32 @@ async function takePendingJob(alarmName: string): Promise<TPendingOnceJob | "con
     if (job.kind === "consumed") {
       return "consumed";
     }
-    // 留墓碑而不是直接删除（见 TConsumedOnceJob）；墓碑按 PENDING_ONCE_JOB_TTL 在下次排程时清理，
-    // 同名任务重新排程（addPendingJob）会直接覆盖它。
-    jobs[alarmName] = { kind: "consumed", fireAt: Date.now() };
+    const now = Date.now();
+    if (job.kind === "running" && now - job.at < ONCE_JOB_LEASE_TTL) {
+      return "running";
+    }
+    const payload = job.kind === "running" ? job.job : job;
+    const attempt = job.kind === "running" ? job.attempt + 1 : 1;
+    jobs[alarmName] = { kind: "running", job: payload, owner, at: now, fireAt: now, attempt };
     await chrome.storage.local.set({ [PENDING_ONCE_JOB_KEY]: jobs });
-    return job;
+    await chrome.alarms.create(alarmName, { when: now + ONCE_JOB_LEASE_TTL });
+    return { job: payload, attempt };
+  });
+}
+
+async function updateRunningJob(alarmName: string, owner: string, complete = false): Promise<boolean> {
+  return enqueuePendingJobWrite(async () => {
+    const jobs = await loadPendingJobs();
+    const running = jobs[alarmName];
+    if (running?.kind !== "running" || running.owner !== owner) return false;
+    jobs[alarmName] = complete ? { kind: "consumed", fireAt: Date.now() } : { ...running, at: Date.now() };
+    await chrome.storage.local.set({ [PENDING_ONCE_JOB_KEY]: jobs });
+    if (complete) {
+      await chrome.alarms.clear(alarmName);
+    } else {
+      await chrome.alarms.create(alarmName, { when: Date.now() + ONCE_JOB_LEASE_TTL });
+    }
+    return true;
   });
 }
 
@@ -331,7 +375,17 @@ async function schedulePendingOnceJob(alarmName: string, fireAt: number, job: TP
   }
 }
 
-function autoFlushUserInfo(retryIndex: number = 0) {
+/** N7：`autoFlushUserInfo` 的结构化返回值；目前只关心「本轮是否因他人持锁被跳过」。 */
+interface IAutoFlushResult {
+  lockBusy?: boolean;
+}
+
+/**
+ * 一次自动刷新（interval job 与持久化重试 job 共用）。
+ *
+ * 返回值：重试任务消费方需要知道「本轮是否因锁被占用而什么都没做」，以便重新排程而不是把它当成完成。
+ */
+function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResult | undefined> {
   return async () => {
     // 先判断是否启用，再决定是否拉起 offscreen（见 docs/performance-audit.md P1-6）
     const autoReflush = (await getExtStoragePathCached("config", "userInfo.autoReflush", {})) as {
@@ -385,7 +439,9 @@ function autoFlushUserInfo(retryIndex: number = 0) {
       sendMessage("logger", {
         msg: `Auto-refreshing user information is already running, skip this round.`,
       }).catch(onLoggerSendFailed);
-      return;
+      // N7：显式返回「因他人持锁跳过」。interval job 忽略返回值（10 分钟后再试）；
+      // 一次性重试任务的消费方必须据此**重新排程**，否则这次重试会被消费墓碑静默吃掉。
+      return { lockBusy: true };
     }
 
     try {
@@ -484,7 +540,10 @@ function autoFlushUserInfo(retryIndex: number = 0) {
         }).catch(onLoggerSendFailed);
         // 走持久化排程（见上方 PENDING_ONCE_JOB_KEY 的说明）：只把 retryIndex 落盘，
         // SW 被回收后由 onAlarm 重建 `autoFlushUserInfo(retryIndex + 1)` 的闭包。
-        const fireAt = +curDate + retryInterval * 60 * 1000; // retryInterval in minutes
+        // N7：fireAt 必须用「本轮结束时间」而不是本轮开始时间（curDate）：
+        // 一轮串行刷新 100 个站点、或遇到多次 30s 超时，很容易超过 retryInterval（默认 5 分钟），
+        // 用开始时间算出的 fireAt 已在过去 → 重试 alarm 立刻触发，撞上本轮自己的锁 → 该次重试被消费掉。
+        const fireAt = Date.now() + retryInterval * 60 * 1000; // retryInterval in minutes
         const alarmName = `${EJobType.FlushUserInfo}-Retry-${retryIndex}-${Date.now()}`;
         try {
           await schedulePendingOnceJob(alarmName, fireAt, {
@@ -499,6 +558,10 @@ function autoFlushUserInfo(retryIndex: number = 0) {
     } finally {
       await releaseLock(USER_INFO_LOCK_KEY, lockOwner);
     }
+
+    // 显式 return（noImplicitReturns）：本函数既有 `return { lockBusy: true }` 的值返回，
+    // 也有只 `return` 的提前退出，末尾必须写明返回 undefined 才不会触发 TS7030。
+    return undefined;
   };
 }
 
@@ -510,6 +573,35 @@ jobs.scheduleJob({
   immediate: true,
   execute: autoFlushUserInfo(),
 });
+
+/**
+ * H-2：自动备份失败的用户可见通知。
+ *
+ * 自动备份每 10 分钟检查一次，失败时旧实现只写 logger 通道（options 没有日志查看器时用户完全无感）。
+ * 这里用 contextMenus 的 `showNotificationSafely` 发一次系统通知；同一服务器在去重窗口内只提示一次，
+ * 避免失败持续时每 10 分钟刷屏。失败原因与服务器名走 logger 同一份文本。
+ *
+ * i18n：新增 key `notificationAutoBackupFailure`（参数 $1=服务器名、$2=失败原因）；
+ * locales 尚未补齐时回落到英文模板，保证通知仍然可读（key 由 Lead 统一补 src/locales）。
+ */
+const AUTO_BACKUP_NOTIFY_DEDUPE_MS = 30 * 60 * 1000;
+const autoBackupFailureNotifyAt = new Map<string, number>();
+
+function notifyAutoBackupFailure(serverId: string, serverName: string, reason: string): void {
+  const now = Date.now();
+  if (now - (autoBackupFailureNotifyAt.get(serverId) ?? 0) < AUTO_BACKUP_NOTIFY_DEDUPE_MS) {
+    return;
+  }
+  autoBackupFailureNotifyAt.set(serverId, now);
+
+  const localized = chrome.i18n?.getMessage?.("notificationAutoBackupFailure", [serverName, reason]);
+  showNotificationSafely({
+    type: "basic",
+    iconUrl: chrome.runtime.getURL?.("icons/logo/128.png") ?? "",
+    title: chrome.i18n?.getMessage?.("extName") || "PT Depiler",
+    message: localized || `Auto backup failed for [${serverName}]: ${reason}`,
+  });
+}
 
 /**
  * 自动备份：检查所有已启用且设置了备份间隔的备份服务器，在满足条件时触发备份
@@ -540,10 +632,25 @@ function autoBackup() {
       return;
     }
 
+    let lockLost = false;
+    let heartbeat: Promise<void> = Promise.resolve();
+    const timer = setInterval(() => {
+      heartbeat = heartbeat.then(async () => {
+        if (!(await renewLock("autoBackupLock", lockOwner))) lockLost = true;
+      });
+    }, ONCE_JOB_HEARTBEAT);
+    (timer as unknown as { unref?: () => void }).unref?.();
     try {
       await setupOffscreenDocument();
 
       for (const [serverId, serverConfig] of pendingServers) {
+        if (lockLost || !(await renewLock("autoBackupLock", lockOwner))) {
+          sendMessage("logger", {
+            msg: `Auto-backup lock lost, skipping remaining servers.`,
+            level: "warn",
+          }).catch(onLoggerSendFailed);
+          break;
+        }
         sendMessage("logger", {
           msg: `Auto-backup triggered for [${serverConfig.name}] (interval: ${serverConfig.backupInterval}h)`,
         }).catch(onLoggerSendFailed);
@@ -556,18 +663,26 @@ function autoBackup() {
           });
 
           if (!ok) {
+            const reason = "exportBackupData returned false";
             sendMessage("logger", {
               msg: `Auto-backup failed for [${serverConfig.name}] (returned false)`,
             }).catch(onLoggerSendFailed);
+            notifyAutoBackupFailure(serverId, serverConfig.name ?? serverId, reason);
+          } else {
+            // 成功一次即清空去重记录：之后再失败应重新提示
+            autoBackupFailureNotifyAt.delete(serverId);
           }
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
           sendMessage("logger", {
             msg: `Auto-backup failed for [${serverConfig.name}]: ${errMsg}`,
           }).catch(onLoggerSendFailed);
+          notifyAutoBackupFailure(serverId, serverConfig.name ?? serverId, errMsg);
         }
       }
     } finally {
+      clearInterval(timer);
+      await heartbeat;
       await releaseLock("autoBackupLock", lockOwner);
     }
   };
@@ -600,25 +715,134 @@ async function markReDownloadAsFailed(downloadId: number, error?: unknown): Prom
   }
 }
 
-async function executePendingOnceJob(job: TPendingOnceJob): Promise<void> {
+/** N7：重试因锁被占用而重排时，两次重排之间的最小间隔（取自配置，回落到 5 分钟）。 */
+async function getAutoFlushRetryIntervalMs(): Promise<number> {
+  try {
+    const autoReflush = (await getExtStoragePathCached("config", "userInfo.autoReflush", {})) as {
+      retry?: { interval?: number };
+    };
+    const minutes = autoReflush?.retry?.interval;
+    return (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0 ? minutes : 5) * 60 * 1000;
+  } catch {
+    return 5 * 60 * 1000;
+  }
+}
+
+/** N7：锁被占用时最多重排几次，超过后放弃并记录（避免极端情况下无限重排）。 */
+const MAX_LOCK_RESCHEDULE = 3;
+
+/**
+ * N7：一次性重试任务到点时，若上一轮刷新仍持锁（`autoFlushUserInfo` 返回 `{ lockBusy: true }`），
+ * 不能把这次任务写成 consumed 墓碑（旧实现会，导致重试被静默吞掉）。这里改为重新排一次：
+ * - **先**用新的 alarm 名（带时间戳）把下一次排成功，`lockRescheduleCount` 累加并有上限；
+ * - 排程成功后**再**消费旧 alarm（写墓碑），避免「先写墓碑、排程失败/SW 被回收」这一两步之间丢任务；
+ * - 排程失败时保留旧 alarm 的 running 状态，由调用方 `finally` 统一消费（保持"本次重试失败"语义）。
+ *
+ * @returns 是否已经成功重排（false 表示排程失败/达到上限，调用方应正常消费本次任务）
+ */
+async function rescheduleLockBusyRetry(
+  alarmName: string,
+  owner: string,
+  job: TPendingFlushUserInfoRetry,
+): Promise<boolean> {
+  const rescheduleCount = (job.lockRescheduleCount ?? 0) + 1;
+
+  if (rescheduleCount > MAX_LOCK_RESCHEDULE) {
+    // 放弃重排：这里没有"新排程"可保护，直接消费当前任务（调用方 finally 也会兜底消费）
+    await updateRunningJob(alarmName, owner, true);
+    logBackgroundError(
+      `Auto-refresh retry #${job.retryIndex} gave up after ${MAX_LOCK_RESCHEDULE} lock-busy reschedules.`,
+    );
+    return false;
+  }
+
+  let delay: number;
+  try {
+    delay = await getAutoFlushRetryIntervalMs();
+    const fireAt = Date.now() + delay;
+    const nextAlarmName = `${FLUSH_USER_INFO_RETRY_ALARM_PREFIX}${job.retryIndex}-${Date.now()}`;
+    await schedulePendingOnceJob(nextAlarmName, fireAt, {
+      ...job,
+      fireAt,
+      lockRescheduleCount: rescheduleCount,
+    });
+  } catch (e) {
+    // 排程失败：保留旧 alarm 的 running（finally 会消费），不能先写墓碑导致这一步永久丢失
+    logBackgroundError(`Failed to reschedule lock-busy auto-refresh retry #${job.retryIndex}`, e);
+    return false;
+  }
+
+  // 新 alarm 已成功落盘，再消费旧任务；即使这里 SW 被回收，最坏也只是多一次重试（at-least-once），不会丢任务
+  try {
+    await updateRunningJob(alarmName, owner, true);
+  } catch (e) {
+    // 新任务已排上；旧 running 记录消费失败会由租期重放兜底（最坏多一次重试），不能因此让本次重排失败
+    logBackgroundError(`Failed to consume old auto-refresh retry #${job.retryIndex} after reschedule`, e);
+  }
+  sendMessage("logger", {
+    msg: `Auto-refresh retry #${job.retryIndex} rescheduled in ${Math.round(delay / 60_000)} minutes because another refresh round is still running.`,
+  }).catch(onLoggerSendFailed);
+  return true;
+}
+
+async function executePendingOnceJob(job: TPendingOnceJob): Promise<IAutoFlushResult | void> {
   switch (job.kind) {
     case "flushUserInfoRetry":
-      await autoFlushUserInfo(job.retryIndex)();
-      return;
+      return await autoFlushUserInfo(job.retryIndex)();
     case "reDownloadTorrent":
       await doReDownloadTorrent(job.downloadOption)();
       return;
   }
 }
 
-async function runPendingOnceJob(alarmName: string): Promise<void> {
-  const job = await takePendingJob(alarmName);
-
-  if (job === "consumed") {
-    return; // 同一任务的重复触发（冷启动扫描重建过 alarm），已执行过，不再判失败
+/**
+ * G1：SW 回收后的「重放」是否应该真的再执行一次重下任务。
+ *
+ * 租期重放是 at-least-once 语义：首次执行期间 SW 被回收时，上一次可能已经产生副作用
+ * （把种子推给了下载器 / 已开始本地下载），盲目重放会重复投递。这里按下载历史的状态保守判定：
+ * - `downloadId` 为负数/缺失：关闭下载历史时用的是 ephemeral id，没有可对账记录 → 不重放；
+ * - `completed` / `failed`：已是终态 → 不重放；
+ * - `pending` / `downloading`：首次执行可能已投递或仍在 offscreen 队列/执行中 → 视为已投递，不重放；
+ * - 历史里没有该 id：首次执行尚未落任何记录 → 重放（唯一允许重放的分支）；
+ * - 读取历史失败：无法判定 → 继续执行（宁可贵 at-least-once 也不静默丢任务；见项 1）。
+ */
+async function shouldReplayReDownloadJob(job: TPendingReDownloadTorrent): Promise<"execute" | "skip"> {
+  if (!(job.downloadId > 0)) {
+    logBackgroundError(
+      `Skip replaying re-download job #${job.downloadId}: no persistent download history id to reconcile`,
+    );
+    return "skip";
   }
 
-  if (!job) {
+  let history: ITorrentDownloadMetadata[] | undefined;
+  try {
+    history = (await sendMessage("getDownloadHistory", undefined)) as ITorrentDownloadMetadata[] | undefined;
+  } catch (err) {
+    logBackgroundError("Failed to check download history before replaying re-download job, continue once", err);
+    return "execute";
+  }
+
+  const record = Array.isArray(history) ? history.find((item) => item.id === job.downloadId) : undefined;
+  if (!record) {
+    return "execute"; // 首次执行还没写入历史：视为未执行
+  }
+
+  // completed/failed 终态、pending/downloading 可能已投递 —— 一律不重放
+  logBackgroundError(
+    `Skip replaying re-download job #${job.downloadId}: download history status is "${record.downloadStatus}"`,
+  );
+  return "skip";
+}
+
+async function runPendingOnceJob(alarmName: string): Promise<void> {
+  const owner = crypto.randomUUID();
+  const taken = await takePendingJob(alarmName, owner);
+
+  if (taken === "consumed" || taken === "running") {
+    return; // 已完成或仍在租期内的重复 alarm，不再执行或判失败
+  }
+
+  if (!taken) {
     // 参数丢失（升级前由 job-scheduler 建的旧 alarm、或 local storage 被清理）：
     // 重新下载只能判定为失败，否则下载历史会永远停在 pending（正是本次要修的静默丢失）。
     const downloadId = parseReDownloadAlarmName(alarmName);
@@ -628,14 +852,53 @@ async function runPendingOnceJob(alarmName: string): Promise<void> {
     return;
   }
 
+  const { job, attempt } = taken;
+  let leaseLost = false;
+  /** N7：本次是否已改排为「锁被占用后的重试」——此时不能再写 consumed 墓碑掩盖这次消费。 */
+  let rescheduled = false;
+  let heartbeat: Promise<void> = Promise.resolve();
+  const timer = setInterval(() => {
+    heartbeat = heartbeat.then(async () => {
+      if (!(await updateRunningJob(alarmName, owner))) leaseLost = true;
+    });
+  }, ONCE_JOB_HEARTBEAT);
+  (timer as unknown as { unref?: () => void }).unref?.();
   try {
-    await executePendingOnceJob(job);
+    // G1：重放次数上限（`attempt - 1` = 已重放次数；首次执行 attempt=1，不会命中）。
+    const replayCount = attempt - 1;
+    if (replayCount > MAX_REPLAY_ATTEMPTS) {
+      const err = new Error(`Exceeded max replay attempts (${MAX_REPLAY_ATTEMPTS}) for job "${alarmName}"`);
+      if (job.kind === "reDownloadTorrent") {
+        await markReDownloadAsFailed(job.downloadId, err);
+      } else {
+        logBackgroundError(`Aborting pending job "${alarmName}"`, err);
+      }
+      return;
+    }
+    // G1：重放前先按下载历史确认「首次执行没有产生副作用」，避免重复投递。
+    if (attempt > 1 && job.kind === "reDownloadTorrent") {
+      if ((await shouldReplayReDownloadJob(job)) === "skip") {
+        return;
+      }
+    }
+    if (leaseLost) return;
+    const result = await executePendingOnceJob(job);
+    if (job.kind === "flushUserInfoRetry" && result?.lockBusy) {
+      rescheduled = await rescheduleLockBusyRetry(alarmName, owner, job);
+      return;
+    }
   } catch (e) {
     if (job.kind === "reDownloadTorrent") {
       await markReDownloadAsFailed(job.downloadId, e);
     } else {
       // 自动刷新重试：单站点失败已在 autoFlushUserInfo 内部逐站点收集，这里只记录整体异常
       logBackgroundError(`Failed to run pending job "${alarmName}"`, e);
+    }
+  } finally {
+    clearInterval(timer);
+    await heartbeat;
+    if (!rescheduled) {
+      await updateRunningJob(alarmName, owner, true);
     }
   }
 }
@@ -666,6 +929,7 @@ onMessage("reDownloadTorrent", async ({ data }) => {
     });
   } catch (e) {
     await markReDownloadAsFailed(data.downloadId, e);
+    throw e;
   }
 });
 
@@ -707,7 +971,7 @@ async function rescheduleLostOnceJobAlarms(): Promise<void> {
       continue; // 墓碑：任务已执行，不能复活
     }
     const fireAt = job?.fireAt ?? 0;
-    if (now - fireAt > PENDING_ONCE_JOB_TTL) {
+    if (job.kind !== "running" && now - fireAt > PENDING_ONCE_JOB_TTL) {
       continue; // 超期条目由 pruneExpiredPendingJobs 统一清理，不再复活
     }
 
@@ -716,7 +980,8 @@ async function rescheduleLostOnceJobAlarms(): Promise<void> {
         continue;
       }
 
-      await chrome.alarms.create(alarmName, { when: Math.max(fireAt, now) });
+      const when = job.kind === "running" ? Math.max(now, job.at + ONCE_JOB_LEASE_TTL) : Math.max(fireAt, now);
+      await chrome.alarms.create(alarmName, { when });
       sendMessage("logger", {
         msg: `Re-created the lost alarm "${alarmName}" from its persisted payload.`,
       }).catch(onLoggerSendFailed);
@@ -737,7 +1002,8 @@ async function hasWaitingReDownloadAlarm(downloadId: number): Promise<boolean> {
   const jobs = await loadPendingJobs();
   const alarmNames = new Set<string>([`${RE_DOWNLOAD_ALARM_PREFIX}${downloadId}`]);
   for (const [alarmName, job] of Object.entries(jobs)) {
-    if (job?.kind === "reDownloadTorrent" && job.downloadId === downloadId) {
+    const payload = job?.kind === "running" ? job.job : job;
+    if (payload?.kind === "reDownloadTorrent" && payload.downloadId === downloadId) {
       alarmNames.add(alarmName);
     }
   }
@@ -746,6 +1012,24 @@ async function hasWaitingReDownloadAlarm(downloadId: number): Promise<boolean> {
     if (await hasAlarm(alarmName)) {
       return true;
     }
+  }
+  return false;
+}
+
+/** 浏览器下载仍在进行时，不能按历史记录的创建时间判定投递链失联。 */
+async function hasLiveBrowserDownload(downloadId: number): Promise<boolean> {
+  try {
+    const stored = await chrome.storage?.session?.get("ptd_downloadTracking");
+    const tracking = stored?.ptd_downloadTracking as Record<string, { downloadId?: number }> | undefined;
+    for (const [chromeId, record] of Object.entries(tracking ?? {})) {
+      if (record?.downloadId !== downloadId) continue;
+      const [item] = (await chrome.downloads.search({ id: Number(chromeId) })) ?? [];
+      // 终态由 base.ts 的追踪交接处理；查询失败也应保守地避免误判。
+      if (item?.state === "in_progress" || item?.state === "complete" || item?.state === "interrupted") return true;
+    }
+  } catch (e) {
+    logBackgroundError(`Failed to reconcile browser download for downloadId=${downloadId}`, e);
+    return true;
   }
   return false;
 }
@@ -773,7 +1057,7 @@ async function failStaleDownloadRecords(): Promise<void> {
   for (const record of staleRecords) {
     const downloadId = record.id!;
     // 还有闹钟在等（可能刚被 rescheduleLostOnceJobAlarms 重新排上）的任务交给 alarm 处理，不能提前判死
-    if (await hasWaitingReDownloadAlarm(downloadId)) {
+    if ((await hasWaitingReDownloadAlarm(downloadId)) || (await hasLiveBrowserDownload(downloadId))) {
       continue;
     }
     await markReDownloadAsFailed(

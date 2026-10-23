@@ -1,4 +1,4 @@
-import BittorrentSite from "../schemas/AbstractBittorrentSite.ts";
+import BittorrentSite, { isElementNode } from "../schemas/AbstractBittorrentSite.ts";
 import Gazelle, { SchemaMetadata } from "../schemas/Gazelle.ts";
 import { type ISearchInput, type ISiteMetadata, type ITorrent } from "../types";
 
@@ -60,6 +60,10 @@ export const siteMetadata: ISiteMetadata = {
   aka: ["HD-F", "HDF"],
   description: "HD-Forever (HD-F) is a FRENCH Private Torrent Tracker for HD MOVIES",
   tags: ["法国"],
+  // E3-12（E3b 视为取舍）：HDF 是法国站点（Europe/Paris，CET/CEST），但 metadata.timezoneOffset 只支持固定
+  // 偏移，选 +0100 会让每年 3 月底–10 月底（CEST=+0200）的时间整体偏 1 小时。精确化需要在 metadata 增加
+  // IANA 时区字段并在 parseValidTimeStringInZone 用 Intl/date-fns-tz 处理，属 schema 层改动（D1/D2 范围）；
+  // 全仓 40+ 欧洲站同为固定偏移，故本轮按下述已知偏差处理，不单方面改 +0200（否则冬令时反向偏 1 小时）。
   timezoneOffset: "+0100",
 
   type: "private",
@@ -298,6 +302,9 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   levelRequirements: [
+    // E3-18【待验证】：Gazelle 系通常有 5–8 级，本表只有 3 级；Elite 以上用户只能靠门槛回落，
+    // 「距下一级」对 id≥3 的用户直接显示「已无可判定目标」。需要站点 /wiki.php 的 Class 规则页才能补齐，
+    // 本轮不猜数值（privilege 亦未收录）。
     {
       id: 1,
       name: "Novice",
@@ -332,19 +339,20 @@ export default class HDF extends Gazelle {
     row: Element | Document | object,
     searchConfig: ISearchInput,
   ): Promise<Partial<ITorrent>> {
-    if (row instanceof HTMLTableRowElement) {
+    if (isElementNode(row)) {
+      const rowElement = row as HTMLTableRowElement;
       let partTorrent = { ...torrent };
-      if (row.classList.contains("group_torrent")) {
-        const groupRow = findHdfGroupRow(row);
+      if (rowElement.classList.contains("group_torrent")) {
+        const groupRow = findHdfGroupRow(rowElement);
         if (groupRow) {
           partTorrent = { ...partTorrent, ...this.getTorrentGroupInfo(groupRow, searchConfig) };
         }
-      } else if (row.classList.contains("torrent")) {
-        partTorrent = { ...partTorrent, ...this.getTorrentGroupInfo(row, searchConfig) };
+      } else if (rowElement.classList.contains("torrent")) {
+        partTorrent = { ...partTorrent, ...this.getTorrentGroupInfo(rowElement, searchConfig) };
       }
 
-      const parsed = (await super.parseWholeTorrentFromRow(partTorrent, row, searchConfig)) as ITorrent;
-      appendHdfFilename(parsed, row);
+      const parsed = (await super.parseWholeTorrentFromRow(partTorrent, rowElement, searchConfig)) as ITorrent;
+      appendHdfFilename(parsed, rowElement);
       return parsed;
     }
 

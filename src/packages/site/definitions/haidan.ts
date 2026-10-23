@@ -5,19 +5,81 @@
  */
 import { type ISiteMetadata, ETorrentStatus } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP.ts";
-import { userInfoWithInvitesInUserDetailsPage } from "./kunlun.ts";
+
+/**
+ * REVIEW-FINDINGS site-defs #6：与 kunlun（已死亡站点）解耦。原先直接
+ * `import { userInfoWithInvitesInUserDetailsPage } from "./kunlun.ts"`，把活站配置绑在死站文件上
+ * （kunlun 被清理时本文件在 import 阶段即失败），且该对象是模块级共享可变对象。
+ * 这里内联一份等价定义（基于 NexusPHP SchemaMetadata，只在 userdetails 页追加 invites 字段），
+ * 与 52pt / yinguskg 的处理方式一致；选择器逐字取自 kunlun 原导出，未做猜测。
+ */
+const userInfoWithInvitesInUserDetailsPage = {
+  ...SchemaMetadata.userInfo!,
+  selectors: {
+    ...SchemaMetadata.userInfo!.selectors!,
+    invites: {
+      selector: [
+        "td.rowhead:contains('邀请') + td",
+        "td.rowhead:contains('Invites') + td",
+        "td.rowhead:contains('Available') + td",
+        "td:contains('邀请')",
+        "td:contains('邀請')",
+        "td:contains('Invites')",
+        "td:contains('Available')",
+      ],
+      filters: [
+        (query: string) => {
+          if (!query?.trim()) return 0;
+          try {
+            // 匹配 "Available: 5" 格式
+            const availableMatch = query.match(/Available:\s*(\d+)/i);
+            if (availableMatch) return parseInt(availableMatch[1], 10) || 0;
+
+            // 匹配纯数字
+            const num = parseInt(query.match(/\d+/)?.[0] || "0", 10);
+            return Number.isNaN(num) ? 0 : num;
+          } catch {
+            return 0;
+          }
+        },
+      ],
+    },
+  },
+  process: [
+    ...SchemaMetadata.userInfo!.process!.map((item) => {
+      // 在用户详情页面添加 invites 字段
+      if (item.requestConfig.url === "/userdetails.php") {
+        return {
+          ...item,
+          fields: [...(item.fields || []), "invites"],
+        };
+      }
+      return item;
+    }),
+  ],
+};
 
 const linkQuery = {
   selector: ['a[href*="download.php?id="]'],
   attr: "href",
 };
 
-function findParentByClass(element: HTMLElement, className: string): HTMLElement {
-  if (!element || element.classList.contains(className)) {
-    return element; // 找到或到达根元素时返回当前元素
-  } else {
-    return findParentByClass(element.parentNode as HTMLElement, className); // 继续向上查找
+/**
+ * E3-11：向上查找带指定类名的祖先。
+ *
+ * 旧实现用递归 + `element.classList.contains`：`document`（HTML 元素之上还有 Document 节点）不是空值、
+ * `classList` 却是 `undefined`，因此任何一行缺少 `.group_content` 祖先（改版 / 置顶行 / 结构异常行）都会抛
+ * `TypeError: Cannot read properties of undefined (reading 'contains')`，该行解析失败；整页都这样时
+ * `transformSearchPage` 直接报 parseError。改为循环 + `parentElement`（到 `<html>` 自然结束）+ 可选链，
+ * 找不到时返回 `null`，由调用点兜底成空串。
+ */
+function findParentByClass(element: Element | null | undefined, className: string): HTMLElement | null {
+  for (let el: Element | null = element ?? null; el; el = el.parentElement) {
+    if (el.classList?.contains(className)) {
+      return el as HTMLElement;
+    }
   }
+  return null;
 }
 
 export const siteMetadata: ISiteMetadata = {
@@ -84,7 +146,7 @@ export const siteMetadata: ISiteMetadata = {
         selector: ":self",
         elementProcess: (element: HTMLElement) => {
           const group = findParentByClass(element, "group_content");
-          return group.querySelector(".name_col > .name > .video_name")?.textContent?.trim() || "";
+          return group?.querySelector(".name_col > .name > .video_name")?.textContent?.trim() || "";
         },
       },
       subTitle: {

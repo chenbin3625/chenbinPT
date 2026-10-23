@@ -5,7 +5,59 @@
  */
 import type { ISiteMetadata } from "../types";
 import { SchemaMetadata } from "../schemas/NexusPHP";
-import { userInfoWithInvitesInUserDetailsPage } from "./kunlun.ts";
+
+/**
+ * REVIEW-FINDINGS site-defs #6：与 kunlun（已死亡站点）解耦。原先直接
+ * `import { userInfoWithInvitesInUserDetailsPage } from "./kunlun.ts"`，把活站配置绑在死站文件上
+ * （kunlun 被清理时本文件在 import 阶段即失败），且该对象是模块级共享可变对象。
+ * 这里内联一份等价定义（基于 NexusPHP SchemaMetadata，只在 userdetails 页追加 invites 字段），
+ * 与 52pt / yinguskg 的处理方式一致；选择器逐字取自 kunlun 原导出，未做猜测。
+ */
+const userInfoWithInvitesInUserDetailsPage = {
+  ...SchemaMetadata.userInfo!,
+  selectors: {
+    ...SchemaMetadata.userInfo!.selectors!,
+    invites: {
+      selector: [
+        "td.rowhead:contains('邀请') + td",
+        "td.rowhead:contains('Invites') + td",
+        "td.rowhead:contains('Available') + td",
+        "td:contains('邀请')",
+        "td:contains('邀請')",
+        "td:contains('Invites')",
+        "td:contains('Available')",
+      ],
+      filters: [
+        (query: string) => {
+          if (!query?.trim()) return 0;
+          try {
+            // 匹配 "Available: 5" 格式
+            const availableMatch = query.match(/Available:\s*(\d+)/i);
+            if (availableMatch) return parseInt(availableMatch[1], 10) || 0;
+
+            // 匹配纯数字
+            const num = parseInt(query.match(/\d+/)?.[0] || "0", 10);
+            return Number.isNaN(num) ? 0 : num;
+          } catch {
+            return 0;
+          }
+        },
+      ],
+    },
+  },
+  process: [
+    ...SchemaMetadata.userInfo!.process!.map((item) => {
+      // 在用户详情页面添加 invites 字段
+      if (item.requestConfig.url === "/userdetails.php") {
+        return {
+          ...item,
+          fields: [...(item.fields || []), "invites"],
+        };
+      }
+      return item;
+    }),
+  ],
+};
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,

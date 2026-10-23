@@ -159,7 +159,9 @@ describe("SERVERSSOCIAL-3：备份实体失败必须留下原因", () => {
 
     const deleteClient = primeB2(b2Client());
     axiosMock.post
-      .mockResolvedValueOnce({ data: { files: [{ fileName: "a.zip", fileId: "f1" }], nextFileName: null } })
+      .mockResolvedValueOnce({
+        data: { files: [{ fileName: "a.zip", fileId: "f1" }], nextFileName: null, nextFileId: null },
+      })
       .mockRejectedValueOnce(new Error("file not found"));
     expect(await deleteClient.deleteFile("a.zip")).toBe(false);
     expect(lastLogMessage()).toBe("[BackblazeB2] deleteFile 失败");

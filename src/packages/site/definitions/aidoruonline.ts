@@ -2,16 +2,16 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/aidoruonline.yml
  */
 import { omit, toMerged } from "es-toolkit";
-import {
-  ETorrentStatus,
-  EResultParseStatus,
-  type ISiteMetadata,
-  type IUserInfo,
-  type ITorrent,
-  NeedLoginError,
-} from "../types";
+import { ETorrentStatus, EResultParseStatus, type ISiteMetadata, type IUserInfo, NeedLoginError } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite";
-import { buildCategoryOptionsFromList, createDocument, parseSizeString } from "../utils";
+import {
+  buildCategoryOptionsFromList,
+  classifySiteError,
+  createDocument,
+  logMessage,
+  parseSizeString,
+  siteErrorLogData,
+} from "../utils";
 
 export const siteMetadata: ISiteMetadata = {
   id: "aidoruonline",
@@ -93,7 +93,10 @@ export const siteMetadata: ISiteMetadata = {
     requestConfig: {
       url: "/get_ttable.php",
       params: {
-        pcat: "Show+All",
+        // E1-B1：原值抄自 Jackett 的原始 URL（`?pcat=Show+All`，`+` 在查询串里表示空格）。
+        // 本引擎把 params 交给 axios 编码，`+` 会变成 `%2B`，服务端拿到字面量 `Show+All`（不存在的分类），
+        // 默认（不选分类）搜索因此为空。分类选项的真实值是 "Show All"，这里保持一致。
+        pcat: "Show All",
         typ: "name",
         scat: "",
         subbed: "",
@@ -161,14 +164,14 @@ export const siteMetadata: ISiteMetadata = {
       progress: {
         selector: ":self",
         elementProcess: (element: any) => {
-          if (!element) return ETorrentStatus.unknown;
+          if (!element) return null;
           if (
             element.querySelector("td.ttable_seeding font[color='green']") ||
             element.querySelector("td.ttable_seeding font[color='black']")
           ) {
             return 100;
           }
-          return ETorrentStatus.unknown;
+          return null;
         },
       },
     },
@@ -198,10 +201,11 @@ export const siteMetadata: ISiteMetadata = {
         filters: [{ name: "parseSize" }],
       },
       levelName: { selector: ["td.prof-lbl:contains('User Class:') + td"] },
-      ratio: {
-        selector: ["td.prof-lbl:contains('Ratio:') + td"],
-        filters: [(query: string) => (query.trim() === "---" ? -1 : parseFloat(query))],
-      },
+      // E1-C2 / E15：站点用 "---" 表示「无下载量（分享率无限）」。原实现把它映射成 -1 哨兵；
+      // level.ts 的 fixRatio 现在会把 -1 视为 Infinity（D2 已修），但 -1 仍会被持久化进 userInfo
+      // 并污染其它直接读取 ratio 的消费者（备份/导出/统计），语义上也不是真实分享率。
+      // 因此这里不输出 ratio，交给引擎按 uploaded/downloaded 推导
+      //（downloaded == 0 && uploaded > 0 → Infinity，UI 显示 ∞，等级判定同样正确）。
       uploads: {
         selector: ["td.prof-lbl:contains('Uploads:') + td"],
         filters: [{ name: "parseNumber" }],
@@ -212,7 +216,9 @@ export const siteMetadata: ISiteMetadata = {
       },
       seedingPage: {
         selector: ["div[id='seed-search-stat']"],
-        filters: [(query: string) => parseInt(query?.match(/Page (\d+) \//)?.[1] ?? "0")],
+        // E1-B2：文案形如 "Page 1 / 3"，原正则 `/Page (\d+) \//` 取的是**当前页**（1），
+        // 不是斜杠后的总页数（3），多页做种体积只统计第一页；改为取 `/` 后的总页数。
+        filters: [(query: string) => parseInt(query?.match(/Page\s+\d+\s*\/\s*(\d+)/)?.[1] ?? "0")],
       },
       // 没有积分系统
       bonus: { text: "0" },
@@ -336,11 +342,16 @@ export default class AidoruOnline extends PrivateSite {
 
       flushUserInfo.status = EResultParseStatus.success;
     } catch (e) {
-      flushUserInfo.status = EResultParseStatus.parseError;
-
-      if (e instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      }
+      // E1-C4：不整段重写基类错误处理——复用 classifySiteError（网络/5xx 可重试、needLogin 单独映射）
+      // 并把 statusMsg / 日志透传出去，避免网络错误被报成「解析失败」且 UI 无原因可看。
+      const { status, statusMsg, retryable } = classifySiteError(e);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        { site: this.metadata.id, status, retryable, error: siteErrorLogData(e) },
+        retryable ? "warn" : "error",
+      );
     }
 
     return flushUserInfo;
@@ -380,11 +391,19 @@ export default class AidoruOnline extends PrivateSite {
       throw new NeedLoginError("请求未获取到数据，需要重新登录");
     }
 
-    return this.getFieldsData(
-      userDetailDocument,
-      this.metadata.userInfo?.selectors!,
-      Object.keys(omit(this.metadata.userInfo?.selectors!, ["id", "seedingSize"])),
-    ) as Partial<IUserInfo>;
+    const selectors = this.metadata.userInfo?.selectors!;
+    const selectorFields = Object.keys(omit(selectors, ["id", "seedingSize"]));
+    // E1-C4 / H-6：基类 getUserInfoResult 会用 checkUserInfoSelectorMatches 做「零命中」与关键字段守卫；
+    // 本定义整体重写了 getUserInfoResult，必须在这里复刻，否则改版/软错误页会被静默标成 success 并写入空值。
+    // 该检查在关键字段（uploaded/downloaded）未命中时会直接抛错，其余字段由下面的 declared/matched 兜底。
+    const matches = this.checkUserInfoSelectorMatches(userDetailDocument, selectors, selectorFields);
+    if (matches.declared > 0 && matches.matched === 0) {
+      throw new Error(
+        `用户信息页未命中任何字段（${matches.declared} 个 selector 全部落空），页面可能已改版或不是用户信息页`,
+      );
+    }
+
+    return this.getFieldsData(userDetailDocument, selectors, selectorFields) as Partial<IUserInfo>;
   }
 
   protected async getUserSeedingFields(flushUserInfo: IUserInfo): Promise<IUserInfo> {
@@ -416,16 +435,7 @@ export default class AidoruOnline extends PrivateSite {
     return flushUserInfo;
   }
 
-  public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    const downloadLink = await super.getTorrentDownloadLink(torrent);
-    if (downloadLink && !downloadLink.includes("download.php")) {
-      const { data: detailDocument } = await this.request<Document>({
-        url: downloadLink,
-        responseType: "document",
-      });
-      return this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!);
-    }
-
-    return downloadLink;
-  }
+  // E1-B3：原先这里在 `super.getTorrentDownloadLink()` 之后判断 `!link.includes("download.php")`，
+  // 但行内 link 选择器就是 `a[href*='download.php?id=']`，super 要么抛错、要么返回含 download.php 的链接，
+  // 该分支恒为 false（死代码），不会覆盖任何真实场景。确认站点不存在中间页后删除该覆写，行为不变。
 }

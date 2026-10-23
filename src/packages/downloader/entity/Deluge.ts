@@ -22,7 +22,7 @@ import {
 } from "../types";
 import urlJoin from "url-join";
 import axios from "axios";
-import { getRemoteTorrentFile } from "../utils";
+import { getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: DownloaderBaseConfig = {
@@ -161,8 +161,12 @@ type TDelugeAdvanceAddTorrentOptionsKey = TDelugeAdvanceAddTorrentOptionsBoolean
 type DelugeMethod =
   | "auth.login"
   | "web.update_ui"
+  | "web.connected"
+  | "web.get_hosts"
+  | "web.connect"
   | "core.get_torrents_status"
   | "core.add_torrent_url"
+  | "core.add_torrent_magnet"
   | "core.add_torrent_file"
   | "core.get_free_space"
   | "core.get_session_status"
@@ -388,6 +392,8 @@ export default class Deluge extends AbstractBittorrentClient {
   private readonly address: string;
   private _msgId: number;
   private isLogin = false;
+  /** 登录单飞去重（PKG-1）：并发首请求共享同一次 auth.login */
+  private loginPromise: Promise<boolean> | null = null;
 
   private torrentRequestField: DelugeTorrentField[] = [
     "hash",
@@ -400,22 +406,42 @@ export default class Deluge extends AbstractBittorrentClient {
     "state",
     "total_size",
     "trackers",
+    // DE-3：映射读取了这些字段就必须真正请求它们，否则 Deluge 只返回请求过的 key，
+    // 列表里的速度/流量列会恒为 undefined。
+    "upload_payload_rate",
+    "download_payload_rate",
+    "total_uploaded",
+    "total_done",
   ];
 
   constructor(options: Partial<DownloaderBaseConfig>) {
     super({ ...clientConfig, ...options });
     this._msgId = 0;
 
-    // 修正服务器地址
+    // 修正服务器地址（复检 RB：非法 URL 不能抛 TypeError 让实例构造失败；解析失败按「无路径」处理）
     let address = this.config.address;
-    if (address.indexOf("json") === -1) {
+    let pathname = "";
+    try {
+      pathname = new URL(address).pathname.toLowerCase();
+    } catch {
+      pathname = "";
+    }
+    if (!pathname.includes("json")) {
       address = urlJoin(address, "/json");
     }
     this.address = address;
   }
 
   async ping(): Promise<boolean> {
-    return await this.login();
+    try {
+      if (!(await this.login())) {
+        return false;
+      }
+      // DE-4：登录成功不代表 deluge-web 已连接到 deluged；测试连接必须反映真实可用性
+      return await this.ensureWebConnected();
+    } catch (e) {
+      return false;
+    }
   }
 
   protected async getClientVersionFromRemote(): Promise<string> {
@@ -445,50 +471,56 @@ export default class Deluge extends AbstractBittorrentClient {
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    const delugeOptions: any = {
-      add_paused: options.addAtPaused ?? false,
-    };
-    const advanceAddTorrentOptions = (options.advanceAddTorrentOptions ?? {}) as Record<
-      TDelugeAdvanceAddTorrentOptionsKey,
-      any
-    >;
-
-    if (options.savePath) {
-      delugeOptions.download_location = options.savePath;
-    }
-
-    if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
-      // Upload speed limit in KB/s for Deluge
-      delugeOptions.max_upload_speed = options.uploadSpeedLimit * 1024;
-    }
-
-    // 处理高级选项（Boolean类型）
-    for (const key of DelugeAdvanceAddTorrentOptionsBooleanKey) {
-      if (advanceAddTorrentOptions[key] === true) {
-        delugeOptions[key] = advanceAddTorrentOptions[key];
-      }
-    }
-
-    // 由于Deluge添加链接和种子的方法名不一样，分开处理
-    let method: "core.add_torrent_file" | "core.add_torrent_url";
-    let params: any;
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      // 链接 add_torrent_url
-      method = "core.add_torrent_url";
-      params = [url, delugeOptions];
-    } else {
-      // 文件 add_torrent_file
-      method = "core.add_torrent_file";
-
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption || {}),
-      });
-
-      params = ["", torrent.metadata.base64(), delugeOptions];
-    }
-
     try {
+      const delugeOptions: any = {
+        add_paused: options.addAtPaused ?? false,
+      };
+      const advanceAddTorrentOptions = (options.advanceAddTorrentOptions ?? {}) as Record<
+        TDelugeAdvanceAddTorrentOptionsKey,
+        any
+      >;
+
+      if (options.savePath) {
+        delugeOptions.download_location = options.savePath;
+      }
+
+      if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
+        // Upload speed limit in KB/s for Deluge
+        delugeOptions.max_upload_speed = options.uploadSpeedLimit * 1024;
+      }
+
+      // 处理高级选项（Boolean类型）
+      for (const key of DelugeAdvanceAddTorrentOptionsBooleanKey) {
+        if (advanceAddTorrentOptions[key] === true) {
+          delugeOptions[key] = advanceAddTorrentOptions[key];
+        }
+      }
+
+      // 由于Deluge添加链接和种子的方法名不一样，分开处理
+      let method: "core.add_torrent_file" | "core.add_torrent_url" | "core.add_torrent_magnet";
+      let params: any;
+      if (url.startsWith("magnet:")) {
+        // DE-2：磁链必须用 core.add_torrent_magnet。
+        // 上游 deluge/core/core.py 的 add_torrent_url() 会把参数当 HTTP 地址去 download_file()，
+        // 收到 magnet: 会直接抛异常，导致推送磁链必然失败。
+        method = "core.add_torrent_magnet";
+        params = [url, delugeOptions];
+      } else if (!options.localDownload) {
+        // 链接 add_torrent_url（http/https .torrent 直链）
+        method = "core.add_torrent_url";
+        params = [url, delugeOptions];
+      } else {
+        // 文件 add_torrent_file
+        method = "core.add_torrent_file";
+
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption || {}),
+        });
+
+        params = ["", torrent.metadata.base64(), delugeOptions];
+      }
+
       const result = await this.request<any>(method, params);
       if (result !== null && options.label) {
         try {
@@ -511,11 +543,14 @@ export default class Deluge extends AbstractBittorrentClient {
 
       if (!addResult.success) {
         addResult.message = result;
+      } else {
+        this.invalidateSuggestListCache();
       }
     } catch (e) {
-      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败
+      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败。
+      // SEC-1：日志里的 URL 必须脱敏（PT 站下载链接通常带 passkey）。
       addResult.message = e instanceof Error ? e.message : String(e);
-      logMessage("[Deluge] 添加种子失败", { url, error: addResult.message }, "error");
+      logMessage("[Deluge] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
     }
 
     return addResult;
@@ -526,26 +561,36 @@ export default class Deluge extends AbstractBittorrentClient {
   }
 
   override async getTorrentsBy(filter: DelugeTorrentFilterRules): Promise<CTorrent<DelugeRawTorrent>[]> {
+    // N-4：不要改写调用方传入的 filter 对象（以前直接 delete/filter.ids = ...），
+    // 否则调用方复用同一个对象时会把上一次的 hash/state 残留带进来。
+    const rpcFilter: Record<string, any> = {};
     if (filter.ids) {
-      filter.hash = filter.ids;
-      delete filter.ids;
+      rpcFilter.hash = filter.ids;
     }
-
-    if (filter.complete) {
-      filter.state = "Seeding";
-      delete filter.complete;
-    }
+    // DE-6：不再把 complete 翻译成 state="Seeding"（会漏掉「已完成但暂停」的种子）；
+    // 改成拉全量后按 progress 本地筛选。
+    const wantCompleteOnly = filter.complete === true;
 
     const torrents = await this.request<Record<string, DelugeRawTorrent>>("core.get_torrents_status", [
-      filter,
+      rpcFilter,
       this.torrentRequestField,
     ]);
 
-    return Object.values(torrents).map((torrent) => {
-      // normalize state to enum
+    let returnTorrents = Object.values(torrents).map((torrent) => {
+      // normalize state to enum；DE-6：Allocating/Moving 也映射掉，不再落 unknown
       let state = CTorrentState.unknown;
-      if (Object.keys(CTorrentState).includes(torrent.state.toLowerCase())) {
-        state = CTorrentState[torrent.state.toLowerCase() as keyof typeof CTorrentState];
+      switch (String(torrent.state)) {
+        case "Allocating":
+          state = CTorrentState.queued;
+          break;
+        case "Moving":
+          state = CTorrentState.checking;
+          break;
+        default:
+          if (Object.keys(CTorrentState).includes(torrent.state.toLowerCase())) {
+            state = CTorrentState[torrent.state.toLowerCase() as keyof typeof CTorrentState];
+          }
+          break;
       }
 
       return {
@@ -567,11 +612,20 @@ export default class Deluge extends AbstractBittorrentClient {
         clientId: this.config.id,
       } as CTorrent<DelugeRawTorrent>;
     });
+
+    if (wantCompleteOnly) {
+      returnTorrents = returnTorrents.filter((torrent) => torrent.isCompleted);
+    }
+
+    return returnTorrents;
   }
 
   async pauseTorrent(id: any): Promise<boolean> {
     try {
-      return await this.request<boolean>("core.pause_torrent", [id]);
+      // DE-1：Deluge 的 pause_torrent 没有返回值（上游 core.py 返回 None → JSON null），
+      // 不能把 result 当布尔返回；request 未抛错即视为成功。
+      await this.request("core.pause_torrent", [id]);
+      return true;
     } catch (e) {
       return false;
     }
@@ -579,7 +633,10 @@ export default class Deluge extends AbstractBittorrentClient {
 
   async removeTorrent(id: string, removeData = false): Promise<boolean> {
     try {
-      return await this.request<boolean>("core.remove_torrent", [id, removeData]);
+      // core.remove_torrent 是少数有返回值（bool）的 RPC，保留真实结果
+      const result = await this.request<boolean>("core.remove_torrent", [id, removeData]);
+      this.invalidateSuggestListCache();
+      return result !== false;
     } catch (e) {
       return false;
     }
@@ -587,7 +644,9 @@ export default class Deluge extends AbstractBittorrentClient {
 
   async resumeTorrent(id: any): Promise<boolean> {
     try {
-      return await this.request<boolean>("core.resume_torrent", [id]);
+      // DE-1：resume_torrent 同样无返回值
+      await this.request("core.resume_torrent", [id]);
+      return true;
     } catch (e) {
       return false;
     }
@@ -616,7 +675,11 @@ export default class Deluge extends AbstractBittorrentClient {
   // 重新校验种子
   override async recheckTorrent(id: any): Promise<boolean> {
     try {
-      return await this.request<boolean>("core.force_recheck", [id]);
+      // N-1：上游 core.force_recheck(torrent_ids: List[str]) 会遍历参数，
+      // 传单字符串会把 hash 逐字符当成 torrent id → KeyError。这里必须传数组。
+      // DE-1：force_recheck 无返回值，request 未抛错即成功。
+      await this.request("core.force_recheck", [[id]]);
+      return true;
     } catch (e) {
       return false;
     }
@@ -632,7 +695,9 @@ export default class Deluge extends AbstractBittorrentClient {
       if (typeof limits.upload !== "undefined") {
         options.max_upload_speed = limits.upload > 0 ? limits.upload : -1;
       }
-      return await this.request<boolean>("core.set_torrent_options", [id, options]);
+      // DE-1：set_torrent_options 无返回值
+      await this.request("core.set_torrent_options", [id, options]);
+      return true;
     } catch (e) {
       return false;
     }
@@ -641,7 +706,10 @@ export default class Deluge extends AbstractBittorrentClient {
   // 设置单个种子的标签
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
     try {
-      return await this.request<boolean>("label.set_torrent", [id, label]);
+      // DE-1：Label 插件的 set_torrent 无返回值（deluge_label/core.py 末尾无 return）
+      await this.request("label.set_torrent", [id, label]);
+      this.invalidateSuggestListCache();
+      return true;
     } catch (e) {
       return false;
     }
@@ -748,19 +816,44 @@ export default class Deluge extends AbstractBittorrentClient {
       }));
   }
 
-  // tracker 列表（带状态）: core.get_torrents_status fields trackers/tracker_status
+  // tracker 列表（带状态）: core.get_torrents_status fields trackers/tracker_status/tracker_host
   override async getTorrentTrackersDetail(torrent: string | CTorrent): Promise<CTorrentTracker[]> {
     const hash = this.getTorrentHash(torrent);
     const result = await this.request<Record<string, any>>("core.get_torrents_status", [
       { hash },
-      ["trackers", "tracker_status"],
+      ["trackers", "tracker_status", "tracker_host"],
     ]);
     const torrentData: any = Object.values(result)[0];
     const trackers: Array<{ url: string; tier: number }> = torrentData?.trackers ?? [];
     const trackerStatus: string | undefined = torrentData?.tracker_status;
+    const trackerHost: string | undefined = torrentData?.tracker_host;
 
-    return trackers.map((tracker) => {
-      const { state, message } = mapDelugeTrackerState(trackerStatus);
+    /**
+     * DE-5：`tracker_status` 只描述「当前 tracker」（tracker_host）的一条文本；
+     * 以前给所有 tracker 都套同一状态，3 个 tracker 的种子会全部显示 error/working。
+     * 这里只对 host 匹配的 tracker 套状态，其余为 unknown；host 信息缺失时退化到第一个（保持旧行为可用）。
+     */
+    const matchIndexes = trackers
+      .map((tracker, index) => {
+        if (!trackerHost) {
+          return -1;
+        }
+        try {
+          const urlHost = new URL(tracker.url).hostname.toLowerCase();
+          const host = trackerHost.toLowerCase().split(":")[0];
+          return urlHost === host || urlHost.endsWith(`.${host}`) ? index : -1;
+        } catch {
+          return -1;
+        }
+      })
+      .filter((index) => index >= 0);
+    const statusIndexes = matchIndexes.length > 0 ? matchIndexes : [0];
+
+    return trackers.map((tracker, index) => {
+      const applies = statusIndexes.includes(index);
+      const { state, message } = applies
+        ? mapDelugeTrackerState(trackerStatus)
+        : { state: CTrackerState.unknown, message: undefined };
       return {
         url: tracker.url,
         tier: tracker.tier ?? 0,
@@ -774,36 +867,69 @@ export default class Deluge extends AbstractBittorrentClient {
 
   // 新增 tracker: core.set_torrent_trackers（全量替换，先读后加）
   override async addTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    const hash = this.getTorrentHash(torrent);
-    const current = await this.getTorrentTrackersDetail(hash);
-    if (current.some((t) => t.url === url)) {
-      return true;
-    }
+    try {
+      const hash = this.getTorrentHash(torrent);
+      const current = await this.getTorrentTrackersDetail(hash);
+      if (current.some((t) => t.url === url)) {
+        return true;
+      }
 
-    const nextTier = current.length ? Math.max(...current.map((t) => t.tier)) + 1 : 0;
-    await this.request<boolean>("core.set_torrent_trackers", [
-      hash,
-      [...current.map((t) => ({ url: t.url, tier: t.tier })), { url, tier: nextTier }],
-    ]);
-    return true;
+      const nextTier = current.length ? Math.max(...current.map((t) => t.tier)) + 1 : 0;
+      await this.request("core.set_torrent_trackers", [
+        hash,
+        [...current.map((t) => ({ url: t.url, tier: t.tier })), { url, tier: nextTier }],
+      ]);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 删除 tracker: core.set_torrent_trackers（全量替换，先读后删）
   override async removeTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    const hash = this.getTorrentHash(torrent);
-    const current = await this.getTorrentTrackersDetail(hash);
-    const rest = current.filter((t) => t.url !== url);
-    if (rest.length === current.length) {
+    try {
+      const hash = this.getTorrentHash(torrent);
+      const current = await this.getTorrentTrackersDetail(hash);
+      const rest = current.filter((t) => t.url !== url);
+      if (rest.length === current.length) {
+        return true;
+      }
+
+      await this.request("core.set_torrent_trackers", [hash, rest.map((t) => ({ url: t.url, tier: t.tier }))]);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 登录单飞（PKG-1）：并发首请求共享同一次 auth.login。
+   * `force` 用于会话失效后的强制重登。
+   */
+  private async ensureLogin(force = false): Promise<boolean> {
+    if (!force && this.isLogin) {
       return true;
     }
-
-    await this.request<boolean>("core.set_torrent_trackers", [hash, rest.map((t) => ({ url: t.url, tier: t.tier }))]);
-    return true;
+    if (!this.loginPromise) {
+      this.loginPromise = this.login().finally(() => {
+        this.loginPromise = null;
+      });
+    }
+    return await this.loginPromise;
   }
 
   private async login(): Promise<boolean> {
     try {
-      this.isLogin = await this.request<boolean>("auth.login", [this.config.password]);
+      /**
+       * P1-8（复检）：登录请求自身必须 `skipAuthRetry=true`。
+       *
+       * `request()` 在响应被判 notAuthenticated（code 1）时会走「清登录态 → `ensureLogin(true)` → 重试」；
+       * 而 login() 内部又是通过 `request()` 发 `auth.login`。若 deluge-web 被反向代理/魔改后**对 auth.login
+       * 本身也回 code 1**，就会出现：login() → request(auth.login) → ensureLogin(true) → 复用
+       * `this.loginPromise`（正等待 login() 完成）→ 自死锁，且实例生命周期内所有请求都 join 这个永不
+       * resolve 的 promise（"砖化"）。传 skipAuthRetry 后登录失败直接抛错 → 返回 false，不会挂起。
+       */
+      this.isLogin = await this.request<boolean>("auth.login", [this.config.password], true);
       return this.isLogin;
     } catch (e) {
       this.isLogin = false;
@@ -811,10 +937,34 @@ export default class Deluge extends AbstractBittorrentClient {
     }
   }
 
+  /**
+   * DE-4：deluge-web 是代理，auth.login 成功只代表 Web 认证通过。
+   * 若 Web 未连接到 deluged（daemon 重启后未自动重连等），core.* 调用会以 "Unknown method" 失败，
+   * 而「测试连接」却仍显示成功。ping 时显式检查并尝试建立连接。
+   */
+  private async ensureWebConnected(): Promise<boolean> {
+    try {
+      if (await this.request<boolean>("web.connected")) {
+        return true;
+      }
+      const hosts = await this.request<any[][]>("web.get_hosts");
+      const hostId = hosts?.[0]?.[0];
+      if (hostId == null) {
+        return false;
+      }
+      await this.request("web.connect", [hostId]);
+      return await this.request<boolean>("web.connected");
+    } catch (e) {
+      return false;
+    }
+  }
+
   private async request<T>(method: DelugeMethod, params: any[] = [], skipAuthRetry = false): Promise<T> {
     // 防止循环调用：请求前若未登录（或已被判定为会话失效）先登录
     if (!this.isLogin && method !== "auth.login") {
-      await this.login();
+      if (!(await this.ensureLogin())) {
+        throw new Error("Deluge: 登录失败（密码错误，或 deluge-web 未连接到 daemon）");
+      }
     }
 
     const response = await this.sessionedAxios.post<DelugeDefaultResponse<T>>(
@@ -843,7 +993,7 @@ export default class Deluge extends AbstractBittorrentClient {
       // 会话 Cookie 失效（code 1 / Not authenticated）：重登一次再重试
       if (notAuthenticated && !skipAuthRetry) {
         this.isLogin = false;
-        if (await this.login()) {
+        if (await this.ensureLogin(true)) {
           return await this.request<T>(method, params, true);
         }
       }

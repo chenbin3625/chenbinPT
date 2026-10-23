@@ -69,7 +69,13 @@ function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown)
 }
 
 const nameError = computed(() => firstError([formValidateRules.require()], siteName.value));
-const sortIndexError = computed(() => firstError([formValidateRules.require()], siteUserConfig.value.sortIndex));
+// F2-Low-07：`formValidateRules.require` 用 `!!v` 判断，排序号 0 会被误判为「未填写」。
+// 排序号是数字字段，0 合法，这里只拒绝 null / undefined / 空串。
+const sortIndexRequiredRule = (v: unknown): boolean | string =>
+  (typeof v === "number" && Number.isFinite(v)) ||
+  (v !== undefined && v !== null && v !== "") ||
+  t("common.form.required");
+const sortIndexError = computed(() => firstError([sortIndexRequiredRule], siteUserConfig.value.sortIndex));
 const urlError = computed(() => firstError([formValidateRules.require()], siteUserConfig.value.url));
 const customUrlError = computed(() =>
   customSiteUrl.value ? firstError([formValidateRules.url()], customSiteUrl.value) : undefined,
@@ -133,6 +139,23 @@ async function initSiteData(siteId: TSiteID, flush = false) {
   revealedInputSettings.value = new Set();
 }
 
+/**
+ * F2-Low-08：编辑对话框复用同一个 Editor 实例（第二次打开不会重挂），而 `customSiteUrl` /
+ * `revealedInputSettings` 只在 `initSiteData()` 里重置。于是上一次输入到一半的非法自定义 URL
+ * （以及它的错误提示）会残留到下一次打开，直接让「确定」置灰。这里暴露一个只重置「本地草稿状态」
+ * 的入口，由 EditDialog 在每次打开时调用（不重新请求站点元数据）。
+ */
+function resetLocalState() {
+  const officialUrls = siteMetaData.value?.urls ?? [];
+  const currentUrl = siteUserConfig.value?.url ?? "";
+  customSiteUrl.value = currentUrl && !officialUrls.includes(currentUrl as TSiteUrl) ? String(currentUrl) : "";
+  revealedInputSettings.value = new Set();
+}
+
+defineExpose({
+  resetLocalState,
+});
+
 onMounted(() => {
   initSiteData(siteId.value);
 });
@@ -142,7 +165,7 @@ watch(siteId, (newValue) => {
 });
 
 const timeZone: Array<{ value: timezoneOffset; title: string }> = [
-  { value: "-1200", title: "(UTC -12:00) Enitwetok, Kwajalien" },
+  { value: "-1200", title: "(UTC -12:00) Eniwetok, Kwajalein" },
   { value: "-1100", title: "(UTC -11:00) Midway Island, Samoa" },
   { value: "-1000", title: "(UTC -10:00) Hawaii" },
   { value: "-0900", title: "(UTC -09:00) Alaska" },
@@ -153,20 +176,20 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
   { value: "-0400", title: "(UTC -04:00) Atlantic Time (Canada), Caracas, La Paz" },
   { value: "-0330", title: "(UTC -03:30) Newfoundland" },
   { value: "-0300", title: "(UTC -03:00) Brazil, Buenos Aires, Falkland Is." },
-  { value: "-0200", title: "(UTC -02:00) Mid-Atlantic, Ascention Is., St Helena" },
+  { value: "-0200", title: "(UTC -02:00) Mid-Atlantic, Ascension Is., St Helena" },
   { value: "-0100", title: "(UTC -01:00) Azores, Cape Verde Islands" },
   { value: "+0000", title: "(UTC ±00:00) Casablanca, Dublin, London, Lisbon, Monrovia" },
   { value: "+0100", title: "(UTC +01:00) Brussels, Copenhagen, Madrid, Paris" },
-  { value: "+0200", title: "(UTC +02:00) Sofia, Izrael, South Africa," },
+  { value: "+0200", title: "(UTC +02:00) Sofia, Israel, South Africa," },
   { value: "+0300", title: "(UTC +03:00) Baghdad, Riyadh, Moscow, Nairobi" },
   { value: "+0330", title: "(UTC +03:30) Tehran" },
   { value: "+0400", title: "(UTC +04:00) Abu Dhabi, Baku, Muscat, Tbilisi" },
   { value: "+0430", title: "(UTC +04:30) Kabul" },
   { value: "+0500", title: "(UTC +05:00) Ekaterinburg, Karachi, Tashkent" },
   { value: "+0530", title: "(UTC +05:30) Bombay, Calcutta, Madras, New Delhi" },
-  { value: "+0600", title: "(UTC +06:00) Almaty, Colomba, Dhakra" },
+  { value: "+0600", title: "(UTC +06:00) Almaty, Colombo, Dhaka" },
   { value: "+0700", title: "(UTC +07:00) Bangkok, Hanoi, Jakarta" },
-  { value: "+0800", title: "(UTC +08:00) ShangHai, HongKong, Perth, Singapore, Taipei" },
+  { value: "+0800", title: "(UTC +08:00) Shanghai, Hong Kong, Perth, Singapore, Taipei" },
   { value: "+0900", title: "(UTC +09:00) Osaka, Sapporo, Seoul, Tokyo, Yakutsk" },
   { value: "+0930", title: "(UTC +09:30) Adelaide, Darwin" },
   { value: "+1000", title: "(UTC +10:00) Melbourne, Papua New Guinea, Sydney" },

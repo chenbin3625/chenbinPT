@@ -301,6 +301,14 @@ export interface CAddTorrentOptions {
   /**
    * called a label in some clients and a category in others
    * Notice: Some clients didn't support it and will ignore this option
+   *
+   * 语义约定（PKG-4 + 复检 RB-3）：单一标签，不按逗号拆分；读取端（CTorrent.label）与写入端
+   * （addTorrent / setTorrentLabel）必须指向客户端里的同一个实体：
+   * - qBittorrent：tag（读 `torrents[].tags` 的第一个；写 `/torrents/addTags` **加法**，不删除其它 tag；
+   *   只有 `label === ""`（显式清空）时才走 `/torrents/removeTags` 清空全部 tag）。
+   *   qB 的 tags 是多值属性且有本插件之外的写入者，不能用「设置为单标签」的方式覆盖。
+   *   category 仍通过 `savePath` 的 `category:` 前缀表达。
+   * - Transmission：labels 数组的**第一个**（写入时覆盖为单元素数组）。
    */
   label?: string;
 
@@ -399,6 +407,16 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
   /** 供 getClientPaths / getClientLabels 共用的短 TTL 列表缓存（含并发去重） */
   private clientSuggestTorrentsCache?: { at: number; promise: Promise<CTorrent[]> };
 
+  /**
+   * 使「下载目录/标签」建议列表缓存失效（PKG-2）。
+   *
+   * addTorrent / setTorrentLabel / removeTorrent 会改变客户端里的目录或标签集合，
+   * 而建议缓存有 30s TTL；不主动失效时，用户刚用过的目录/标签在随后打开的下拉建议里看不到。
+   */
+  protected invalidateSuggestListCache(): void {
+    this.clientSuggestTorrentsCache = undefined;
+  }
+
   private async getAllTorrentsForSuggest(): Promise<CTorrent[]> {
     const now = Date.now();
     if (this.clientSuggestTorrentsCache && now - this.clientSuggestTorrentsCache.at < CLIENT_SUGGEST_LIST_CACHE_TTL) {
@@ -436,9 +454,13 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
   public async getTorrentsBy(filter: CTorrentFilterRules): Promise<CTorrent[]> {
     let torrents = await this.getAllTorrents();
     if (filter.ids) {
-      const filterIds = Array.isArray(filter.ids) ? filter.ids : [filter.ids];
+      // RT-5：ruTorrent / uTorrent / Flood 的 `id` 是小写 hash、`infoHash` 保留客户端原样（大写），
+      // 基类若按严格相等比较会查不到；hash 大小写不敏感。
+      const filterIds = (Array.isArray(filter.ids) ? filter.ids : [filter.ids]).map((id: any) =>
+        String(id).toLowerCase(),
+      );
       torrents = torrents.filter((t) => {
-        return filterIds.includes(t.infoHash);
+        return filterIds.includes(String(t.infoHash ?? "").toLowerCase());
       });
     }
 
@@ -449,13 +471,19 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
     return torrents;
   }
 
-  public async getTorrent(id: string): Promise<CTorrent> {
+  public async getTorrent(id: string): Promise<CTorrent | undefined> {
     return (await this.getTorrentsBy({ ids: id }))[0];
   }
 
   // 添加种子
   public abstract addTorrent(url: string, options: Partial<CAddTorrentOptions>): Promise<CAddTorrentResult>;
 
+  /**
+   * 操作型方法的结果契约：成功返回 `true`，失败返回 `false`。
+   * 不得把客户端 RPC 的返回值（Deluge 的 None → null）原样当布尔返回，也不得在失败时仍返回 true。
+   * 网络/协议层异常允许 reject（调用方 `MyClient` 用 `Promise.allSettled` 统计成功数），
+   * 但实现应尽量在内部 catch 成 `false`，让「失败」在类型上可见。
+   */
   // 暂停种子
   public abstract pauseTorrent(id: any): Promise<boolean>;
 

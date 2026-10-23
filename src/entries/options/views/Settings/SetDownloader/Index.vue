@@ -230,6 +230,14 @@ function deleteDownloader(downloaderId: TDownloaderKey[]) {
 async function confirmDeleteDownloader(downloaderId: TDownloaderKey) {
   return await metadataStore.removeDownloader(downloaderId);
 }
+
+/**
+ * F2-N6：删除后清理选中项（受控 rowSelection 不会自动剔除已不存在的 key）。
+ * 按「store 里是否还存在」过滤，兼容多选时默认下载器被跳过、以及部分删除失败的情况。
+ */
+function pruneTableSelected() {
+  tableSelected.value = tableSelected.value.filter((id) => !!metadataStore.downloaders[id]);
+}
 </script>
 
 <template>
@@ -441,5 +449,10 @@ async function confirmDeleteDownloader(downloaderId: TDownloaderKey) {
   <DefaultDownloaderEditDialog v-model="showDefaultDownloaderEditDialog" />
   <SiteFilterDialog v-model="showSiteFilterDialog" :client-id="toEditDownloaderId!" />
   <PathAndTagSuggestDialog v-model="showPathAndTagSuggestDialog" :client-id="toEditDownloaderId!" />
-  <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteDownloader" />
+  <DeleteDialog
+    v-model="showDeleteDialog"
+    :to-delete-ids="toDeleteIds"
+    :confirm-delete="confirmDeleteDownloader"
+    @all-delete="pruneTableSelected"
+  />
 </template>

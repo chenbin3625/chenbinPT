@@ -23,7 +23,8 @@ import {
   TorrentFilePriority,
 } from "../types";
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import { getRemoteTorrentFile } from "../utils";
+import { getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: TorrentClientConfig = {
   type: "Flood",
@@ -151,6 +152,9 @@ export default class Flood extends AbstractBittorrentClient {
    */
   private readonly sessionedAxios = axios.create({ withCredentials: true });
 
+  /** 登录单飞去重（PKG-1）：并发 401 共享同一次 authenticate */
+  private loginPromise: Promise<boolean> | null = null;
+
   constructor(options: Partial<TorrentClientConfig> = {}) {
     super({ ...clientConfig, ...options });
   }
@@ -170,13 +174,22 @@ export default class Flood extends AbstractBittorrentClient {
     } catch (e) {
       // not authenticated or token expired
       if ((e as AxiosError).response?.status === 401 && !skipAuthRetry) {
-        if (await this.login()) {
+        if (await this.ensureLogin()) {
           return await this.request<T>(url, config, true);
         }
       }
 
       throw e;
     }
+  }
+
+  private async ensureLogin(): Promise<boolean> {
+    if (!this.loginPromise) {
+      this.loginPromise = this.login().finally(() => {
+        this.loginPromise = null;
+      });
+    }
+    return await this.loginPromise;
   }
 
   private async login(): Promise<boolean> {
@@ -218,19 +231,15 @@ export default class Flood extends AbstractBittorrentClient {
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    let postData: any = { destination: "", tags: [] };
-
-    if (options.savePath) {
-      postData.destination = options.savePath;
-    }
-
-    if (options.addAtPaused) {
-      postData.start = !options.addAtPaused;
-    }
-
-    if (options.label) {
-      postData.tags = [options.label];
-    }
+    const postData: any = {
+      destination: options.savePath || "",
+      tags: options.label ? [options.label] : [],
+      /**
+       * FL-1：jesec/flood 的 add-urls/add-files 里 `start` 缺省 = false（server/routes/api/torrents.ts
+       * 的 `start: start ?? false`），所以「自动开始」必须显式发 start=true，否则推送的种子总是停止状态。
+       */
+      start: !(options.addAtPaused ?? false),
+    };
 
     // Note: Flood does not support upload speed limit during torrent addition
     // The uploadSpeedLimit parameter is not implemented as it's not supported by the API
@@ -259,9 +268,12 @@ export default class Flood extends AbstractBittorrentClient {
       }
 
       addResult.success = true;
+      this.invalidateSuggestListCache();
     } catch (e) {
-      // 将失败原因带回给调用方（会写入下载历史），避免静默失败无法排查
+      // 将失败原因带回给调用方（会写入下载历史），避免静默失败无法排查。
+      // SEC-1：URL 脱敏后再写日志（PT 站下载链接通常带 passkey）。
       addResult.message = e instanceof Error ? e.message : String(e);
+      logMessage("[Flood] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
     }
 
     return addResult;
@@ -318,35 +330,50 @@ export default class Flood extends AbstractBittorrentClient {
   }
 
   async pauseTorrent(id: any): Promise<boolean> {
-    await this.request("/api/torrents/stop", {
-      method: "post",
-      data: {
-        hashes: [id],
-      },
-    });
-    return true;
+    try {
+      // FL-2：Flood/rTorrent 的 hash 是大写；MyClient 传的是 CTorrent.id（小写），必须转大写，
+      // 否则服务端查不到该 torrent。
+      await this.request("/api/torrents/stop", {
+        method: "post",
+        data: {
+          hashes: [String(id).toUpperCase()],
+        },
+      });
+      return true;
+    } catch (e) {
+      // FL-3：失败返回 false，与 Promise<boolean> 契约一致（不再让 4xx/5xx reject）
+      return false;
+    }
   }
 
   async resumeTorrent(id: any): Promise<boolean> {
-    await this.request("/api/torrents/start", {
-      method: "post",
-      data: {
-        hashes: [id],
-      },
-    });
-    return true;
+    try {
+      await this.request("/api/torrents/start", {
+        method: "post",
+        data: {
+          hashes: [String(id).toUpperCase()],
+        },
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async removeTorrent(id: any, removeData: boolean = false): Promise<boolean> {
-    await this.request("/api/torrents/delete", {
-      method: "post",
-      data: {
-        hashes: [id],
-        deleteData: removeData,
-      },
-    });
-
-    return true;
+    try {
+      await this.request("/api/torrents/delete", {
+        method: "post",
+        data: {
+          hashes: [String(id).toUpperCase()],
+          deleteData: removeData,
+        },
+      });
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async getTorrentTrackers(torrent: CTorrent): Promise<string[]> {
@@ -412,10 +439,15 @@ export default class Flood extends AbstractBittorrentClient {
     }
 
     for (const [priority, indices] of grouped) {
-      await this.request(`/api/torrents/${hash}/contents`, {
-        method: "patch",
-        data: { indices, priority },
-      });
+      try {
+        await this.request(`/api/torrents/${hash}/contents`, {
+          method: "patch",
+          data: { indices, priority },
+        });
+      } catch (e) {
+        // FL-3：失败返回 false，与 Promise<boolean> 契约一致
+        return false;
+      }
     }
     return true;
   }
@@ -469,26 +501,34 @@ export default class Flood extends AbstractBittorrentClient {
 
   // 新增 tracker: PATCH /api/torrents/trackers（全量替换，先读后加）
   override async addTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    const hash = this.getTorrentHash(torrent);
-    const urls = (await this.getTorrentTrackersDetail(hash)).map((tracker) => tracker.url);
-    if (urls.includes(url)) {
+    try {
+      const hash = this.getTorrentHash(torrent);
+      const urls = (await this.getTorrentTrackersDetail(hash)).map((tracker) => tracker.url);
+      if (urls.includes(url)) {
+        return true;
+      }
+      urls.push(url);
+      await this.request("/api/torrents/trackers", { method: "patch", data: { hashes: [hash], trackers: urls } });
       return true;
+    } catch (e) {
+      return false;
     }
-    urls.push(url);
-    await this.request("/api/torrents/trackers", { method: "patch", data: { hashes: [hash], trackers: urls } });
-    return true;
   }
 
   // 删除 tracker: PATCH /api/torrents/trackers（全量替换，先读后删）
   override async removeTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    const hash = this.getTorrentHash(torrent);
-    const trackers = await this.getTorrentTrackersDetail(hash);
-    const urls = trackers.filter((tracker) => tracker.url !== url).map((tracker) => tracker.url);
-    if (urls.length === trackers.length) {
+    try {
+      const hash = this.getTorrentHash(torrent);
+      const trackers = await this.getTorrentTrackersDetail(hash);
+      const urls = trackers.filter((tracker) => tracker.url !== url).map((tracker) => tracker.url);
+      if (urls.length === trackers.length) {
+        return true;
+      }
+      await this.request("/api/torrents/trackers", { method: "patch", data: { hashes: [hash], trackers: urls } });
       return true;
+    } catch (e) {
+      return false;
     }
-    await this.request("/api/torrents/trackers", { method: "patch", data: { hashes: [hash], trackers: urls } });
-    return true;
   }
 }
 

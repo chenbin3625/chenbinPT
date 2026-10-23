@@ -81,7 +81,12 @@ const categoryMap = extCategories.reduce<Record<string, string>>((map, item) => 
   return map;
 }, {});
 
-const categoryOptions = extCategories.map(({ cat, subCat, value }) => ({ name: value, value: `${cat}|${subCat}` }));
+// E2-04/E2b-17：一级分类没有 subCat，直接拼模板串会生成 "1|undefined"，
+// 随后 generateRequestConfig 会把它拆成 `sub_cat=undefined` 发给站点。
+const categoryOptions = extCategories.map(({ cat, subCat, value }) => ({
+  name: value,
+  value: typeof subCat === "number" ? `${cat}|${subCat}` : `${cat}`,
+}));
 
 const parseId = (uri: string) => {
   const parts = uri.split("-");
@@ -116,9 +121,10 @@ export const siteMetadata: ISiteMetadata = {
       options: categoryOptions,
       generateRequestConfig: (selectedCategories) => {
         const params: { cat?: string; sub_cat?: string } = {};
-        const idParts = (selectedCategories as string).split("|");
+        const idParts = String(selectedCategories).split("|");
         params.cat = idParts[0];
-        if (idParts.length > 1) params.sub_cat = idParts[1];
+        // 只在确实带了子分类时才写 sub_cat，避免一级分类发出 sub_cat=undefined
+        if (idParts.length > 1 && idParts[1]) params.sub_cat = idParts[1];
         return { requestConfig: { params } };
       },
     },
@@ -193,7 +199,9 @@ export const siteMetadata: ISiteMetadata = {
     urlPattern: [/-\d+\//],
     selectors: {
       title: { selector: "h1.card-title:first" },
-      link: { text: "N/A" }, // 后续方法中会获取到正确链接
+      // E2b-16：这里原先写 `link: { text: "N/A" }`，父类 getTorrentDownloadLink 的「详情页兜底」
+      // 会把它当成真实下载链接返回，最终下载器请求的是站点根目录下的 /N/A（HTML）。
+      // 删掉该常量后，取不到磁力时父类会走「无法解析下载链接」并明确抛错。
     },
   },
 };
@@ -256,7 +264,10 @@ export default class ExtTorrents extends BittorrentSite {
         const [pageToken, csrfToken] = tokens;
         const magnet =
           (await this.getTorrentMagnet({ id: torrent.id as number, pageToken, csrfToken, isSearch: true })) ?? "";
-        return magnet;
+        if (magnet) return magnet;
+        // E2b-16：换取磁力失败时明确失败，不能返回空串 —— 下游 isTrustedDownloadLink("")
+        // 会把空串解析成站点根地址并通过白名单，最终把首页 HTML 当种子交给下载器。
+        throw new Error(`[PTD] site '${this.name}' cannot get magnet link (torrentId=${torrent.id ?? ""})`);
       }
     }
     return super.getTorrentDownloadLink(torrent);

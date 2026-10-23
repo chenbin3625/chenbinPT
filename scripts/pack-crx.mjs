@@ -32,6 +32,8 @@ import { fileURLToPath } from "node:url";
 
 import JSZip from "jszip";
 
+import { checkCsAppWarClosure, checkWarWildcardsHaveMatches } from "./lib/war-coverage.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_KEY = "build/chrome-extension-signing-key.pem";
 const DEFAULT_OUT = "build/extension.crx";
@@ -220,6 +222,54 @@ async function listZipEntries(buffer) {
   return zip;
 }
 
+/**
+ * manifest 结构自校验（G19）。
+ *
+ * `vite.config.ts` 用 `skipManifestValidation: true` 关掉了 vite-plugin-web-extension 的 schema
+ * 校验（`{{chrome}}` / `{{firefox}}` 条件字段让默认校验不适用），于是结构性错误只能等到
+ * 「装到浏览器」才暴露。这里补最低限度的必填项检查：只断言扩展能装上、内容脚本会注入
+ * 所必需的结构，不引入完整 schema（避免把合法的动态字段判错）。
+ */
+function checkManifestShape(manifest) {
+  const problems = [];
+  if (manifest.manifest_version !== 3) {
+    problems.push(`manifest_version 应为 3，实际 ${manifest.manifest_version}`);
+  }
+  for (const field of ["name", "version", "default_locale"]) {
+    if (!manifest[field]) problems.push(`缺少 ${field}`);
+  }
+  if (!manifest.icons || Object.keys(manifest.icons).length === 0) {
+    problems.push("缺少 icons");
+  }
+  if (!Array.isArray(manifest.content_scripts) || manifest.content_scripts.length === 0) {
+    problems.push("content_scripts 为空");
+  }
+  for (const [index, cs] of (manifest.content_scripts ?? []).entries()) {
+    if (!Array.isArray(cs.matches) || cs.matches.length === 0) {
+      problems.push(`content_scripts[${index}].matches 为空`);
+    }
+    if (!Array.isArray(cs.js) || cs.js.length === 0) {
+      problems.push(`content_scripts[${index}].js 为空`);
+    }
+  }
+  if (!Array.isArray(manifest.host_permissions) || manifest.host_permissions.length === 0) {
+    problems.push("host_permissions 为空");
+  }
+  const background = manifest.background ?? {};
+  if (!background.service_worker && (background.scripts ?? []).length === 0) {
+    problems.push("background 既没有 service_worker 也没有 scripts");
+  }
+  for (const [index, war] of (manifest.web_accessible_resources ?? []).entries()) {
+    if (!Array.isArray(war.resources) || war.resources.length === 0) {
+      problems.push(`web_accessible_resources[${index}].resources 为空`);
+    }
+    if (!Array.isArray(war.matches) || war.matches.length === 0) {
+      problems.push(`web_accessible_resources[${index}].matches 为空`);
+    }
+  }
+  return problems;
+}
+
 /** 校验 manifest 里引用的每个资源都在包内（防「装得上但点开空白」） */
 async function checkManifestReferences(zip) {
   const manifestEntry = zip.file("manifest.json");
@@ -262,7 +312,47 @@ async function checkManifestReferences(zip) {
       throw new Error(`${messagesPath} 缺少 manifest 引用的本地化键：${missingKeys.join(", ")}`);
     }
   }
-  return { manifest, referencedCount: new Set(referenced).size };
+
+  // G19：skipManifestValidation 之后的最后一道结构检查
+  const shapeProblems = checkManifestShape(manifest);
+  if (shapeProblems.length > 0) {
+    throw new Error(`manifest 结构校验失败：${shapeProblems.join("；")}`);
+  }
+
+  // G16：manifest 之外的关键运行时产物。
+  // `assets/cs-app.js` 由 content-script 引导在运行时 `chrome.runtime.getURL` 动态加载、不在 manifest 里，
+  // 它缺失时包仍然「装得上」，但站点侧完全没有任何反应 —— 这正是 `npm run pack:crx`（不带 :build）
+  // 过去会为半成品打印「✓ 自校验通过」的缺口。
+  const requiredRuntimeArtifacts = ["assets/cs-app.js", "src/entries/content-script/index.js", "chenbinpt.css"];
+  if ((manifest.permissions ?? []).includes("offscreen")) {
+    // offscreen 文档由 offscreen API 按 URL 打开，也不在 manifest 的静态引用里（firefox 没有该页面）
+    requiredRuntimeArtifacts.push("src/entries/offscreen/offscreen.html");
+  }
+  const missingRuntimeArtifacts = requiredRuntimeArtifacts.filter((p) => !zip.file(p));
+  if (missingRuntimeArtifacts.length > 0) {
+    throw new Error(`包内缺少关键运行时产物：${missingRuntimeArtifacts.join(", ")}`);
+  }
+
+  // G3 / G16：WAR 通配符必须匹配到真实文件；cs-app 的相对 import 闭包必须全部存在且被 WAR 覆盖。
+  // 这不是「收窄 WAR」——收窄需要真实浏览器验证（见 fix report 延期项）；这里只保证任何 WAR
+  // 调整都不会悄悄弄坏内容脚本加载。
+  const zipPaths = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
+  const warWildcardProblems = checkWarWildcardsHaveMatches(manifest, () => zipPaths);
+  if (warWildcardProblems.length > 0) {
+    throw new Error(`WAR 通配符校验失败：${warWildcardProblems.join("；")}`);
+  }
+  const warClosure = await checkCsAppWarClosure({
+    fileExists: (p) => Boolean(zip.file(p)),
+    readFile: async (p) => {
+      const entry = zip.file(p);
+      return entry ? await entry.async("string") : null;
+    },
+  });
+  if (warClosure.problems.length > 0) {
+    throw new Error(`WAR 覆盖不足（cs-app 会加载失败）：${warClosure.problems.join("；")}`);
+  }
+
+  return { manifest, referencedCount: new Set(referenced).size, warClosureChecked: warClosure.checked };
 }
 
 // ---------------------------------------------------------------- CRX3 组装与校验
@@ -443,9 +533,12 @@ async function main() {
   }
 
   const zip = await listZipEntries(zipBuffer);
-  const { manifest, referencedCount } = await checkManifestReferences(zip);
+  const { manifest, referencedCount, warClosureChecked } = await checkManifestReferences(zip);
   if (!opts.quiet)
-    console.log(`▶ manifest v${manifest.manifest_version} ${manifest.version}，引用资源 ${referencedCount} 项全部就位`);
+    console.log(
+      `▶ manifest v${manifest.manifest_version} ${manifest.version}，引用资源 ${referencedCount} 项全部就位` +
+        (warClosureChecked > 0 ? `，cs-app import 闭包 ${warClosureChecked} 个文件均在 WAR 覆盖内` : ""),
+    );
 
   // 2) 私钥
   const { pem, from } = loadPrivateKey(opts);

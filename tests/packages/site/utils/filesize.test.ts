@@ -34,6 +34,23 @@ describe("parseSizeString：单位换算", () => {
 
   it("允许千分位逗号", () => {
     expect(parseSizeString("1,024 MiB")).toBe(1024 * MB);
+    expect(parseSizeString("12,345,678 B")).toBe(12345678);
+  });
+
+  it("E03：欧式小数逗号按小数解析，不再放大/缩小", () => {
+    expect(parseSizeString("1,5 GB")).toBe(1.5 * GB);
+    expect(parseSizeString("1.234,56 MB")).toBeCloseTo(1234.56 * MB, 0);
+    expect(parseSizeString("1,5GiB")).toBe(1.5 * GB);
+  });
+
+  it("E01：支持裸字节数（B / Bytes）", () => {
+    expect(parseSizeString("10B")).toBe(10);
+    expect(parseSizeString("10 Bytes")).toBe(10);
+    expect(parseSizeString("1234567890 Bytes")).toBe(1234567890);
+  });
+
+  it("空格作为千分位分隔符", () => {
+    expect(parseSizeString("1 024 MiB")).toBe(1024 * MB);
   });
 
   it("0 与非法输入返回 0（与原实现一致，不返回 NaN）", () => {

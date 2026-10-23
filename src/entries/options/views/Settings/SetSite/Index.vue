@@ -227,6 +227,15 @@ async function confirmDeleteSite(siteId: TSiteID) {
   return await metadataStore.removeSite(siteId);
 }
 
+/**
+ * F2-N6：删除后清理选中项。ant-design-vue 的受控 rowSelection 不会因 dataSource 变化自动剔除
+ * 已不存在的 key，否则「移除」按钮保持可用、删除弹窗继续显示已删的站点、批量刷新图标还会逐个失败。
+ * 按「store 里是否还存在」过滤，而不是按本次删除的 id（删除可能部分失败）。
+ */
+function pruneTableSelected() {
+  tableSelected.value = tableSelected.value.filter((siteId) => !!metadataStore.sites[siteId]);
+}
+
 const isFaviconFlushing = ref(false);
 async function flushSiteFavicon(siteId: TSiteID | TSiteID[]) {
   const siteIds = Array.isArray(siteId) ? siteId : [siteId];
@@ -517,7 +526,12 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
   </a-card>
 
   <AddDialog v-model="showAddDialog" />
-  <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteSite" />
+  <DeleteDialog
+    v-model="showDeleteDialog"
+    :to-delete-ids="toDeleteIds"
+    :confirm-delete="confirmDeleteSite"
+    @all-delete="pruneTableSelected"
+  />
   <EditDialog v-model="showEditDialog" :site-id="toEditId!" />
   <OneClickImportDialog v-model="showOneClickImportDialog" />
   <RebuildMapDialog v-model="showRebuildMapDialog" />

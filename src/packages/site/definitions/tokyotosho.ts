@@ -101,7 +101,10 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
-  list: [{ urlPattern: ["/index.php", /\/(\?.+)?$/, "/search.php"] }],
+  // L-25：原先的 `/\/(\?.+)?$/` 匹配「任何以 / 或 /?... 结尾的路径」，等于把站点所有目录页
+  // （/rules/、/faq/…）都当成种子列表页，在这些页面上注入批量下载按钮并按列表选择器解析必然为空。
+  // 列表页只保留实际存在的两个入口；详情页由 detail.urlPattern 判定。
+  list: [{ urlPattern: ["/index.php", "/search.php", "^https?:\\/\\/[^/]+(?:\\/(?:[?#].*)?)?$"] }],
 
   detail: {
     urlPattern: ["/details.php"],

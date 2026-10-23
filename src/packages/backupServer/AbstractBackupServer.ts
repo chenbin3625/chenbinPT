@@ -1,7 +1,13 @@
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 import { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption } from "./type.ts";
-import { backupDataToJSZipBlob, decryptData, encryptData, jsZipBlobToBackupData } from "./utils.ts";
+import {
+  backupDataToJSZipBlob,
+  decryptData,
+  encryptData,
+  getBackupRequestTimeout,
+  jsZipBlobToBackupData,
+} from "./utils.ts";
 
 export default abstract class AbstractBackupServer<T extends IBackupConfig> {
   protected abstract version: string;
@@ -62,6 +68,29 @@ export default abstract class AbstractBackupServer<T extends IBackupConfig> {
 
   protected async jsZipBlobToBackupData(blob: Blob): Promise<IBackupData> {
     return await jsZipBlobToBackupData(blob, this.encryptionKey);
+  }
+
+  /**
+   * C2-B-2：统一的请求超时包装。
+   *
+   * 有些后端客户端不支持 timeout 选项（webdav@5 的 `createClient` 只有逐方法 `signal`），
+   * 服务端挂死时请求会永远 pending，把自动备份锁一并卡死。这里用 AbortController 兜底：
+   * 超时后 abort，由调用方 catch 并记录失败原因。
+   */
+  protected async withRequestTimeout<T>(
+    executor: (signal: AbortSignal) => Promise<T>,
+    timeout: number = getBackupRequestTimeout(this.userConfig),
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`[${this.config.type}] request timeout after ${timeout}ms`)),
+      timeout,
+    );
+    try {
+      return await executor(controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

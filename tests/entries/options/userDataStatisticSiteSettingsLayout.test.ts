@@ -21,6 +21,9 @@ import {
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn().mockResolvedValue(""), onMessage: vi.fn() }));
 
+const saveAsMock = vi.hoisted(() => vi.fn());
+vi.mock("file-saver", () => ({ saveAs: saveAsMock }));
+
 /**
  * 统计页的数据源是 `loadFullData()`：真实实现要读 chrome.storage 里的用户信息历史。
  * 这里替换成固定的两份站点数据，让「显示站点设置」区块的站点行真正渲染出来。
@@ -140,6 +143,32 @@ describe("统计页站点设置区块", () => {
       expect(option.closest(".ant-checkbox-wrapper"), "站点选项应在复选框内").not.toBeNull();
     }
 
+    view.unmount();
+  });
+});
+
+describe("F15：统计页导出图片的兜底", () => {
+  it("没有可导出的图表 canvas（全部图表关闭 / 仍在骨架屏）时不生成空白图，并给出提示", async () => {
+    saveAsMock.mockReset();
+    const { view, t } = await mountStatistic();
+
+    const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+    const runtimeStore = useRuntimeStore();
+    const showSnakebar = vi.spyOn(runtimeStore, "showSnakebar");
+
+    // 本用例把图表组件替换成无 canvas 的空壳，正好覆盖「所有图表被关闭」这一分支
+    const exportButton = view
+      .$$<HTMLButtonElement>("button")
+      .find((button) => (button.textContent ?? "").includes(t("common.exportImage")));
+    expect(exportButton, "统计页应有「导出图片」按钮").toBeDefined();
+
+    exportButton!.click();
+    await view.settle();
+
+    expect(saveAsMock, "不应把 0 宽/空白图片交给 saveAs").not.toHaveBeenCalled();
+    expect(showSnakebar, "应提示用户当前没有可导出的图表").toHaveBeenCalled();
+
+    showSnakebar.mockRestore();
     view.unmount();
   });
 });

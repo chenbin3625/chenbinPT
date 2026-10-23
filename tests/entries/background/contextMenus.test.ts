@@ -26,9 +26,14 @@ vi.mock("@/background/utils/base.ts", () => ({
 vi.stubGlobal("chrome", {
   contextMenus: {
     onClicked: { addListener: vi.fn() },
-    create: vi.fn(),
+    create: vi.fn((_data: Record<string, any>, callback?: () => void) => {
+      callback?.();
+    }),
     remove: vi.fn(() => Promise.resolve()),
-    removeAll: vi.fn(() => Promise.resolve()),
+    removeAll: vi.fn((callback?: () => void) => {
+      callback?.();
+      return Promise.resolve();
+    }),
   },
   tabs: {
     onActivated: { addListener: vi.fn() },
@@ -38,6 +43,7 @@ vi.stubGlobal("chrome", {
   },
   storage: { onChanged: { addListener: vi.fn() } },
   i18n: { getMessage: vi.fn((key: string) => key) },
+  runtime: { id: "test-extension-id", lastError: undefined as { message: string } | undefined },
 });
 
 const { buildContextMenusContextKey, createCoalescingDebounce, createContextMenuClickDispatcher } =
@@ -176,6 +182,21 @@ describe("buildContextMenusContextKey", () => {
     const filterEnabled = { ...baseConfig, download: { allowDownloaderFilterForSite: true } };
     expect(buildContextMenusContextKey(makeInput({ config: filterEnabled }))).not.toBe(base);
   });
+
+  it("Info-3：$date:*$ 模板按构建时日期求值，摘要必须包含当天日期（跨午夜后才会重建）", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-23T10:00:00+08:00"));
+      const day1 = buildContextMenusContextKey(makeInput());
+
+      vi.setSystemTime(new Date("2026-10-24T10:00:00+08:00"));
+      const day2 = buildContextMenusContextKey(makeInput());
+
+      expect(day2).not.toBe(day1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("createCoalescingDebounce", () => {
@@ -242,17 +263,38 @@ describe("createCoalescingDebounce", () => {
 });
 
 describe("context menu click dispatch", () => {
-  it("service worker 冷启动时先重建事件表，再分发第一次点击", async () => {
+  // A3 修复后的真实语义：菜单项 id 必须是**确定性**的，SW 回收前后重建出同一组 id，
+  // 这样冷启动「先重建事件表」才能找回用户点到的旧菜单项。
+  const DETERMINISTIC_DEFAULT_SEARCH_ID = "chenbinPT-Context-Menus**Search**Search-In-Default";
+
+  it("service worker 冷启动时先重建事件表，再分发第一次点击（id 确定性是前提）", async () => {
     const eventBus = new Map<string | number, (info: any, tab: any) => void>();
     const handler = vi.fn();
+    // 用确定性 id 建表（真实实现里由 createSearchMenu 显式传入该 id）
     const rebuild = vi.fn(async () => {
-      eventBus.set("menu-1", handler);
+      eventBus.set(DETERMINISTIC_DEFAULT_SEARCH_ID, handler);
     });
     const dispatch = createContextMenuClickDispatcher(eventBus, rebuild);
 
-    await dispatch({ menuItemId: "menu-1" } as any, { id: 1 } as any);
+    await dispatch({ menuItemId: DETERMINISTIC_DEFAULT_SEARCH_ID } as any, { id: 1 } as any);
 
     expect(rebuild).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith({ menuItemId: "menu-1" }, { id: 1 });
+    expect(handler).toHaveBeenCalledWith({ menuItemId: DETERMINISTIC_DEFAULT_SEARCH_ID }, { id: 1 });
+  });
+
+  it("旧行为对照：若重建生成的是随机 id，冷启动后的旧点击会丢失（A3 的根因）", async () => {
+    const eventBus = new Map<string | number, (info: any, tab: any) => void>();
+    const handler = vi.fn();
+    // 模拟旧实现的 nanoid：每次重建生成新 id
+    const rebuild = vi.fn(async () => {
+      eventBus.set(`random-${Math.random()}`, handler);
+    });
+    const dispatch = createContextMenuClickDispatcher(eventBus, rebuild);
+
+    await dispatch({ menuItemId: "random-old-id" } as any, { id: 1 } as any);
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    // 旧 id 不在新事件表里 → 点击被静默丢弃（这正是 A3 修复要避免的）
+    expect(handler).not.toHaveBeenCalled();
   });
 });

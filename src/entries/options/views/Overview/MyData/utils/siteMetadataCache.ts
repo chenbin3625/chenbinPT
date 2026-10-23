@@ -51,9 +51,15 @@ export async function getCachedSiteMergedMetadata<T extends keyof ISiteMetadata>
 export interface ISiteLevelMetadata {
   levelRequirements: NonNullable<ISiteMetadata["levelRequirements"]>;
   userInfo: ISiteMetadata["userInfo"];
+  /**
+   * F9：`levelRequirements: []` 同时代表「元数据还没加载完」和「该站没有等级要求」，
+   * 只凭数组是否为空无法区分「已满级」与「无数据」。这里显式标记是否已成功加载完成；
+   * 加载失败 / 未加载完成时保持 false（失败同样不能被当成「该站没有等级要求 / 已满级」）。
+   */
+  loaded: boolean;
 }
 
-const EMPTY_SITE_LEVEL_METADATA: ISiteLevelMetadata = { levelRequirements: [], userInfo: undefined };
+const EMPTY_SITE_LEVEL_METADATA: ISiteLevelMetadata = { levelRequirements: [], userInfo: undefined, loaded: false };
 
 /**
  * 行级合并元数据缓存：MyData 表格每行原本各挂 2 个 computedAsync，
@@ -105,10 +111,12 @@ export function getSiteLevelMetadata(siteId: TSiteID): ISiteLevelMetadata {
         siteLevelMetadata[siteId] = {
           levelRequirements: (levelRequirements ?? []) as ISiteLevelMetadata["levelRequirements"],
           userInfo,
+          loaded: true,
         };
       })
       .catch(() => {
-        // 失败时填充空值，避免每行反复重试；站点配置变化时上面的 watcher 会清空缓存后重试
+        // 失败时填充空值，避免每行反复重试；站点配置变化时上面的 watcher 会清空缓存后重试。
+        // 注意 loaded 仍为 false：失败/未加载不能被当成「该站没有等级要求 / 已满级」。
         siteLevelMetadata[siteId] = EMPTY_SITE_LEVEL_METADATA;
       })
       .finally(() => loadingSiteLevelMetadata.delete(siteId));

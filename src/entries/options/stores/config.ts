@@ -48,40 +48,64 @@ function isContentScriptStorageContext(): boolean {
 
 export const useConfigStore = defineStore("config", {
   persistWebExt: {
+    /**
+     * F1-03：水合后的清理**绝不能抛错**。
+     *
+     * 插件把 `afterRestore` 放在 `restore().then(...)` 里、并在它之前就把 `$ready` 置为 true
+     * （见 `extends/pinia/webExtPersistence.ts`）。一旦这里抛出（例如 storage 里的
+     * `tableBehavior.DownloadHistory.sortBy` 被备份/手工改成了非数组，`.filter` 直接 TypeError），
+     * `restorePromise` 会 reject → `$onReady()` 变成永久 rejected 的 Promise →
+     * 所有 `await configStore.$onReady()` 的页面（MyClient 等）初始化静默中断，且每次刷新都重现。
+     *
+     * 因此：① 所有对持久化数据的结构假设都先做形状校验；② 整个清理过程包在 try/catch 里，
+     * 失败只告警、保留恢复出来的状态（用户仍可通过「设置 → 插件重置」自救），不影响水合成功语义。
+     */
     afterRestore: (context) => {
-      // 清理已废弃的配置项
-      const state = context.store.$state as any;
-      let needsSave = false;
+      try {
+        const state = context.store.$state as any;
+        let needsSave = false;
 
-      // 清理已废弃的配置项
-      for (const key of deprecatedConfigKeys) {
-        if (has(state, key)) {
-          unset(state, key);
-          needsSave = true;
-        }
-      }
-
-      // 清理基于 id 字段的 DownloadHistory 排序配置
-      if (state.tableBehavior?.DownloadHistory?.sortBy) {
-        const sortBy = state.tableBehavior.DownloadHistory.sortBy;
-        // 过滤掉基于 id 字段的排序项
-        const filteredSortBy = sortBy.filter((sort: any) => sort.key !== "id");
-
-        // 如果过滤后数组长度发生变化，说明移除了基于 id 的排序项
-        if (filteredSortBy.length !== sortBy.length) {
-          // 如果过滤后没有任何排序项，使用默认的 downloadAt 排序
-          if (filteredSortBy.length === 0) {
-            state.tableBehavior.DownloadHistory.sortBy = [{ key: "downloadAt", order: "desc" }];
-          } else {
-            // 否则保留其他有效的排序项
-            state.tableBehavior.DownloadHistory.sortBy = filteredSortBy;
+        // 清理已废弃的配置项
+        for (const key of deprecatedConfigKeys) {
+          if (has(state, key)) {
+            unset(state, key);
+            needsSave = true;
           }
-          needsSave = true;
         }
-      }
 
-      if (needsSave) {
-        context.store.$save();
+        // 清理基于 id 字段的 DownloadHistory 排序配置
+        // （形状校验：非对象/非数组一律跳过清理，而不是让整个水合失败）
+        const downloadHistoryBehavior = state.tableBehavior?.DownloadHistory;
+        const sortBy = downloadHistoryBehavior?.sortBy;
+        if (Array.isArray(sortBy)) {
+          // 过滤掉基于 id 字段的排序项；顺带过滤形状不对的项（无 key / 非对象），
+          // 避免表格排序读到半截数据后抛错
+          const filteredSortBy = sortBy.filter(
+            (sort: any) =>
+              sort !== null && typeof sort === "object" && typeof sort.key === "string" && sort.key !== "id",
+          );
+
+          // 如果过滤后数组长度发生变化，说明移除了基于 id 的排序项
+          if (filteredSortBy.length !== sortBy.length) {
+            // 如果过滤后没有任何排序项，使用默认的 downloadAt 排序
+            if (filteredSortBy.length === 0) {
+              downloadHistoryBehavior.sortBy = [{ key: "downloadAt", order: "desc" }];
+            } else {
+              // 否则保留其他有效的排序项
+              downloadHistoryBehavior.sortBy = filteredSortBy;
+            }
+            needsSave = true;
+          }
+        }
+
+        if (needsSave) {
+          // `$save()` 自己已经记录失败并返回 rejected Promise；这里再兜一次，避免 afterRestore 产生 unhandled rejection
+          void context.store.$save().catch(() => undefined);
+        }
+      } catch {
+        // 保留恢复出来的状态（不阻断水合）。这里刻意**不**记 console：本文件受 no-console 门禁约束，
+        // 且该分支只可能来自被改坏的持久化数据；需要诊断时可在 devtools 里观察 $ready / 手工检查 config key。
+        // 详见 docs/review-2026-10-23/fix-reports/f1-options-stores.md 的「需要 G 跟进」一节。
       }
     },
   },
@@ -275,6 +299,7 @@ export const useConfigStore = defineStore("config", {
       highlightSameSizeTorrent: false,
       maxTagCountBeforeGroup: 0,
       hiddenTagNames: [],
+      tagClickToFilter: true,
     },
 
     userInfo: {

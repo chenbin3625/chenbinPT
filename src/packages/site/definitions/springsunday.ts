@@ -235,7 +235,7 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.search?.advanceKeywordParams!,
       douban: {
         requestConfigTransformer: ({ requestConfig: config }) => {
-          set(config!, "params.search_area", 5); // params "&search_area=4"
+          set(config!, "params.search_area", 5); // params "&search_area=5"（4=IMDB, 5=豆瓣）
           return config!;
         },
       },
@@ -396,15 +396,33 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class SpringSunday extends NexusPHP {
+  /**
+   * Low-1：一次刷新内复用同一次做种 AJAX 响应。
+   * NexusPHP.parseUserInfoForSeedingStatus 自身会再调用 requestUserSeedingPage，基类没有请求缓存，
+   * 旧实现在断言不命中时会让同一个 `/getusertorrentlistajax.php?...&type=seeding` 请求连发两次，
+   * 且注释写的是相反的「不用担心 super 里面中重复请求」。这里用一次性缓存把首次响应交给回落分支。
+   */
+  private _seedingPageOnce?: { userId: number; text: string | null };
+
+  protected override async requestUserSeedingPage(userId: number, type: string = "seeding"): Promise<string | null> {
+    if (type === "seeding" && this._seedingPageOnce?.userId === userId) {
+      const cached = this._seedingPageOnce.text;
+      this._seedingPageOnce = undefined; // 一次性：避免后续刷新读到旧响应
+      return cached;
+    }
+    return super.requestUserSeedingPage(userId, type);
+  }
+
   protected override async parseUserInfoForSeedingStatus(
     flushUserInfo: Partial<IUserInfo>,
   ): Promise<Partial<IUserInfo>> {
     const userId = flushUserInfo.id as number;
 
-    // 这里先请求一次，不用担心 super 里面中重复请求
     const userSeedingRequestString = await this.requestUserSeedingPage(userId);
 
-    if (userSeedingRequestString && /<b>\d+<\/b>(条记录| records|條記錄)/.test(userSeedingRequestString)) {
+    // Low-2：与 baozi.ts 对同一段 AJAX 头部文本的写法对齐，允许 `</b>` 与「条记录」之间有空格；
+    // 旧正则不允许任何空白，断言极可能永不成立，自定义的 b:eq(0)/b:eq(1) 解析成了死代码。
+    if (userSeedingRequestString && /<b>\d+<\/b>\s{0,3}(条记录|records|條記錄)/.test(userSeedingRequestString)) {
       const userSeedingDocument = createDocument(userSeedingRequestString);
 
       flushUserInfo.seeding = this.getFieldData(userSeedingDocument, {
@@ -415,10 +433,16 @@ export default class SpringSunday extends NexusPHP {
         selector: "b:eq(1)",
         filters: [{ name: "parseSize" }],
       });
-    } else {
-      return super.parseUserInfoForSeedingStatus(flushUserInfo); // 回落到默认的处理
+
+      return flushUserInfo;
     }
 
-    return flushUserInfo;
+    // 断言不命中时回落到基类的通用解析，但复用上面已经取到的响应，不再重复请求。
+    this._seedingPageOnce = { userId, text: userSeedingRequestString };
+    try {
+      return await super.parseUserInfoForSeedingStatus(flushUserInfo);
+    } finally {
+      this._seedingPageOnce = undefined;
+    }
   }
 }

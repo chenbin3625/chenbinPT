@@ -135,10 +135,15 @@ export const siteMetadata: ISiteMetadata = {
       time: {
         selector: "div.postContent",
         filters: [
+          // E1b-C3：原实现用 definedFilters.parseTime（即 parseValidTimeString）直接算出**宿主时区**的时间戳；
+          // 随后 parseTimeWithZone 对 number 原样返回，metadata.timezoneOffset (+0100) 从未参与换算。
+          // 这里只做字符串归一化，"12 Jan 2024" 的时区换算交给紧随其后的具名 parseTime
+          //（runQueryFilters 会按 metadata.timezoneOffset 走 parseValidTimeStringInZone）。
           (query: string) => {
             const matchDateAdded = query.match(/Posted: (\d{1,2} \D{3} \d{4})/);
-            return matchDateAdded ? definedFilters.parseTime(matchDateAdded[1]) : null;
+            return matchDateAdded ? matchDateAdded[1] : "";
           },
+          { name: "parseTime", args: ["d MMM yyyy"] },
         ],
       },
       subTitle: {
@@ -150,14 +155,19 @@ export const siteMetadata: ISiteMetadata = {
           },
         ],
       },
-      seeders: { text: "N/A" },
-      leechers: { text: "N/A" },
-      completed: { text: "N/A" },
+      // E1b-C4：原先这里把 seeders/leechers/completed 声明成 { text: "N/A" }。getFieldData 零命中时回落到
+      // text，而 tryToNumber("N/A") 原样返回字符串，于是 ITorrent 的 number 字段变成 "N/A"（排序/统计 NaN）。
+      // 公共站本来就没有 peer 数据，直接不声明（缺失即不展示），把「无数据」交给 UI 处理。
     },
   },
 
   list: [
     {
+      // E1-C1：metadata.list 非空时，content-script 只用各条目的 urlPattern 判定列表页，不回落到
+      // search.requestConfig.url。原先该条目只有 excludeUrlPattern，listUrlPatterns 恒为空，
+      // 列表页永远不会被识别为 list（用户在 /、/page/2/、/?s=… 上完全看不到「解析当前页面」）。
+      // 形态：首页 /、分页 /page/N/（均可带 ?s= 搜索参数），并排除 /abss/ 详情页。
+      urlPattern: ["^https?://[^/]+/(page/\\d+/)?(\\?.*)?$"],
       excludeUrlPattern: ["/abss/"],
     },
   ],

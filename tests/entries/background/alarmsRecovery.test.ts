@@ -17,18 +17,25 @@ const mocks = vi.hoisted(() => {
   const alarms = new Map<string, { name: string; when?: number }>();
   const createdAlarms: Array<{ name: string; info: chrome.alarms.AlarmCreateInfo }> = [];
   const jobs = new Map<string, { execute: () => Promise<void> }>();
+  /** TEST-4：记录对 session 的每次写入（用于证明「每个站点后都有一次锁续租」） */
+  const sessionWriteLog: Array<{ key: string; value: any }> = [];
   return {
     localStore,
     sessionStore,
     alarms,
     createdAlarms,
     jobs,
+    sessionWriteLog,
     onMessage: vi.fn(),
     sendMessage: vi.fn(),
     getExtStoragePathCached: vi.fn(),
     patchExtStoragePathLocal: vi.fn(),
     logBackgroundError: vi.fn(),
+    searchDownload: vi.fn(),
     setupOffscreenDocument: vi.fn(async () => undefined),
+    /** H-2：自动备份失败的用户可见通知 */
+    notificationsCreate: vi.fn(),
+    i18nGetMessage: vi.fn((_key: string, _args?: string[]) => ""),
   };
 });
 
@@ -68,6 +75,7 @@ vi.stubGlobal("chrome", {
         mocks.sessionStore.has(key) ? { [key]: structuredClone(mocks.sessionStore.get(key)) } : {},
       set: async (items: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(items)) {
+          mocks.sessionWriteLog.push({ key, value });
           mocks.sessionStore.set(key, structuredClone(value));
         }
       },
@@ -85,7 +93,10 @@ vi.stubGlobal("chrome", {
     onAlarm: { addListener: vi.fn() },
     clear: async (name: string) => mocks.alarms.delete(name),
   },
-  runtime: { id: "test" },
+  downloads: { search: mocks.searchDownload },
+  i18n: { getMessage: mocks.i18nGetMessage },
+  notifications: { create: mocks.notificationsCreate },
+  runtime: { id: "test", getURL: (path: string) => `chrome-extension://test/${path}` },
 } as any);
 
 vi.stubGlobal("__BROWSER__", "chrome");
@@ -127,6 +138,7 @@ describe("alarms：孤儿任务恢复（L-4）", () => {
     mocks.alarms.clear();
     mocks.createdAlarms.length = 0;
     mocks.sendMessage.mockReset();
+    mocks.searchDownload.mockReset();
     mocks.getExtStoragePathCached.mockReset();
     mocks.patchExtStoragePathLocal.mockReset();
 
@@ -215,6 +227,31 @@ describe("alarms：孤儿任务恢复（L-4）", () => {
 
     expect(mocks.sendMessage.mock.calls.some(([name]) => name === "setDownloadHistoryStatus")).toBe(false);
   });
+
+  it("浏览器长时间下载仍为 in_progress 时不判失败，失踪的下载仍可纠偏", async () => {
+    const now = Date.now();
+    mocks.sessionStore.set("ptd_downloadTracking", {
+      101: { downloadId: 11 },
+      102: { downloadId: 12 },
+    });
+    mocks.searchDownload.mockImplementation(async ({ id }: { id: number }) =>
+      id === 101 ? [{ id, state: "in_progress" }] : [],
+    );
+    mocks.sendMessage.mockImplementation(async (name: string) =>
+      name === "getDownloadHistory"
+        ? [11, 12].map((id) => ({ id, downloadStatus: "pending", downloadAt: now - 2 * 60 * 60_000 }))
+        : undefined,
+    );
+
+    vi.resetModules();
+    await import("@/background/utils/alarms.ts");
+    await flush();
+
+    expect(mocks.searchDownload).toHaveBeenCalledWith({ id: 101 });
+    expect(
+      mocks.sendMessage.mock.calls.filter(([name]) => name === "setDownloadHistoryStatus").map(([, data]) => data),
+    ).toEqual([{ downloadId: 12, status: "failed" }]);
+  });
 });
 
 describe("alarms：刷新锁续租与等待兜底（L-3 / B-12）", () => {
@@ -226,6 +263,7 @@ describe("alarms：刷新锁续租与等待兜底（L-3 / B-12）", () => {
     mocks.sendMessage.mockReset();
     mocks.getExtStoragePathCached.mockReset();
     mocks.patchExtStoragePathLocal.mockReset();
+    mocks.sessionWriteLog.length = 0;
     mocks.getExtStoragePathCached.mockImplementation(defaultStoragePathCachedImpl());
   });
 
@@ -259,27 +297,63 @@ describe("alarms：刷新锁续租与等待兜底（L-3 / B-12）", () => {
     return job!.execute;
   }
 
-  it("每处理完一个站点续租一次锁，结束后按 owner 释放", async () => {
+  it("每处理完一个站点续租一次锁（心跳），结束后按 owner 释放", async () => {
     const execute = await prepareFlush({ a: { allowQueryUserInfo: true }, b: { allowQueryUserInfo: true } });
     await execute();
 
-    // 锁的写入次数：1 次获取 + 每个站点 1 次心跳 = 3 次；结束时 owner 匹配 → 删除
     expect(mocks.sessionStore.has(LOCK_KEY), "执行结束后必须释放锁").toBe(false);
     expect(mocks.setupOffscreenDocument).toHaveBeenCalled();
 
-    // 断言行心跳确实发生在每个站点之后：把 session.set 的调用序列记下来比对
+    // TEST-4：直接断言锁写入序列 —— 1 次 acquire + 每个站点 1 次续租 = 3 次 set（release 走 remove）
+    const lockWrites = mocks.sessionWriteLog.filter((write) => write.key === LOCK_KEY);
+    expect(lockWrites, "应有一次获取 + 每个站点一次续租").toHaveLength(3);
+    const owners = new Set(lockWrites.map((write) => write.value?.owner));
+    expect(owners.size, "同一轮的所有锁写入必须是同一个 owner").toBe(1);
+    expect([...owners][0]).toBeTruthy();
+
     const refreshedAt = mocks.patchExtStoragePathLocal.mock.calls.filter(
       ([key, path]) => key === "metadata" && path === "lastUserInfoAutoFlushAt",
     ).length;
     expect(refreshedAt, "正常结束应记录本次刷新时间").toBe(1);
   });
 
-  it("单轮刷新不会因为「距开始超过 TTL」被另一轮并发接管（心跳保持锁有效）", async () => {
-    // 让第一轮的开始时间落在 31 分钟前：没有心跳时另一轮会判定超时并启动
-    const execute = await prepareFlush({ a: { allowQueryUserInfo: true }, b: { allowQueryUserInfo: true } });
-    await execute();
+  it("心跳让长轮次在超过锁 TTL 后仍持有锁：另一轮不会并发启动", async () => {
+    const SITE_MS = 4 * 60 * 1000; // 单站点 4 分钟（< USER_INFO_SITE_WAIT_TIMEOUT，模拟慢站点）
+    const requested: string[] = [];
+    const sites = Object.fromEntries(
+      ["a", "b", "c", "d", "e", "f", "g", "h", "i"].map((id) => [id, { allowQueryUserInfo: true }]),
+    );
+    const execute = await prepareFlush(sites, async (siteId: string) => {
+      requested.push(siteId);
+      await new Promise((resolve) => setTimeout(resolve, SITE_MS));
+      return { status: 0 };
+    });
 
-    expect(mocks.sessionStore.has(LOCK_KEY)).toBe(false);
+    vi.useFakeTimers();
+    try {
+      const running = execute();
+      // 前 8 个站点共 32 分钟，已超过 30 分钟的锁 TTL —— 只有「每站点续租」才让锁仍有效
+      for (let i = 0; i < 8; i++) {
+        await vi.advanceTimersByTimeAsync(SITE_MS);
+      }
+      expect(requested).toHaveLength(9); // 第 9 个站点已开始处理
+
+      // 此时另一轮定时任务触发：若没有心跳（锁 at 仍是 t0），会误判超时并并发启动第二轮
+      const secondRound = execute();
+      await vi.advanceTimersByTimeAsync(0);
+      await secondRound;
+      expect(requested, "第二轮必须因锁仍被持有而跳过，不得并发请求站点").toHaveLength(9);
+
+      await vi.advanceTimersByTimeAsync(SITE_MS);
+      await running;
+      expect(requested, "第一轮仍应处理完全部 9 个站点").toHaveLength(9);
+      expect(mocks.sessionStore.has(LOCK_KEY), "长轮次结束后仍必须释放锁").toBe(false);
+
+      const lockWrites = mocks.sessionWriteLog.filter((write) => write.key === LOCK_KEY);
+      expect(lockWrites.length, "每个站点后都应有续租").toBeGreaterThanOrEqual(9);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("TTL 内他人持锁时直接跳过本轮，且不动别人的锁", async () => {
@@ -342,5 +416,107 @@ describe("alarms：刷新锁续租与等待兜底（L-3 / B-12）", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("alarms：自动备份锁心跳", () => {
+  beforeEach(() => {
+    mocks.localStore.clear();
+    mocks.sessionStore.clear();
+    mocks.alarms.clear();
+    mocks.jobs.clear();
+    mocks.sendMessage.mockReset();
+    mocks.getExtStoragePathCached.mockReset();
+  });
+
+  it("备份请求持续超过 30 分钟时仍持锁，后续一轮不会并发执行", async () => {
+    vi.resetModules();
+    await import("@/background/utils/alarms.ts");
+    mocks.getExtStoragePathCached.mockImplementation(async (key: string, path: string) =>
+      key === "metadata" && path === "backupServers"
+        ? { server: { enabled: true, backupInterval: 1, lastBackupAt: 0, name: "backup" } }
+        : undefined,
+    );
+    let finish!: () => void;
+    const backupGate = new Promise<boolean>((resolve) => (finish = () => resolve(true)));
+    mocks.sendMessage.mockImplementation(async (name: string) =>
+      name === "exportBackupData" ? backupGate : name === "getDownloadHistory" ? [] : undefined,
+    );
+    vi.useFakeTimers();
+    try {
+      const execute = mocks.jobs.get("autoBackup")!.execute;
+      const running = execute();
+      await vi.waitFor(() =>
+        expect(mocks.sendMessage.mock.calls.filter(([name]) => name === "exportBackupData")).toHaveLength(1),
+      );
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      expect((mocks.sessionStore.get("autoBackupLock") as { at: number }).at).toBeGreaterThan(Date.now() - 60_000);
+      await execute();
+      expect(mocks.sendMessage.mock.calls.filter(([name]) => name === "exportBackupData")).toHaveLength(1);
+      finish();
+      await running;
+      expect(mocks.sessionStore.has("autoBackupLock")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("alarms：自动备份失败通知（H-2）", () => {
+  beforeEach(() => {
+    mocks.localStore.clear();
+    mocks.sessionStore.clear();
+    mocks.alarms.clear();
+    mocks.jobs.clear();
+    mocks.sendMessage.mockReset();
+    mocks.getExtStoragePathCached.mockReset();
+    mocks.notificationsCreate.mockReset();
+    mocks.notificationsCreate.mockResolvedValue("notification-id");
+    mocks.i18nGetMessage.mockClear();
+  });
+
+  it("失败时给一次用户可见通知；同服务器持续失败去重，成功后再失败会重新通知", async () => {
+    vi.resetModules();
+    await import("@/background/utils/alarms.ts");
+    mocks.getExtStoragePathCached.mockImplementation(async (key: string, path: string) =>
+      key === "metadata" && path === "backupServers"
+        ? { server: { enabled: true, backupInterval: 1, lastBackupAt: 0, name: "backup-1" } }
+        : undefined,
+    );
+
+    let fail = true;
+    mocks.sendMessage.mockImplementation(async (name: string) => {
+      if (name === "exportBackupData") {
+        if (fail) {
+          throw new Error("boom");
+        }
+        return true;
+      }
+      if (name === "getDownloadHistory") {
+        return [];
+      }
+      return undefined;
+    });
+
+    const execute = mocks.jobs.get("autoBackup")!.execute;
+
+    await execute();
+    expect(mocks.notificationsCreate, "自动备份失败必须给用户可见通知").toHaveBeenCalledTimes(1);
+    const options = mocks.notificationsCreate.mock.calls[0]![0] as chrome.notifications.NotificationCreateOptions;
+    expect(options.message).toContain("backup-1");
+    expect(options.message).toContain("boom");
+    // i18n key（由 Lead 补 locales；缺失时组件回落到英文模板）
+    expect(mocks.i18nGetMessage).toHaveBeenCalledWith("notificationAutoBackupFailure", ["backup-1", "boom"]);
+
+    // 同一服务器持续失败：去重窗口内不再重复通知（否则每 10 分钟刷屏）
+    await execute();
+    expect(mocks.notificationsCreate).toHaveBeenCalledTimes(1);
+
+    // 成功一次清空去重；之后再失败应重新通知
+    fail = false;
+    await execute();
+    fail = true;
+    await execute();
+    expect(mocks.notificationsCreate, "成功一次后再次失败应重新通知").toHaveBeenCalledTimes(2);
   });
 });

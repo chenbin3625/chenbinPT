@@ -29,7 +29,8 @@ export const siteMetadata: ISiteMetadata = {
   schema: "Unit3D",
 
   urls: ["uggcf://qnexcrref.bet/"],
-  favicon: "https://darkpeers.org/favicon.ico",
+  // E2-23：urls 用 rot13 隐藏域名的同时，明文 favicon 会把同一域名泄漏出去。
+  // favicon 不支持加密，此处删除该字段（缺失时由 utils/favicon 按站点地址动态获取）。
 
   category: [
     {

@@ -4,7 +4,7 @@
 
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { localSort } from "../utils";
+import { getBackupRequestTimeout, localSort } from "../utils";
 import type { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption, IBackupMetadata } from "../type";
 
 interface S3Config extends IBackupConfig {
@@ -62,13 +62,47 @@ export default class S3 extends AbstractBackupServer<S3Config> {
     return this.userConfig.accessKeyId;
   }
 
+  /**
+   * RFC3986 编码（encodeURIComponent 不编码 `!'()*`，而 SigV4 要求编码）。
+   * 复检 P2（F）：canonical URI 与查询串必须用同一套编码。
+   */
+  private static encodeRFC3986(str: string): string {
+    return encodeURIComponent(str).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  }
+
+  /**
+   * SigV4 canonical URI：S3 不做路径归一化（不折叠 `//`/`.`），但每个路径段必须 RFC3986 编码一次。
+   * 先把已编码的段解码回原文再编码，避免 `new URL()` 已编码过的 `%20` 被二次编码成 `%2520`。
+   */
+  static encodeCanonicalUri(pathname: string): string {
+    const raw = pathname === "" ? "/" : pathname;
+    return raw
+      .split("/")
+      .map((segment) => {
+        let decoded = segment;
+        try {
+          decoded = decodeURIComponent(segment);
+        } catch {
+          // 非法百分号编码：保持原段参与编码，避免整条签名抛错
+        }
+        return S3.encodeRFC3986(decoded);
+      })
+      .join("/");
+  }
+
   private objectUrl(path: string): string {
     const bucket = this.userConfig.bucket;
     const cleanPath = path.replace(/^\//, "");
+    // 复检 P2（F）：实际请求 URL 与 canonical URI 使用同一套路径编码，避免 prefix/文件名含
+    // `+ ! ' ( ) * % 空格` 时「签名用 A、请求用 B」→ 全 403。
+    const encodedPath = cleanPath
+      .split("/")
+      .map((segment) => (segment === "" ? "" : S3.encodeRFC3986(segment)))
+      .join("/");
     if (this.userConfig.forcePathStyle) {
-      return `${this.endpoint}/${bucket}/${cleanPath}`;
+      return `${this.endpoint}/${bucket}/${encodedPath}`;
     }
-    return `${this.endpoint.replace("://", `://${bucket}.`)}/${cleanPath}`;
+    return `${this.endpoint.replace("://", `://${bucket}.`)}/${encodedPath}`;
   }
 
   // ───── AWS Signature V4 ─────
@@ -115,18 +149,30 @@ export default class S3 extends AbstractBackupServer<S3Config> {
     const amzDate = date.toISOString().replace(/[-:]|\.\d{3}/g, "");
     const dateStamp = amzDate.slice(0, 8);
     const parsedUrl = new URL(url);
-    const canonicalUri = parsedUrl.pathname === "" ? "/" : parsedUrl.pathname;
+    // 复检 P2（F）：canonical URI 必须按 RFC3986 编码（含 `+ ! ' ( ) *` 等字符）；
+    // 不能直接用 `parsedUrl.pathname`（用户 prefix 含这些字符时签名与服务端计算不一致 → 403）。
+    const canonicalUri = S3.encodeCanonicalUri(parsedUrl.pathname);
 
-    const signedHeaders: Record<string, string> = {
+    /**
+     * 复检 P2（F）：SigV4 要求 canonical headers 按**小写 header 名**排序与拼接。
+     * 旧实现先对原始大小写 key 排序、再在拼接时转小写：extraHeaders 里若混入 `Content-Type`
+     * 这类大写键，排序结果会与「全部小写后排序」不同（当前调用方恰好都是小写键，属潜伏缺陷）。
+     */
+    const normalizedHeaders: Record<string, string> = {};
+    for (const [key, value] of Object.entries({
       host: parsedUrl.host,
       "x-amz-content-sha256": payloadHash,
       "x-amz-date": amzDate,
       ...extraHeaders,
-    };
+    })) {
+      const name = key.trim().toLowerCase();
+      if (!name) continue;
+      normalizedHeaders[name] = String(value).trim();
+    }
 
-    const sortedKeys = Object.keys(signedHeaders).sort();
-    const canonicalHeaders = sortedKeys.map((k) => `${k.toLowerCase()}:${signedHeaders[k]}\n`).join("");
-    const signedHeaderStr = sortedKeys.map((k) => k.toLowerCase()).join(";");
+    const sortedKeys = Object.keys(normalizedHeaders).sort();
+    const canonicalHeaders = sortedKeys.map((k) => `${k}:${normalizedHeaders[k]}\n`).join("");
+    const signedHeaderStr = sortedKeys.join(";");
 
     const canonicalRequest = [method, canonicalUri, queryString, canonicalHeaders, signedHeaderStr, payloadHash].join(
       "\n",
@@ -139,8 +185,14 @@ export default class S3 extends AbstractBackupServer<S3Config> {
     const signingKey = await S3.deriveSigningKey(this.userConfig.secretAccessKey, dateStamp, region, service);
     const signature = S3.bufferToHex(await S3.hmacSha256(signingKey, stringToSign));
 
+    // C2-B-5：`host` 只用于参与 SigV4 的 canonical request / SignedHeaders（浏览器会自动带 Host）。
+    // 不能把它放进 axios 请求头：全局 unsafe-header 拦截器（extends/axios/replaceUnsafeHeader.ts）会把
+    // unsafeHeaders 里的 host 剥离并安装一条 DNR(SET host) 会话规则 —— 每条 S3 请求多两次消息往返，
+    // 且依赖「DNR 允许修改 Host」这一未验证前提（不允许时规则安装失败会让请求直接报错）。
+    const { host: _hostHeader, ...sentHeaders } = normalizedHeaders;
+
     return {
-      ...signedHeaders,
+      ...sentHeaders,
       Authorization: `AWS4-HMAC-SHA256 Credential=${this.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaderStr}, Signature=${signature}`,
     };
   }
@@ -157,13 +209,10 @@ export default class S3 extends AbstractBackupServer<S3Config> {
   ): Promise<AxiosResponse<T>> {
     const url = this.objectUrl(path);
 
-    const encodeRFC3986 = (str: string) =>
-      encodeURIComponent(str).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-
     const queryString = options.query
       ? Object.entries(options.query)
           .sort(([aKey, aVal], [bKey, bVal]) => aKey.localeCompare(bKey) || aVal.localeCompare(bVal))
-          .map(([k, v]) => `${encodeRFC3986(k)}=${encodeRFC3986(v)}`)
+          .map(([k, v]) => `${S3.encodeRFC3986(k)}=${S3.encodeRFC3986(v)}`)
           .join("&")
       : "";
     let payloadHash: string;
@@ -190,7 +239,7 @@ export default class S3 extends AbstractBackupServer<S3Config> {
       headers: authHeaders,
       data: options.data,
       responseType: options.responseType ?? "json",
-      timeout: 45e3,
+      timeout: getBackupRequestTimeout(this.userConfig),
     });
   }
 

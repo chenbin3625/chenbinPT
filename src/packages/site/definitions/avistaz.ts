@@ -155,13 +155,21 @@ export default class Avistaz extends AvistazNetwork {
     }
 
     // 中配
-    const audioArray = row.audio?.map((a: any) => a.language).filter((x: string) => x.trim() !== "") || [];
+    // E1-C6：`?.` 只保护 row.audio 本身，元素缺 language 时 `x.trim()` 会对 undefined 抛 TypeError，
+    // 异常会被 transformSearchPage 的单行 catch 吞掉（整行种子从搜索结果消失）。这里加类型守卫。
+    const audioArray =
+      row.audio
+        ?.map((a: any) => a.language)
+        .filter((x: unknown): x is string => typeof x === "string" && x.trim() !== "") ?? [];
     if (audioArray.some((audio) => /Chinese|Cantonese/i.test(audio))) {
       tags.push({ name: "中配" });
     }
 
     // 字幕
-    const subtitleArray = row.subtitle?.map((s: any) => s.language).filter((x: string) => x.trim() !== "") || [];
+    const subtitleArray =
+      row.subtitle
+        ?.map((s: any) => s.language)
+        .filter((x: unknown): x is string => typeof x === "string" && x.trim() !== "") ?? [];
     if (subtitleArray.some((subtitle) => /Chinese/i.test(subtitle))) {
       tags.push({ name: "中字" });
     }

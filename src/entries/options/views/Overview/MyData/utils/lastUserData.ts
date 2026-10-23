@@ -24,14 +24,14 @@ export const tableData = computed(() => Object.values(perSiteLastUserData.value)
 /** 表格首次加载 / 重新加载期间为 true，供页面显示表格 loading 占位 */
 export const isTableDataLoading = ref<boolean>(false);
 
-async function updatePerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo) {
+async function buildPerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo): Promise<IUserInfoItem> {
   const currentDate = new Date();
 
   // 再单独加载一遍该站点的配置信息，以免缺失
   const allAddedSiteMetadata = await loadAllAddedSiteMetadata([siteId]);
   const siteMeta = allAddedSiteMetadata[siteId];
 
-  perSiteLastUserData.value[siteId] = {
+  return {
     ...fixUserInfo(siteUserInfoData),
     site: siteId,
     siteUserConfig: metadataStore.sites[siteId],
@@ -47,8 +47,14 @@ async function updatePerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo) {
   };
 }
 
+async function updatePerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo) {
+  perSiteLastUserData.value[siteId] = await buildPerSiteData(siteId, siteUserInfoData);
+}
+
+let tableLoadToken = 0;
 export async function initTableData() {
   const configStore = useConfigStore();
+  const loadToken = ++tableLoadToken;
 
   isTableDataLoading.value = true;
 
@@ -61,6 +67,7 @@ export async function initTableData() {
     const addedSiteMetaData = await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));
 
     const tasks: Promise<void>[] = [];
+    const nextRows: Record<TSiteID, IUserInfoItem> = {};
 
     for (const [siteId, siteUserConfig] of Object.entries(metadataStore.sites)) {
       const siteMeta = addedSiteMetaData[siteId];
@@ -86,17 +93,32 @@ export async function initTableData() {
 
       const siteUserInfoData = metadataStore.lastUserInfo[siteId] ?? {};
       tasks.push(
-        updatePerSiteData(siteId as TSiteID, siteUserInfoData).catch((e) => {
-          console.error(`initTableData: updatePerSiteData failed for ${siteId}`, e);
-        }),
+        buildPerSiteData(siteId as TSiteID, siteUserInfoData)
+          .then((row) => {
+            nextRows[siteId] = row;
+          })
+          .catch((e) => {
+            console.error(`initTableData: updatePerSiteData failed for ${siteId}`, e);
+          }),
       );
     }
 
     await Promise.allSettled(tasks);
+    if (loadToken === tableLoadToken) perSiteLastUserData.value = nextRows;
   } finally {
-    isTableDataLoading.value = false;
+    if (loadToken === tableLoadToken) isTableDataLoading.value = false;
   }
 }
+
+/**
+ * 本页面实例里「确实有在途请求」的站点集合。
+ *
+ * `runtimeStore.userInfo.flushPlan[site]` 会被 500ms 节流写进 sessionStorage；刷新页面后任务已不存在，
+ * 恢复出来的 `true` 没有任何 `.finally` 会把它复位（F17：MyData 一直显示「取消刷新」、行内刷新按钮
+ * 长期 loading/disabled）。这里记录真正的在途请求，供 `reconcileFlushPlan()` 区分「恢复残留」与
+ * 「同一页面内仍在刷新」。
+ */
+const inFlightFlush = new Set<TSiteID>();
 
 export function flushSiteLastUserInfo(sites: TSiteID[]) {
   const runtimeStore = useRuntimeStore();
@@ -104,6 +126,7 @@ export function flushSiteLastUserInfo(sites: TSiteID[]) {
 
   for (const site of sites) {
     runtimeStore.userInfo.flushPlan[site] = true;
+    inFlightFlush.add(site);
 
     sendMessage("getSiteUserInfoResult", {
       siteId: site,
@@ -120,13 +143,35 @@ export function flushSiteLastUserInfo(sites: TSiteID[]) {
         }
       })
       .finally(() => {
+        inFlightFlush.delete(site);
         runtimeStore.userInfo.flushPlan[site] = false;
       });
   }
 }
 
+/**
+ * F17：页面加载时把「从 sessionStorage 恢复出来、但没有在途请求」的 flushPlan 复位。
+ *
+ * 必须在 MyData 页面挂载时调用；同一 SPA 内离开再回来时，`inFlightFlush` 里仍有真实任务，
+ * 不会被误清。
+ */
+export function reconcileFlushPlan(): boolean {
+  const runtimeStore = useRuntimeStore();
+  let changed = false;
+
+  for (const site of Object.keys(runtimeStore.userInfo.flushPlan)) {
+    if (runtimeStore.userInfo.flushPlan[site] && !inFlightFlush.has(site as TSiteID)) {
+      runtimeStore.userInfo.flushPlan[site] = false;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 export async function cancelFlushSiteLastUserInfo() {
   const runtimeStore = useRuntimeStore();
+  inFlightFlush.clear();
   for (const runtimeStoreKey in runtimeStore.userInfo.flushPlan) {
     runtimeStore.userInfo.flushPlan[runtimeStoreKey] = false;
   }

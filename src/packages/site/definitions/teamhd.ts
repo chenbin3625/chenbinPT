@@ -94,10 +94,13 @@ export const siteMetadata: ISiteMetadata = {
     requestConfigTransformer: ({ requestConfig }) => {
       const raw = requestConfig?.params?.search as string | undefined;
       if (raw) {
+        // M-10：必须先在**原始串**上剥掉结尾年份，再做「空格 → %」替换。
+        // 旧实现先 `\s+ → "%"`，随后按「年份前有字面空格」匹配的 `/ +(?:19|20)\d{2} *$/`
+        // 永远不可能命中，年份清洗成了死代码（`The Matrix 1999` 被原样发成 `The%Matrix%1999`）。
         requestConfig!.params!.search = raw
-          .replace(/\s+/g, "%")
-          .replace(/ +(?:19|20)\d{2} *$/, "")
-          .replace(/(\S)%?$/, "$1");
+          .replace(/\s+(?:19|20)\d{2}\s*$/, "")
+          .trim()
+          .replace(/\s+/g, "%");
       }
       return requestConfig!;
     },
@@ -139,7 +142,9 @@ export const siteMetadata: ISiteMetadata = {
         filters: [{ name: "parseNumber" }],
       },
       completed: { selector: "td:nth-child(5) strong", filters: [{ name: "parseNumber" }] },
-      tags: [{ name: "Free", selector: "a[href^='/details/id'][style='color:#f2b101']", color: "blue" }],
+      // L-11：内联样式属于站点模板细节，用「属性值全等」匹配会在多一个空格/分号时整体失效
+      // （标签静默消失）。改为包含匹配，只要求颜色值仍出现在 style 中。
+      tags: [{ name: "Free", selector: "a[href^='/details/id'][style*='f2b101']", color: "blue" }],
     },
   },
 
@@ -194,7 +199,10 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       {
-        requestConfig: { url: "/user/" },
+        // M-9：assertion 的语义是「把 flushUserInfo.id 写进 pathKey 处并替换该字符串里的 `$id$`」。
+        // 原 url 写成 "/user/"，不含占位符，`String.replace("$id$", id)` 静默无效，
+        // 每次刷新请求的都是不带用户 id 的 `/user/`；与仓库其它 6 处 assertion 保持一致写成 `/user/$id$`。
+        requestConfig: { url: "/user/$id$" },
         assertion: { id: "url" },
         selectors: {
           joinTime: {

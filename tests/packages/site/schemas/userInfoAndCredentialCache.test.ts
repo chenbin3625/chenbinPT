@@ -132,7 +132,7 @@ describe("问题5：空凭据不写入 12h 缓存", () => {
 
   it("GazelleJSONAPI：authkey 为空时不写缓存，合法凭据才写（并 trim）", async () => {
     class TestGazelleJSONAPI extends GazelleJSONAPI {
-      public apiInfoResponse: any = { response: { authkey: "", passkey: "pk" } };
+      public apiInfoResponse: any = { status: "success", response: { authkey: "", passkey: "pk" } };
       protected override async requestApiInfo(): Promise<any> {
         return this.apiInfoResponse;
       }
@@ -158,7 +158,7 @@ describe("问题5：空凭据不写入 12h 缓存", () => {
     expect(infoSpy).toHaveBeenCalledTimes(1);
 
     const valid = new TestGazelleJSONAPI(metadata, {});
-    valid.apiInfoResponse = { response: { authkey: " ak ", passkey: " pk " } };
+    valid.apiInfoResponse = { status: "success", response: { authkey: " ak ", passkey: " pk " } };
     const authKey = await valid.runGetAuthKey();
     expect(authKey).toEqual({ authkey: "ak", passkey: "pk" });
     expect(mocks.store).toHaveBeenCalledTimes(1);

@@ -15,7 +15,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/messages.ts", () => ({ onMessage: mocks.onMessage, sendMessage: mocks.sendMessage }));
 vi.mock("@/offscreen/utils/logger.ts", () => ({ logger: mocks.logger }));
-vi.mock("@/offscreen/utils/site.ts", () => ({ getSiteInstance: mocks.getSiteInstance }));
+vi.mock("@/offscreen/utils/site.ts", () => ({
+  getSiteInstance: mocks.getSiteInstance,
+  // OS-5：搜索 handler 经 per-site 串行器执行；串行语义由 site 单测覆盖，这里直接执行任务本身。
+  runSiteOperation: (_siteId: string, task: () => Promise<unknown>) => task(),
+}));
 
 type SearchHandler = (args: { data: any }) => Promise<any>;
 

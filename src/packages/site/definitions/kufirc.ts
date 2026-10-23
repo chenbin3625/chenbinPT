@@ -116,7 +116,10 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata!.search!,
     requestConfig: {
       ...SchemaMetadata!.search!.requestConfig!,
+      // M1：params 会被整体替换（不是深合并），必须展开父层 params 才能保留 Luminance 的 action=advanced；
+      // 否则关键词（advanceKeywordParams 改写的 searchtext）与 filter_cat/taglist/filter_freeleech 全部失效。
       params: {
+        ...SchemaMetadata!.search!.requestConfig!.params,
         perPage: 100,
       },
     },

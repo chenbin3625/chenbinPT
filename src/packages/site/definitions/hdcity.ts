@@ -312,7 +312,11 @@ export const siteMetadata: ISiteMetadata = {
         selector: [".mtitle a[href^='t-']"],
       },
       time: {
-        selector: "div[style='minfo']",
+        // B1：同一组 selectors 里其它位置全是类选择器（.mitem/.mtop/.mtitle/.mbottom），只有这两处把 `minfo`
+        // 当成 style 属性的整值匹配；若站点实际渲染的是 `<div class="minfo">`（更符合模板写法），
+        // `div[style='minfo']` 会恒为 0 命中 → 时间/发布者静默为空。两种写法都试，避免在没有真实 DOM
+        // 证据时把可用的一边改坏（待验证：需一张 /pt 列表页）。
+        selector: ["div.minfo", "div[style='minfo']"],
         filters: [
           // DEFS2-5：自定义 filter 里直调 parseValidTimeString 会按宿主时区解析（站点时区 +0800 被丢弃）；
           // 这里只把文本归一化成时间字符串，时区换算交给具名 parseTime（runQueryFilters 会走 parseValidTimeStringInZone）。
@@ -322,32 +326,23 @@ export const siteMetadata: ISiteMetadata = {
       },
       size: { selector: ".mbottom .mbelement:nth-child(3)", filters: [{ name: "parseSize" }] },
       author: {
-        selector: ["div[style='minfo'] > span"],
+        selector: ["div.minfo > span", "div[style='minfo'] > span"],
         elementProcess: cleanUsername,
       },
+      // E3-9：原实现用 `query.match(...)![1]`，元素存在但文本不含数字（改文案 / 用「—」表示 0）时
+      // match 返回 null，`![1]` 抛 TypeError：列表行异常被基类吞掉并计入 failedRows（整页都这样直接报错）。
+      // 统一改成判空返回 0（与同文件 levelId/invites 的写法一致）。
       seeders: {
         selector: ".mbottom a[href*='seeders']",
-        filters: [
-          (query: string) => {
-            return query ? query.match(/(\d+)/)![1] : "0";
-          },
-        ],
+        filters: [(query: string) => parseInt(query.match(/(\d+)/)?.[1] ?? "0", 10) || 0],
       },
       leechers: {
         selector: ".mbottom a[href*='leechers']",
-        filters: [
-          (query: string) => {
-            return query ? query.match(/(\d+)/)![1] : "0";
-          },
-        ],
+        filters: [(query: string) => parseInt(query.match(/(\d+)/)?.[1] ?? "0", 10) || 0],
       },
       completed: {
         selector: ".mbottom a[href*='viewsnatches']",
-        filters: [
-          (query: string) => {
-            return query ? query.match(/(\d+)/)![1] : "0";
-          },
-        ],
+        filters: [(query: string) => parseInt(query.match(/(\d+)/)?.[1] ?? "0", 10) || 0],
       },
       tags: [...SchemaMetadata.search!.selectors!.tags!],
     },
@@ -364,11 +359,8 @@ export const siteMetadata: ISiteMetadata = {
           ...SchemaMetadata.userInfo!.process?.[0]?.selectors,
           id: {
             selector: ["center .text_alt .text:contains('ID')"],
-            filters: [
-              (query: string) => {
-                return query.match(/(\d+)/)![1];
-              },
-            ],
+            // E3-9：文案变化时 match 返回 null，`![1]` 会让整个 userInfo 步骤失败（已解析字段一并丢失）
+            filters: [(query: string) => query.match(/(\d+)/)?.[1] ?? "0"],
           },
           name: {
             selector: [".text_alt span[style]"],
@@ -377,11 +369,8 @@ export const siteMetadata: ISiteMetadata = {
           messageCount: {
             text: 0,
             selector: "a[href*='messages']",
-            filters: [
-              (query: string) => {
-                return parseInt(query.match(/(\d+)/)![1]);
-              },
-            ],
+            // E3-9：`a[href*='messages']` 可能指向「消息中心」而无数字，`![1]` 会抛 TypeError
+            filters: [(query: string) => parseInt(query.match(/(\d+)/)?.[1] ?? "0", 10) || 0],
           },
           uploaded: {
             selector: [".text_alt + br + div .text:nth-child(1)"],

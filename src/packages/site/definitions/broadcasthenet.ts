@@ -2,10 +2,18 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/BroadcasTheNet.cs
  */
 import type { ISiteMetadata, ISearchResult, ISearchEntryRequestConfig, ITorrent } from "../types.ts";
+import { toMerged } from "es-toolkit";
+import { isEmpty } from "es-toolkit/compat";
 import { SchemaMetadata } from "../schemas/Gazelle.ts";
 import Gazelle from "../schemas/Gazelle.ts";
 import { EResultParseStatus, ETorrentStatus } from "../types.ts";
-import { parseSizeString } from "../utils";
+import {
+  classifySiteError,
+  hasNonLatinCharacters,
+  parseSizeString,
+  parseTimeToLiveToDate,
+  parseValidTimeStringInZone,
+} from "../utils";
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
@@ -156,6 +164,8 @@ export const siteMetadata: ISiteMetadata = {
         // M-12：站点给的是「每天」收益；`divide` 并不是已定义的过滤器（会被静默跳过，结果虚高 24 倍），用函数过滤器换算成每小时
         filters: [{ name: "parseNumber" }, (query: number) => query / 24],
       },
+      // E1b-C28：BTN 页面上有分享率，但站点对 "∞" 的处理与本仓库判级用的 fixRatio 不一致，
+      // 本定义的等级判定只用 totalTraffic/bonus/snatches，故显式关闭 ratio 解析（ratio 面板显示为空是刻意为之）。
       ratio: undefined,
       joinTime: {
         selector: "ul.nobullet > li:contains('Joined:') > span",
@@ -313,24 +323,41 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class BroadcastTheNet extends Gazelle {
   private async getSeriesPageFromIMDB(imdbId: string): Promise<{ document: Document; pageUrl: string } | null> {
-    try {
-      const response = await this.request({
-        url: `/torrents.php?imdb=${imdbId}`,
-        responseType: "document",
-      });
-      const document = response.data as Document;
-      const pageUrl = response.request?.responseURL || document.URL || "";
+    const response = await this.request({
+      url: `/torrents.php?imdb=${encodeURIComponent(imdbId)}`,
+      responseType: "document",
+    });
+    const document = response.data as Document;
+    const pageUrl = response.request?.responseURL || document.URL || "";
 
-      if (!pageUrl.includes("series.php")) {
-        console.debug(`[BroadcastTheNet] IMDB search for ${imdbId} did not redirect to series.php, no results found`);
-        return null;
-      }
-
-      return { document, pageUrl };
-    } catch (error) {
-      console.debug(`[BroadcastTheNet] IMDB search failed for IMDB ID: ${imdbId}. Error:`, error);
+    if (!pageUrl.includes("series.php")) {
       return null;
     }
+
+    return { document, pageUrl };
+  }
+
+  /**
+   * E1b-C22：解析 series 页行内的时间。站点把时间放在 span.time 里：
+   * title 属性一般是绝对时间（站点墙上时间），文本可能是 "1 hour ago" 这类相对时间。
+   * 解析失败时返回 undefined（保持原有「无 time」行为，不影响其它字段）。
+   */
+  private parseSeriesRowTime(row: Element): number | undefined {
+    const timeEl = row.querySelector<HTMLElement>("span.time");
+    const timeText = (timeEl?.getAttribute("title") || timeEl?.textContent || "").replace(/\s+/g, " ").trim();
+    if (!timeText) return undefined;
+
+    const ttl = parseTimeToLiveToDate(timeText);
+    if (typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0) {
+      return ttl;
+    }
+
+    const parsed = parseValidTimeStringInZone(
+      timeText,
+      ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "MMM d yyyy, HH:mm", "MMM d, yyyy HH:mm"],
+      this.metadata.timezoneOffset ?? "+0000",
+    );
+    return typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
   }
 
   private parseSeriesPageTorrents(document: Document, pageUrl: string): ITorrent[] {
@@ -380,6 +407,16 @@ export default class BroadcastTheNet extends Gazelle {
 
       if (!url || !link) return;
 
+      // E1b-C22：这条自定义路径手工构造 ITorrent，原实现既没有 time（结果列表无法按时间排序/判断新旧），
+      // 也绕过了 parseTorrentRowForTags，导致 Gazelle 共享 tags 里的 Free（Freeleech!）也被一并丢掉。
+      const time = this.parseSeriesRowTime(row);
+      const tags: Array<{ name: string; color?: string }> = [];
+      // 只补回可静态判定的 Free；不走 parseTorrentRowForTags 是因为它会顺带给每一行贴全站 H&R，
+      // 与 DEFS2-2「imdb/series 结果不伪造 H&R」的约定冲突（见 hrs-sweep 回归）。
+      if (row.textContent?.includes("Freeleech!")) {
+        tags.push({ name: "Free", color: "blue" });
+      }
+
       torrents.push({
         site: this.metadata.id,
         id: new URL(link).searchParams.get("id") || new URL(url).searchParams.get("torrentid") || url,
@@ -393,8 +430,9 @@ export default class BroadcastTheNet extends Gazelle {
         leechers: parseNumberCell(cells.at(-1)),
         progress: 0,
         status: ETorrentStatus.unknown,
-        // DEFS2-2：原先这里给 series 页解析出的每一行硬写 tags:[{ name: "H&R" }]，同样会把 imdb 搜索的
-        // 全部结果误标成 H&R（该路径不走 parseTorrentRowForTags，无法判定真实 H&R），故不再伪造标签。
+        time,
+        tags,
+        // DEFS2-2：不给 series 页解析出的每一行硬写 H&R（该路径无法判定真实 H&R，会误标全部 imdb 结果）。
       });
     });
 
@@ -406,21 +444,40 @@ export default class BroadcastTheNet extends Gazelle {
     searchEntry: ISearchEntryRequestConfig = {},
   ): Promise<ISearchResult> {
     if (keywords?.startsWith("imdb|")) {
-      const imdbId = keywords.replace("imdb|", "");
-      const seriesPage = await this.getSeriesPageFromIMDB(imdbId);
-      if (!seriesPage) {
-        return {
-          data: [],
-          status: EResultParseStatus.noResults,
-        };
+      let effectiveEntry: ISearchEntryRequestConfig = searchEntry;
+      if (effectiveEntry.id) {
+        effectiveEntry = toMerged(this.metadata.searchEntry?.[effectiveEntry.id] ?? {}, effectiveEntry);
+      }
+      if (isEmpty(effectiveEntry) || effectiveEntry.merge !== false) {
+        effectiveEntry = toMerged(this.metadata.search!, effectiveEntry);
+      }
+      const imdbConfig = effectiveEntry.advanceKeywordParams?.imdb;
+      if (
+        !this.allowSearch ||
+        effectiveEntry.enabled === false ||
+        imdbConfig === false ||
+        imdbConfig?.enabled === false ||
+        (effectiveEntry.skipNonLatinCharacters === true && hasNonLatinCharacters(keywords))
+      ) {
+        return super.getSearchResult(keywords, searchEntry);
       }
 
-      const torrents = this.parseSeriesPageTorrents(seriesPage.document, seriesPage.pageUrl);
+      const imdbId = keywords.replace("imdb|", "");
+      try {
+        const seriesPage = await this.getSeriesPageFromIMDB(imdbId);
+        if (!seriesPage) {
+          return { data: [], status: EResultParseStatus.noResults };
+        }
 
-      return {
-        data: torrents,
-        status: torrents.length > 0 ? EResultParseStatus.success : EResultParseStatus.noResults,
-      };
+        const torrents = this.parseSeriesPageTorrents(seriesPage.document, seriesPage.pageUrl);
+        return {
+          data: torrents,
+          status: torrents.length > 0 ? EResultParseStatus.success : EResultParseStatus.noResults,
+        };
+      } catch (error) {
+        const { status, statusMsg } = classifySiteError(error);
+        return { data: [], status, statusMsg };
+      }
     }
 
     return await super.getSearchResult(keywords, searchEntry);

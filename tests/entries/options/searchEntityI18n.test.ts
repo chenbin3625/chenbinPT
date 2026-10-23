@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { i18nInstance } from "@/options/plugins/i18n.ts";
+import { getSearchSolutionDisplayName } from "@/options/views/Overview/SearchEntity/utils/planName.ts";
 
 const LOCALES = ["zh_CN", "en"] as const;
 
@@ -55,5 +56,16 @@ describe("SearchEntity 搜索提示文案", () => {
     }
 
     expect(missing).toEqual([]);
+  });
+});
+
+describe("F12：跨站搜索的方案名不再硬编码中文", () => {
+  it('"all" 走 i18n（英文界面不再显示「全站」），其它方案仍由 store 解析', () => {
+    const allLabel = getSearchSolutionDisplayName("all", () => "全站");
+
+    expect(allLabel).toBe(i18nInstance.global.t("layout.header.searchPlan.all"));
+    expect(allLabel).not.toBe("全站");
+    // store 里的中文硬编码只会在非 all 方案上作为兜底出现，且这里应原样透传
+    expect(getSearchSolutionDisplayName("my-plan", () => "我的方案")).toBe("我的方案");
   });
 });

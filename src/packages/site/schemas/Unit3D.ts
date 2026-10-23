@@ -579,9 +579,11 @@ export default class Unit3D extends PrivateSite {
 
     // 否则直接使用 Unit3D 的方式获取用户信息
     try {
+      // E18：`lastUserInfo.name` 可能是历史遗留的 number（旧版 getFieldData 把纯数字用户名强转成数字，
+      // 且已经持久化），必须显式转成字符串，否则 urlJoin 会抛 "Url must be a string"。
       let userName: string;
       if (lastUserInfo !== null && lastUserInfo.name) {
-        userName = lastUserInfo.name as string;
+        userName = String(lastUserInfo.name);
       } else {
         // 如果没有 id 信息，则访问一次 index.php
         userName = await this.getUserNameFromSite();
@@ -642,10 +644,14 @@ export default class Unit3D extends PrivateSite {
       },
       true,
     );
-    return this.getFieldData(
-      indexDocument,
+    // E18：纯数字用户名不能被 getFieldData 转成 number（getUserNameFromSite 兼容两参数调用，
+    // 两参数路径保留「数字字符串 → number」的历史行为，因此在这里兜底转回字符串）。
+    return String(
+      this.getFieldData(
+        indexDocument,
 
-      this.metadata.userInfo?.selectors?.name!,
+        this.metadata.userInfo?.selectors?.name!,
+      ) ?? "",
     );
   }
 
@@ -653,7 +659,8 @@ export default class Unit3D extends PrivateSite {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
     const { data: userDetailDocument } = await this.request<Document>({
-      url: urlJoin("/users", userName),
+      // E18：urlJoin 5.x 只接受字符串参数（历史持久化的数字用户名会直接抛错）
+      url: urlJoin("/users", String(userName)),
       responseType: "document",
     });
 
@@ -666,16 +673,11 @@ export default class Unit3D extends PrivateSite {
     // 用户已解析的 uploaded/downloaded/ratio/bonus/seedingSize 会被一次刷新静默替换成 0 并写进当日历史。
     // 53 个声明 schema: "Unit3D" 的定义里 51 个未声明 userInfo.process、全部走这条自定义路径，
     // 父类 AbstractPrivateSite 的同款守卫覆盖不到它们。
-    let declaredSelectorFields = 0;
-    let matchedSelectorFields = 0;
-    for (const field of fields) {
-      const elementQuery = declaredSelectors[field];
-      if (!elementQuery) continue;
-      declaredSelectorFields++;
-      if (this.hasFieldMatch(userDetailDocument, elementQuery)) {
-        matchedSelectorFields++;
-      }
-    }
+    const { declared: declaredSelectorFields, matched: matchedSelectorFields } = this.checkUserInfoSelectorMatches(
+      userDetailDocument,
+      declaredSelectors,
+      fields,
+    );
 
     if (declaredSelectorFields > 0 && matchedSelectorFields === 0) {
       // noinspection ExceptionCaughtLocallyJS
@@ -684,13 +686,17 @@ export default class Unit3D extends PrivateSite {
       );
     }
 
-    return this.getFieldsData(userDetailDocument, userInfoSelectors, fields) as Partial<IUserInfo>;
+    // D1-6：零命中字段不写入 ""（否则会把 IUserInfo 的数字字段写成空串，覆盖用户真实数据）
+    return this.getFieldsData(userDetailDocument, userInfoSelectors, fields, {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected async getUserBonusPerHour(name: string): Promise<number> {
     const { data: document } = await this.request<Document>(
       {
-        url: `/users/${name}/earnings`,
+        // E18：用户名作为路径段必须编码（含空格/特殊字符的 Unit3D 用户名）
+        url: `/users/${encodeURIComponent(String(name))}/earnings`,
         responseType: "document",
       },
       true,
@@ -701,8 +707,24 @@ export default class Unit3D extends PrivateSite {
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     const downloadLink = await super.getTorrentDownloadLink(torrent);
     if (downloadLink && !downloadLink.includes("/download/") && downloadLink.includes("/torrents/")) {
+      // D1-8：合成分支此前会丢 downloadLinkAppendix（基类只把后缀加在被丢弃的原始链接上），
+      // 且 torrent.id 缺失时会拼出 `/torrents/download/undefined`。
+      if (torrent.id === undefined || torrent.id === null || String(torrent.id).trim() === "") {
+        throw new Error(
+          `[PTD] site '${this.name}' cannot synthesize Unit3D download link without torrent id (url=${(torrent.url ?? "").split("?")[0]})`,
+        );
+      }
       const mockRequestConfig = torrent.url?.startsWith("http") ? { url: torrent.url } : { baseURL: this.url };
-      return this.fixLink(`/torrents/download/${torrent.id}`, mockRequestConfig);
+      const synthesized = this.fixLink(
+        `/torrents/download/${encodeURIComponent(String(torrent.id))}`,
+        mockRequestConfig,
+      );
+      if (!synthesized) {
+        throw new Error(`[PTD] site '${this.name}' rejected synthesized Unit3D download link`);
+      }
+      return this.userConfig.downloadLinkAppendix
+        ? `${synthesized}${this.userConfig.downloadLinkAppendix}`
+        : synthesized;
     }
 
     return downloadLink;

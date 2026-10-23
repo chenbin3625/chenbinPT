@@ -38,6 +38,7 @@ const { SchemaMetadata: GazelleSchema } = await import("@ptd/site/schemas/Gazell
 const { default: Gazelle } = await import("@ptd/site/schemas/Gazelle.ts");
 const { SchemaMetadata: Unit3DSchema } = await import("@ptd/site/schemas/Unit3D.ts");
 const { default: Unit3D } = await import("@ptd/site/schemas/Unit3D.ts");
+const { default: PrivateSite } = await import("@ptd/site/schemas/AbstractPrivateSite.ts");
 const { default: Rartracker } = await import("@ptd/site/schemas/Rartracker.ts");
 const { default: BittorrentSite } = await import("@ptd/site/schemas/AbstractBittorrentSite.ts");
 const { EResultParseStatus } = await import("@ptd/site/types.ts");
@@ -186,14 +187,63 @@ describe("SITECORE-2：Unit3D 用户信息页零命中不得报 success", () => 
     expect(result.statusMsg).toMatch(/未命中任何字段/);
   });
 
-  it("至少命中一个字段时仍判 success（不能把有效页面误杀）", async () => {
+  it("只命中可选的消息提示，上传下载均失配时不得报 success", async () => {
     const site = newSite();
     site.doc = makeDoc(`<a href="/mail"><span class="point">1</span></a>`);
 
     const result = await site.getUserInfoResult({ name: "tester" });
 
+    expect(result.status).toBe(EResultParseStatus.parseError);
+    expect(result.statusMsg).toMatch(/关键字段.*uploaded.*downloaded/);
+  });
+
+  it("可选字段失配但核心上传下载匹配时仍成功", async () => {
+    const site = newSite();
+    site.doc = makeDoc(`
+      <li class="ratio-bar__uploaded"><a><i class="fa-arrow-up"></i> 1 GiB</a></li>
+      <li class="ratio-bar__downloaded"><a><i class="fa-arrow-down"></i> 0 B</a></li>
+    `);
+
+    const result = await site.getUserInfoResult({ name: "tester" });
+
     expect(result.status).toBe(EResultParseStatus.success);
-    expect(result.messageCount).toBe(11);
+    expect(result.uploaded).toBeGreaterThan(0);
+    expect(result.downloaded).toBe(0);
+  });
+});
+
+describe("AbstractPrivateSite 关键字段部分失配", () => {
+  class TestPrivateSite extends PrivateSite {
+    public doc = makeDoc("");
+    public override async request<T>(config?: any): Promise<any> {
+      return { data: this.doc, status: 200, headers: {}, config, request: { responseURL: "https://site.example/" } };
+    }
+  }
+
+  function newSite(selectors: Record<string, any>) {
+    return new TestPrivateSite({
+      id: "private-partial",
+      name: "Private Partial",
+      type: "private",
+      urls: ["https://site.example/"],
+      userInfo: { process: [{ requestConfig: { url: "/" }, selectors }] },
+    } as any);
+  }
+
+  it("只解析出上传量时不得把下载量回落为 0 并报告成功", async () => {
+    const site = newSite({ uploaded: { selector: ".up" }, downloaded: { selector: ".down", text: 0 } });
+    site.doc = makeDoc(`<span class="up">42</span>`);
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.parseError);
+    expect(result.statusMsg).toMatch(/关键字段 downloaded 未命中/);
+  });
+
+  it("没声明下载量选择器的步骤仍允许成功，真实 0 也视为命中", async () => {
+    const site = newSite({ uploaded: { selector: ".up" }, bonus: { selector: ".optional" } });
+    site.doc = makeDoc(`<span class="up">0</span>`);
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.success);
+    expect(result.uploaded).toBe(0);
   });
 });
 

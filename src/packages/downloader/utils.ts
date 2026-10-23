@@ -3,6 +3,10 @@ import axios, { AxiosRequestConfig } from "axios";
 import parseTorrent, { Instance as TorrentInstance } from "parse-torrent";
 import isValidFilename from "valid-filename";
 
+// 复检 RB-5：日志脱敏复用统一实现（query 值 + **路径内凭据段**，如 Rartracker
+// `/api/v1/torrents/download/{id}/{passkey}`）。该函数是纯函数、无浏览器依赖。
+import { redactSensitiveUrls } from "@/shared/redact.ts";
+
 export * from "./utils/adapter";
 
 /**
@@ -64,24 +68,72 @@ export function extractMagnetHash(magnetUri: string): string | null {
   return v2Match?.groups?.hash || null;
 }
 
+/**
+ * 将下载链接脱敏后再写日志（SEC-1）。
+ *
+ * PT 站的下载链接通常带 `passkey` / `torrent_pass` 等凭据参数，日志会被导出、粘贴到 issue；
+ * 这里只保留「协议 + 主机 + 路径」，去掉 query/hash；磁链只保留 infoHash 相关字段。
+ * 无法解析时返回固定占位符，避免把原文写进日志。
+ */
+export function sanitizeDownloadUrlForLog(url: unknown): string {
+  const raw = typeof url === "string" ? url : "";
+  if (!raw) {
+    return "<empty>";
+  }
+
+  if (/^magnet:/i.test(raw)) {
+    const hash = extractMagnetHash(raw);
+    return hash ? `magnet:?xt=urn:btih:${hash}` : "magnet:<redacted>";
+  }
+
+  try {
+    const parsed = new URL(raw);
+    /**
+     * 复检 RB-5：除了丢弃 query，还要抹掉**路径里的凭据段** —— 例如 Rartracker 的下载链接是
+     * `/api/v1/torrents/download/{id}/{passkey}`（凭据在 pathname 里）。这里复用统一的
+     * `redactSensitiveUrls`（query 值 + ≥20 位字母数字混合的路径段均替换为 `***`）。
+     */
+    return redactSensitiveUrls(`${parsed.protocol}//${parsed.host}${parsed.pathname}`);
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
+/** 单个种子文件的最大允许体积（PKG-3）：防止把明显不是种子的超大响应读进内存 */
+const MAX_TORRENT_FILE_SIZE = 50 * 1024 * 1024;
+
 export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Promise<ParsedTorrent> {
   const req = await axios.request({
     ...options,
     responseType: "arraybuffer", // 统一以 ArrayBuffer 形式获取，方便后面转化
   });
 
+  // PKG-3：加体积上限，避免误把大文件（视频/备份）当种子读进内存
+  const contentLength = Number(req.headers["content-length"] ?? 0);
+  const dataLength = (req.data as ArrayBuffer | undefined)?.byteLength ?? 0;
+  if ((contentLength > 0 && contentLength > MAX_TORRENT_FILE_SIZE) || dataLength > MAX_TORRENT_FILE_SIZE) {
+    throw new Error("Invalid Torrent From Server (response too large)");
+  }
+
   /**
-   * 如果服务器设置了 content-type 响应头，
-   * 但响应头值不是 application/x-bittorrent 或 application/octet-stream，
-   * 则我们认为非正常的种子：
+   * PKG-3：原先只接受 `octet-stream|x-bittorrent` 白名单，部分站点用
+   * `application/force-download`、`application/x-download`、`application/x-torrent` 等会误报；
+   * 这里改为「明确不是种子的类型（HTML/JSON/XML/纯文本）→ 直接报错，其余仍交给 parseTorrent 校验」。
    */
-  if (req.headers["content-type"] && !/octet-stream|x-bittorrent/gi.test(<string>req.headers["content-type"])) {
+  const contentType = String(req.headers["content-type"] ?? "");
+  if (contentType && /^(text\/|application\/(json|xml|xhtml\+xml))/i.test(contentType)) {
     throw new Error("Invalid Torrent From Server");
   }
 
   // 将获取到的 ArrayBuffer 转成 Buffer
   const metaDataBuffer = Buffer.from(req.data, "binary");
-  const parsedInfo = (await parseTorrent(metaDataBuffer)) as TorrentInstance;
+  let parsedInfo: TorrentInstance;
+  try {
+    parsedInfo = (await parseTorrent(metaDataBuffer)) as TorrentInstance;
+  } catch {
+    // parseTorrent 失败说明响应体不是合法种子（例如站点返回登录页/错误页）
+    throw new Error("Invalid Torrent From Server");
+  }
 
   /**
    * 设置种子名字

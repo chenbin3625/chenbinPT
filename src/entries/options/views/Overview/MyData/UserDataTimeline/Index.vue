@@ -65,7 +65,10 @@ const control = configStore.userDataTimelineControl;
 const timelineTitle = computed({
   get: () => timelineData.value.title,
   set: (value: string) => {
-    timelineData.value.title = value;
+    // F8：`timelineData` 是 shallowRef（useResetableRef({ shallow: true })），
+    // 直接改 `.title` 只改了内部属性、不会触发 render effect —— 输入框自己会显示新值，
+    // 但 Konva 画布（以及「导出图片」）仍停留在旧标题。这里整体替换以触发重渲染。
+    timelineData.value = { ...timelineData.value, title: value };
     control.title = value;
   },
 });
@@ -102,8 +105,10 @@ const topAndTotalInfoHeight = computed<number>(() => 10 + (realShowField.value.l
 const perSiteHeight = computed<number>(
   () => (control.showPerSiteField.siteName ? 24 : 20) + (realShowField.value.length + 1) * 20 + 20,
 ); // 给每个站点 160px 的高度
+// F14：高度按实际会绘制的站点数（siteInfo 已按 canThisSiteShow / 数据有效性过滤）计算。
+// 修复前用 selectedSites.length：勾选里含「无法展示」的站点时，画布底部会多留一整行空白。
 const siteTimeHeight = computed<number>(() =>
-  control.showTimeline ? 95 + perSiteHeight.value * selectedSites.value.length : 0,
+  control.showTimeline ? 95 + perSiteHeight.value * siteInfo.value.length : 0,
 );
 const canvasHeight = computed<number>(() => nameInfoHeight + topAndTotalInfoHeight.value + siteTimeHeight.value + 25);
 
@@ -490,7 +495,7 @@ function saveControl() {
                       divider({
                         x: stageConfig.width / 2,
                         y: 0,
-                        points: [0, 10, 0, selectedSites.length * perSiteHeight + 10],
+                        points: [0, 10, 0, siteInfo.length * perSiteHeight + 10],
                       })
                     "
                   />

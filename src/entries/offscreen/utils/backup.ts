@@ -26,6 +26,9 @@ import type {
 
 import { logger } from "./logger.ts";
 import { releaseBlobUrlWhenDownloadSettled } from "./download.ts";
+import { sanitizeDownloadHistoryRecordForExport } from "./downloadHistorySanitize.ts";
+import { clearSiteInstanceCache } from "./siteInstanceCache.ts";
+import { replaceKeepUploadTasks } from "./keepUploadTask.ts";
 import { ptdIndexDb } from "../adapter/indexdb.ts";
 
 export const storageKey = [
@@ -35,6 +38,79 @@ export const storageKey = [
   "searchResultSnapshot",
   "keepUploadTask",
 ] as TExtensionStorageKey[];
+
+/**
+ * 未设置备份加密密钥时**禁止上传到远端存储**的字段（OS-2 硬化）。
+ *
+ * 这些字段一旦明文进入远端存储就等于交出账号：
+ *   - `cookies`：全部已配置站点的登录会话（含 httpOnly）；
+ *   - `metadata`：下载器/媒体服务器密码、站点 inputSetting/runtimeSettings 里的 passkey/token；
+ *   - `downloadHistory`：历史记录里的 `torrent.link`/`downloadRequestConfig` 可能带 passkey。
+ *
+ * 旧实现（以及审查报告 OS-2）只是「建议提示」，但自动备份完全不经过 UI，提示等于不存在。
+ * 现在改为 fail-closed：**上传远端**时没有密钥就拒绝导出这些字段，错误消息里给出可操作的修复入口。
+ * 其它无凭据字段（config/userInfo/searchResultSnapshot/keepUploadTask）仍允许明文导出。
+ *
+ * 复检 RB-1/H-2 修订：**本地导出**（`backupServerId === "local"`，写用户自己的磁盘、不经过任何
+ * 第三方）不再 fail-closed —— 强制加密会破坏「导出明文 zip 迁移/离线保存」这一既有能力，且与
+ * 「防止明文上传第三方」的威胁模型无关；改为记一条 warn，由 UI 决定是否二次确认
+ * （SetBackup 页面提示由 options 任务负责）。
+ */
+export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = ["cookies", "metadata", "downloadHistory"];
+
+/** 无密钥 + 敏感字段时的提示文案（remote 拒绝用错误、local 仅告警） */
+function buildPlaintextSensitiveMessage(blockedFields: TBackupFields[]): string {
+  return (
+    `备份包含敏感字段（${blockedFields.join("、")}）但未设置备份加密密钥。` +
+    `上传到远端存储会被拒绝（避免明文交出 cookies/passkey）；` +
+    `请先在 设置 → 基础设置 → 备份 中生成/填写加密密钥，或取消勾选这些字段。`
+  );
+}
+
+/**
+ * 校验「无密钥时不得**上传**敏感字段」，不通过时抛错（仅用于 remote 目标）：
+ * 调用方 UI 会把错误作为失败提示。
+ */
+export function assertBackupFieldsSafeWithoutEncryption(
+  backupFields: TBackupFields[],
+  encryptionKey: string | undefined,
+): void {
+  const key = typeof encryptionKey === "string" ? encryptionKey.trim() : "";
+  if (key.length > 0) {
+    return;
+  }
+
+  const blockedFields = PLAINTEXT_UNSAFE_BACKUP_FIELDS.filter((field) => backupFields.includes(field));
+  if (blockedFields.length === 0) {
+    return;
+  }
+
+  const message = buildPlaintextSensitiveMessage(blockedFields);
+  logger({ msg: `Refuse plaintext backup upload: ${message}`, level: "error", data: { blockedFields } });
+  throw new Error(message);
+}
+
+/**
+ * 本地导出：允许无密钥明文（用户自己的磁盘），但对敏感字段记一条 warn，
+ * 方便用户在导出后自行妥善保管、或在随后上传远端前先设置密钥。
+ */
+export function warnPlaintextLocalExport(backupFields: TBackupFields[], encryptionKey: string | undefined): void {
+  const key = typeof encryptionKey === "string" ? encryptionKey.trim() : "";
+  if (key.length > 0) {
+    return;
+  }
+
+  const blockedFields = PLAINTEXT_UNSAFE_BACKUP_FIELDS.filter((field) => backupFields.includes(field));
+  if (blockedFields.length === 0) {
+    return;
+  }
+
+  logger({
+    msg: `Local plaintext backup contains sensitive fields (${blockedFields.join(", ")}); keep the exported file safe.`,
+    level: "warn",
+    data: { blockedFields },
+  });
+}
 
 export async function createBackupData(backupFields: TBackupFields[] = []): Promise<IBackupData> {
   const backupData: IBackupData = {};
@@ -55,10 +131,19 @@ export async function createBackupData(backupFields: TBackupFields[] = []): Prom
     for (let i = 0; i < siteHosts.length; i += COOKIE_CONCURRENCY) {
       const batch = siteHosts.slice(i, i + COOKIE_CONCURRENCY);
       const results = await Promise.all(
-        batch.map(async (siteHost) => ({
-          siteHost,
-          cookies: await sendMessage("getAllCookies", { domain: siteHost }),
-        })),
+        batch.map(async (siteHost) => {
+          try {
+            return { siteHost, cookies: await sendMessage("getAllCookies", { domain: siteHost }) };
+          } catch (e) {
+            // 单个 host 读取失败不应让整份备份失败（例如带端口的 host 被 cookies API 拒绝）。
+            logger({
+              msg: `Failed to read cookies for backup host ${siteHost}`,
+              level: "warn",
+              data: e instanceof Error ? e.message : String(e),
+            });
+            return { siteHost, cookies: [] as chrome.cookies.Cookie[] };
+          }
+        }),
       );
       for (const { siteHost, cookies: siteHostCookies } of results) {
         if (siteHostCookies.length > 0) {
@@ -79,7 +164,9 @@ export async function createBackupData(backupFields: TBackupFields[] = []): Prom
 
   // 备份下载历史
   if (backupFields.includes("downloadHistory")) {
-    backupData["downloadHistory"] = await (await ptdIndexDb).getAll("download_history");
+    // OS-1：导出前兜底脱敏（旧记录里可能仍有完整 downloadRequestConfig）。
+    const downloadHistory = await (await ptdIndexDb).getAll("download_history");
+    backupData["downloadHistory"] = downloadHistory.map((record) => sanitizeDownloadHistoryRecordForExport(record));
   }
 
   backupData.manifest = {
@@ -96,8 +183,11 @@ export async function createBackupData(backupFields: TBackupFields[] = []): Prom
 
 export async function getBackupServerInstance(backupServerId: TBackupServerKey): Promise<AbstractBackupServer<any>> {
   logger({ msg: `Get backup server instance for ID: ${backupServerId}` });
-  const metadataStore = (await sendMessage("getExtStorage", "metadata")) as IMetadataPiniaStorageSchema;
-  const backupServerConfig = metadataStore.backupServers[backupServerId];
+  const metadataStore = ((await sendMessage("getExtStorage", "metadata")) ?? {}) as IMetadataPiniaStorageSchema;
+  const backupServerConfig = (metadataStore.backupServers ?? {})[backupServerId];
+  if (!backupServerConfig) {
+    throw new Error(`Backup server not found: ${backupServerId}`);
+  }
   return await getBackupServer(backupServerConfig);
 }
 
@@ -112,8 +202,8 @@ export async function applyBackupRetention(
   backupServerId: TBackupServerKey,
   keepFilename?: string,
 ): Promise<IBackupFileInfo[]> {
-  const metadataStore = (await sendMessage("getExtStorage", "metadata")) as IMetadataPiniaStorageSchema;
-  const retention = metadataStore.backupServers[backupServerId]?.retention;
+  const metadataStore = ((await sendMessage("getExtStorage", "metadata")) ?? {}) as IMetadataPiniaStorageSchema;
+  const retention = (metadataStore.backupServers ?? {})[backupServerId]?.retention;
 
   if (!hasBackupRetentionToApply(retention)) {
     return [];
@@ -157,11 +247,23 @@ export async function exportBackupData(
   backupServerId: string | "local",
   backupFields: TBackupFields[] = [],
 ): Promise<boolean> {
-  const backupData = await createBackupData(backupFields);
-  const backupFilename = getBackupFilename();
-
   const configStore = (await sendMessage("getExtStorage", "config")) as IConfigPiniaStorageSchema;
   const encryptionKey = configStore?.backup?.encryptionKey ?? "";
+
+  /**
+   * OS-2 / 复检 RB-1：无密钥处理按**目标**区分，且校验在任何读取（cookies/IndexedDB）之前完成：
+   * - 远端（第三方便携存储）：fail-closed，拒绝上传敏感字段（防止明文交出 cookies/passkey）；
+   * - 本地（用户自己的磁盘）：允许明文导出（迁移/离线保存的既有能力），仅记 warn；
+   *   UI 侧的二次确认由 options 任务负责。
+   */
+  if (backupServerId === "local") {
+    warnPlaintextLocalExport(backupFields, encryptionKey);
+  } else {
+    assertBackupFieldsSafeWithoutEncryption(backupFields, encryptionKey);
+  }
+
+  const backupData = await createBackupData(backupFields);
+  const backupFilename = getBackupFilename();
 
   logger({ msg: `Exporting backup data to ${backupServerId}`, data: { backupFields, backupFilename } });
   if (backupServerId === "local") {
@@ -651,10 +753,35 @@ export async function restoreBackupData(
         continue; // 阶段 2 已记录跳过原因
       }
 
-      await sendMessage("setExtStorage", { key, value });
+      /**
+       * B1-5：`siteIndex` 是 metadata 的派生索引，必须与 metadata 同生共死。
+       * 阶段 2 里 metadata 可能快照失败被跳过（而 siteIndex 的快照成功），此时若照常写
+       * siteIndex，内容脚本/右键菜单会按备份的 host→siteId 映射识别站点，而本地 metadata 仍是旧配置。
+       */
+      if (key === "siteIndex" && !snapshots.has("metadata")) {
+        report.skipped.push({
+          field: "siteIndex",
+          reason: "metadata was not restored, keep local site index",
+        });
+        continue;
+      }
+
+      /**
+       * B1-6 续（Lead 接线）：`keepUploadTask` 必须走 keepUploadTask 模块的**串行突变链**，
+       * 不能直接 `setExtStorage` 整表覆盖 —— 否则与在途的 `updateKeepUploadTask`（读存在 → 写）
+       * 互相覆盖：更新会把已恢复/已删除的任务写回，恢复也可能把更新后的任务整表抹掉。
+       */
+      if (key === "keepUploadTask") {
+        await replaceKeepUploadTasks(value as Parameters<typeof replaceKeepUploadTasks>[0]);
+      } else {
+        await sendMessage("setExtStorage", { key, value });
+      }
       written.push({ key, snapshot: snapshots.get(key)!, field });
       report.restored.push(field);
     }
+
+    // metadata/config 被整份重写后，offscreen 缓存的站点实例可能持有旧 url/凭据，必须失效。
+    clearSiteInstanceCache();
 
     // 最后替换 IndexedDB 历史：该操作自身是原子事务，失败时上面的 storage 写入仍可回滚。
     if (restoreFields.includes("downloadHistory")) {
@@ -702,7 +829,12 @@ export async function restoreBackupData(
     const failedRollbackFields: string[] = [];
     for (const { key, snapshot, field } of written.toReversed()) {
       try {
-        await sendMessage("setExtStorage", { key, value: snapshot });
+        // 与写入路径一致：keepUploadTask 的回滚也走串行突变链
+        if (key === "keepUploadTask") {
+          await replaceKeepUploadTasks(snapshot as Parameters<typeof replaceKeepUploadTasks>[0]);
+        } else {
+          await sendMessage("setExtStorage", { key, value: snapshot });
+        }
       } catch (rollbackError) {
         rollbackOk = false;
         failedRollbackFields.push(field);
@@ -716,6 +848,8 @@ export async function restoreBackupData(
     report.rolledBack = rollbackOk;
     report.restored = failedRollbackFields;
     report.success = false;
+    // 回滚也可能只成功了一部分，缓存同样必须失效（宁可从 storage 重建实例）。
+    clearSiteInstanceCache();
   }
 
   // 报告「跳过/安全化」的细节，便于定位「恢复后为什么少了一些东西」

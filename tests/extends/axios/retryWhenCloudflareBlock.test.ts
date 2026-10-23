@@ -43,9 +43,12 @@ function installSendMessageMock() {
     switch (type) {
       case "getAllCookies":
         return Promise.resolve([cfClearanceCookie]);
+      case "getCookie":
+        return Promise.resolve(null);
+      case "setCookie":
+        return Promise.resolve(true);
       case "updateDNRSessionRules":
       case "removeDNRSessionRuleById":
-      case "setCookie":
       case "removeCookie":
         return Promise.resolve(undefined);
       default:
@@ -187,5 +190,30 @@ describe("Cloudflare 重试与 DNR 注入头（B-17）", () => {
 
     expect(attempts).toHaveLength(2);
     expect(callsOf("updateDNRSessionRules")).toHaveLength(0);
+  });
+
+  it("重试结束后恢复原有的非分区 cf_clearance，而非直接删除", async () => {
+    const original = { ...cfClearanceCookie, value: "original-token", hostOnly: true, httpOnly: true };
+    sendMessageMock.mockImplementation((type: string) => {
+      if (type === "getAllCookies") return Promise.resolve([cfClearanceCookie]);
+      if (type === "getCookie") return Promise.resolve(original);
+      if (type === "setCookie") return Promise.resolve(true);
+      return Promise.resolve(undefined);
+    });
+
+    const { instance } = createCfRetryHarness();
+    await instance.get("/api/thing");
+
+    expect(callsOf("getCookie")).toHaveLength(1);
+    expect(callsOf("removeCookie")).toHaveLength(1);
+    const writes = callsOf("setCookie");
+    expect(writes).toHaveLength(2);
+    expect(writes[1]![1]).toMatchObject({
+      value: "original-token",
+      hostOnly: true,
+      httpOnly: true,
+    });
+    const callTypes = sendMessageMock.mock.calls.map(([type]) => type);
+    expect(callTypes.lastIndexOf("setCookie")).toBeGreaterThan(callTypes.indexOf("removeCookie"));
   });
 });

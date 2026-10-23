@@ -109,7 +109,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "1080i", value: 2 },
         { name: "720p", value: 3 },
         { name: "2160p/4K", value: 5 },
-        { name: "4320k/8K", value: 6 },
+        // L9：原为 "4320k/8K"（拼写笔误，会随搜索方案导出被用户照抄）
+        { name: "4320p/8K", value: 6 },
       ],
       cross: { mode: "append" },
     },

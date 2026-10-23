@@ -111,7 +111,8 @@ export const siteMetadata: ISiteMetadata = {
     {
       id: 2,
       name: "Elite User",
-      privilege: "Elite User",
+      // L8：原 privilege 是 "Elite User"（与 name 完全相同的模板占位）。未取得站点规则页的真实权限文案前
+      // 删除该字段（类型允许缺省，UI 会隐藏权限行），不再把等级名当成权限说明展示。
       interval: "P3W",
       downloaded: "120GB",
       ratio: 1.55,

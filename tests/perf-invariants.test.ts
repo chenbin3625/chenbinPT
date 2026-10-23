@@ -155,10 +155,13 @@ const invariants: Invariant[] = [
   },
   {
     id: "P2-20",
-    description: "locales 生成前清理残留目录",
+    description: "locales 生成后清理已无源语言包的残留目录",
     file: "vite/plugin/generateWebextLocales.ts",
     mustMatch: /rmSync/,
   },
+  // task-12：删除了原 G17 形态断言（`mustMatch /renameSync/`）。它锁的是源码写法而不是行为，
+  // 而行为（先解析后写盘、原子写、清理过期目录）已由 tests/i18n/generateWebextLocales.test.ts
+  // 的行为用例覆盖 —— 与本文件头「行为已被用例覆盖时不要再加形态断言」的纪律冲突，故移除。
   {
     id: "correctness",
     description: "Vite 浏览器构建保留 path polyfill（parse-torrent 会调用 path.join）",

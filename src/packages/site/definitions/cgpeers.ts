@@ -82,8 +82,11 @@ export const siteMetadata: ISiteMetadata = {
         ],
       },
       author: { text: "N/A" },
+      // E2-12：id/title/url/link 已切到 `/torrent/download/` 新布局，status/progress 却仍指向
+      // 旧版 `torrents.php?action=download`（新页面没有这种 href → 状态恒 unknown、进度恒 0）。
+      // 这里保留两种 href（新布局优先）并复用原有图标类名，不猜测新的 class。
       status: {
-        selector: ["a[href*='torrents.php?action=download'] > i"],
+        selector: ["a[href*='torrent/download/'] > i", "a[href*='torrents.php?action=download'] > i"],
         text: ETorrentStatus.unknown,
         case: {
           "i.seeding-torrent": ETorrentStatus.seeding, // 做种!
@@ -92,7 +95,7 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       progress: {
-        selector: ["a[href*='torrents.php?action=download'] > i"],
+        selector: ["a[href*='torrent/download/'] > i", "a[href*='torrents.php?action=download'] > i"],
         text: 0,
         case: {
           "i.seeding-torrent": 100,

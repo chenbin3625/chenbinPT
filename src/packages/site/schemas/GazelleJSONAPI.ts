@@ -1,7 +1,8 @@
 import type { AxiosResponse } from "axios";
 
 import { GazelleBase } from "./Gazelle";
-import { classifySiteError, extractContent, logMessage, parseTimeWithZone, siteErrorLogData } from "../utils";
+import { extractTextFromHtmlFragment } from "./AbstractBittorrentSite";
+import { classifySiteError, logMessage, parseTimeWithZone, siteErrorLogData } from "../utils";
 import {
   EResultParseStatus,
   type IElementQuery,
@@ -302,6 +303,15 @@ export default class GazelleJSONAPI extends GazelleBase {
   private static readonly authKeyCacheKey = "authKey";
   private static readonly authKeyCacheTtl = 12 * 60 * 60; // 12 小时
 
+  /**
+   * E17：基于站点基址生成绝对 URL。
+   * `this.url` 来自用户配置，可能没有尾斜杠（设置页 URL 校验不要求），
+   * 字符串拼接会得到 `https://redacted.shtorrents.php?...` 这种主机名被改写、下载必然失败的链接。
+   */
+  protected siteUrl(path: string): string {
+    return new URL(path, this.url).toString();
+  }
+
   protected async requestApi<T extends jsonResponse>(
     action: apiType,
     params: { [key: string]: any },
@@ -344,18 +354,16 @@ export default class GazelleJSONAPI extends GazelleBase {
    */
   protected assertUserInfoFieldsMatched(doc: object, fields: (keyof IUserInfo)[]): void {
     const selectors = (this.metadata.userInfo?.selectors ?? {}) as Record<string, IElementQuery | undefined>;
-
-    let declaredSelectorFields = 0;
-    let matchedSelectorFields = 0;
-    for (const field of fields) {
-      const elementQuery = selectors[field as string];
-      if (!elementQuery) continue;
-
-      declaredSelectorFields++;
-      if (this.hasFieldMatch(doc, elementQuery)) {
-        matchedSelectorFields++;
-      }
-    }
+    // P2（第二轮审查）：支持定义级逃生口 `userInfo.criticalFields`；未覆写时保持原语义
+    // （index 接口把 id 也视为关键字段：id 缺失会导致扩展信息无法获取）。
+    const configuredCriticalFields = this.metadata.userInfo?.criticalFields;
+    const criticalFields = configuredCriticalFields ?? (fields.includes("id") ? ["id", "uploaded", "downloaded"] : []);
+    const { declared: declaredSelectorFields, matched: matchedSelectorFields } = this.checkUserInfoSelectorMatches(
+      doc,
+      selectors,
+      fields as string[],
+      criticalFields,
+    );
 
     if (declaredSelectorFields > 0 && matchedSelectorFields === 0) {
       // noinspection ExceptionCaughtLocallyJS
@@ -400,10 +408,18 @@ export default class GazelleJSONAPI extends GazelleBase {
       return { authkey: cachedAuthKey.authkey.trim(), passkey: cachedAuthKey.passkey.trim() };
     }
 
-    const apiInfo = await this.requestApiInfo();
+    // D1-2：index 接口与用户信息路径一样存在 HTTP 200 + `{status:"failure", error:"..."}`（无 response）的
+    // 软失败形态；直接取 `response.authkey` 会抛 TypeError，把「账号停用 / ratio watch / 限流」的
+    // 真实原因替换成 "Cannot read properties of undefined"，并让整次搜索以 parseError 收场。
+    // 这里复用 H-7 的 assertApiSuccess，并在 response 缺失时给出可读错误。
+    const apiInfo = this.assertApiSuccess(await this.requestApiInfo(), "index");
+    if (!apiInfo.response || typeof apiInfo.response !== "object") {
+      throw new Error("Gazelle API index error: missing response payload");
+    }
+
     const authKey = {
-      authkey: (apiInfo.response.authkey ?? "").trim(),
-      passkey: (apiInfo.response.passkey ?? "").trim(),
+      authkey: String(apiInfo.response.authkey ?? "").trim(),
+      passkey: String(apiInfo.response.passkey ?? "").trim(),
     };
 
     // 空凭据不写入持久化缓存：否则后续 12 小时内的下载链接都会复用空 authkey/passkey；
@@ -432,10 +448,17 @@ export default class GazelleJSONAPI extends GazelleBase {
     return {
       site: this.metadata.id, // 补全种子的 site 属性
       id: group.torrentId,
-      title: extractContent(group.groupName),
+      title: extractTextFromHtmlFragment(group.groupName),
       subTitle: group.tags.join(", "),
-      url: `${this.url}torrents.php?id=${group.groupId}&torrentid=${group.torrentId}`,
-      link: `${this.url}torrents.php?action=download&id=${group.torrentId}&authkey=${authkey}&torrent_pass=${passkey}`,
+      // E17：用 URL 解析而不是字符串拼接——用户自定义地址可以没有尾斜杠
+      //（设置页的 url 校验不要求 `/` 结尾），`${this.url}torrents.php` 会拼出
+      // `https://redacted.shtorrents.php` 这种主机名都变了、且被 isTrustedDownloadLink 拒绝的链接。
+      url: this.siteUrl(`torrents.php?id=${group.groupId}&torrentid=${group.torrentId}`),
+      link: this.siteUrl(
+        `torrents.php?action=download&id=${group.torrentId}&authkey=${encodeURIComponent(
+          authkey,
+        )}&torrent_pass=${encodeURIComponent(passkey)}`,
+      ),
       time: parseTimeWithZone(group.groupTime, this.metadata.timezoneOffset),
       size: group.size,
       author: "",
@@ -462,16 +485,20 @@ export default class GazelleJSONAPI extends GazelleBase {
     return {
       site: this.metadata.id, // 补全种子的 site 属性
       id: torrent.torrentId,
-      title: `${artistField}${extractContent(group.groupName)} [${group.groupYear}] [${group.releaseType}]`,
+      title: `${artistField}${extractTextFromHtmlFragment(group.groupName)} [${group.groupYear}] [${group.releaseType}]`,
       subTitle:
         `${torrent.format} / ${torrent.encoding} / ${torrent.media}` +
         (torrent.hasLog ? ` / Log(${torrent.logScore})` : "") +
         (torrent.hasCue ? " / Cue" : "") +
         (torrent.remastered ? ` / ${torrent.remasterYear}` : "") +
-        (torrent.remasterTitle ? ` / ${extractContent(torrent.remasterTitle)}` : "") +
+        (torrent.remasterTitle ? ` / ${extractTextFromHtmlFragment(torrent.remasterTitle)}` : "") +
         (torrent.scene ? " / Scene" : ""),
-      url: `${this.url}torrents.php?id=${group.groupId}&torrentid=${torrent.torrentId}`,
-      link: `${this.url}torrents.php?action=download&id=${torrent.torrentId}&authkey=${authkey}&torrent_pass=${passkey}`,
+      url: this.siteUrl(`torrents.php?id=${group.groupId}&torrentid=${torrent.torrentId}`),
+      link: this.siteUrl(
+        `torrents.php?action=download&id=${torrent.torrentId}&authkey=${encodeURIComponent(
+          authkey,
+        )}&torrent_pass=${encodeURIComponent(passkey)}`,
+      ),
       time: parseTimeWithZone(torrent.time, this.metadata.timezoneOffset),
       size: torrent.size,
       author: "",

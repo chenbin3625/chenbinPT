@@ -71,6 +71,15 @@ vi.mock("@/options/views/Overview/DownloadHistory/utils.ts", async () => {
     },
     clearWatchingMap: vi.fn(),
     throttleLoadDownloadHistory: vi.fn(),
+    // N3（F3/F4 的修复新增）：批量操作只处理「当前可见且仍被勾选」的记录。
+    // 这里按真实实现给一份等价替身，避免 mock 缺导出导致组件渲染期 TypeError。
+    pickVisibleDownloadHistoryIds: (
+      selectedIds: Array<string | number>,
+      visibleItems: Array<{ id?: string | number }>,
+    ) => {
+      const visibleKeys = new Set(visibleItems.map((item) => item.id));
+      return selectedIds.filter((id) => visibleKeys.has(id));
+    },
   };
 });
 

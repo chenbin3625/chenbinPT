@@ -25,7 +25,14 @@
           storage: { local: storageArea, session: storageArea, sync: storageArea, onChanged: listeners() },
           runtime: {
             id: "preview",
-            getURL: (p) => p,
+            // F1-05：扩展的持久化层与 runtime store 都用「location.href 是否以 runtime.getURL("") 开头」
+            // 来判断当前文档是不是扩展页（见 extends/pinia/webExtPersistence.ts 的
+            // isContentScriptStorageContext 与 stores/runtime.ts 的 isHostPageStorage）。
+            // 旧 mock 返回 `p` 本身（getURL("") === ""），判定落到「http 页面 ⇒ 内容脚本」分支：
+            // 上面这套 storage mock 一次都不会被调用，预览页的设置刷新即丢、也永远看不到水合后的界面。
+            // 这里让 getURL 返回「预览页自己的 origin 前缀」，使判定为「扩展页」，
+            // 从而让 mock storage 真正参与读写（仅本地预览用途，不影响扩展运行时）。
+            getURL: (p) => new URL(String(p ?? ""), `${location.origin}/`).href,
             sendMessage: (_message, callback) => {
               const response = {
                 err: {

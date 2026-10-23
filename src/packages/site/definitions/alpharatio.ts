@@ -170,7 +170,8 @@ export const siteMetadata: ISiteMetadata = {
       seedingBonus: 2000000,
       // hnrUnsatisfied: 0,
       donation: 50,
-      privilege: "Harpy privileges plus exemption from hit and runs and can see other users' active torrents.",
+      // E1-B5：原 privilege 与 id8 Satyr 逐字相同（都写 "Harpy privileges plus…"），是复制上一级文案的产物，
+      // 等级面板会展示错误的权限继承关系。站点规则页的真实文案无法离线确认，按「拿不到就省略」处理。
     },
     {
       id: 10,
@@ -179,7 +180,8 @@ export const siteMetadata: ISiteMetadata = {
       uploaded: "18TB",
       seedingBonus: 4800000,
       // hnrUnsatisfied: 0,
-      privilege: "Satyr privileges.",
+      // E1-B5：id10 Cyclops 的上一级是 Adonis，原 privilege 却复制了 Satyr 的文案（同 id11 Chimera），
+      // 真实文案无法离线确认，省略 privilege 而不是保留错误继承关系。
     },
     {
       id: 11,
@@ -189,7 +191,6 @@ export const siteMetadata: ISiteMetadata = {
       seedingBonus: 4000000,
       // hnrUnsatisfied: 0,
       donation: 200,
-      privilege: "Satyr privileges.",
     },
     {
       id: 12,

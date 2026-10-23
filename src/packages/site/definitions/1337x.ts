@@ -228,7 +228,9 @@ export const siteMetadata: ISiteMetadata = {
       category: {
         selector: 'td[class^="coll-1"] a[href^="/sub/"]',
         attr: "href",
-        filters: [(q: string) => categoryMap[parseInt(q.match(/\/sub\/(\d+)/)?.[1] ?? "40")]],
+        // E1-A5：`?? "40"` 只在正则不匹配时兜底；站点新增 sub id（1337x 会加分类）时 categoryMap[id]
+        // 是 undefined，会让 category 变空。显式兜底到 "Other/Other"。
+        filters: [(q: string) => categoryMap[parseInt(q.match(/\/sub\/(\d+)/)?.[1] ?? "40")] ?? "Other/Other"],
       },
     },
   },

@@ -70,12 +70,21 @@ export async function mapWithConcurrency<T, R>(
   const results: R[] = new Array(items.length);
   const workerCount = Math.max(1, Math.min(concurrency, items.length));
   let nextIndex = 0;
+  // N6：任一 worker 抛错后，其它 worker 不能再领取新任务。
+  // 早期实现 `await Promise.all(workers)` 会在首个 rejection 立即返回，但其余 worker 仍继续
+  // 消费剩余 items（搜索翻页场景会继续发请求，结果被丢弃，失败重试时叠加成重复请求）。
+  let failed = false;
 
   const workers = new Array(workerCount).fill(0).map(async () => {
-    while (true) {
+    while (!failed) {
       const index = nextIndex++;
       if (index >= items.length) break;
-      results[index] = await mapper(items[index], index);
+      try {
+        results[index] = await mapper(items[index], index);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
 

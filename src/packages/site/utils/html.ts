@@ -37,11 +37,17 @@ export function cfDecodeEmail(encodedString: string): string {
   return email;
 }
 
-// From: https://stackoverflow.com/a/28899585/8824471
+/**
+ * 从 HTML 片段中提取纯文本（保留 HTML 实体解码语义）。
+ *
+ * E07：早期实现是 `document.createElement("span").innerHTML = s`，在当前**活动文档**里建节点。
+ * 即使 span 未挂载，`<img src onerror>` 在真实浏览器中也会发起请求并触发事件（offscreen 的
+ * CSP 只能拦住内联事件，不能阻止图片请求），把不可信标题/副标题变成扩展发出的第三方请求。
+ * 这里改用 `DOMParser` 生成的惰性文档：它不执行脚本、不加载资源，textContent 语义与原来一致。
+ */
 export function extractContent(s: string): string {
-  const span = document.createElement("span");
-  span.innerHTML = s;
-  return span.textContent || span.innerText;
+  if (!s) return "";
+  return createDocument(String(s), "text/html").body?.textContent ?? "";
 }
 
 /**
@@ -84,6 +90,63 @@ export function extractTextExcludingByPredicate(
 }
 
 /**
+ * 按顶层逗号切分选择器列表（忽略 `()` / `[]` 内、以及引号内的逗号）。
+ *
+ * N3：早期 `extractTextExcluding` 直接 `split(",")`，`[title="a,b"]` / `:not(a, b)` / `:is(...)`
+ * 这类合法选择器会被拆成两段非法选择器，`Element.matches` 抛 SyntaxError 并让整行解析失败。
+ */
+function splitSelectorList(selector: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i];
+    if (quote) {
+      if (ch === "\\") {
+        i++;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "(" || ch === "[") {
+      depth++;
+      continue;
+    }
+    if (ch === ")" || ch === "]") {
+      depth--;
+      continue;
+    }
+    if (ch === "," && depth === 0) {
+      parts.push(selector.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(selector.slice(start));
+
+  return parts.map((part) => part.trim()).filter(Boolean);
+}
+
+/** 依赖外部输入的非法选择器不应让整行解析失败：matches 抛错时按「不匹配」处理 */
+function elementMatches(element: Element, selector: string): boolean {
+  try {
+    return element.matches(selector);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 读取 element 的文本内容，但排除匹配 excludeSelector 的后代元素（element 自身不会被排除）。
  *
  * 等价于 `cloneNode(true)` 后删除这些后代元素再取文本，但不需要深克隆整棵子树，
@@ -94,10 +157,7 @@ export function extractTextExcludingByPredicate(
  * 注意 `Element.matches(">span")` 本身是非法选择器，因此这里显式拆开处理。
  */
 export function extractTextExcluding(element: Element, excludeSelector: string): string {
-  const parts = excludeSelector
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const parts = splitSelectorList(excludeSelector);
 
   const directChildSelectors: string[] = [];
   const descendantSelectors: string[] = [];
@@ -110,10 +170,10 @@ export function extractTextExcluding(element: Element, excludeSelector: string):
   }
 
   return extractTextExcludingByPredicate(element, (target, isDirectChild) => {
-    if (isDirectChild && directChildSelectors.some((selector) => target.matches(selector))) {
+    if (isDirectChild && directChildSelectors.some((selector) => elementMatches(target, selector))) {
       return true;
     }
-    return descendantSelectors.some((selector) => target.matches(selector));
+    return descendantSelectors.some((selector) => elementMatches(target, selector));
   });
 }
 

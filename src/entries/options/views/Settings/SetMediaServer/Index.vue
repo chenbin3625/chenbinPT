@@ -86,6 +86,11 @@ function deleteMediaServer(mediaServerId: TMediaServerKey[]) {
 async function confirmDeleteMediaServer(mediaServerId: TMediaServerKey) {
   return await metadataStore.removeMediaServer(mediaServerId);
 }
+
+/** F2-N6：删除后清理选中项（受控 rowSelection 不会自动剔除已不存在的 key） */
+function pruneTableSelected() {
+  tableSelected.value = tableSelected.value.filter((id) => !!metadataStore.mediaServers[id]);
+}
 </script>
 
 <template>
@@ -163,6 +168,11 @@ async function confirmDeleteMediaServer(mediaServerId: TMediaServerKey) {
     <AddDialog v-model="showAddDialog" />
     <EditDialog v-model="showEditDialog" :client-id="toEditMediaServerId!" />
 
-    <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteMediaServer" />
+    <DeleteDialog
+      v-model="showDeleteDialog"
+      :to-delete-ids="toDeleteIds"
+      :confirm-delete="confirmDeleteMediaServer"
+      @all-delete="pruneTableSelected"
+    />
   </a-card>
 </template>

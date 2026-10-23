@@ -8,11 +8,12 @@ import { resolveColor } from "@/shared/colors.ts";
 import { supportTheme } from "@/shared/types.ts";
 import { definedLangMetaData } from "@/options/plugins/i18n.ts";
 
-import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
+import { useSetBaseConfigDraft } from "./configDraft.ts";
+
 const { t } = useI18n();
-const configStore = useConfigStore();
+const config = useSetBaseConfigDraft();
 const metadataStore = useMetadataStore();
 
 const infoIconColor = resolveColor("info");
@@ -40,8 +41,8 @@ async function initContentScriptExceptionSites() {
 async function beforeSave() {
   // 对从低版本升级上来的用户，在启用例外站点时，补全缺失选项
   if (
-    configStore.contentScript.enabled &&
-    configStore.contentScript.allowExceptionSites &&
+    config.value.contentScript.enabled &&
+    config.value.contentScript.allowExceptionSites &&
     !isEmpty(metadataStore.sites)
   ) {
     await initContentScriptExceptionSites();
@@ -60,18 +61,18 @@ defineExpose({
       <!-- 插件语言设置 -->
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.ui.changeLanguage") }}</a-typography-text>
-        <a-select v-model:value="configStore.lang" :options="langOptions" style="width: min(100%, 420px)" />
+        <a-select v-model:value="config.lang" :options="langOptions" style="width: min(100%, 420px)" />
       </div>
 
       <!-- 明亮模式设置 -->
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.ui.displayMode.index") }}</a-typography-text>
-        <a-select v-model:value="configStore.theme" :options="themeOptions" style="width: min(100%, 420px)" />
+        <a-select v-model:value="config.theme" :options="themeOptions" style="width: min(100%, 420px)" />
       </div>
 
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.ui.saveTableBehavior") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.saveTableBehavior" />
+        <a-switch v-model:checked="config.saveTableBehavior" />
       </div>
 
       <div class="ptd-settings-row">
@@ -81,7 +82,7 @@ defineExpose({
             <template #title>{{ t("SetBase.ui.tableMultiSortNote") }}</template>
             <QuestionCircleOutlined :style="{ color: infoIconColor }" />
           </a-tooltip>
-          <a-switch v-model:checked="configStore.enableTableMultiSort" />
+          <a-switch v-model:checked="config.enableTableMultiSort" />
         </a-flex>
       </div>
 
@@ -92,7 +93,7 @@ defineExpose({
             <template #title>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChangeNote") }}</template>
             <QuestionCircleOutlined :style="{ color: infoIconColor }" />
           </a-tooltip>
-          <a-switch v-model:checked="configStore.autoToggleNavBarOnDisplayChange" />
+          <a-switch v-model:checked="config.autoToggleNavBarOnDisplayChange" />
         </a-flex>
       </div>
     </section>
@@ -103,11 +104,11 @@ defineExpose({
         <a-typography-text strong>{{ t("SetBase.ui.contentScript") }}</a-typography-text>
         <a-flex align="center" :gap="8">
           <a-typography-text>{{ t("common.enable") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.contentScript.enabled" />
+          <a-switch v-model:checked="config.contentScript.enabled" />
         </a-flex>
       </div>
 
-      <template v-if="configStore.contentScript.enabled">
+      <template v-if="config.contentScript.enabled">
         <a-alert type="warning" show-icon :message="t('SetBase.ui.contentScriptWarning')" />
 
         <div class="ptd-setting-group">
@@ -115,12 +116,12 @@ defineExpose({
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.allowExceptionSites") }}</a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.allowExceptionSites" />
+            <a-switch v-model:checked="config.contentScript.allowExceptionSites" />
           </div>
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.enableOnSocialSite") }}</a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.enabledAtSocialSite" />
+            <a-switch v-model:checked="config.contentScript.enabledAtSocialSite" />
           </div>
         </div>
 
@@ -131,22 +132,22 @@ defineExpose({
             <a-typography-text>
               {{ `${t("SetBase.ui.respondDisplayMode")}` + t("SetBase.ui.displayMode.index") }}
             </a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.applyTheme" />
+            <a-switch v-model:checked="config.contentScript.applyTheme" />
           </div>
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.expandByDefault") }}</a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.defaultOpenSpeedDial" />
+            <a-switch v-model:checked="config.contentScript.defaultOpenSpeedDial" />
           </div>
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.useLargeIcon") }}</a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.stackedButtons" />
+            <a-switch v-model:checked="config.contentScript.stackedButtons" />
           </div>
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.enableFadeEffect") }}</a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.fadeEnterStyle" />
+            <a-switch v-model:checked="config.contentScript.fadeEnterStyle" />
           </div>
         </div>
 
@@ -155,7 +156,7 @@ defineExpose({
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.confirmTwoStep") }}</a-typography-text>
-            <a-switch v-model:checked="configStore.contentScript.doubleConfirmAction" />
+            <a-switch v-model:checked="config.contentScript.doubleConfirmAction" />
           </div>
 
           <div class="ptd-settings-row">
@@ -165,15 +166,15 @@ defineExpose({
                 <template #title>{{ t("SetBase.ui.dragNote") }}</template>
                 <QuestionCircleOutlined :style="{ color: infoIconColor }" />
               </a-tooltip>
-              <a-switch v-model:checked="configStore.contentScript.dragLinkOnSpeedDial" />
+              <a-switch v-model:checked="config.contentScript.dragLinkOnSpeedDial" />
             </a-flex>
           </div>
 
           <div class="ptd-settings-row">
             <a-typography-text>{{ t("SetBase.ui.socialSiteSearchLabel") }}</a-typography-text>
             <a-select
-              v-model:value="configStore.contentScript.socialSiteSearchBy"
-              :disabled="!configStore.contentScript.enabledAtSocialSite"
+              v-model:value="config.contentScript.socialSiteSearchBy"
+              :disabled="!config.contentScript.enabledAtSocialSite"
               :options="socialSiteSearchOptions"
               style="width: min(100%, 420px)"
             />
@@ -188,25 +189,25 @@ defineExpose({
         <a-typography-text strong>{{ t("SetBase.ui.contextMenu") }}</a-typography-text>
         <a-flex align="center" :gap="8">
           <a-typography-text>{{ t("common.enable") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.contextMenus.enabled" />
+          <a-switch v-model:checked="config.contextMenus.enabled" />
         </a-flex>
       </div>
 
-      <template v-if="configStore.contextMenus.enabled">
+      <template v-if="config.contextMenus.enabled">
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.ui.contextMenuTextSearch") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.contextMenus.allowSelectionTextSearch" />
+          <a-switch v-model:checked="config.contextMenus.allowSelectionTextSearch" />
         </div>
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.ui.contextMenuSocialSearch") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.contextMenus.allowSocialLinkSearch" />
+          <a-switch v-model:checked="config.contextMenus.allowSocialLinkSearch" />
         </div>
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.ui.contextMenuLinkPush") }}</a-typography-text>
           <a-switch
-            v-model:checked="configStore.contextMenus.allowLinkDownloadPush"
+            v-model:checked="config.contextMenus.allowLinkDownloadPush"
             :disabled="metadataStore.getEnabledDownloaders.length === 0"
           />
         </div>

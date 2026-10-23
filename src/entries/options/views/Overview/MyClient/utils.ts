@@ -4,7 +4,7 @@ import type { CTorrent } from "@ptd/downloader";
 import { sendMessage } from "@/messages.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
-import { useI18n } from "vue-i18n";
+import { useI18n, type ComposerTranslation } from "vue-i18n";
 
 // ── module-level shared state ─────────────────────────────────────────────
 
@@ -30,6 +30,17 @@ export const globalRefreshInterval = ref(DEFAULT_CLIENT_REFRESH_INTERVAL_SECONDS
 
 /** Whether auto-refresh is currently running. */
 export const autoRefreshRunning = ref(false);
+
+/**
+ * 用户是否显式停止过自动刷新（D2-06）。
+ *
+ * `autoRefreshRunning` 表示「此刻有没有定时器在跑」；页面卸载必须清掉定时器（否则离开页面后
+ * 仍在轮询），但**不能**把用户主动「停止自动刷新」的选择一起复位 —— 否则下次进入页面又会自动开始。
+ * 两者分开：卸载只清定时器，`autoRefreshUserStopped` 记住用户的选择，重进页面时据此决定是否重新启动。
+ *
+ * 默认 false：与旧行为一致，首次进入页面默认开启自动刷新（间隔为 0 时不会启动）。
+ */
+export const autoRefreshUserStopped = ref(false);
 
 // private – not reactive, managed by the composable only
 const failCounts = new Map<string, number>();
@@ -120,6 +131,77 @@ export function formatTorrentProgressLabel(value: unknown): string {
   return `${normalizeTorrentProgress(value).toFixed(0)}%`;
 }
 
+// ── batch operation helpers ───────────────────────────────────────────────
+
+/**
+ * 批量操作的结果汇总（D2-09）。
+ *
+ * 下载器实体的契约是 `Promise<boolean>`，但「成功」并不总是 `true`：Deluge 的
+ * `pause_torrent` / `force_recheck` / `label.set_torrent` 等上游 RPC 没有返回值，
+ * 实体按原样把 `null` 透传出来（C1 的 DE-1）。用 `Boolean(r.value)` 统计会把这些
+ * **成功**操作算成失败，于是 UI 提示「已暂停 0 个种子」。这里只把 `false` / reject
+ * 视为失败，`true` / `null` / `undefined` 都算成功。
+ */
+export interface CBatchOpSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  /** 首个可读的失败原因（实体返回 false 时没有原因，此时为空） */
+  firstFailureReason?: string;
+}
+
+function reasonToText(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  const text = String(reason ?? "").trim();
+  return text === "Fails." ? "" : text;
+}
+
+export function summarizeBatchResults(results: readonly PromiseSettledResult<unknown>[]): CBatchOpSummary {
+  let succeeded = 0;
+  let firstFailureReason: string | undefined;
+  for (const result of results) {
+    if (result.status === "rejected") {
+      firstFailureReason ||= reasonToText(result.reason);
+      continue;
+    }
+    if (result.value === false) continue; // 失败信号（实体返回 false），没有原因可展示
+    succeeded++;
+  }
+  const failed = results.length - succeeded;
+  return { total: results.length, succeeded, failed, firstFailureReason: failed > 0 ? firstFailureReason : undefined };
+}
+
+/**
+ * 把汇总结果拼成一条提示：成功数沿用各操作自己的文案，失败数与首个原因附加在后。
+ *
+ * L2（F1）：失败文案改用 `MyClient.batch.partialFailure`（不再借用「发送到下载器」的文案）；
+ * 首个可读原因仍复用 `DownloadHistory.detail.errorMessage`（「失败原因」）。
+ *
+ * 成功/失败判定见 `summarizeBatchResults`：实体契约是 `Promise<boolean>`，但 Deluge 的
+ * `pause_torrent` / `force_recheck` 等上游 RPC 无返回值，实体按原样透传 `null`（C1 DE-1），
+ * 因此只有 **`false` / reject** 才算失败，`null` / `undefined` 仍算成功。
+ */
+export function formatBatchOpMessage(
+  t: ComposerTranslation<any, any>,
+  successKey: string,
+  summary: CBatchOpSummary,
+): string {
+  let message = t(successKey, { count: summary.succeeded });
+  if (summary.failed > 0) {
+    message += `，${t("MyClient.batch.partialFailure")}`;
+    if (summary.firstFailureReason) {
+      message += ` (${t("DownloadHistory.detail.errorMessage")}: ${summary.firstFailureReason})`;
+    }
+  }
+  return message;
+}
+
+/** 批量操作的提示色：全成功 success / 部分成功 warning / 全失败 error。 */
+export function batchOpColor(summary: CBatchOpSummary): "success" | "warning" | "error" {
+  if (summary.failed === 0) return "success";
+  return summary.succeeded > 0 ? "warning" : "error";
+}
+
 // ── composable ────────────────────────────────────────────────────────────
 
 /**
@@ -179,10 +261,20 @@ export function useClientRefresh() {
     refreshTimers.set(id, tid);
   }
 
-  function stopAllTimers() {
+  /**
+   * 清掉所有定时器，但**保留** `autoRefreshRunning` / `autoRefreshUserStopped`。
+   *
+   * 页面卸载时使用：离开页面必须停止轮询，但用户「停止自动刷新」的选择要保留到下次进入
+   * （D2-06；`stopAllTimers` 会一并复位运行状态，只适合「用户点停止」的路径）。
+   */
+  function clearAllTimers() {
     for (const id of refreshTimers.keys()) {
       clearDownloaderTimer(id);
     }
+  }
+
+  function stopAllTimers() {
+    clearAllTimers();
     autoRefreshRunning.value = false;
   }
 
@@ -203,6 +295,7 @@ export function useClientRefresh() {
   function startAutoRefresh() {
     if (globalRefreshInterval.value <= 0) return;
     autoRefreshRunning.value = true;
+    autoRefreshUserStopped.value = false;
     for (const id of activeDownloaderIds.value) {
       scheduleDownloaderRefresh(id);
     }
@@ -210,6 +303,7 @@ export function useClientRefresh() {
 
   function stopAutoRefresh() {
     stopAllTimers();
+    autoRefreshUserStopped.value = true;
     resetRefreshState();
   }
 
@@ -226,6 +320,7 @@ export function useClientRefresh() {
     activeDownloaderIds,
     loadSingleDownloader,
     clearDownloaderTimer,
+    clearAllTimers,
     scheduleDownloaderRefresh,
     stopAllTimers,
     resetRefreshState,

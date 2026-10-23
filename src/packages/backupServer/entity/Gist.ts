@@ -86,6 +86,9 @@ interface IGistBackupFileManifest extends IBackupFileManifest {
 export default class Gist extends AbstractBackupServer<GistConfig> {
   protected version = "0.0.1";
 
+  /** C2-B-4：Gist 不支持删除历史，删除尝试的提示每个上下文只打一次 */
+  private static warnedDeleteUnsupported = false;
+
   protected async request<T>(url: string, config: AxiosRequestConfig = {}) {
     const headers = {
       ...(config.headers ?? {}),
@@ -115,19 +118,30 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
 
   async list(options: IBackupFileListOption = {}): Promise<IBackupFileInfo[]> {
     const retFileList = [] as IBackupFileInfo[];
-    const listReq = await this.request<IGistCommitHistory[]>("/commits", {
-      params: { per_page: 100 },
-    });
-    for (const datum of listReq.data) {
-      // 假定了 每次更新记录 都会产生 deletions， 如果 deletions = 0 则说明是 第一次创建，应该过滤掉 （实际并不一定）
-      if (datum.change_status?.deletions > 0) {
-        retFileList.push({
-          filename: datum.version,
-          path: datum.version,
-          time: new Date(datum.committed_at).getTime(),
-          size: "N/A",
-        });
+
+    // C2-B-4：GitHub `/commits` 是分页接口（per_page 最大 100）。旧实现只取第一页，
+    // 备份超过 100 份后更早的版本在恢复对话框里直接消失。这里按页拉取，最多 1000 份（10 页）防止异常账号拖死请求。
+    const PER_PAGE = 100;
+    const MAX_PAGES = 10;
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const listReq = await this.request<IGistCommitHistory[]>("/commits", {
+        params: { per_page: PER_PAGE, page },
+      });
+      const commits = listReq.data ?? [];
+
+      for (const datum of commits) {
+        // 假定了 每次更新记录 都会产生 deletions， 如果 deletions = 0 则说明是 第一次创建，应该过滤掉 （实际并不一定）
+        if (datum.change_status?.deletions > 0) {
+          retFileList.push({
+            filename: datum.version,
+            path: datum.version,
+            time: new Date(datum.committed_at).getTime(),
+            size: "N/A",
+          });
+        }
       }
+
+      if (commits.length < PER_PAGE) break;
     }
 
     return localSort(retFileList, options);
@@ -221,13 +235,36 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       }
       const { hash: manifestContentHash, name: fileName } = value as { hash: string; name: string };
 
-      let fileRawContent = files[fileName]?.content;
-      if (fileRawContent) {
-        if (files[fileName].truncated) {
-          const rawContentReq = await this.request<string>(files[fileName].raw_url);
-          fileRawContent = rawContentReq.data;
-        }
+      const fileEntry = files[fileName];
+      // 复检 P2（H）：manifest 引用了备份里不存在的文件 → 与 zip 路径统一为「warning + 跳过」
+      if (!fileEntry) {
+        warnings.push(`${key}：备份中缺少 ${fileName}，已跳过该条目`);
+        continue;
+      }
 
+      let fileRawContent = fileEntry.content;
+      /**
+       * 复检 P2（C）：`raw_url` 指向 `gist.githubusercontent.com`，它不是 api.github.com，
+       * 不应携带 `Authorization: Bearer <PAT>`（把长期凭据发给内容 CDN 属于凭据外泄面）。
+       * 这里改用裸 axios 拉取：GitHub gist 的 raw URL 本身带签名，无需额外鉴权。
+       *
+       * 注意：GitHub 对 >1MB 的文件返回 `truncated: true` 且内联 content 可能为空，
+       * 因此必须先拉 raw_url，再判断内容是否为空（旧实现 `if (content)` 会跳过这类文件）。
+       */
+      if (fileEntry.truncated && typeof fileEntry.raw_url === "string" && fileEntry.raw_url.length > 0) {
+        const rawContentReq = await axios.get<string>(fileEntry.raw_url, {
+          responseType: "text",
+          timeout: getBackupRequestTimeout(this.userConfig),
+        });
+        fileRawContent = rawContentReq.data;
+      }
+
+      if (!fileRawContent) {
+        warnings.push(`${key}：备份中 ${fileName} 内容为空，已跳过该条目`);
+        continue;
+      }
+
+      {
         const fileContentHash = CryptoJS.MD5(fileRawContent).toString();
         if (fileContentHash !== manifestContentHash) {
           throw new Error(`File hash mismatch for ${fileName}.`);
@@ -251,6 +288,10 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
               ? decryptData(fileRawContent, undefined, key)
               : this.decryptData(fileRawContent, key);
         } catch (e) {
+          // C2-B-10：降级保护的可操作提示不能被通用文案吞掉（用户清空解密密钥即可恢复明文备份）
+          if (e instanceof BackupDowngradeError) {
+            throw e;
+          }
           throw new Error(`Failed to decrypt file.`);
         }
 
@@ -273,6 +314,12 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
 
   // Gist 不支持删除历史记录！我们直接返回 false 表示删除失败即可！
   async deleteFile(path: string): Promise<boolean> {
+    // C2-B-4：deleteFile 恒 false 时，调用侧的保留策略（applyBackupRetention）只会静默跳过、
+    // 不留下任何原因。这里每个 Gist 实例只提示一次（避免对每个候选文件刷日志）。
+    if (!Gist.warnedDeleteUnsupported) {
+      Gist.warnedDeleteUnsupported = true;
+      logMessage("[Gist] 不支持删除历史备份，保留策略对本后端不生效", { path }, "warn");
+    }
     return false;
   }
 
@@ -283,16 +330,24 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
   }
 
   protected override decryptData<T = any>(data: string, field = ""): T {
-    // SERVERSSOCIAL-2：`|<gist_id>` 候选密钥仅为兼容修复前上传的旧备份（它们确实是用它加密的），
-    // 新备份不再使用该密钥派生方式。
-    const decryptKeys = [`${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`, this.encryptionKey];
+    /**
+     * SERVERSSOCIAL-2：`|<gist_id>` 候选密钥仅为兼容修复前上传的旧备份（它们确实是用它加密的），
+     * 新备份不再使用该密钥派生方式。
+     *
+     * 复检 P2（H）：候选顺序调整为「真实密钥优先」——否则每次恢复新备份都会先用错误的 `|<gist_id>`
+     * 试一次、失败后再回退，既多一次 PBKDF2/AES，又在日志里刷一条误导性的
+     * 「使用候选密钥解密失败」（用户会以为备份损坏或密钥错误）。
+     * 空密钥不进入候选（避免把明文 JSON 当成可解密数据、或对 undefined 做 MD5）。
+     */
+    const decryptKeys = [this.encryptionKey, `${this.encryptionKey ?? ""}|${this.userConfig.gist_id}`].filter(
+      (key): key is string => typeof key === "string" && key.length > 0,
+    );
 
     for (const key of decryptKeys) {
       try {
         return decryptData(data, key, field) as T;
       } catch (e) {
-        // P1-5：多密钥依次尝试属正常控制流，但记录每次失败原因，
-        // 便于区分「密钥不匹配」与「数据本身损坏」；全部失败时下方仍会抛出。
+        // 多密钥依次尝试属正常控制流；全部失败时下方仍会抛出。
         logMessage("[Gist] 使用候选密钥解密失败，尝试下一个密钥", {
           gistId: this.userConfig.gist_id,
           error: e instanceof Error ? e.message : String(e),

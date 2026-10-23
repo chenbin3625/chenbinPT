@@ -3,8 +3,9 @@
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdhome.org/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hd_home.json
  */
-import { ETorrentStatus, type IElementQuery, type ISiteMetadata } from "../types";
-import {
+import { ETorrentStatus, type IElementQuery, type ISiteMetadata, type IUserInfo } from "../types";
+import { selectElements } from "../utils/selector.ts";
+import NexusPHP, {
   CategoryInclbookmarked,
   CategoryIncldead,
   CategorySpstate,
@@ -358,36 +359,15 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata.userInfo,
     selectors: {
       ...SchemaMetadata.userInfo!.selectors,
+      // B2：`/mybonus.php` 的时魔单元格。解析逻辑在下面的 parseUserInfoForBonusPerHour（动态方法优先于
+      // selector），这里保留 selector 是为了 locate 元素与 `hasFieldMatch` 的命中判据。
       bonusPerHour: {
         selector: ["td.text:has(>h1)"],
-        elementProcess: (element: any) => {
-          if (!element) return 0;
-
-          // 查找所有包含魔力值信息的div元素
-          const divs = element.querySelectorAll('div[align="center"]');
-
-          // 将所有div的文本内容合并
-          const allText = Array.from(divs)
-            .map((div: any) => div.textContent || div.innerText || "")
-            .join(" ");
-
-          const queryMatch = String(allText || "")
-            .replace(/,/g, "")
-            .match(/[\d.]+/g);
-          if (!queryMatch) return 0;
-
-          // 如果匹配到10个数字，取第0、5、8位相加；否则只取第0位
-          const bonusPerHour =
-            queryMatch.length === 10
-              ? parseFloat(queryMatch[0]) + parseFloat(queryMatch[5]) + parseFloat(queryMatch[8])
-              : parseFloat(queryMatch[0]);
-          return bonusPerHour;
-        },
       },
     },
     donorConfig: {
       ...SchemaMetadata.userInfo!.donorConfig,
-      bonusPerHourMultiplier: 1, // selector 已能正确选中加倍后的时魔
+      bonusPerHourMultiplier: 1, // 下面的解析方法已能正确选中加倍后的时魔
     },
   },
 
@@ -480,3 +460,48 @@ export const siteMetadata: ISiteMetadata = {
     },
   ],
 };
+
+export default class HDHome extends NexusPHP {
+  /**
+   * B2：`bonusPerHour` 的解析依赖「该单元格文本里数字个数恰好为 10」这一版式事实
+   * （取第 0、5、8 个数字相加，即基础 + 加成 + 保种三段的时魔）。
+   *
+   * 旧实现把「个数 ≠ 10」时的 `queryMatch[0]`（通常是**当前总魔力值**）当成时魔写回，出现
+   * 百万级时魔、`bonusNeededInterval` 失真，且状态仍是 success。这里改为：版式不匹配就**不写字段**
+   * （保留上一次的真实值 / 显示为空），而不是写一个必然错误的数量级。
+   *
+   * 待验证：10 个数字的分布需要一张 `/mybonus.php` 的 DOM 片段确认；这属于版式事实，不是可猜的选择器。
+   */
+  protected async parseUserInfoForBonusPerHour(
+    flushUserInfo: Partial<IUserInfo>,
+    dataDocument: Document,
+  ): Promise<Partial<IUserInfo>> {
+    const elementQuery = this.metadata.userInfo?.selectors?.bonusPerHour;
+    if (!elementQuery?.selector || !this.hasFieldMatch(dataDocument, elementQuery)) {
+      return flushUserInfo;
+    }
+
+    // 依次尝试 selectors（与原 getFieldData 的 selector 语义一致）
+    let element: HTMLElement | undefined;
+    for (const selector of ([] as string[]).concat(elementQuery.selector)) {
+      element = selectElements(selector, dataDocument)[0] as HTMLElement | undefined;
+      if (element) break;
+    }
+    if (!element) return flushUserInfo;
+
+    // 查找所有包含魔力值信息的 div 元素，合并其文本
+    const allText = Array.from(element.querySelectorAll('div[align="center"]'))
+      .map((div) => div.textContent || (div as HTMLElement).innerText || "")
+      .join(" ");
+    const queryMatch = String(allText || "")
+      .replace(/,/g, "")
+      .match(/[\d.]+/g);
+
+    if (!queryMatch || queryMatch.length !== 10) {
+      return flushUserInfo;
+    }
+
+    flushUserInfo.bonusPerHour = parseFloat(queryMatch[0]) + parseFloat(queryMatch[5]) + parseFloat(queryMatch[8]);
+    return flushUserInfo;
+  }
+}

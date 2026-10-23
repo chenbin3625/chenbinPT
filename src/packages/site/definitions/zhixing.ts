@@ -3,7 +3,7 @@
  */
 import urlJoin from "url-join";
 
-import { createDocument } from "../utils";
+import { createDocument, logMessage, siteErrorLogData } from "../utils";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import { EResultParseStatus, type ISiteMetadata, type IUserInfo } from "../types";
 
@@ -18,7 +18,9 @@ export const siteMetadata: ISiteMetadata = {
   collaborator: ["wanicca", "Rhilip"],
 
   type: "private",
-  schema: "CGBTSource",
+  // Info-46 / L-3：schemas/ 下没有 CGBTSource 引擎，实际基类是本文件导出的 default class（extends PrivateSite）。
+  // schema 写真实基类名，避免「误删 default class 后静默回落裸 AbstractPrivateSite」且无类型错误。
+  schema: "AbstractPrivateSite",
   urls: ["http://pt.zhixing.bjtu.edu.cn/"],
 
   category: [
@@ -41,9 +43,12 @@ export const siteMetadata: ISiteMetadata = {
       ],
       cross: false,
       generateRequestConfig: (options) => {
+        // L-33：选「全部」时 value 是空串，模板串会生成 `/search//`（双斜杠）。
+        // 空类目直接请求 `/search/`，与非空类目保持同一路径形状。
+        const categoryPath = typeof options === "string" && options !== "" ? `${options}/` : "";
         return {
           requestConfig: {
-            url: `/search/${options}/`,
+            url: `/search/${categoryPath}`,
           },
         };
       },
@@ -180,29 +185,41 @@ export default class Zhixing extends PrivateSite {
     userId: string,
   ): Promise<{ count: number; size: number }> {
     const retUserInfo = { count: 0, size: 0 };
-    let currentPage = 1; // 生成页面信息
-    while (true) {
+    // L-34：终止条件原先只依赖「越界页返回空表」。若站点对越界页码回落到最后一页，
+    // `tbody > tr` 数仍 > 1 → 永久循环；这里加页数上限、请求间隔，并对连续两页内容做去重判断。
+    const MAX_PAGES = 50;
+    let currentPage = 1;
+    let previousPageSignature: string | undefined;
+    while (currentPage <= MAX_PAGES) {
+      // 批量抓取用户种子时逐页限速，避免触发站点 anti-flood
+      await this.sleepAction(this.metadata.userInfo?.requestDelay ?? this.metadata.requestDelay ?? 0);
       const requestConfig = { url: `/user/${userId}/${type}/p${currentPage}` };
       const { data: TListString } = await this.request<string>(requestConfig);
 
       const TListDocument = createDocument(TListString);
-      try {
-        const TList = await this.transformSearchPage(TListDocument, {
-          searchEntry: this.metadata.search,
-          requestConfig,
-          keywords: "",
-        });
-
-        if (TList.length === 0) {
-          break; // 如果没有数据了，则退出循环
-        }
-
-        retUserInfo.count += TList.length; // 累加种子数量
-        retUserInfo.size += TList.reduce((sum, torrent) => sum + (torrent.size || 0), 0); // 累加种子大小
-        currentPage += 1; // 进入下一页
-      } catch (e) {
-        break;
+      const table = TListDocument.querySelector("table.torrenttable");
+      if (!table) {
+        throw new Error(`用户${type}列表第 ${currentPage} 页缺少种子表格`);
       }
+      if (table.querySelectorAll("tbody > tr").length <= 1) break;
+
+      // 站点对越界页码回落最后一页时，连续两页的第一条数据行相同；此时停止，避免把同一页重复计数。
+      // 注意 table.torrenttable 的第一个 tbody > tr 是表头（rows 选择器是 `tr:gt(0)`），
+      // 必须取第 2 行作为「首条数据行」，否则每页表头相同会让循环在第一页后就误停。
+      const dataRows = table.querySelectorAll("tbody > tr");
+      const firstDataRowSignature = dataRows[1]?.outerHTML;
+      if (firstDataRowSignature && firstDataRowSignature === previousPageSignature) break;
+      previousPageSignature = firstDataRowSignature;
+
+      const TList = await this.transformSearchPage(TListDocument, {
+        searchEntry: this.metadata.search,
+        requestConfig,
+        keywords: "",
+      });
+
+      retUserInfo.count += TList.length;
+      retUserInfo.size += TList.reduce((sum, torrent) => sum + (torrent.size || 0), 0);
+      currentPage += 1;
     }
 
     return retUserInfo;
@@ -212,12 +229,21 @@ export default class Zhixing extends PrivateSite {
     const flushUserInfo: IUserInfo = await super.getUserInfoResult(lastUserInfo);
 
     if (flushUserInfo.status === EResultParseStatus.success && flushUserInfo.id) {
-      const seedingInfo = await this.parseUserInfoForUserTorrent("seeding", flushUserInfo.id as string);
-      flushUserInfo.seeding = seedingInfo.count;
-      flushUserInfo.seedingSize = seedingInfo.size;
-
-      const uploadedInfo = await this.parseUserInfoForUserTorrent("uploaded", flushUserInfo.id as string);
-      flushUserInfo.uploads = uploadedInfo.count;
+      try {
+        const seedingInfo = await this.parseUserInfoForUserTorrent("seeding", flushUserInfo.id as string);
+        const uploadedInfo = await this.parseUserInfoForUserTorrent("uploaded", flushUserInfo.id as string);
+        flushUserInfo.seeding = seedingInfo.count;
+        flushUserInfo.seedingSize = seedingInfo.size;
+        flushUserInfo.uploads = uploadedInfo.count;
+      } catch (error) {
+        // L-35：做种/发布列表只是可选增强。super 已成功拿到 uploaded/downloaded/ratio/levelName，
+        // 这里若把 status 改成错误态，UI 会把整条记录当失败（与 NexusPHP/Gazelle 对可选步骤只 warn 同构）。
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForUserTorrent failed`,
+          { site: this.metadata.id, error: siteErrorLogData(error) },
+          "warn",
+        );
+      }
     }
 
     return flushUserInfo;

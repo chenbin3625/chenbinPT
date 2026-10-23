@@ -19,7 +19,9 @@ export const siteMetadata: ISiteMetadata = {
   type: "private",
   schema: "NexusPHP",
 
-  urls: ["https://pt.gtkpw.xyz/", "https://pt.gtk.pw/"],
+  // E5-15：Jackett 上游把 pt.gtk.pw 标为 legacylinks，仓库约定旧域名放 legacyUrls
+  urls: ["https://pt.gtkpw.xyz/"],
+  legacyUrls: ["https://pt.gtk.pw/"],
 
   favicon: "./_default_nexusphp.png",
 

@@ -12,6 +12,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { itAcrossTimezones } from "../../../helpers/timezoneMatrix.ts";
+
 // 站点定义会连带引入 @ptd/site 的运行时依赖（messages.ts 用到 __BROWSER__ 与 chrome API），
 // 这里给出最小桩（与 definitionFixes.test.ts 一致），避免为纯配置断言去跑整个扩展环境。
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
@@ -77,7 +79,9 @@ describe("H&R 恒真标签（DEFS2-2）", () => {
 });
 
 describe("nebulance 时间（DEFS2-3）", () => {
-  it("列表时间只走 parseTTL，不再叠加宿主 getTimezoneOffset 与 -11h", async () => {
+  // H-L2：这条用例的区分力来自宿主时区（旧实现按宿主 getTimezoneOffset 叠加），
+  // 因此在 UTC / +0800 / 美东三种宿主下各跑一次，避免「在 +0800 开发机上碰巧通过」。
+  itAcrossTimezones("列表时间只走 parseTTL，不再叠加宿主 getTimezoneOffset 与 -11h", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/nebulance.ts");
     const { default: BittorrentSite } = await import("@ptd/site/schemas/AbstractBittorrentSite.ts");
     const filters = (siteMetadata.list![0].selectors!.time as any).filters as Array<any>;
@@ -143,8 +147,9 @@ describe("hdcity 时间与等级（DEFS2-5 / DEFS2-9）", () => {
     }
   });
 
-  it("具名 parseTime 按站点 +0800 换算，不随宿主时区漂移", async () => {
+  it("具名 parseTime 按站点 +0800 换算，不随宿主时区漂移（走真实装配路径）", async () => {
     const { default: NexusPHP } = await import("@ptd/site/schemas/NexusPHP.ts");
+    const { getDefinedSiteMetadata } = await import("@ptd/site/index.ts");
     const { siteMetadata } = await import("@ptd/site/definitions/hdcity.ts");
     const listFilters = (siteMetadata.search!.selectors!.time as any).filters as Array<any>;
 
@@ -153,8 +158,13 @@ describe("hdcity 时间与等级（DEFS2-5 / DEFS2-9）", () => {
         return this.runQueryFilters(query, fs);
       }
     }
-    // 运行期 index.ts 会给未声明 timezoneOffset 的 NexusPHP 站点补 +0800，这里显式补上
-    const probe = new Probe({ ...siteMetadata, timezoneOffset: "+0800" } as any);
+    // H-L5：hdcity 自己没声明 timezoneOffset，+0800 来自 site/index.ts 的运行期默认注入。
+    // 不再手写 `{ ...siteMetadata, timezoneOffset: "+0800" }`（那样 index.ts 的默认值改了测试也不会红），
+    // 而是用真实装配函数取元数据，并顺带断言默认注入的两种取值。
+    const assembled = await getDefinedSiteMetadata("hdcity");
+    expect(assembled.timezoneOffset).toBe("+0800");
+
+    const probe = new Probe(assembled as any);
     expect(probe.run(listFilters[0]("发布时间 2024-01-02 03:04:05"), listFilters)).toBe(
       Date.parse("2024-01-02T03:04:05+08:00"),
     );

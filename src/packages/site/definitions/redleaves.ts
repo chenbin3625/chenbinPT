@@ -232,7 +232,7 @@ export const siteMetadata: ISiteMetadata = {
     },
     {
       id: 9,
-      name: "四川简州猫 NEXUS MASTER",
+      name: "Nexus Master",
       interval: "P100W",
       downloaded: "4000GB",
       ratio: 4.55,

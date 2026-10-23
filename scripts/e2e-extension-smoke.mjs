@@ -12,6 +12,8 @@
  * - the top-bar search button navigates to the search route;
  * - the Set Site "Add" button opens its modal;
  * - the Set Site "Rebuild Site Cache" button opens a second modal.
+ * - a matched site mounts the content script without module load errors;
+ * - the fixed-ID JS WAR remains accessible (known extension-fingerprinting risk).
  *
  * The test uses a temporary browser profile and never touches the user's
  * installed extension data or persistent browser profile.
@@ -130,6 +132,54 @@ async function runSmoke() {
     assert(
       pageErrors.length === 0,
       `The extension page raised ${pageErrors.length} exception(s):\n${pageErrors.join("\n")}`,
+    );
+
+    await context.route("https://movie.douban.com/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<html><head><title>Movie list</title></head><body><h1>Movie list</h1></body></html>",
+      }),
+    );
+    const sitePage = await context.newPage();
+    const contentScriptErrors = [];
+    sitePage.on("pageerror", (error) => contentScriptErrors.push(error.message));
+    sitePage.on("console", (message) => {
+      if (["error", "warning"].includes(message.type())) {
+        contentScriptErrors.push(message.text());
+      }
+    });
+    await sitePage.goto("https://movie.douban.com/top250", { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    try {
+      await sitePage.locator(".ptd-content-script-root").waitFor({ state: "attached", timeout: timeoutMs });
+    } catch (error) {
+      throw new Error(`Content script did not mount: ${error.message}\n${contentScriptErrors.join("\n")}`);
+    }
+    // task-12（P2）：挂载点是引导先插入的，cs-app chunk / 样式资源仍在异步加载。
+    // 若立刻断言「零 console error」，会漏掉 200ms 后才出现的 chunk/style 加载失败（漏报）。
+    // 这里给资源与微任务一个 settle 窗口，并显式等待入口 chunk 的 resource timing 出现（最多 2s）。
+    await sitePage
+      .waitForFunction(
+        (entrySuffix) => performance.getEntriesByType("resource").some((entry) => entry.name.includes(entrySuffix)),
+        "assets/cs-app.js",
+        { timeout: 2000 },
+      )
+      .catch(() => undefined);
+    await sitePage.waitForTimeout(800);
+    const fixedResourceAccessible = await sitePage.evaluate(async (url) => {
+      try {
+        return (await fetch(url)).ok;
+      } catch {
+        return false;
+      }
+    }, `chrome-extension://${extensionId}/assets/cs-app.js`);
+    assert(
+      fixedResourceAccessible,
+      "The fixed-ID JS WAR is unavailable; static ESM imports will fail to mount the content script.",
+    );
+    assert(
+      contentScriptErrors.length === 0,
+      `The content script raised ${contentScriptErrors.length} exception(s):\n${contentScriptErrors.join("\n")}`,
     );
     console.log(`Extension smoke E2E passed (${extensionId})`);
   } finally {

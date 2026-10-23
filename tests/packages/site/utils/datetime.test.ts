@@ -8,6 +8,7 @@ import {
   parseTimeToLiveToSeconds,
   parseTimeWithZone,
   parseValidTimeString,
+  parseValidTimeStringInZone,
 } from "@ptd/site/utils/datetime.ts";
 
 const DAY = 86400;
@@ -15,6 +16,11 @@ const HOUR = 3600;
 const MINUTE = 60;
 
 describe("parseTimeToLiveToSeconds", () => {
+  it("重复的相同单位全部累加，包括别名和紧凑写法", () => {
+    expect(parseTimeToLiveToSeconds("1 day 2 days")).toBe(3 * DAY);
+    expect(parseTimeToLiveToSeconds("1天2日3天")).toBe(6 * DAY);
+    expect(parseTimeToLiveToSeconds("2h3h30m")).toBe(5 * HOUR + 30 * MINUTE);
+  });
   it("标准英文单位", () => {
     expect(parseTimeToLiveToSeconds("1 day")).toBe(DAY);
     expect(parseTimeToLiveToSeconds("2 weeks")).toBe(14 * DAY);
@@ -258,5 +264,90 @@ describe("parseValidTimeString", () => {
   it("完全无法解析时原样返回输入字符串", () => {
     expect(parseValidTimeString("not a date")).toBe("not a date");
     expect(parseValidTimeString("")).toBe("");
+  });
+
+  it("E04：无关文本不再被 V8 宽松解析成 2001 年", () => {
+    expect(parseValidTimeString("foo 1")).toBe("foo 1");
+    expect(parseValidTimeString("Released 3")).toBe("Released 3");
+  });
+
+  it("E04：无年份日期按当前年份补全，而不是回落到 2001 年", () => {
+    const currentYear = new Date().getFullYear();
+
+    const jan5 = parseValidTimeString("5 Jan");
+    expect(typeof jan5).toBe("number");
+    expect(new Date(jan5 as number).getFullYear()).toBe(currentYear);
+    expect(new Date(jan5 as number).getMonth()).toBe(0);
+    expect(new Date(jan5 as number).getDate()).toBe(5);
+
+    const sep5 = parseValidTimeString("Sep 5, 10:00");
+    expect(typeof sep5).toBe("number");
+    const sep = new Date(sep5 as number);
+    expect(sep.getFullYear()).toBe(currentYear);
+    expect(sep.getMonth()).toBe(8);
+    expect(sep.getDate()).toBe(5);
+    expect(sep.getHours()).toBe(10);
+  });
+});
+
+describe("parseTimeWithZone 的 UTC/GMT 后缀与紧凑日期（E06 / N2）", () => {
+  it("UTC / GMT 文本后缀按绝对时间解析，不再按宿主时区二次换算（E06）", () => {
+    expect(parseTimeWithZone("2024-03-01 10:00:00 UTC", "+0800")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+    expect(parseTimeWithZone("2024-03-01 10:00:00 GMT", "+0800")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+    expect(parseTimeWithZone("2024-03-01 10:00 UTC", "+0800")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+  });
+
+  it("parseValidTimeStringInZone 对 UTC/GMT 后缀同样返回绝对时间（E06）", () => {
+    expect(parseValidTimeStringInZone("2024-03-01 10:00:00 UTC", [], "+0800")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+    expect(parseValidTimeStringInZone("2024-03-01 10:00:00 GMT", [], "-0500")).toBe(Date.parse("2024-03-01T10:00:00Z"));
+  });
+
+  it("8 位 yyyyMMdd 按站点时区的墙上日期解析，不再被当成 Unix 秒（N2）", () => {
+    expect(parseTimeWithZone("20240301", "+0800")).toBe(+new Date("2024-03-01T00:00:00+08:00"));
+    expect(parseValidTimeStringInZone("20240301", [], "+0800")).toBe(+new Date("2024-03-01T00:00:00+08:00"));
+    // 8 位但不是合法日期形状时仍按时间戳处理
+    expect(parseTimeWithZone("19700101" as any, "+0800")).toBe(+new Date("1970-01-01T00:00:00+08:00"));
+  });
+});
+
+describe("parseTimeToLiveToSeconds 的多字母单位大小写（E05）", () => {
+  it("首字母大写的英文单位也能解析", () => {
+    expect(parseTimeToLiveToSeconds("5 Minutes")).toBe(5 * MINUTE);
+    expect(parseTimeToLiveToSeconds("1 Day")).toBe(DAY);
+    expect(parseTimeToLiveToSeconds("2 Hours")).toBe(2 * HOUR);
+    expect(parseTimeToLiveToSeconds("10 Min")).toBe(10 * MINUTE);
+    expect(parseTimeToLiveToSeconds("2 Weeks")).toBe(14 * DAY);
+    expect(parseTimeToLiveToSeconds("1 Year")).toBe(365 * DAY);
+    expect(parseTimeToLiveToSeconds("1 Day ago")).toBe(DAY);
+  });
+
+  it("单字母单位仍保持大小写敏感（M=月 / m=分）", () => {
+    expect(parseTimeToLiveToSeconds("5 M")).toBe(150 * DAY);
+    expect(parseTimeToLiveToSeconds("5 m")).toBe(5 * MINUTE);
+    // 小写 d 不在单位表内，保持原样返回
+    expect(parseTimeToLiveToSeconds("1d")).toBe("1d");
+  });
+});
+
+describe("parseTimeWithZone 的 native Date 兜底闸门（P2-A / E04 同源）", () => {
+  it("垃圾串不再被 V8 宽松解析成 2001 年的「有效时间」", () => {
+    // V8: new Date("foo 1") ≈ 2000-12-31、new Date("Released 3") ≈ 2001-02-28
+    expect(parseTimeWithZone("foo 1", "+0800")).toBe(0);
+    expect(parseTimeWithZone("Released 3", "+0800")).toBe(0);
+    expect(parseTimeWithZone("abc 1 2", "+0800")).toBe(0);
+  });
+
+  it("无年份自然语言日期按当前年份补全，并按站点时区换算", () => {
+    const year = new Date().getFullYear();
+    expect(parseTimeWithZone("Sep 5", "+0800")).toBe(+new Date(`${year}-09-05T00:00:00+08:00`));
+    expect(parseTimeWithZone("5 Jan", "+0000")).toBe(+new Date(`${year}-01-05T00:00:00Z`));
+    expect(parseTimeWithZone("Mar 10, 10:30", "+0800")).toBe(+new Date(`${year}-03-10T10:30:00+08:00`));
+  });
+
+  it("形如日期的串（含四位年份/完整数字日期）仍走原有 native 路径", () => {
+    expect(parseTimeWithZone("Mar 10, 2024 10:30", "+0800")).toBe(+new Date("2024-03-10T10:30:00+08:00"));
+    expect(parseTimeWithZone("Mar 10, 2024", "+0800")).toBe(+new Date("2024-03-10T00:00:00+08:00"));
+    // 「日 + 月 + 2 位年份」也是站点常见写法，不能被闸门误杀
+    expect(parseTimeWithZone("31 Dec 24", "+0800")).toBe(+new Date("2024-12-31T00:00:00+08:00"));
   });
 });

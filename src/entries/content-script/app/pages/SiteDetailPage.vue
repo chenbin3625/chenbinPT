@@ -28,12 +28,25 @@ const enabledDownloadersBySite = computed(() => {
   return metadataStore.getEnabledDownloadersBySite(ptdData.siteId ?? "");
 });
 
-async function parseDetailPage() {
+/**
+ * 解析详情页。
+ *
+ * B2-4：`requireLink` 区分两类动作 —— 「复制链接 / 推送到下载器」需要可下载的 link，
+ * 而「快捷搜索」只需要标题。旧实现让快捷搜索也复用「必须解析出 link」的同一路径，
+ * 于是详情页 link 解析失败时快捷搜索完全不会执行，还弹一条与本动作无关的错误。
+ */
+async function parseDetailPage(options: { requireLink?: boolean } = {}) {
+  const { requireLink = true } = options;
   const parsedResult = await siteInstance.value?.transformDetailPage(document);
+
+  if (!parsedResult) {
+    runtimeStore.showSnakebar(t("contentScript.parsePageFailed"), { color: "error" });
+    throw new Error("无法解析当前页面种子信息");
+  }
 
   // 真值判定：fixLink 对危险 scheme（javascript:/data:/file: 等）返回空串，
   // 空串与 undefined 都是「没解析到链接」，必须走同一条提示，而不是把空串当成可用下载链接往下传。
-  if (!parsedResult?.link) {
+  if (requireLink && !parsedResult.link) {
     runtimeStore.showSnakebar(t("contentScript.cannotParseDetailLink"), { color: "error" });
     throw new Error("无法解析当前页面种子链接");
   }
@@ -58,7 +71,7 @@ async function parseTrustedDetailTorrent(): Promise<ITorrent | undefined> {
     // S-2：详情页链接同样可能被页面注入（下载列里的异站 <a href>）；magnet: 没有 host，不受影响
     return (await ensureTrustedTorrentLink(torrent, ptdData.siteId)) ? torrent : undefined;
   } catch {
-    // parseDetailPage 内部已经给出「无法解析当前页面种子链接」的提示
+    // parseDetailPage 内部已经给出「无法解析当前页面种子链接 / 页面信息」的提示
     return undefined;
   }
 }
@@ -89,7 +102,8 @@ async function handleRemoteDownload(isDefaultSend = false) {
 }
 
 function handleSearch() {
-  parseDetailPage()
+  // B2-4：快捷搜索只用到标题，不要求下载链接（link 解析失败不再阻止搜索）
+  parseDetailPage({ requireLink: false })
     .then((torrent) => {
       void doKeywordSearch(torrent.title || "");
     })

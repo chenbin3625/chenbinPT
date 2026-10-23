@@ -8,6 +8,11 @@ import { describe, expect, it } from "vitest";
 import { levelRequirementUnMet } from "@ptd/site/utils/level.ts";
 
 describe("levelRequirementUnMet", () => {
+  it("做种数不足时返回差值，达标时不返回", () => {
+    const requirement = { id: 1, name: "Seeder", seeding: 5 } as any;
+    expect(levelRequirementUnMet({ seeding: 2 } as any, requirement)).toEqual({ seeding: 3 });
+    expect(levelRequirementUnMet({ seeding: 5 } as any, requirement)).toEqual({});
+  });
   it("L-18：percentile 低于门槛时列为未满足，达到时不列", () => {
     const requirement = { id: 1, name: "Elite", percentile: 70 } as any;
     expect(levelRequirementUnMet({ percentile: 50 } as any, requirement)).toMatchObject({ percentile: 20 });

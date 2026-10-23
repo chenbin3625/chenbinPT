@@ -25,6 +25,14 @@ import NexusPHP, {
   subTitleRemoveExtraElement,
 } from "../schemas/NexusPHP.ts";
 
+/**
+ * 新等级表的生效分界：2025-03-01T00:00:00+0800 = 2025-02-28T16:00:00Z = 1740758400000。
+ *
+ * B4：旧值 1740787200000 是 **2025-03-01T00:00:00Z**，即 +0800 的 3 月 1 日 08:00，比站点本地零点晚 8 小时；
+ * 落在这 8 小时窗口（本地 3/1 00:00–08:00）注册的用户会被判成「按旧表」，而站点已按 3 月 1 日 0 点切表。
+ */
+const NEW_LEVEL_REQUIREMENTS_START_AT = 1740758400000;
+
 // 2025年3月1日起加入的用户使用新的用户等级要求
 const newUserLevelRequirements: ILevelRequirement[] = [
   {
@@ -406,8 +414,8 @@ export default class Hdsky extends NexusPHP {
       // 如果用户配置中有自定义的等级要求，则使用自定义的等级要求
       judgeLevelRequirements = this.userConfig.merge.levelRequirements;
     } else {
-      if (userInfo.joinTime && userInfo.joinTime < 1740787200000) {
-        // 如果用户加入时间在 2025年3月1日之前，则使用旧的用户等级要求
+      if (userInfo.joinTime && userInfo.joinTime < NEW_LEVEL_REQUIREMENTS_START_AT) {
+        // 如果用户加入时间在 2025-03-01 00:00 (+0800) 之前，则使用旧的用户等级要求
         judgeLevelRequirements = oldUserLevelRequirements;
 
         // 将旧的用户等级要求存储到 metadataStore.sites.hdsky.merge.levelRequirements 中，以便于展示

@@ -615,7 +615,15 @@ export default class SpeedApp extends PrivateSite {
         url: downloadLink,
         responseType: "document",
       });
-      return this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!);
+      const resolvedLink = this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!);
+      // E5-12：中间页取不到真正链接时必须显式失败，否则空串会让下游把站点首页当种子请求。
+      if (!resolvedLink) {
+        throw new Error(
+          `[PTD] site '${this.metadata.id}' cannot resolve torrent download link ` +
+            `(torrentId=${torrent.id ?? ""}, middlePage=${downloadLink.split("?")[0]})`,
+        );
+      }
+      return resolvedLink;
     }
 
     return downloadLink;

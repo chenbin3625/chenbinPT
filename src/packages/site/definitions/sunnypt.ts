@@ -5,7 +5,6 @@ import { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
 import { ISearchInput, type ISiteMetadata, type ITorrent } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
-import { xiaomloveDefaultUserLevelRequirements } from "../schemas/NexusPHP.ts";
 
 interface ISunnyPtResponse<T> {
   code: number;
@@ -45,7 +44,9 @@ export const siteMetadata: ISiteMetadata = {
   collaborator: ["yanleichang"],
 
   type: "private",
-  schema: "SunnyPT",
+  // Info-46：schemas/ 下没有 SunnyPT 引擎，实际基类是本文件导出的 default class（extends PrivateSite）。
+  // schema 写成真实基类名，避免「误删 default class 后静默回落裸 AbstractPrivateSite」且无类型错误。
+  schema: "AbstractPrivateSite",
 
   urls: ["uggcf://fhaalcg.gbc/"],
 
@@ -112,7 +113,10 @@ export const siteMetadata: ISiteMetadata = {
         selectors: {
           id: { selector: "data.id" },
           name: { selector: "data.username" },
-          joinTime: { selector: "data.registered_at" },
+          // M-6：IUserInfo.joinTime 是毫秒时间戳；接口返回的 registered_at 是 ISO 字符串，
+          // 不加 parseTime 会把字符串原样写进 joinTime，导致 utils/level.ts 的 interval（注册时长）
+          // 门槛被判为已满足（E16 放大器），概览页也会展示非预期字符串。
+          joinTime: { selector: "data.registered_at", filters: [{ name: "parseTime" }] },
           uploaded: { selector: "data.uploaded" },
           downloaded: { selector: "data.downloaded" },
           ratio: { selector: "data.ratio" },
@@ -128,7 +132,10 @@ export const siteMetadata: ISiteMetadata = {
     ],
   },
 
-  levelRequirements: [...xiaomloveDefaultUserLevelRequirements],
+  // L-7 / Info-39：SunnyPT 不是 NexusPHP 站点，原先直接展开 NexusPHP 的通用示例等级表
+  // （Peasant/User/Power User… 含 interval: P4W、downloaded: 50GB、ratio: 1.05），
+  // 「距下一等级还差什么」会按别站规则计算。等级 id（data.class）已由接口直接给出，
+  // 省略 levelRequirements 不影响等级显示，也不会再展示错误的差距。
 };
 
 // ---------------------------------------------------------------------------
@@ -136,9 +143,28 @@ export const siteMetadata: ISiteMetadata = {
 // ---------------------------------------------------------------------------
 
 export default class SunnyPT extends PrivateSite {
-  /** SunnyPT 公开集成 API 的地址 */
+  /**
+   * SunnyPT 公开集成 API 的地址。
+   *
+   * Info-8：域名以 rot13 写在 `urls` 中（用户可切换镜像），而 API 固定走 api.sunnypt.top，
+   * 换域名时需要同时改这里与 `getTorrentDownloadLink` 里的 `sunnypt.top → api.sunnypt.top` 替换。
+   * 未做 url 派生是因为 API 子域与页面域名不是简单拼接关系，需在产品层面确定镜像策略。
+   */
   get apiBaseUrl(): string {
     return "https://api.sunnypt.top/api/v1/mp/";
+  }
+
+  /** Info-45：允许携带 X-API-Key 的 host（站点主域与 API 子域） */
+  private static readonly apiCredentialHosts = new Set(["api.sunnypt.top", "sunnypt.top"]);
+
+  /** 请求目标 host 是否属于 SunnyPT；无法解析时按「不属于」处理（宁可漏发凭据，不可误发） */
+  private isSunnyPtRequest(axiosConfig: AxiosRequestConfig): boolean {
+    try {
+      const host = new URL(axiosConfig.url ?? "", axiosConfig.baseURL ?? this.apiBaseUrl).host;
+      return SunnyPT.apiCredentialHosts.has(host);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -153,10 +179,15 @@ export default class SunnyPT extends PrivateSite {
   ): Promise<AxiosResponse<T>> {
     axiosConfig.baseURL ??= this.apiBaseUrl;
     axiosConfig.responseType ??= "json";
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      "X-API-Key": this.userConfig.inputSetting?.apiKey ?? "",
-    };
+    // Info-45：request() 是站点所有网络请求的唯一出口，包括用 API 返回的绝对 URL 下载 .torrent。
+    // 只在目标 host 属于 SunnyPT 时附加 API Key；否则（CDN / 上游改版 / 被劫持的返回值）
+    // 不发凭据，属于纵深防御。
+    if (this.isSunnyPtRequest(axiosConfig)) {
+      axiosConfig.headers = {
+        ...(axiosConfig.headers ?? {}),
+        "X-API-Key": this.userConfig.inputSetting?.apiKey ?? "",
+      };
+    }
     return super.request<T>(axiosConfig, checkLogin);
   }
 

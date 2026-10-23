@@ -12,7 +12,8 @@ export const siteMetadata: ISiteMetadata = {
   id: "cinematik",
   name: "Cinematik",
   aka: ["tik"],
-  tags: ["影视,原盘"],
+  // E2-17：tags 的每个数组元素是一个独立标签，写成 "影视,原盘" 会变成一个分组名
+  tags: ["影视", "原盘"],
   collaborator: ["akina"],
 
   type: "private",

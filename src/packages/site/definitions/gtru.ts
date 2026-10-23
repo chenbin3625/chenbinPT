@@ -8,7 +8,8 @@ export const siteMetadata: ISiteMetadata = {
   name: "GayTorrent.ru",
   tags: ["成人"],
   type: "private",
-  timezoneOffset: "+0800",
+  // E2-22：Jackett 的 gaytorrentru.yml 对日期显式追加 " +02:00 # EET"，站点时区应为 EET（UTC+2）
+  timezoneOffset: "+0200",
   urls: ["uggcf://jjj.tnlgbe.erag/"],
   legacyUrls: ["uggcf://jjj.tnlgbeerag.eh/"],
 

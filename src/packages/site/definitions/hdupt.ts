@@ -155,6 +155,10 @@ export const siteMetadata: ISiteMetadata = {
     selectors: {
       ...SchemaMetadata.search!.selectors!,
       progress: {
+        // E3-10：selector 零命中时 getFieldData 会回落到 elementQuery.text（缺省 ""），且不会再跑 filters。
+        // 没有 text 默认值时非本人发布的种子会得到 `progress = ""`、`status = ""`（而不是 unknown/0），
+        // 前端按状态着色/筛选走不进任何分支。这里显式给出引擎默认值（NexusPHP.ts:464-480）。
+        text: 0,
         selector: [
           "td[class='embedded'][style*='color: blue;font-weight: bold']",
           "td[class='embedded'] img[src*='zuozhong.gif']",
@@ -169,6 +173,7 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       status: {
+        text: ETorrentStatus.unknown,
         selector: [
           "td[class='embedded'][style*='color: blue;font-weight: bold']",
           "td[class='embedded'] img[src*='zuozhong.gif']",
@@ -193,16 +198,11 @@ export const siteMetadata: ISiteMetadata = {
         selector: ["td.rowhead:contains('魔力值') + td"],
         filters: [{ name: "parseNumber" }],
       },
-      seeding: {
-        selector: ["img.arrowup"],
-        elementProcess: (element: HTMLElement) => {
-          return parseInt((element.nextSibling?.textContent ?? "0").trim());
-        },
-      },
-      seedingSize: {
-        selector: ["td.rowhead:contains('Seeding Size') + td"],
-        filters: [{ name: "parseSize" }],
-      },
+      // B5/E3：这里原本声明了 seeding（`img.arrowup`，语义上是「上传量箭头」而非做种数）与
+      // seedingSize（英文表头 'Seeding Size'，HDU 是中文站）两个 selector。它们一旦失配，getFieldData
+      // 会回落成 0 / ""，让 `typeof seeding === "undefined"` 的判据不再成立，引擎为「userdetails 页没有
+      // 做种信息」准备的 `/getusertorrentlistajax.php` 兜底（NexusPHP.ts:947-950, 1012-1062）被整块跳过，
+      // 结果是做种数恒为 0、做种体积为空且状态仍是 success。这里删除这两个 selector，完全交给引擎兜底。
     },
   },
 

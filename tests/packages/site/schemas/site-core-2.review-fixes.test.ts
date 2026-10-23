@@ -156,6 +156,44 @@ describe("H-6 家族：GazelleJSONAPI 用户信息接口零命中不得报 succe
     expect(result.ratio).toBe(0);
   });
 
+  it("index 部分失配：id 和上传量存在、下载量缺失仍须报解析错误", async () => {
+    const site = makeSite({
+      ...validIndexResponse,
+      response: {
+        ...validIndexResponse.response,
+        userstats: { uploaded: 100, ratio: 2 },
+      },
+    });
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.parseError);
+    expect(result.statusMsg).toMatch(/关键字段 downloaded 未命中/);
+    expect(result.uploaded).toBeUndefined();
+  });
+
+  it("id 缺失但流量仍能读出时也不能跳过 user 接口并报告成功", async () => {
+    const site = makeSite({
+      ...validIndexResponse,
+      response: { ...validIndexResponse.response, id: undefined },
+    });
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.parseError);
+    expect(result.statusMsg).toMatch(/关键字段 id 未命中/);
+  });
+
+  it("可选 bonus 与扩展字段缺失不影响核心字段解析", async () => {
+    const site = makeSite(
+      {
+        ...validIndexResponse,
+        response: { ...validIndexResponse.response, userstats: { uploaded: 0, downloaded: 0 } },
+      },
+      { status: "success", response: { community: { seeding: 0 } } },
+    );
+    const result = await site.getUserInfoResult({});
+    expect(result.status).toBe(EResultParseStatus.success);
+    expect(result.uploaded).toBe(0);
+    expect(result.downloaded).toBe(0);
+  });
+
   it("正常响应 → success，且各字段按选择器解析出来", async () => {
     const site = makeSite(validIndexResponse, validUserResponse);
 

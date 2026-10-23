@@ -58,6 +58,47 @@ export const socialBuildUrlMap = {} as Record<TSupportSocialSite$1, socialEntity
 export const socialParseUrlMap = {} as Record<TSupportSocialSite$1, socialEntity["parse"]>;
 export const socialPageParserMatchesMap = {} as Record<TSupportSocialSite$1, TSupportSocialSitePageParserMatches>;
 
+/**
+ * 各社交站点的「可信主机」后缀白名单（C2-S-1）。
+ *
+ * 旧实现是精确 hostname 集合，`m.douban.com` / `m.imdb.com` / `m.themoviedb.org` 这类常见移动页
+ * 会被判为非社交页（快捷搜索入口消失），与各实体正则本身允许的 `m.*` / `mobile.*` 子域不一致。
+ * 后缀匹配同时保留了反例（如 `douban.com.evil.example` 不匹配）。
+ */
+const socialPageHosts: Record<TSupportSocialSite$1, readonly string[]> = {
+  anidb: ["anidb.net"],
+  bangumi: ["bgm.tv", "bangumi.tv", "chii.in"],
+  douban: ["douban.com"],
+  imdb: ["imdb.com"],
+  tmdb: ["themoviedb.org"],
+  tvmaze: ["tvmaze.com"],
+};
+
+/** host 是否等于白名单域名本身或为其子域 */
+export function isSocialPageHost(hostname: string, site: TSupportSocialSite$1): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return (socialPageHosts[site] ?? []).some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+export function matchSocialPageUrl(url: string): TSupportSocialSite$1 | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+
+  const pageUrl = parsed.origin + parsed.pathname;
+  for (const [site, patternMatches] of Object.entries(socialPageParserMatchesMap)) {
+    if (!isSocialPageHost(parsed.hostname, site as TSupportSocialSite$1)) continue;
+    if (patternMatches.some(([pattern]) => new RegExp(pattern, "i").test(pageUrl))) {
+      return site as TSupportSocialSite$1;
+    }
+  }
+  return null;
+}
+
 export function getSocialModule(site: TSupportSocialSite$1): socialEntity {
   return socialContent[`./entity/${site}.ts`];
 }
@@ -142,11 +183,15 @@ async function fetchSocialSiteInformation(
   if (preferPtGen && PtGenApiSupportSite.includes(site)) {
     console?.log("Use PtGen API to fetch social site information ", { site, id });
 
-    // 两个端点并行请求，共享同一个 deadline：任一成功即返回，避免串行等待每个端点的完整 timeout
+    // 所有内置端点 + 用户配置端点并行请求（去重），共享同一个 deadline：任一成功即返回。
+    // C2-S-2：旧候选集只有 [配置端点, buildInPtGenApi.at(-1)]，中间的 OurHelp CDN 端点永远不请求，
+    // 与 types.ts 里「从默认的 buildInPtGenApi 中依次尝试」的说明不符。
     const deadline = Date.now() + timeout;
-    const ptGenUrls = Array.from(new Set<string>([ptGenEndpoint, buildInPtGenApi.at(-1)!.url].filter(Boolean))).map(
-      (endpoint) => endpoint.replace("<site>", site).replace("<sid>", id),
-    );
+    const ptGenUrls = Array.from(
+      new Set<string>(
+        [ptGenEndpoint, ...buildInPtGenApi.map((api) => api.url)].filter((endpoint): endpoint is string => !!endpoint),
+      ),
+    ).map((endpoint) => endpoint.replace("<site>", site).replace("<sid>", id));
 
     if (ptGenUrls.length > 0) {
       const requestPtGen = async (ptGenUrl: string) => {
@@ -212,8 +257,8 @@ export async function getSocialSiteInformation(
 
   try {
     const result = await promise;
-    if (typeof result === "undefined") {
-      // 失败结果不参与 TTL 复用，保持"下次调用重新请求"的既有行为
+    if (!result || (!result.title && !result.poster)) {
+      // 内置解析器在请求失败时也可能返回带 createAt 的空对象。
       if (socialInformationInFlight.get(cacheKey)?.promise === promise) {
         socialInformationInFlight.delete(cacheKey);
       }

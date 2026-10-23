@@ -16,6 +16,11 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@ptd/downloader/utils.ts", () => ({
   getRemoteTorrentFile: vi.fn(),
+  sanitizeDownloadUrlForLog: vi.fn((url: string) => String(url)),
+}));
+
+vi.mock("@ptd/site/utils/adapter.ts", () => ({
+  logMessage: vi.fn(),
 }));
 
 import axios from "axios";
@@ -178,15 +183,16 @@ describe("ruTorrent：system.multicall 多剥一层（B-6）", () => {
   });
 });
 
-describe("ruTorrent：恢复动作使用 unpause", () => {
-  it("resumeTorrent 不发送不存在的 mode=post", async () => {
+describe("ruTorrent：恢复动作使用 start（RT-2）", () => {
+  it("resumeTorrent 用 start（d.open+d.start+d.resume）恢复已停止的种子", async () => {
     const { client, requestHttpRpc } = createClient(intResultXml());
 
     await client.resumeTorrent("HASH");
 
     expect(requestHttpRpc).toHaveBeenCalledWith(expect.any(URLSearchParams));
     const body = requestHttpRpc.mock.calls[0][0] as URLSearchParams;
-    expect(body.get("mode")).toBe("unpause");
+    // 只用 unpause（d.start）无法重新打开被 d.stop+d.close 关闭的种子
+    expect(body.get("mode")).toBe("start");
   });
 });
 
@@ -279,12 +285,12 @@ describe("ruTorrent：label / 状态消息下标（B-7）", () => {
     expect(torrent.state).not.toBe(CTorrentState.error);
   });
 
-  it("d.message 为已知的良性提示时不判为错误态", async () => {
+  it("d.message 为已知的良性提示时判为 paused（RT-1：is_open=0 = 已停止）", async () => {
     const okTorrent = makeRawTorrent({ 0: "0", 29: "Tracker: [Tried all trackers.]" });
     const { client } = createClient(listResponse(okTorrent));
 
     const [torrent] = await client.getAllTorrents();
-    expect(torrent.state).toBe(CTorrentState.unknown);
+    expect(torrent.state).toBe(CTorrentState.paused);
   });
 
   it("ratio 取 d.get_ratio 并归一到倍数（rTorrent 返回千分比，未除会放大 1000 倍）", async () => {
@@ -305,12 +311,12 @@ describe("ruTorrent：label / 状态消息下标（B-7）", () => {
     expect(Number.isFinite(torrent.ratio)).toBe(true);
   });
 
-  it("d.message 为空且 Comment 也为空时不判为错误态", async () => {
+  it("d.message 为空且 Comment 也为空的已停止种子判为 paused（RT-1）", async () => {
     const emptyMsg = makeRawTorrent({ 0: "0", 29: "", 30: "" });
     const { client } = createClient(listResponse(emptyMsg));
 
     const [torrent] = await client.getAllTorrents();
-    expect(torrent.state).toBe(CTorrentState.unknown);
+    expect(torrent.state).toBe(CTorrentState.paused);
   });
 });
 
@@ -367,5 +373,131 @@ describe("ruTorrent：空闲空间端点（D-7）", () => {
     ).toBe(
       "http://rt.local/rutorrent/rutorrent/plugins/diskspace/action.php", // 修复前的确切值
     );
+  });
+});
+
+/** C1 修复轮回归：RT-1/RT-3/RT-4/RT-7/N-5/PKG-2 */
+describe("ruTorrent：C1 修复轮", () => {
+  function rawTorrent(overrides: Record<number, string> = {}): string[] {
+    const raw = new Array<string>(34).fill("0");
+    raw[0] = "1";
+    raw[3] = "1";
+    raw[4] = "My Torrent";
+    raw[5] = "1024";
+    raw[6] = "5";
+    raw[7] = "10";
+    raw[14] = "";
+    raw[25] = "/downloads/My Torrent";
+    raw[28] = "1";
+    raw[29] = "";
+    Object.assign(raw, overrides);
+    return raw;
+  }
+
+  function listClient(rows: string[][]) {
+    const t: Record<string, string[]> = {};
+    rows.forEach((row, index) => (t[`HASH${index}`] = row));
+    const { client, requestHttpRpc } = createClient({ t, cid: 1 });
+    return { client, requestHttpRpc };
+  }
+
+  it("RT-3：getClientStatus 用实时速率（cmd=get_up_rate/get_down_rate）而不是全局限速", async () => {
+    // ttl 模式：up_total, down_total, upload_rate(限速上限), download_rate, get_up_rate, get_down_rate
+    const { client, requestHttpRpc } = createClient(["100", "200", "0", "0", "777", "888"]);
+
+    const status = await client.getClientStatus();
+    expect(status).toMatchObject({ upData: 100, dlData: 200, upSpeed: 777, dlSpeed: 888 });
+
+    const body = requestHttpRpc.mock.calls[0][0] as URLSearchParams;
+    expect(body.get("mode")).toBe("ttl");
+    expect(body.getAll("cmd")).toEqual(["get_up_rate", "get_down_rate"]);
+  });
+
+  it("RT-3：旧服务端不返回追加值时回退到 ttl 原值（防御性）", async () => {
+    const { client } = createClient(["100", "200", "11", "22"]);
+    const status = await client.getClientStatus();
+    expect(status).toMatchObject({ upSpeed: 11, dlSpeed: 22 });
+  });
+
+  it("RT-4：dateAdded 优先取 cmd=d.custom=addtime（ruTorrent ≤5.2 追加列下标 34）", async () => {
+    const raw = rawTorrent({ 21: "999" });
+    raw[34] = "1700000001";
+    const { client, requestHttpRpc } = listClient([raw]);
+
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.dateAdded).toBe(1700000001);
+
+    const body = requestHttpRpc.mock.calls[0][0] as URLSearchParams;
+    expect(body.getAll("cmd")).toContain("d.custom=addtime");
+  });
+
+  it("RB-6：ruTorrent master 新增 d.is_partially_done 后追加值在下标 35，不再读成 1/1970", async () => {
+    // master 基础字段 35 个（下标 0..34，34 = is_partially_done），追加的 addtime 在 35
+    const raw = rawTorrent({ 21: "999", 34: "1" });
+    raw[35] = "1700000002";
+    const { client } = listClient([raw]);
+
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.dateAdded).toBe(1700000002);
+  });
+
+  it("RB-6：追加列不是合法时间戳时回退到 state_changed", async () => {
+    const raw = rawTorrent({ 21: "888" });
+    raw[34] = "1"; // 非时间戳（例如被误读成 is_partially_done）
+    const { client } = listClient([raw]);
+
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.dateAdded).toBe(888);
+  });
+
+  it("RT-4：没有追加列时回退到 state_changed（旧行为可用）", async () => {
+    const { client } = listClient([rawTorrent({ 21: "888" })]);
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.dateAdded).toBe(888);
+  });
+
+  it("RT-7：磁链未取到元数据（size_chunks=0）时 progress 为 0，不是 NaN/Infinity", async () => {
+    const { client } = listClient([rawTorrent({ 6: "0", 7: "0" })]);
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.progress).toBe(0);
+    expect(Number.isFinite(torrent.progress)).toBe(true);
+    expect(torrent.isCompleted).toBe(false);
+  });
+
+  it("RT-1：is_open=0（ruTorrent 的停止/关闭）映射为 paused", async () => {
+    const { client } = listClient([rawTorrent({ 0: "0", 29: "" })]);
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.state).toBe(CTorrentState.paused);
+  });
+
+  it("N-5：addTorrent 遇到网络/HTTP 错误时返回 success=false，而不是 reject", async () => {
+    const { client } = createClient("unused");
+    (client as any).request = vi.fn().mockRejectedValue(new Error("network down"));
+
+    await expect(
+      client.addTorrent("magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", { addAtPaused: false }),
+    ).resolves.toMatchObject({ success: false, message: expect.stringContaining("network down") });
+  });
+
+  it("PKG-2：setTorrentLabel 成功后建议列表缓存失效", async () => {
+    const { client, requestHttpRpc } = createClient(intResultXml());
+    requestHttpRpc.mockImplementation(async (body: any) => {
+      if (body instanceof URLSearchParams && body.get("mode") === "list") {
+        return { data: { t: { HASH0: rawTorrent() }, cid: 2 } };
+      }
+      return { data: intResultXml() };
+    });
+
+    await client.getClientPaths(); // list #1
+    await client.getClientPaths(); // 30s 内复用缓存
+    expect(
+      requestHttpRpc.mock.calls.filter(([body]) => body instanceof URLSearchParams && body.get("mode") === "list"),
+    ).toHaveLength(1);
+
+    await client.setTorrentLabel("HASH0", "tv"); // 应使建议缓存失效
+    await client.getClientPaths(); // list #2
+    expect(
+      requestHttpRpc.mock.calls.filter(([body]) => body instanceof URLSearchParams && body.get("mode") === "list"),
+    ).toHaveLength(2);
   });
 });

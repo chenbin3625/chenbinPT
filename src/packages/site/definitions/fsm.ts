@@ -1,6 +1,6 @@
 import {
   // ETorrentStatus,
-  type ILevelRequirement,
+  // type ILevelRequirement,
   // type ISearchInput,
   type ISiteMetadata,
   // type ITorrent,
@@ -9,30 +9,9 @@ import {
 // import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 // import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
-const levelRequirements: (ILevelRequirement & { levelId?: number })[] = [
-  {
-    id: 1,
-    name: "封禁用户",
-    privilege: "无法解封，感谢曾经来过",
-  },
-  {
-    id: 3,
-    name: "注册成员",
-    privilege: "投票中拥有1票权",
-  },
-  {
-    id: 4,
-    name: "特殊贡献成员",
-    groupType: "vip",
-    privilege: "投票中拥有3票权，不计下载量",
-  },
-  {
-    id: 5,
-    name: "自制委员会",
-    groupType: "manager",
-    privilege: "投票中拥有10票权",
-  },
-];
+// E2b-04：本文件是死站（isDead），原先这里还有一份生效的 levelRequirements
+// （把「封禁用户」列为 id1，且不含真实用户等级）。死站不再保留生效配置，
+// 历史等级表已删除（需要时可在 git 历史中查阅），避免静态工具把死站当成有判级能力的活跃站。
 
 export const siteMetadata: ISiteMetadata = {
   // refs: https://t.me/Ptfxq/892 https://t.me/FsmNotify/292
@@ -47,10 +26,12 @@ export const siteMetadata: ISiteMetadata = {
   tags: ["成人"],
   timezoneOffset: "+0800",
 
-  collaborator: [],
+  // E2-27：不留空 collaborator 占位（站点详情页会渲染空协作者）
+  // collaborator: [],
 
   type: "private",
-  schema: "FSM",
+  // E2b-03/E2b-04：`schemas/` 里没有 FSM 引擎（实现已全部注释），死站只保留 urls/描述。
+  // schema: "FSM",
 
   urls: ["uggcf://sfz.anzr/"],
 
@@ -196,7 +177,8 @@ export const siteMetadata: ISiteMetadata = {
   },
 
    */
-  levelRequirements,
+  // E2b-04：死站不再挂载生效的等级表（历史等级表已删除，见文件头说明）
+  // levelRequirements,
 
   /*
   userInputSettingMeta: [

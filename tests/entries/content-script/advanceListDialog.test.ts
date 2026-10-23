@@ -87,3 +87,66 @@ describe("高级列表弹窗", () => {
     }
   });
 });
+
+describe("高级列表弹窗 · 行 key 唯一性（B2-5）", () => {
+  it("id 缺失/重复的种子也渲染出互不相同的 data-row-key（避免选中串行）", async () => {
+    const host = document.createElement("div");
+    const shadow = host.attachShadow({ mode: "open" });
+    const mount = document.createElement("div");
+    const popup = document.createElement("div");
+    shadow.append(mount, popup);
+    document.body.append(host);
+
+    // 引擎在 url/link 都解析不到时不会补 id；同一页面上也可能出现重复 id（列表里重复条目）
+    const items = [
+      { title: "Torrent A", site: "test", link: "https://example.com/a" },
+      { title: "Torrent B", site: "test", link: "https://example.com/b" },
+      { id: "dup", title: "Torrent C", site: "test", link: "https://example.com/c" },
+      { id: "dup", title: "Torrent D", site: "test", link: "https://example.com/d" },
+    ] as any[];
+
+    const shown = ref(false);
+    const Root = defineComponent({
+      setup() {
+        provide("remoteDownloadDialogData", { show: false, torrents: [], isDefaultSend: false });
+        return () =>
+          h(
+            StyleProvider,
+            { container: shadow },
+            {
+              default: () =>
+                h(
+                  ConfigProvider,
+                  { getPopupContainer: () => popup },
+                  {
+                    default: () =>
+                      h(AdvanceListModuleDialog, {
+                        modelValue: shown.value,
+                        "onUpdate:modelValue": (value: boolean | undefined) => (shown.value = value ?? false),
+                        torrentItems: items,
+                      }),
+                  },
+                ),
+            },
+          );
+      },
+    });
+    const app = createApp(Root).use(createPinia()).use(i18nInstance).use(antdInstance);
+    try {
+      app.mount(mount);
+      await nextTick();
+      shown.value = true;
+      await nextTick();
+      await nextTick();
+
+      const rowKeys = Array.from(popup.querySelectorAll<HTMLElement>(".ant-table-tbody > tr[data-row-key]")).map(
+        (row) => row.getAttribute("data-row-key"),
+      );
+      expect(rowKeys).toHaveLength(items.length);
+      expect(new Set(rowKeys).size, `row-key 必须唯一，实际：${rowKeys.join(",")}`).toBe(items.length);
+    } finally {
+      app.unmount();
+      host.remove();
+    }
+  });
+});

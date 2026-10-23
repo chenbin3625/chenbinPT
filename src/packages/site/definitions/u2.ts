@@ -156,12 +156,19 @@ export const siteMetadata: ISiteMetadata = {
       },
       seeding: {
         selector: [":self"],
-        filters: [(query: string) => query.match(/<b>(\d+)<\/b>条记录/)?.[1] ?? "0", { name: "parseNumber" }],
+        // L-31：与 baozi.ts 对齐，允许 `</b>` 与「条记录」之间 0~3 个空白；
+        // 旧正则不允许空白，NexusPHP 该模板带空格时做种数会稳定显示 0。
+        // 注：`:self` 会把整段响应文本当作命中值，引擎无法从 hasFieldMatch 区分「未匹配」与「真的是 0」，
+        // 这里保留 0 兜底（返回值语义不变），仅修正匹配。
+        filters: [
+          (query: string) => query.match(/<b>(\d+)<\/b>\s{0,3}(条记录|records|條記錄)/)?.[1] ?? "0",
+          { name: "parseNumber" },
+        ],
       },
       seedingSize: {
         selector: [":self"],
         filters: [
-          (query: string) => query.match(/大小.+?([\d.]+ [ZEPTGMK]?i?B)</)?.[1] ?? "0 B",
+          (query: string) => query.match(/大小.+?([\d.]+ ?[ZEPTGMK]?i?B)/)?.[1] ?? "0 B",
           { name: "parseSize" },
         ],
       },

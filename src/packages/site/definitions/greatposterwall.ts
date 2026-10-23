@@ -2,8 +2,14 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/GreatPosterWall.cs
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/greatposterwall.com/config.json
  */
-import { buildCategoryOptionsFromList, parseTimeWithZone, extractContent } from "../utils";
-import { ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
+import {
+  buildCategoryOptionsFromList,
+  parseTimeWithZone,
+  extractContent,
+  logMessage,
+  siteErrorLogData,
+} from "../utils";
+import { EResultParseStatus, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
 import GazelleJSONAPI, { groupBrowseResult, groupTorrent, SchemaMetadata } from "../schemas/GazelleJSONAPI.ts";
 
 interface gpwBrowseResult extends groupBrowseResult {
@@ -335,7 +341,9 @@ export default class GreatPosterWall extends GazelleJSONAPI {
       tags.push(freeTypeMap[torrent.freeType]);
     }
 
-    const attrs = torrent.remasterTitle.split("/").map((s) => s.trim());
+    // E2b-22：API 对某些行会省略可选字段，`undefined.split` 会让 GazelleJSONAPI 的单行解析
+    // 抛 TypeError 并作废整页搜索结果（该循环没有逐行 try/catch），这里补兜底。
+    const attrs = (torrent.remasterTitle ?? "").split("/").map((s) => s.trim());
     attrs.forEach((a) => {
       if (attrMap[a]) {
         tags.push(attrMap[a]);
@@ -346,7 +354,10 @@ export default class GreatPosterWall extends GazelleJSONAPI {
       tags.push({ name: "禁转", color: "deep-orange-darken-1" });
     }
 
-    const trTitle = [extractContent(group.groupSubName), extractContent(group.groupName)].filter(Boolean).join(" / ");
+    // E2b-22：extractContent(undefined) 会把 "undefined" 写进标题，先归一成空串
+    const trTitle = [extractContent(group.groupSubName ?? ""), extractContent(group.groupName ?? "")]
+      .filter(Boolean)
+      .join(" / ");
 
     return {
       site: this.metadata.id, // 补全种子的 site 属性
@@ -357,8 +368,14 @@ export default class GreatPosterWall extends GazelleJSONAPI {
         (torrent.remasterYear ? ` / ${torrent.remasterYear}` : "") +
         (torrent.remasterCustomTitle ? ` / ${extractContent(torrent.remasterCustomTitle)}` : "") +
         (torrent.scene ? " / Scene" : ""),
-      url: `${this.url}torrents.php?id=${group.groupId}&torrentid=${torrent.torrentId}`,
-      link: `${this.url}torrents.php?action=download&id=${torrent.torrentId}&authkey=${authkey}&torrent_pass=${passkey}`,
+      // E17 同型：用 siteUrl()（new URL(path, this.url)）而非字符串拼接，兼容无尾斜杠的自定义地址；
+      // authkey / torrent_pass 是凭据，按 siteUrl 模板同样 encodeURIComponent 后再拼进 query。
+      url: this.siteUrl(`torrents.php?id=${group.groupId}&torrentid=${torrent.torrentId}`),
+      link: this.siteUrl(
+        `torrents.php?action=download&id=${torrent.torrentId}&authkey=${encodeURIComponent(
+          authkey,
+        )}&torrent_pass=${encodeURIComponent(passkey)}`,
+      ),
       time: parseTimeWithZone(torrent.time, this.metadata.timezoneOffset),
       size: torrent.size,
       author: "",
@@ -372,27 +389,53 @@ export default class GreatPosterWall extends GazelleJSONAPI {
     } as ITorrent;
   }
 
+  /**
+   * E2-07/E2b-15：trueDownloaded 来自可选页 `/user.php?id=`，它的失败（超时 / CF / 登录页 / 改版）
+   * 不能作废 super 已经解析成功的整份用户信息 —— 调用方 offscreen/utils/userInfo.ts 没有 try/catch，
+   * 异常会逃出「总返回 IUserInfo」的方法契约，当日快照也不再更新。
+   */
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
-    let flushUserInfo = await super.getUserInfoResult(lastUserInfo);
+    const flushUserInfo = await super.getUserInfoResult(lastUserInfo);
 
-    if (!flushUserInfo.id) {
+    if (flushUserInfo.status !== EResultParseStatus.success || !flushUserInfo.id) {
       return flushUserInfo;
     }
-    flushUserInfo.trueDownloaded = await this.getUserTrueDownloaded(flushUserInfo.id!);
+
+    try {
+      const trueDownloaded = await this.getUserTrueDownloaded(flushUserInfo.id);
+      // 可选页未命中（例如返回的是登录页/错误页）时保持 undefined，不要用 0 覆盖，
+      // 因为 trueDownloaded 是等级门槛字段，写 0 会把用户判低。
+      if (typeof trueDownloaded === "number") {
+        flushUserInfo.trueDownloaded = trueDownloaded;
+      }
+    } catch (e) {
+      logMessage(
+        `[Site] ${this.name} getUserTrueDownloaded failed, keep other user info`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
+    }
+
     return flushUserInfo;
   }
 
-  private async getUserTrueDownloaded(userid: string | number): Promise<number> {
+  private async getUserTrueDownloaded(userid: string | number): Promise<number | undefined> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
+    // checkLogin: false —— 这是可选的补充页，登录态/CF 判断交给主流程，避免把可选页失败误判成整站需要登录
     const { data: document } = await this.request<Document>(
       {
         url: `/user.php?id=${userid}`,
         responseType: "document",
       },
-      true,
+      false,
     );
 
-    return this.getFieldData(document, this.metadata.userInfo?.selectors?.trueDownloaded!) || 0;
+    const selector = this.metadata.userInfo?.selectors?.trueDownloaded;
+    if (!selector || !this.hasFieldMatch(document, selector)) {
+      return undefined;
+    }
+
+    return this.getFieldData(document, selector) || 0;
   }
 }

@@ -1,4 +1,5 @@
 import CryptoJS from "crypto-js";
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -120,6 +121,41 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
 
       await expect(jsZipBlobToBackupData(blob, "user-secret")).rejects.toThrow(/downgrade|unencrypted|integrity/i);
     });
+  });
+
+  it.each(["missing", "empty"])(
+    "manifest 引用的文件 %s 时跳过该条目并给出 warning（与 Gist 路径统一）",
+    async (kind) => {
+      const zip = new JSZip();
+      zip.file(
+        "manifest.json",
+        JSON.stringify({
+          encryption: false,
+          files: { config: { name: "config.json", hash: CryptoJS.MD5("").toString() } },
+        }),
+      );
+      if (kind === "empty") zip.file("config.json", "");
+
+      // 复检 P2（H）：旧实现 throw 导致整份恢复失败；现在统一为「记录 warning、跳过该条目」，
+      // 让恢复对话框能显示「少了哪一块数据」，其余字段仍可恢复。
+      const restored = await jsZipBlobToBackupData(await zip.generateAsync({ type: "blob" }));
+      expect(restored.config).toBeUndefined();
+      expect(getBackupWarnings(restored).some((warning) => /config\.json/.test(warning))).toBe(true);
+    },
+  );
+
+  it("复检 P2（G）：条目数超过上限时拒绝恢复", async () => {
+    const zip = new JSZip();
+    const files: Record<string, { name: string; hash: string }> = {};
+    for (let i = 0; i < 513; i++) {
+      const name = `f${i}.json`;
+      const content = JSON.stringify({ i });
+      zip.file(name, content);
+      files[`f${i}`] = { name, hash: CryptoJS.MD5(content).toString() };
+    }
+    zip.file("manifest.json", JSON.stringify({ encryption: false, files }));
+
+    await expect(jsZipBlobToBackupData(await zip.generateAsync({ type: "blob" }))).rejects.toThrow(/条目数超过上限/);
   });
 
   describe("结构校验：不能误拒合法备份", () => {

@@ -72,6 +72,8 @@ import { siteMetadata as tjuptMetadata } from "@ptd/site/definitions/tjupt.ts";
 import { EResultParseStatus } from "@ptd/site/types.ts";
 import { selectElements } from "@ptd/site/utils/selector.ts";
 
+import { itAcrossTimezones } from "../../../helpers/timezoneMatrix.ts";
+
 import {
   generateSiteSearchSolution,
   radioDefault,
@@ -165,28 +167,19 @@ describe("DEFS3-2：u2 leechers 有选择器且经真实引擎可解析", () => 
 // DEFS3-3：tokyotosho 的时间解析不得随宿主机时区漂移
 // ---------------------------------------------------------------------------
 describe("DEFS3-3：tokyotosho 的 `Date: ... UTC` 解析", () => {
-  it("在 Asia/Shanghai 与 UTC 下都得到 10:41Z（原实现上海下会偏 +8h）", async () => {
+  // H-L2 / H-L5：在 UTC / +0800 / 美东三种宿主下各跑一次，且时区取真实装配路径注入的默认值
+  itAcrossTimezones("在三种宿主时区下都得到 10:41Z（原实现上海下会偏 +8h）", async () => {
     const { default: BittorrentSite } = await import("@ptd/site/schemas/AbstractBittorrentSite.ts");
-    // index.ts 给非 NexusPHP 站点的默认 timezoneOffset 就是 "+0000"
-    const site = new BittorrentSite({ ...(tokyotoshoMetadata as any), timezoneOffset: "+0000" }, {});
+    const { getDefinedSiteMetadata } = await import("@ptd/site/index.ts");
+    // tokyotosho 自己没声明 timezoneOffset；非 NexusPHP 站点的默认值由 site/index.ts 注入（+0000）
+    const assembled = await getDefinedSiteMetadata("tokyotosho");
+    expect(assembled.timezoneOffset).toBe("+0000");
+
+    const site = new BittorrentSite(assembled as any, {});
     const filters = (tokyotoshoMetadata.search!.selectors!.time as any).filters;
     const cellText = "Date: 2024-03-10 10:41 UTC|Comment: hello";
 
-    const expected = Date.UTC(2024, 2, 10, 10, 41);
-    const previousTZ = process.env.TZ;
-    let shanghai: unknown;
-    let utc: unknown;
-    try {
-      process.env.TZ = "Asia/Shanghai";
-      shanghai = (site as any).runQueryFilters(cellText, filters);
-      process.env.TZ = "UTC";
-      utc = (site as any).runQueryFilters(cellText, filters);
-    } finally {
-      process.env.TZ = previousTZ;
-    }
-
-    expect(shanghai).toBe(expected);
-    expect(utc).toBe(expected);
+    expect((site as any).runQueryFilters(cellText, filters)).toBe(Date.UTC(2024, 2, 10, 10, 41));
   });
 });
 

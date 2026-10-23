@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
     releaseDownloaderInstance: vi.fn(),
     getRemoteTorrentFile: vi.fn(),
     sessionStore: new Map<string, unknown>(),
+    sessionGet: vi.fn(),
     downloadStateListeners: [] as Array<(delta: any) => void>,
     searchDownload: vi.fn(async () => [{ state: "in_progress" }]),
     createObjectURL: vi.fn(() => "blob:test/torrent"),
@@ -51,7 +52,7 @@ vi.mock("@ptd/downloader/utils.ts", () => ({ getRemoteTorrentFile: mocks.getRemo
 vi.stubGlobal("chrome", {
   storage: {
     session: {
-      get: async (key: string) => (mocks.sessionStore.has(key) ? { [key]: mocks.sessionStore.get(key) } : {}),
+      get: (...args: any[]) => mocks.sessionGet(...args),
       set: async (items: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(items)) {
           mocks.sessionStore.set(key, structuredClone(value));
@@ -145,6 +146,10 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
   beforeEach(() => {
     nextDownloadId = 1;
     mocks.sessionStore.clear();
+    mocks.sessionGet.mockReset();
+    mocks.sessionGet.mockImplementation(async (key: string) =>
+      mocks.sessionStore.has(key) ? { [key]: mocks.sessionStore.get(key) } : {},
+    );
     mocks.history.clear();
     mocks.downloadStateListeners.length = 0;
     mocks.searchDownload.mockReset();
@@ -197,6 +202,47 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
     expect(reDownloadCall![1].leftInterval).toBeGreaterThan(0);
   });
 
+  it("首次 session 读取挂起时，同站点并发只放行一个下载", async () => {
+    const handler = await loadDownloadModule();
+    mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(60));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mocks.sessionGet.mockImplementationOnce(async () => {
+      await gate;
+      return {};
+    });
+
+    const first = handler({ data: makeOption({ id: "first" }) });
+    const second = handler({ data: makeOption({ id: "second" }) });
+    await vi.waitFor(() => expect(mocks.sessionGet).toHaveBeenCalledTimes(1));
+    expect(mocks.windowOpen).not.toHaveBeenCalled();
+    release();
+
+    const results = await Promise.all([first, second]);
+    expect(results.map((result) => result.downloadStatus).sort()).toEqual(["completed", "pending"]);
+    expect(mocks.windowOpen).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessage.mock.calls.filter(([name]) => name === "reDownloadTorrent")).toHaveLength(1);
+  });
+
+  it("延迟重下排程失败后不把历史留在 pending", async () => {
+    const handler = await loadDownloadModule();
+    mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(60));
+    const first = await handler({ data: makeOption({ id: "first" }) });
+    expect(first.downloadStatus).toBe("completed");
+    mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
+      if (name === "getExtStoragePath") {
+        return payload?.path === "download"
+          ? { ignoreSiteDownloadIntervalWhenLocalDownload: false }
+          : payload?.defaultValue;
+      }
+      if (name === "reDownloadTorrent") throw new Error("alarm creation failed");
+      return undefined;
+    });
+
+    await expect(handler({ data: makeOption({ id: "second" }) })).rejects.toThrow("alarm creation failed");
+    expect(mocks.history.get(first.downloadId + 1)?.downloadStatus).toBe("failed");
+  });
+
   it("L-1：下载失败不消耗站点下载间隔（预留的时间戳被回滚）", async () => {
     const handler = await loadDownloadModule();
     mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(60));
@@ -209,10 +255,17 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
 
     const failed = await handler({ data: makeOption({ link: "https://example.com/download/1" }) });
     expect(failed.downloadStatus).toBe("failed");
+    expect(mocks.getRemoteTorrentFile).toHaveBeenCalledTimes(1);
 
-    // 失败没有消耗间隔：紧接着的下载必须被真正执行，而不是被间隔挡住
+    // 失败没有消耗间隔：紧接着的下载必须被**真正执行**（再次抓取种子），而不是走 reDownloadTorrent 排队。
+    // 旧断言只检查 downloadStatus === "pending"，被间隔挡住与真正下载返回的都是 pending，无法区分。
     const second = await handler({ data: makeOption({ link: "https://example.com/download/2" }) });
     expect(second.downloadStatus, "失败的下载不应消耗站点下载间隔").toBe("pending");
+    expect(mocks.getRemoteTorrentFile, "第二次必须真正抓取种子（证明间隔已回滚）").toHaveBeenCalledTimes(2);
+    expect(
+      mocks.sendMessage.mock.calls.filter(([name]) => name === "reDownloadTorrent"),
+      "间隔已回滚时不应再投递延迟重下",
+    ).toHaveLength(0);
   });
 
   it("L-6：window.open 被拦截（返回 null）时回退到 extension 方法，而不是标记 completed", async () => {
@@ -364,5 +417,58 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
     expect(result.downloadStatus).toBe("failed");
     expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:test/torrent");
     expect(mocks.downloadStateListeners).toHaveLength(0);
+  });
+
+  it("B1-1：超过兜底超时但下载仍在进行时，不得先 revoke blob URL", async () => {
+    vi.useFakeTimers();
+    try {
+      const handler = await loadDownloadModule();
+      mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(0));
+      mocks.windowOpen.mockReturnValue(null as any);
+      mocks.getRemoteTorrentFile.mockResolvedValue({
+        name: "1.torrent",
+        metadata: { blob: () => new Blob(["x"]) },
+      });
+      mocks.searchDownload.mockResolvedValue([{ state: "in_progress" }]);
+
+      const result = await handler({ data: makeOption({ link: "https://example.com/download/1" }) });
+      expect(result.downloadStatus).toBe("pending");
+      expect(mocks.downloadStateListeners).toHaveLength(1);
+
+      // 第一次 10 分钟兜底超时：查询到仍在下载 → 继续等待，不能释放 blob
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 10);
+      expect(mocks.revokeObjectURL, "仍在下载时提前 revoke 会把慢下载中断").not.toHaveBeenCalled();
+      expect(mocks.downloadStateListeners).toHaveLength(1);
+
+      // 第二次超时前下载完成 → 正常释放
+      mocks.searchDownload.mockResolvedValue([{ state: "complete" }]);
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 10);
+      expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:test/torrent");
+      expect(mocks.downloadStateListeners).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("B1-1：超过最长等待上限时强制释放 blob 并结束监听（避免僵尸下载占住内存）", async () => {
+    vi.useFakeTimers();
+    try {
+      const handler = await loadDownloadModule();
+      mocks.getSiteInstance.mockResolvedValue(makeSiteInstance(0));
+      mocks.windowOpen.mockReturnValue(null as any);
+      mocks.getRemoteTorrentFile.mockResolvedValue({
+        name: "1.torrent",
+        metadata: { blob: () => new Blob(["x"]) },
+      });
+      mocks.searchDownload.mockResolvedValue([{ state: "in_progress" }]);
+
+      await handler({ data: makeOption({ link: "https://example.com/download/1" }) });
+      // 每次超时都会重新查询并 re-arm；推进到 60 分钟硬上限之后
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 10 * 60 * 1000);
+      expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:test/torrent");
+      expect(mocks.downloadStateListeners).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

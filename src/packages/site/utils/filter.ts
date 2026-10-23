@@ -1,18 +1,58 @@
 // noinspection ES6PreferShortImport
 
 import { parseTimeToLiveToDate, parseTimeToLiveToSeconds, parseValidTimeString } from "./datetime.ts";
-import { parseSizeString } from "./filesize.ts";
+import { parseLocalizedNumber, parseSizeString } from "./filesize.ts";
 import { socialParseUrlMap } from "@ptd/social/index.ts";
 
+/**
+ * 尽可能把「纯整数」字符串转成 number（保留非整数/非数字文本的原样）。
+ *
+ * E03：只认「整组 3 位的千分位」分隔符。早期实现把所有 `,`/空格删掉再匹配整数，
+ * 于是 `"1,5"`（欧式小数）会被误转成 `15`。现在 `"1,5"` 保持字符串，交由上层
+ * 用 `parseLocalizedNumber` / `parseSizeString` 按真实语义解析。
+ */
 export function tryToNumber(value: any): number {
   if (typeof value === "string") {
-    value = value.replace(/[, ]/gi, ""); // 统一处理 `1,024` `1 024` 之类的情况
-    if (/^-?\d+$/.test(value)) {
+    const trimmed = value.trim();
+    const normalized = /^-?\d{1,3}(?:[, \u00a0]\d{3})+$/.test(trimmed) ? trimmed.replace(/[, \u00a0]/g, "") : trimmed;
+    if (/^-?\d+$/.test(normalized)) {
       // 尽可能的将返回值转成数字类型
-      value = isNaN(parseInt(value)) ? 0 : parseInt(value);
+      value = isNaN(parseInt(normalized)) ? 0 : parseInt(normalized);
     }
   }
   return value;
+}
+
+/**
+ * 把「可能是数字的字段值」归一为有限数字；空值/无法解析时返回 `undefined`。
+ *
+ * 供 `getFieldData` 这类「零命中回落到 `""`」的读取路径使用：调用方可以据此区分
+ * 「字段缺失」（undefined，交给 lastUserInfo 合并/跳过）与「字段真的是 0」。
+ * 字符串会按区域数字格式解析（复用 `parseLocalizedNumber`）。
+ */
+export function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = parseLocalizedNumber(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * 把「可能是数字的字段值」归一为数字，无法解析时返回 `fallback`（默认 `0`）。
+ *
+ * 与 `toFiniteNumber` 的区别：不保留「零命中」信息，适合确定要写入 number 字段的场景
+ * （如 seeders/leechers/completed 这类缺失即 0 的计数）。
+ */
+export function normalizeNumericField(value: unknown, fallback = 0): number {
+  return toFiniteNumber(value) ?? fallback;
 }
 
 type TQueryFilterFn = (query: any, args?: any[]) => any;
@@ -110,6 +150,12 @@ export const definedFilters = {
   /**
    * Extracts a number from a string.
    *
+   * E03：不能先删逗号/空格再取数字，否则 `"1,5"`（欧式小数）会变成 `15`、
+   * `"1.234,56"` 会变成 `1.23456`。这里先取出第一个数字片段，再按区域格式解析。
+   *
+   * E03 复检 L-2：允许**省略整数部分的小数**（`.5` / `-.5`），否则 `parseNumber(".5")`
+   * 会从整数部分开始匹配成 `5`（旧实现 `parseFloat(".5")` = 0.5）。
+   *
    * input: "This is 8.5"
    * results: 8.5
    */
@@ -119,14 +165,22 @@ export const definedFilters = {
     }
     const queryMatch = String(query ?? "")
       .trim()
-      .replace(/[\s,\n]/g, "")
-      .match(/(-?[\d.]+)/);
-    return queryMatch && queryMatch.length >= 2 ? parseFloat(queryMatch[1]) : 0;
+      .match(/-?(?:\d+(?:[.,\s\u00a0\u202f]\d+)*|\.\d+)/);
+    if (!queryMatch) {
+      return 0;
+    }
+    const parsed = parseLocalizedNumber(queryMatch[0]);
+    return Number.isFinite(parsed) ? parsed : 0;
   },
 
   /**
    * Extracts a size from a string.
    * The size string can be in the format of "123.45 MB" or "123.45MiB".
+   *
+   * E01/E02：取**第一个**「数字 + 单位」片段（单位大小写不敏感，支持 `B`/`Bytes`），
+   * 不再用贪婪正则吞到字符串末尾的 `B`（如 `"700 MB (Blu-ray)"`）导致解析为 0。
+   *
+   * E01 复检 L-2：数字片段允许以 `.` 开头（`.5 GB`、`0.5 GB`），避免把 `.5` 抽成 `5`（10 倍错值）。
    *
    * input: "This is 8.5 MB"
    * results: 8912896
@@ -135,11 +189,27 @@ export const definedFilters = {
     if (typeof query === "number") {
       return query;
     }
-    const queryMatch = String(query ?? "")
-      .trim()
-      .replace(/[ ,\n]/g, "")
-      .match(/([\d.]+(.*[^ZEPTGMK])?[ZEPTGMK]?i?B)/);
-    return queryMatch && queryMatch.length >= 2 ? parseSizeString(queryMatch[1]) : 0;
+    const raw = String(query ?? "").trim();
+    if (!raw) {
+      return 0;
+    }
+
+    // 不删除空格：`"[3] 1.5 GB"` 删空格会拼成 `"3]1.5GB"`，必须按原始文本定位片段
+    const sizeMatch = raw.match(/((?:\d|\.\d)[\d.,\s\u00a0\u202f]*?)[\s\-_]{0,3}([ZEPTGMK](?:i?B)|B(?:ytes?)?)/i);
+    if (sizeMatch) {
+      const parsed = parseSizeString(`${sizeMatch[1]}${sizeMatch[2]}`);
+      if (parsed > 0) {
+        return parsed;
+      }
+    }
+
+    // 兜底：整段就是带千分位的纯整数时，按字节数处理（站点 tooltip 里的裸字节计数）
+    const plain = raw.replace(/[\s,\u00a0\u202f]/g, "");
+    if (/^-?\d+$/.test(plain)) {
+      return parseInt(plain, 10);
+    }
+
+    return 0;
   },
 
   /**

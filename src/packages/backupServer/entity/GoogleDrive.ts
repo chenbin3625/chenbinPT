@@ -118,6 +118,23 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
     return this.accessInformation!;
   }
 
+  /**
+   * C2-B-6：Google Drive 的限流有多种表达（429 / "Rate Limit Exceeded" / "User Rate Limit Exceeded" /
+   * `errors[].reason = userRateLimitExceeded|rateLimitExceeded`）。旧实现只按精确文案匹配，导致最常见的
+   * `User Rate Limit Exceeded` 不重试。
+   */
+  private static isRateLimitResponse(response?: AxiosResponse<ErrorResponse>): boolean {
+    if (!response) return false;
+    if (response.status === 429) return true;
+
+    const apiError = response.data?.error;
+    if (!apiError) return false;
+    if (typeof apiError.message === "string" && /rate\s*limit/i.test(apiError.message)) {
+      return true;
+    }
+    return (apiError.errors ?? []).some((item) => /rate\s*limit/i.test(String(item?.reason ?? "")));
+  }
+
   private async request<T extends ApiResponse>(config: AxiosRequestConfig = {}, retry = 3): Promise<AxiosResponse<T>> {
     // generateAuthRequestConfig
     const accessToken = await this.fetchAccessToken();
@@ -134,9 +151,9 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       // 先判 response?.data：网络层错误（无 response）时按原样抛出，
       // 避免访问 undefined.status/.data 抛 TypeError 掩盖真实原因
       const response = error.response;
-      if (response?.data?.error?.message === "Rate Limit Exceeded" && retry > 0) {
+      if (GoogleDrive.isRateLimitResponse(response) && retry > 0) {
         // 指数退避 + 抖动；如果服务端给了 Retry-After 则优先使用
-        const retryAfterSeconds = Number(response.headers?.["retry-after"]);
+        const retryAfterSeconds = Number(response?.headers?.["retry-after"]);
         const baseDelay =
           Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
             ? retryAfterSeconds * 1e3
@@ -149,7 +166,12 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
         throw error;
       }
 
-      throw Error(`Network Error: ${response.status} ${response.statusText || ""}`.trim());
+      // C2-B-6：把服务端原因带出去（deleteFile 依赖 response 判断 404 幂等；其它调用方至少能读到 API message）
+      const thrown = new Error(
+        response.data?.error?.message || `Network Error: ${response.status} ${response.statusText || ""}`.trim(),
+      ) as Error & { response?: AxiosResponse<ErrorResponse> };
+      thrown.response = response;
+      throw thrown;
     }
   }
 
@@ -292,9 +314,7 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
         });
       }
 
-      if (data.nextPageToken) {
-        pageToken = data.nextPageToken;
-      }
+      pageToken = data.nextPageToken;
     } while (pageToken);
 
     return files;

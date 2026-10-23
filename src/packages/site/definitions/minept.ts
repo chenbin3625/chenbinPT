@@ -9,7 +9,9 @@ export const siteMetadata: ISiteMetadata = {
   tags: ["影视", "综合"],
 
   type: "private",
-  schema: "meanTorrent",
+  // I5：原为 `schema: "meanTorrent"`，但 schemas/ 下没有该实现（只有 Abstruct*/Unit3D/Gazelle/…），
+  // 站点已 dead 且本文件没有 `...SchemaMetadata`，该 schema 名只会让静态校验报「回落 AbstractPrivateSite」。
+  // 这里不再声明 schema，按 type 直接回落到 AbstractPrivateSite；若站点复活需按 meanTorrent 结构重写。
 
   urls: ["https://mine.pt/"],
 

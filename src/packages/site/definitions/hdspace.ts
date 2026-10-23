@@ -44,17 +44,20 @@ const statsFilter = (query?: string) => {
  * 时间，结果随运行主机漂移（+0800 宿主相对站点 +0000 差 8 小时）。
  * 这里只把日期词归一化成 `yyyy-MM-dd HH:mm:ss` 墙上时间串：日期取 UTC 日历（与
  * parseValidTimeStringInZone 在缺少年/月/日时使用的 UTC 参考日历一致，且与宿主时区无关），
- * 真正的时区换算交给紧随其后的具名 `parseTime`（runQueryFilters 会按 metadata.timezoneOffset
- * 走 parseValidTimeStringInZone）。
+ * 真正的时区换算交给紧随其后的具名 `parseFuzzyTime`（runQueryFilters 会按 metadata.timezoneOffset
+ * 走 parseValidTimeStringInZone；解析不出时再退回 TTL 解析，见 E3-7）。
  */
-const timeFilterWithDay = (query: string): string | null => {
+const timeFilterWithDay = (query: string): string => {
   // Today at 09:17:08
   // Yesterday at 17:11:03
   const dateParts = query.trim().split(/\s+at\s+/i);
-  if (dateParts.length < 2) return null;
+  // E3-7：不是 Today/Yesterday（例如「3 days ago」、或 `:contains('day')` 误命中的 Sunday）时
+  // **原样返回 query**，而不是返回 null。null 会继续进入下游 parseTime → parseTimeWithZone(null) → 0，
+  // 时间字段被静默写成空值；原样返回让紧随其后的 parseFuzzyTime 有机会按 TTL（"3 days ago"）解析。
+  if (dateParts.length < 2) return query;
 
   const dayText = dateParts[0].trim().toLowerCase();
-  if (dayText !== "today" && dayText !== "yesterday") return null;
+  if (dayText !== "today" && dayText !== "yesterday") return query;
 
   const now = new Date();
   const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -62,8 +65,10 @@ const timeFilterWithDay = (query: string): string | null => {
   return `${date.toISOString().slice(0, 10)} ${dateParts[1].trim()}`;
 };
 const timeFilterWithoutDay: TQueryFilter = { name: "parseTime", args: ["MMMM dd, yyyy,\u00A0HH:mm:ss"] };
-// timeFilterWithDay 归一化出的 `yyyy-MM-dd HH:mm:ss` 墙上时间串，交给具名 parseTime 按站点时区换算
-const timeFilterInZone: TQueryFilter = { name: "parseTime" };
+// E3-7：归一化出的 `yyyy-MM-dd HH:mm:ss` 墙上时间串交给 parseFuzzyTime —— runQueryFilters 会先按
+// metadata.timezoneOffset 走 parseValidTimeStringInZone；解析不出时再退回 TTL 解析（旧实现用的
+// parseTime 在失败时原样返回字符串，最终由 parseWholeTorrentFromRow 变成 0）。
+const timeFilterInZone: TQueryFilter = { name: "parseFuzzyTime" };
 
 export const siteMetadata: ISiteMetadata = {
   version: 1,
@@ -75,7 +80,8 @@ export const siteMetadata: ISiteMetadata = {
   timezoneOffset: "+0000",
 
   type: "private",
-  schema: "XBTIT",
+  // E3-8：schemas/ 下没有 XBTIT 实现，写它只会静默回落 AbstractPrivateSite（且未来新增同名引擎会让行为突变）
+  schema: "AbstractPrivateSite",
 
   urls: ["uggcf://uq-fcnpr.bet/"],
 
@@ -155,8 +161,10 @@ export const siteMetadata: ISiteMetadata = {
       },
       tags: [
         {
+          // E3-6：Jackett hdspace.yml 的 downloadvolumefactor 里 `images/sf.png`（side freeleech）同样是 0 下载量，
+          // 只匹配 gold.png 会让侧边栏/活动位的免费种子在结果里不带 Free 标签。
           name: "Free",
-          selector: "img[src*='gold.png']",
+          selector: "img[src*='gold.png'], img[src*='sf.png']",
         },
         {
           name: "50%",

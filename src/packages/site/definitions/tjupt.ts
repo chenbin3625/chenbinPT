@@ -185,7 +185,11 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.userInfo!.process!.filter((item) => item.requestConfig.url !== "/mybonus.php"),
       {
         requestConfig: { url: "/bonus.php", params: { show: "description" }, responseType: "document" },
-        fields: ["bonusPerHour"],
+        // L-14：NexusPHP 默认第 3 步的 fields 同时声明了 bonusPerHour 与 seedingBonusPerHour，
+        // 这里替换步骤时漏掉了后者。补回声明以保持与默认步骤一致；但仓库 NexusPHP 的默认
+        // userInfo.selectors 里并没有 seedingBonusPerHour（PTPP 的 tjupt 配置也只采集 bonusPerHour），
+        // 目前没有真实页面证据可写选择器，故该字段实际仍为空（见 fix report 的待验证说明）。
+        fields: ["bonusPerHour", "seedingBonusPerHour"],
       },
     ],
   },

@@ -5,10 +5,15 @@ import { useI18n } from "vue-i18n";
 import type { CTorrent, TorrentSpeedLimit } from "@ptd/downloader";
 import { sendMessage } from "@/messages.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
+import { summarizeBatchResults, formatBatchOpMessage, batchOpColor } from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
 const { torrents } = defineProps<{
   torrents: CTorrent[];
+}>();
+
+const emit = defineEmits<{
+  (e: "done", clientIds: string[]): void;
 }>();
 
 const { t } = useI18n();
@@ -16,10 +21,14 @@ const runtimeStore = useRuntimeStore();
 
 const uploadLimit = ref<number | null>(null);
 const downloadLimit = ref<number | null>(null);
+const submitting = ref(false);
 
 function dialogEnter() {
-  // 初始化为当前种子的限速（qBittorrent raw 中有 up_limit/dl_limit 字段，其他客户端留空）
-  const first = torrents[0];
+  submitting.value = false;
+  // D2-08：只在「单选」时用当前种子的限速预填。
+  // 多选时预填首个种子的两个方向，确认后会把它的限速覆盖到所有种子 —— 与文案
+  // 「留空表示不修改该方向」的承诺冲突；多选一律留空，用户只填想改的方向。
+  const first = torrents.length === 1 ? torrents[0] : undefined;
   const raw = first?.raw as Record<string, any> | undefined;
   uploadLimit.value = typeof raw?.up_limit === "number" ? Math.round(raw.up_limit / 1024) : null;
   downloadLimit.value = typeof raw?.dl_limit === "number" ? Math.round(raw.dl_limit / 1024) : null;
@@ -31,6 +40,8 @@ watch(showDialog, (open) => {
 });
 
 async function confirmSetLimit() {
+  if (submitting.value) return;
+
   const limits: TorrentSpeedLimit = {};
   if (uploadLimit.value !== null) limits.upload = uploadLimit.value;
   if (downloadLimit.value !== null) limits.download = downloadLimit.value;
@@ -39,20 +50,27 @@ async function confirmSetLimit() {
     return;
   }
 
-  const results = await Promise.allSettled(
-    torrents.map((torrent) =>
-      sendMessage("setClientTorrentSpeedLimit", {
-        downloaderId: torrent.clientId,
-        id: torrent.id,
-        limits,
-      }),
-    ),
-  );
-  const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
-  runtimeStore.showSnakebar(t("MyClient.speedLimit.success", { count: succeeded }), {
-    color: succeeded > 0 ? "success" : "error",
-  });
-  showDialog.value = false;
+  submitting.value = true;
+  try {
+    const results = await Promise.allSettled(
+      torrents.map((torrent) =>
+        sendMessage("setClientTorrentSpeedLimit", {
+          downloaderId: torrent.clientId,
+          id: torrent.id,
+          limits,
+        }),
+      ),
+    );
+    const summary = summarizeBatchResults(results);
+    runtimeStore.showSnakebar(formatBatchOpMessage(t, "MyClient.speedLimit.success", summary), {
+      color: batchOpColor(summary),
+    });
+    showDialog.value = false;
+    // D2-09：成功后立即刷新受影响下载器，不再等下一轮自动刷新
+    emit("done", [...new Set(torrents.map((torrent) => torrent.clientId))]);
+  } finally {
+    submitting.value = false;
+  }
 }
 </script>
 
@@ -60,6 +78,10 @@ async function confirmSetLimit() {
   <a-modal
     v-model:open="showDialog"
     :cancel-text="t('common.dialog.cancel')"
+    :closable="!submitting"
+    :confirm-loading="submitting"
+    :keyboard="!submitting"
+    :mask-closable="!submitting"
     :ok-text="t('common.dialog.ok')"
     :title="t('MyClient.speedLimit.title', { count: torrents.length })"
     :width="480"
@@ -70,10 +92,10 @@ async function confirmSetLimit() {
     </a-typography-paragraph>
 
     <a-form-item :label="t('MyClient.speedLimit.upload')"
-      ><a-input-number v-model:value="uploadLimit" :min="0"></a-input-number
+      ><a-input-number v-model:value="uploadLimit" :disabled="submitting" :min="0"></a-input-number
     ></a-form-item>
     <a-form-item :label="t('MyClient.speedLimit.download')"
-      ><a-input-number v-model:value="downloadLimit" :min="0"></a-input-number
+      ><a-input-number v-model:value="downloadLimit" :disabled="submitting" :min="0"></a-input-number
     ></a-form-item>
   </a-modal>
 </template>

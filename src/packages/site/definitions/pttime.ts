@@ -83,7 +83,13 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.search!.selectors,
       rows: { selector: "table.torrents:last > tbody > tr:gt(0)" }, // 前 50 条
       category: { text: "DEFAULT", selector: ["span.category"], attr: "title" },
-      id: { selector: [":self"], attr: "data" },
+      // E5-1：原写法 `{ selector: [":self"], attr: "data" }` 读的是字面名为 data 的属性，
+      // 读不到时 getFieldData 回落到 `""`（`??=` 不会覆盖空串），整页结果会被去重键压成 1 条。
+      // 改为从下载链接的 `?id=` 派生数字 id（与 NexusPHP 默认一致）。
+      id: {
+        ...baseLinkQuery,
+        filters: [{ name: "querystring", args: ["id"] }],
+      },
       link: baseLinkQuery,
       url: {
         ...baseLinkQuery,
@@ -248,20 +254,21 @@ export default class Pttime extends NexusPHP {
     if (userSeedingRequestString && userSeedingRequestString.includes("<table")) {
       const userSeedingDocument = createDocument(userSeedingRequestString);
 
-      seedStatus.seeding =
-        this.getFieldData(userSeedingDocument, {
-          selector: "#outer > span:nth-child(3) > b",
-          filters: [{ name: "parseNumber" }],
-        }) ?? 0;
+      // E5-8：零命中时 getFieldData 返回 ""，`"" ?? 0` 仍是 ""，会被当作数值写进 IUserInfo。
+      const seeding = this.getFieldData(userSeedingDocument, {
+        selector: "#outer > span:nth-child(3) > b",
+        filters: [{ name: "parseNumber" }],
+      });
+      seedStatus.seeding = typeof seeding === "number" ? seeding : 0;
 
-      seedStatus.seedingSize =
-        this.getFieldData(userSeedingDocument, {
-          selector: "#outer > span:nth-child(4)",
-          elementProcess: (element: Element) => {
-            const text = element.lastChild?.textContent?.trim() ?? "";
-            return text ? parseSizeString(text) : 0;
-          },
-        }) ?? 0;
+      const seedingSize = this.getFieldData(userSeedingDocument, {
+        selector: "#outer > span:nth-child(4)",
+        elementProcess: (element: Element) => {
+          const text = element.lastChild?.textContent?.trim() ?? "";
+          return text ? parseSizeString(text) : 0;
+        },
+      });
+      seedStatus.seedingSize = typeof seedingSize === "number" ? seedingSize : 0;
     }
 
     flushUserInfo = mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) => {

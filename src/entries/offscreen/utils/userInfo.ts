@@ -36,9 +36,69 @@ async function getQueueConcurrency(): Promise<number> {
   return typeof queueConcurrency === "number" && queueConcurrency > 0 ? queueConcurrency : 1;
 }
 
-function applyQueueConcurrency(queueConcurrency?: number) {
-  if (typeof queueConcurrency === "number" && Number.isFinite(queueConcurrency) && queueConcurrency > 0) {
-    flushQueue.concurrency = Math.floor(queueConcurrency);
+/**
+ * 队列并发度的**唯一来源**（OS-4 修复）。
+ *
+ * 旧实现在 `flushQueue.on("active")` 里每个任务启动时都读一遍 config 并覆盖 concurrency，
+ * 与调用方显式传入的 `queueConcurrency` 互相打架（调用方的值在首个任务开始后即失效），
+ * 且每处理一个站点就多一次 SW 往返。
+ *
+ * 现在：
+ *   - 调用方显式传入（options 每次刷新都会带当前配置值）→ 直接采用，并记为最近一次的配置值；
+ *   - 未显式传入（background 自动刷新）→ 首次读一次 config 并记住；之后沿用缓存值，
+ *     直到某次调用方显式传入新值（config 只可能被 options 修改，而 options 总会显式传入）。
+ */
+let memoizedQueueConcurrency: number | null = null;
+/** 首次从 config 读取并发度的 in-flight promise：并发的首批调用共享同一次 SW 往返 */
+let configConcurrencyInFlight: Promise<number> | null = null;
+
+if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && ("config" in changes || "userInfo.queueConcurrency" in changes)) {
+      memoizedQueueConcurrency = null;
+    }
+  });
+}
+
+function isValidQueueConcurrency(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function setQueueConcurrency(queueConcurrency: number) {
+  const next = Math.floor(queueConcurrency);
+  if (!isValidQueueConcurrency(next)) {
+    return;
+  }
+  memoizedQueueConcurrency = next;
+  if (flushQueue.concurrency !== next) {
+    flushQueue.concurrency = next;
+    logger({
+      msg: `The concurrency of the user information refresh queue has been updated to ${flushQueue.concurrency}`,
+    });
+  }
+}
+
+async function applyQueueConcurrency(queueConcurrency?: number) {
+  if (isValidQueueConcurrency(queueConcurrency)) {
+    setQueueConcurrency(queueConcurrency);
+    return;
+  }
+
+  if (memoizedQueueConcurrency === null) {
+    try {
+      configConcurrencyInFlight ??= getQueueConcurrency().finally(() => {
+        configConcurrencyInFlight = null;
+      });
+      setQueueConcurrency(await configConcurrencyInFlight);
+    } catch (e) {
+      // 读取配置失败（SW 回收/通道断开）时保持当前并发，不让整批刷新失败。
+      logger({ msg: "Failed to read user info queue concurrency, keep current value", level: "warn", data: `${e}` });
+    }
+    return;
+  }
+
+  if (flushQueue.concurrency !== memoizedQueueConcurrency) {
+    flushQueue.concurrency = memoizedQueueConcurrency;
   }
 }
 
@@ -49,17 +109,6 @@ function normalizeGetSiteUserInfoPayload(payload: TGetSiteUserInfoPayload) {
 
   return payload;
 }
-
-flushQueue.on("active", async () => {
-  const queueConcurrency = await getQueueConcurrency();
-
-  if (flushQueue.concurrency != queueConcurrency) {
-    flushQueue.concurrency = queueConcurrency;
-    logger({
-      msg: `The concurrency of the user information refresh queue has been updated to ${flushQueue.concurrency}`,
-    });
-  }
-});
 
 /**
  * 队列取消的控制句柄（见 B-12）。
@@ -104,10 +153,15 @@ onMessage("cancelUserInfoQueue", () => {
 });
 
 export async function getSiteUserInfoResult(payload: TGetSiteUserInfoPayload) {
-  const { siteId, queueConcurrency } = normalizeGetSiteUserInfoPayload(payload);
-  applyQueueConcurrency(queueConcurrency);
-
   const signal = flushAbortController.signal;
+  if (signal.aborted) {
+    throw signal.reason;
+  }
+  const { siteId, queueConcurrency } = normalizeGetSiteUserInfoPayload(payload);
+  await applyQueueConcurrency(queueConcurrency);
+  if (signal.aborted) {
+    throw signal.reason;
+  }
 
   return (await flushQueue.add(
     async () => {
@@ -180,6 +234,18 @@ onMessage("getSiteUserInfoResult", async ({ data }) => await getSiteUserInfoResu
 export async function setSiteLastUserInfo(userData: IUserInfo) {
   return setSiteLastUserInfoQueue.add(async () => {
     const site = userData.site;
+
+    // B1-12：只有解析成功的载荷才会走到写库，但 `updateAt` 可能来自恢复的历史数据/异常载荷
+    // （非 number）。`date-fns.format` 对非法值会抛 `RangeError: Invalid time value`，
+    // 使该站点之后每次刷新都在这里失败。统一兜底为当前时间，保证写入形状与后续刷新都正常。
+    if (!Number.isFinite(userData.updateAt as number)) {
+      logger({
+        msg: `Invalid updateAt for site ${site}, fallback to current time`,
+        level: "warn",
+        data: { site, updateAt: userData.updateAt },
+      });
+      userData = { ...userData, updateAt: Date.now() };
+    }
 
     // 日志只保留摘要，避免把完整用户信息（含做种列表）写入日志缓冲
     logger({

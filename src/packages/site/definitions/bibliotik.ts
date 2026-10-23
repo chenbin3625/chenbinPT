@@ -8,7 +8,7 @@ import { mergeWith } from "es-toolkit";
 
 import PrivateSite from "../schemas/AbstractPrivateSite";
 import { EResultParseStatus, type ISiteMetadata, type IUserInfo } from "../types";
-import { parseSizeString, mapWithConcurrency } from "../utils";
+import { classifySiteError, logMessage, mapWithConcurrency, parseSizeString, siteErrorLogData } from "../utils";
 
 const categoryMap: Record<string, number> = {
   Applications: 1,
@@ -239,7 +239,20 @@ export default class Bibliotik extends PrivateSite {
       flushUserInfo.id &&
       (typeof flushUserInfo.seeding === "undefined" || typeof flushUserInfo.seedingSize === "undefined")
     ) {
-      flushUserInfo = await this.parseUserInfoForSeedingStatus(flushUserInfo);
+      try {
+        flushUserInfo = await this.parseUserInfoForSeedingStatus(flushUserInfo);
+      } catch (error) {
+        // E1-C17：super.getUserInfoResult 已把基类步骤的异常收敛成 status/statusMsg，但这次额外的分页请求
+        // 在它的 try/catch 之外：会话过期 / 5xx / 超时会一路冒到消息处理层，整次刷新 reject，
+        // 用户看不到原因、lastUserInfo 也不更新。这里兜住：保留已取到的字段，只透传错误信息并记日志。
+        const { statusMsg, retryable } = classifySiteError(error);
+        flushUserInfo.statusMsg = statusMsg;
+        logMessage(
+          `[Site] ${this.name} parse seeding status failed (retryable=${retryable})`,
+          { site: this.metadata.id, retryable, error: siteErrorLogData(error) },
+          retryable ? "warn" : "error",
+        );
+      }
     }
 
     return flushUserInfo;
@@ -249,10 +262,11 @@ export default class Bibliotik extends PrivateSite {
     const userId = flushUserInfo.id as number | string;
     const seedStatus = { seeding: 0, seedingSize: 0 };
     const maxPages = 50; // 硬上限，防止分页信息异常时无限翻页
-    const concurrency = 4;
+    // E1-C17：4 路并发 + 未配置 requestDelay 等于对分页接口无限速轰炸，降到 2 路并保底 1000ms 间隔。
+    const concurrency = 2;
 
-    // 保证并发请求之间仍然满足站点 requestDelay 的请求间隔
-    const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay);
+    // 保证并发请求之间仍然满足站点 requestDelay 的请求间隔（metadata 未配置时用保守的 1000ms）
+    const throttle = this.createRequestThrottle(this.metadata.userInfo?.requestDelay ?? 1000);
 
     // 解析单页：返回行数与逐行体积（保持原有累加顺序需要按行收集）
     const parsePage = (doc: Document): { rowCount: number; sizes: number[] } => {

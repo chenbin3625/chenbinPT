@@ -11,7 +11,7 @@
  * - 内容里没有 `a-card` 那层卡片包裹；
  * - 悬停前不渲染浮层（触发方式确实是 hover）。
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
@@ -38,9 +38,19 @@ const userInfo = {
 } as any;
 
 /** 行级站点元数据缓存是模块级单例，这里替换成直接返回可控数据（该缓存的自身逻辑不在此用例范围） */
+const levelMetadataState = vi.hoisted(() => ({ levelRequirements: [] as any[], loaded: true }));
 vi.mock("@/options/views/Overview/MyData/utils/siteMetadataCache.ts", () => ({
-  getSiteLevelMetadata: () => ({ levelRequirements: [levelRequirement], userInfo: undefined }),
+  getSiteLevelMetadata: () => ({
+    levelRequirements: levelMetadataState.levelRequirements,
+    userInfo: undefined,
+    loaded: levelMetadataState.loaded,
+  }),
 }));
+
+beforeEach(() => {
+  levelMetadataState.levelRequirements = [levelRequirement];
+  levelMetadataState.loaded = true;
+});
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
@@ -137,5 +147,41 @@ describe("我的数据等级要求浮层", () => {
 
     view.unmount();
     cleanupOverlays();
+  });
+});
+
+describe("F9：没有等级要求 / 元数据未加载完时不得显示「已达下一级」", () => {
+  async function mountCellWithNextLevelFlag() {
+    const pinia = prepareOptionsPinia();
+    const { useConfigStore } = await import("@/options/stores/config.ts");
+    const { default: UserLevelRequirementsTd } =
+      await import("@/options/views/Overview/MyData/UserLevelRequirementsTd.vue");
+
+    const configStore = useConfigStore();
+    configStore.myDataTableControl.showNextLevelInTable = true;
+    configStore.myDataTableControl.showLevelRequirement = false;
+
+    const view = mountOptionsView(UserLevelRequirementsTd, { props: { userInfo }, pinia });
+    await view.settle();
+    return view;
+  }
+
+  it("levelRequirements 为空（该站无等级要求）时不显示绿色勾", async () => {
+    levelMetadataState.levelRequirements = [];
+    levelMetadataState.loaded = true;
+
+    const view = await mountCellWithNextLevelFlag();
+    // CheckOutlined = .anticon-check；用户等级组图标是 anticon-team / anticon-check-circle，不会命中
+    expect(view.$$(".anticon-check")).toHaveLength(0);
+    view.unmount();
+  });
+
+  it("元数据尚未加载完成（loaded=false）时同样不显示绿色勾", async () => {
+    levelMetadataState.levelRequirements = [];
+    levelMetadataState.loaded = false;
+
+    const view = await mountCellWithNextLevelFlag();
+    expect(view.$$(".anticon-check")).toHaveLength(0);
+    view.unmount();
   });
 });

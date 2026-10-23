@@ -86,3 +86,41 @@ describe("removeValueByPath：删除", () => {
     expect(target).toEqual({ a: 1 });
   });
 });
+
+describe("原型链防护（TEST-7：B-22 / A-3 / C-1 的直测）", () => {
+  it("getValueByPath 只读自有属性：原型链成员与污染值一律返回 undefined", () => {
+    expect(getValueByPath({}, "constructor")).toBeUndefined();
+    expect(getValueByPath({}, "__proto__")).toBeUndefined();
+    expect(getValueByPath({}, "toString")).toBeUndefined();
+
+    // 原型上的值不得被读到（Object.create 的继承属性不是自有属性）
+    const inherited = Object.create({ a: 1 });
+    inherited.b = 2;
+    expect(getValueByPath(inherited, "a")).toBeUndefined();
+    expect(getValueByPath(inherited, "b")).toBe(2);
+  });
+
+  it("setValueByPath 拒绝 __proto__ / constructor / prototype 段，且不污染全局原型", () => {
+    for (const path of [
+      ["__proto__", "polluted"],
+      ["constructor", "prototype", "polluted"],
+      ["a", "prototype", "polluted"],
+    ]) {
+      const target: any = {};
+      setValueByPath(target, path, "yes");
+      expect(target).toEqual({});
+    }
+    expect(({} as any).polluted).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(Object.prototype, "polluted")).toBe(false);
+  });
+
+  it("removeValueByPath 拒绝危险段，且不会误删同前缀的正常路径", () => {
+    const target: any = { a: { b: 1 } };
+    removeValueByPath(target, ["__proto__", "x"]);
+    removeValueByPath(target, ["constructor"]);
+    expect(target).toEqual({ a: { b: 1 } });
+
+    removeValueByPath(target, ["a", "b"]);
+    expect(target).toEqual({ a: {} });
+  });
+});

@@ -25,9 +25,15 @@ const sampleDates = [
 ];
 
 describe("getBackupFilename：生成格式", () => {
-  it("按 yyyyMMddTHHmm（本地时间）生成，含字面量 T", () => {
-    expect(getBackupFilename(new Date(2026, 9, 4, 2, 15))).toBe("PTD_backup_20261004T0215.zip");
-    expect(getBackupFilename(new Date(2000, 0, 1, 0, 0))).toBe("PTD_backup_20000101T0000.zip");
+  it("同一分钟的备份名不重复，且旧格式仍可识别", () => {
+    const date = new Date(2026, 9, 4, 2, 15);
+    const filenames = Array.from({ length: 20 }, () => getBackupFilename(date));
+    expect(new Set(filenames).size).toBe(20);
+    for (const filename of filenames) {
+      expect(filename).toMatch(/^PTD_backup_20261004T0215_[0-9a-f-]{36}\.zip$/);
+      expect(isBackupFilename(filename)).toBe(true);
+    }
+    expect(isBackupFilename("PTD_backup_20261004T0215.zip")).toBe(true);
   });
 
   it("生成的文件名一定通过保留策略过滤", () => {
@@ -55,6 +61,8 @@ describe("isBackupFilename：拒绝非本插件备份文件", () => {
       "PTD_backup_20261004T0215.zip ",
       "PTD_backup_20261004T021.zip", // 分钟只有 1 位
       "PTD_backup_20261004T02155.zip", // 分钟多 1 位
+      "PTD_backup_20261004T0215_fake.zip",
+      "PTD_backup_20260230T0215_00000000-0000-0000-0000-000000000000.zip",
       "PTD_backup_2026-10-04T02-15.zip", // 分隔符错误
       "PTD_backup_20261004t0215.zip", // 小写 t
       "PTD_backup_20261340T0261.zip", // 月份/分钟越界

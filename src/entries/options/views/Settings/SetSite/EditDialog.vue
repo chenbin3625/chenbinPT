@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { nextTick, provide, ref, watch } from "vue";
+import { nextTick, provide, ref, useTemplateRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { cloneDeep } from "es-toolkit";
 import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
@@ -23,6 +23,8 @@ const isFormValid = ref<boolean>(false);
 const storedSiteUserConfig = ref<ISiteUserConfig & { valid?: boolean }>({ valid: false });
 provide("storedSiteUserConfig", storedSiteUserConfig);
 
+const editorRef = useTemplateRef<{ resetLocalState?: () => void }>("editor");
+
 async function patchSite() {
   try {
     await metadataStore.addSite(props.siteId, storedSiteUserConfig.value);
@@ -39,6 +41,9 @@ function dialogEnter() {
     valid: false,
     ...(metadataStore.sites[props.siteId] ?? {}),
   });
+  // F2-Low-08：Editor 实例会被复用，重置它上一次残留的自定义 URL 草稿 / 明文显示状态，
+  // 否则上次未填完的非法自定义 URL 会让本次打开时「确定」直接置灰。
+  editorRef.value?.resetLocalState?.();
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
@@ -57,6 +62,6 @@ watch(showDialog, (open) => {
     :width="800"
     @ok="patchSite"
   >
-    <Editor v-model="props.siteId" @update:form-valid="(v) => (isFormValid = v)" />
+    <Editor ref="editor" v-model="props.siteId" @update:form-valid="(v) => (isFormValid = v)" />
   </a-modal>
 </template>

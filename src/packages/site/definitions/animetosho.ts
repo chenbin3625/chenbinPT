@@ -2,7 +2,6 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/animetosho-xyz.yml
  */
 import { type ISiteMetadata } from "../types";
-import { format, subDays } from "date-fns";
 
 export const siteMetadata: ISiteMetadata = {
   version: 1,
@@ -63,8 +62,19 @@ export const siteMetadata: ISiteMetadata = {
             // Today 01:59
             // Yesterday 23:39
             q = q.replace("Date/time submitted: ", "");
-            q = q.replace("Today", format(new Date(), "dd/MM/yyyy"));
-            q = q.replace("Yesterday", format(subDays(new Date(), 1), "dd/MM/yyyy"));
+            // E1-B4：站点时间是 UTC，而原实现用 `format(new Date())` / `subDays` 取**宿主时区**的今天/昨天，
+            // 宿主与 UTC 不同日的时段（如 UTC+8 的 00:00–08:00）会把 Today 补成宿主日期，发布时间偏一天。
+            // 这里按 UTC 日历日补全，时区换算仍交给紧随其后的具名 parseTime（按 metadata.timezoneOffset）。
+            const now = new Date();
+            const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+            const utcDate = (date: Date) =>
+              [
+                String(date.getUTCDate()).padStart(2, "0"),
+                String(date.getUTCMonth() + 1).padStart(2, "0"),
+                date.getUTCFullYear(),
+              ].join("/");
+            q = q.replace("Today", utcDate(utcToday));
+            q = q.replace("Yesterday", utcDate(new Date(utcToday.getTime() - 86_400_000)));
             return q;
           },
           { name: "parseTime", args: ["dd/MM/yyyy HH:mm"] },

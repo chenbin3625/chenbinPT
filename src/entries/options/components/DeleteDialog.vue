@@ -40,7 +40,12 @@ async function confirmDelete() {
     // 而派生索引仍是旧内容。这里收集 rejected 项并在关闭前明确告知。
     // DOWNLOADER-3：fulfilled 但 value === false 同样是失败（实体按契约用返回值表达「删不掉」），
     // 旧写法只看 rejection，Synology 默认路径（removeData=false）会被当成删除成功。
-    const results = await Promise.allSettled(toDeleteIds.map((toDeleteId) => confirmDeleteFn(toDeleteId)));
+    // F1（Info-I7）：`confirmDeleteFn` 是调用方传入的普通函数，理论上可能**同步**抛错；
+    // 直接放进 `map` 会让 Promise.allSettled 压根不执行、异常从 @ok 处理器逃逸成 unhandled rejection。
+    // 统一包成 `Promise.resolve().then(...)`，让同步/异步失败都走同一个 allSettled 通道。
+    const results = await Promise.allSettled(
+      toDeleteIds.map((toDeleteId) => Promise.resolve().then(() => confirmDeleteFn(toDeleteId))),
+    );
     failedIds = toDeleteIds.filter((_, index) => {
       const result = results[index];
       return result?.status === "rejected" || (result?.status === "fulfilled" && result.value === false);

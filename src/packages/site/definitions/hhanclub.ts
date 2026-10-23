@@ -4,13 +4,14 @@
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hhanclub.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/hhanclub.json
  */
-import { ETorrentStatus, type ISiteMetadata, IUserInfo } from "../types";
+import { ETorrentStatus, type IElementQuery, type ISiteMetadata, IUserInfo } from "../types";
 import NexusPHP, {
   CategoryInclbookmarked,
   CategoryIncldead,
   CategorySpstate,
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
+import { logMessage, siteErrorLogData } from "../utils";
 import { selectElements } from "../utils/selector";
 
 const hhLinkQuery = {
@@ -367,26 +368,57 @@ export default class Hhanclub extends NexusPHP {
     flushUserInfo: Partial<IUserInfo>,
     dataDocument: Document,
   ): Promise<Partial<IUserInfo>> {
-    // 从mybonus.php 页面，解析出 用户每小时获得憨豆无加成的部分 数值
-    const baseSeedingBonusPerHour = this.getFieldData(
-      dataDocument,
-      this.metadata.userInfo?.selectors?.seedingBonusPerHour!,
-    );
-
-    // 请求保重区结算日志页面，并解析出最近一次结算时获得的积分 数值
-    let rescueDocument = await this.getRescueDocument(flushUserInfo.id as number);
-    // 如果有分页，从最后一页获取
-    const totalPages = selectElements("table + div b", rescueDocument);
-    if (totalPages.length > 0) {
-      rescueDocument = await this.getRescueDocument(
-        flushUserInfo.id as number,
-        parseInt(totalPages[totalPages.length - 1].textContent || "1") - 1,
-      );
+    const baseQuery = this.metadata.userInfo?.selectors?.seedingBonusPerHour;
+    if (!baseQuery || !this.hasFieldMatch(dataDocument, baseQuery)) {
+      // E3-4：mybonus 页改版 / 文案变化时 getFieldData 会回落到 ""，`"" + x / 24` 得到数字字符串、
+      // `x + "" / 24` 得到 NaN。两种都会写进 UserInfo（破坏 number 契约、让升级时间变成 NaN）。
+      // 这里与基类一致：没命中就不写字段，保留上一次的真实值。
+      return flushUserInfo;
     }
-    const rescueSeedingBonusPerDay = this.getFieldData(rescueDocument, {
+
+    // 从mybonus.php 页面，解析出 用户每小时获得憨豆无加成的部分 数值
+    const baseSeedingBonusPerHour = Number(this.getFieldData(dataDocument, baseQuery));
+    if (!Number.isFinite(baseSeedingBonusPerHour)) {
+      return flushUserInfo;
+    }
+
+    // 请求保重区结算日志页面，并解析出最近一次结算时获得的积分 数值。
+    // E3-4：这是额外请求，失败/页面异常不应作废整次用户信息刷新（已解析出的字段会一并丢失），
+    // 与基类对 `/getusertorrentlistajax.php` 的处理保持一致：只记 warn 并放弃本字段。
+    const rescueQuery: IElementQuery = {
       selector: ["table tbody tr:last-child > td:nth-of-type(6)"],
       filters: [{ name: "parseNumber" }],
-    });
+    };
+    let rescueDocument: Document;
+    try {
+      rescueDocument = await this.getRescueDocument(flushUserInfo.id as number);
+      // 如果有分页，从最后一页获取
+      const totalPages = selectElements("table + div b", rescueDocument);
+      if (totalPages.length > 0) {
+        rescueDocument = await this.getRescueDocument(
+          flushUserInfo.id as number,
+          parseInt(totalPages[totalPages.length - 1].textContent || "1") - 1,
+        );
+      }
+    } catch (e) {
+      logMessage(
+        `[Site] ${this.name} parseUserInfoForSeedingBonusPerHour: 保种区结算日志获取失败`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
+      return flushUserInfo;
+    }
+
+    if (!this.hasFieldMatch(rescueDocument, rescueQuery)) {
+      // 结算日志表格结构变化时同样不写半成品数值
+      return flushUserInfo;
+    }
+
+    const rescueSeedingBonusPerDay = Number(this.getFieldData(rescueDocument, rescueQuery));
+    if (!Number.isFinite(rescueSeedingBonusPerDay)) {
+      return flushUserInfo;
+    }
+
     // 加和计算真实的 总做种积分 数值
     flushUserInfo.seedingBonusPerHour = baseSeedingBonusPerHour + rescueSeedingBonusPerDay / 24;
     return flushUserInfo;

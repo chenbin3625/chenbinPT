@@ -29,11 +29,16 @@ const mocks = vi.hoisted(() => {
     /** 让第 N 次 setExtStorage 失败（模拟写入中途出错），用于验证回滚 */
     failSetForKey: null as string | null,
     setCalls: [] as Array<{ key: string; value: any }>,
+    /** B1-6 续：恢复 keepUploadTask 必须走 keepUploadTask 模块的串行突变链 */
+    replaceKeepUploadTasks: vi.fn(async (_tasks: unknown) => undefined),
   };
 });
 
 vi.mock("@/messages.ts", () => ({ onMessage: mocks.onMessage, sendMessage: mocks.sendMessage }));
 vi.mock("@/offscreen/utils/logger.ts", () => ({ logger: mocks.logger }));
+vi.mock("@/offscreen/utils/keepUploadTask.ts", () => ({
+  replaceKeepUploadTasks: mocks.replaceKeepUploadTasks,
+}));
 vi.mock("@/offscreen/adapter/indexdb.ts", () => ({
   ptdIndexDb: Promise.resolve({
     transaction: () => ({}),
@@ -68,6 +73,7 @@ async function loadBackupModule() {
   mocks.logger.mockClear();
   mocks.setCalls.length = 0;
   mocks.failSetForKey = null;
+  mocks.replaceKeepUploadTasks.mockClear();
 
   mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
     if (name === "getExtStorage") {
@@ -339,7 +345,7 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(mocks.setCalls.map((call) => call.key)).toEqual(["userInfo", "config", "userInfo"]);
   });
 
-  it("storage 写入失败时连同已恢复的下载历史一起回滚", async () => {
+  it("storage 写入失败时不会触碰 IndexedDB 下载历史（替换在 storage 写入之后才执行）", async () => {
     const { restoreBackupData } = await loadBackupModule();
     mocks.store.set("config", { lang: "zh_CN" });
     mocks.failSetForKey = "config";
@@ -363,7 +369,86 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(report.success).toBe(false);
     expect(report.rolledBack).toBe(true);
     expect(report.restored).toEqual([]);
+    // storage 阶段就失败，IDB 替换根本没执行（下载历史保持原值，同时替换器也没被调用）
     expect(mocks.downloadHistory).toEqual([{ id: 1, title: "original" }]);
+    expect(mocks.replaceDownloadHistory).not.toHaveBeenCalled();
+  });
+
+  it("L-10：IDB 下载历史替换失败时回滚已写入的 storage key", async () => {
+    const { restoreBackupData } = await loadBackupModule();
+    mocks.store.set("config", { lang: "zh_CN" });
+    mocks.replaceDownloadHistory.mockRejectedValueOnce(new Error("idb transaction failed"));
+
+    const report = await restoreBackupData(
+      {
+        downloadHistory: [{ id: 2, title: "from backup" }],
+        config: { lang: "en" } as any,
+        manifest: {
+          time: Date.now(),
+          version: "test",
+          files: {
+            downloadHistory: { hash: "h", name: "downloadHistory.json" },
+            config: { hash: "h", name: "config.json" },
+          },
+        },
+      },
+      { fields: ["downloadHistory", "config"] },
+    );
+
+    expect(report.success).toBe(false);
+    expect(report.rolledBack).toBe(true);
+    // config 已被写成功，但 IDB 失败后必须回滚到快照
+    expect(mocks.store.get("config")).toEqual({ lang: "zh_CN" });
+    expect(mocks.replaceDownloadHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("B1-5：metadata 快照读取失败时不写由备份派生的 siteIndex（索引与配置必须同生共死）", async () => {
+    const { handler } = await loadBackupModule();
+    mocks.store.set("metadata", { sites: { mine: {} }, siteHostMap: { "mine.example": "mine" } });
+    mocks.store.set("siteIndex", { siteHostMap: { "mine.example": "mine" }, siteNameMap: {} });
+
+    // stage1 需要读一次 metadata（existingMetadata），之后 snapshot 阶段再读一次 metadata 时失败。
+    const originalImplementation = mocks.sendMessage.getMockImplementation()!;
+    let metadataReads = 0;
+    mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
+      if (name === "getExtStorage" && payload === "metadata") {
+        metadataReads += 1;
+        if (metadataReads > 1) {
+          throw new Error("metadata read failed");
+        }
+      }
+      return originalImplementation(name, payload);
+    });
+
+    const report = (await handler({
+      data: {
+        restoreData: {
+          metadata: {
+            sites: { restored: {} },
+            siteHostMap: { "evil.example": "restored" },
+            siteNameMap: { restored: "Restored" },
+            backupServers: {},
+          },
+          config: { lang: "en" },
+          manifest: { time: Date.now(), version: "test", files: { metadata: "h", config: "h" } },
+        },
+        restoreOptions: { fields: ["metadata", "config"] },
+      },
+    })) as any;
+
+    expect(report.success).toBe(true); // config 仍然恢复成功
+    expect(report.skipped.some((item: any) => item.field === "metadata")).toBe(true);
+    expect(report.restored).not.toContain("siteIndex");
+    // 本机 metadata / siteIndex 均未被修改
+    expect(mocks.store.get("metadata")).toEqual({
+      sites: { mine: {} },
+      siteHostMap: { "mine.example": "mine" },
+    });
+    expect(mocks.store.get("siteIndex")).toEqual({
+      siteHostMap: { "mine.example": "mine" },
+      siteNameMap: {},
+    });
+    expect(mocks.setCalls.some((call) => call.key === "siteIndex")).toBe(false);
   });
 
   it("L-10：全部校验通过时按顺序写入，success 为 true", async () => {
@@ -498,5 +583,28 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     expect(mocks.replaceDownloadHistory).toHaveBeenCalledTimes(1);
     const logMessages = mocks.logger.mock.calls.map(([item]) => item.msg).join("\n");
     expect(logMessages).toContain("Skip restoring download history");
+  });
+
+  it("B1-6 续：恢复 keepUploadTask 走 keepUploadTask 模块的串行突变链，而不是直接 setExtStorage", async () => {
+    const { handler } = await loadBackupModule();
+    mocks.store.set("keepUploadTask", { existing: { id: "existing", status: "pending" } });
+
+    const restoredTasks = { t1: { id: "t1", status: "pending" }, t2: { id: "t2", status: "completed" } };
+    const report = (await handler({
+      data: {
+        restoreData: {
+          keepUploadTask: restoredTasks,
+          manifest: { time: Date.now(), version: "test", files: { keepUploadTask: "h" } },
+        },
+        restoreOptions: { fields: ["keepUploadTask"] },
+      },
+    })) as any;
+
+    expect(report.success).toBe(true);
+    // 关键：整表替换必须经过串行链（避免与在途 updateKeepUploadTask 互相覆盖）
+    expect(mocks.replaceKeepUploadTasks).toHaveBeenCalledTimes(1);
+    expect(mocks.replaceKeepUploadTasks).toHaveBeenCalledWith(restoredTasks);
+    // 不再直接写 setExtStorage("keepUploadTask")
+    expect(mocks.setCalls.some((call) => call.key === "keepUploadTask")).toBe(false);
   });
 });

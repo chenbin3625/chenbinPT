@@ -24,13 +24,38 @@
  * SH-06 的「smAndDown 应为 <1145 / mdAndDown 应为 <1545」，该结论把 Vuetify 源码里的
  * 布尔表达式换算错了一档；`mobile` 与 `smAndDown` 在 mobileBreakpoint='lg' 下本来就不同值）。
  */
-import { computed } from "vue";
-import { useWindowSize } from "@vueuse/core";
+import { computed, ref } from "vue";
 
 const thresholds = { sm: 600, md: 840, lg: 1145, xl: 1545 } as const;
 
+/**
+ * I-2：`useWindowSize()` 每个调用点都会新建一个 ref + 注册一个 window `resize` 监听。
+ * `useDisplay()` 被 Topbar / Navigation / 每一个工具栏按钮（NavButton）调用，
+ * 同一页面上因此存在 N 份重复监听与重复计算。
+ *
+ * 这里收成**模块级单例**：整个页面只保留一个 `resize` 监听。
+ * 刻意不用 `useWindowSize()` 做单例 —— 它把监听绑在当前 effect scope 上，若首次调用发生在
+ * 某个随后被卸载的组件里，监听会随之被释放，其它组件就再也收不到宽度变化。
+ * 页内生命周期监听（不回收）在这里是正确的：options 页面本身就是一次 SPA 会话。
+ */
+const windowWidth = ref(typeof window === "undefined" ? 0 : window.innerWidth);
+let windowResizeListenerInstalled = false;
+
+function installWindowWidthListener() {
+  if (windowResizeListenerInstalled || typeof window === "undefined") return;
+  windowResizeListenerInstalled = true;
+  window.addEventListener(
+    "resize",
+    () => {
+      windowWidth.value = window.innerWidth;
+    },
+    { passive: true },
+  );
+}
+
 export function useDisplay() {
-  const { width } = useWindowSize();
+  installWindowWidthListener();
+  const width = windowWidth;
 
   return {
     width,

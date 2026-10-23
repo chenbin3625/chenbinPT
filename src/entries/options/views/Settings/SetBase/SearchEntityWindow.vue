@@ -5,25 +5,33 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { resolveColor } from "@/shared/colors.ts";
-import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
+import { useSetBaseConfigDraft } from "./configDraft.ts";
+
 const { t } = useI18n();
-const configStore = useConfigStore();
+const config = useSetBaseConfigDraft();
 const metadataStore = useMetadataStore();
 
 const infoIconColor = resolveColor("info");
 
-async function clearLastFilter(v: boolean) {
-  if (!v) {
+/**
+ * F2-N1：清空「上一次搜索筛选词」是保存时才生效的副作用（与 SetBase 的显式保存语义一致）。
+ */
+async function beforeSave() {
+  if (!config.value.searchEntity.saveLastFilter) {
     await metadataStore.setLastSearchFilter("");
   }
 }
 
+defineExpose({
+  beforeSave,
+});
+
 const hiddenTagNamesText = computed({
-  get: () => configStore.searchEntifyControl.hiddenTagNames.join("\n"),
+  get: () => config.value.searchEntifyControl.hiddenTagNames.join("\n"),
   set: (val: string) => {
-    configStore.searchEntifyControl.hiddenTagNames = val
+    config.value.searchEntifyControl.hiddenTagNames = val
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
@@ -40,7 +48,7 @@ const hiddenTagNamesText = computed({
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.searchEntity.siteQueueConcurrency") }}</a-typography-text>
         <a-input-number
-          v-model:value="configStore.searchEntity.queueConcurrency"
+          v-model:value="config.searchEntity.queueConcurrency"
           :max="25"
           :min="1"
           style="width: min(100%, 420px)"
@@ -53,7 +61,7 @@ const hiddenTagNamesText = computed({
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.allowSingleSiteSearch") }}</a-typography-text>
           <a-switch
-            v-model:checked="configStore.searchEntity.allowSingleSiteSearch"
+            v-model:checked="config.searchEntity.allowSingleSiteSearch"
             :disabled="isEmpty(metadataStore.sites)"
           />
         </div>
@@ -65,13 +73,13 @@ const hiddenTagNamesText = computed({
               <template #title>{{ t("SetBase.searchEntity.imdbTip") }}</template>
               <QuestionCircleOutlined :style="{ color: infoIconColor }" />
             </a-tooltip>
-            <a-switch v-model:checked="configStore.searchEntity.treatTTQueryAsImdbSearch" />
+            <a-switch v-model:checked="config.searchEntity.treatTTQueryAsImdbSearch" />
           </a-flex>
         </div>
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.showHotRecommendations") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.searchEntity.showHotRecommendations" />
+          <a-switch v-model:checked="config.searchEntity.showHotRecommendations" />
         </div>
       </div>
 
@@ -80,12 +88,12 @@ const hiddenTagNamesText = computed({
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.saveLastSearchFilter") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.searchEntity.saveLastFilter" @change="clearLastFilter" />
+          <a-switch v-model:checked="config.searchEntity.saveLastFilter" />
         </div>
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.forceImdbIdMatchFilter") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.searchEntity.forceImdbIdMatchFilter" />
+          <a-switch v-model:checked="config.searchEntity.forceImdbIdMatchFilter" />
         </div>
       </div>
 
@@ -94,17 +102,22 @@ const hiddenTagNamesText = computed({
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.autoDetectOfficialGroupFromTitle") }}</a-typography-text>
-          <a-switch v-model:checked="configStore.searchEntity.autoDetectOfficialGroupFromTitle" />
+          <a-switch v-model:checked="config.searchEntity.autoDetectOfficialGroupFromTitle" />
         </div>
 
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.maxTagCountBeforeGroup") }}</a-typography-text>
           <a-input-number
-            v-model:value="configStore.searchEntifyControl.maxTagCountBeforeGroup"
+            v-model:value="config.searchEntifyControl.maxTagCountBeforeGroup"
             :max="50"
             :min="0"
             style="width: min(100%, 420px)"
           />
+        </div>
+
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.searchEntity.tagClickToFilter") }}</a-typography-text>
+          <a-switch v-model:checked="config.searchEntifyControl.tagClickToFilter" />
         </div>
 
         <div class="ptd-settings-row" style="margin-top: 8px">
@@ -129,7 +142,7 @@ const hiddenTagNamesText = computed({
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.searchEntity.mediaQueueConcurrency") }}</a-typography-text>
         <a-input-number
-          v-model:value="configStore.mediaServerEntity.queueConcurrency"
+          v-model:value="config.mediaServerEntity.queueConcurrency"
           :max="25"
           :min="1"
           style="width: min(100%, 420px)"
@@ -138,10 +151,10 @@ const hiddenTagNamesText = computed({
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.searchEntity.mediaSearchLimit") }}</a-typography-text>
         <a-input-number
-          v-model:value="configStore.mediaServerEntity.searchLimit"
+          v-model:value="config.mediaServerEntity.searchLimit"
           :max="500"
           :min="1"
-          :step="configStore.mediaServerEntity.searchLimit >= 100 ? 10 : 1"
+          :step="config.mediaServerEntity.searchLimit >= 100 ? 10 : 1"
           style="width: min(100%, 420px)"
         />
       </div>
@@ -150,11 +163,11 @@ const hiddenTagNamesText = computed({
       </div>
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.searchEntity.autoLoadInitialMediaWall") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.mediaServerEntity.autoSearchWhenMount" />
+        <a-switch v-model:checked="config.mediaServerEntity.autoSearchWhenMount" />
       </div>
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.searchEntity.autoLoadMoreMediaOnScroll") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.mediaServerEntity.autoSearchMoreWhenScroll" />
+        <a-switch v-model:checked="config.mediaServerEntity.autoSearchMoreWhenScroll" />
       </div>
     </section>
   </div>

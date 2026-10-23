@@ -2,6 +2,7 @@ import axios from "axios";
 import PQueue from "p-queue";
 
 import type { ISocialSitePageInformation, TSupportSocialSite } from "./types.ts";
+import { normalizeSocialPosterUrl } from "./utils.ts";
 
 export type TSocialRecommendationCategory = "movie" | "tv" | "variety" | "anime";
 
@@ -285,7 +286,7 @@ function normalizeDoubanSearchSubjects(
         title,
         titles: [title],
         sourceUrl: item.url ?? source.url,
-        poster: normalizeDoubanImageUrl(item.cover),
+        poster: normalizeSocialPosterUrl(normalizeDoubanImageUrl(item.cover)),
         ratingScore: Number(item.rate || 0),
       } satisfies ISocialRecommendationItem;
     })

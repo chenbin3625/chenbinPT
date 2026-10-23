@@ -3,12 +3,12 @@ import { buildInPtGenApi } from "@ptd/social";
 import { computed, ref } from "vue";
 import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons-vue";
 
-import { useConfigStore } from "@/options/stores/config.ts";
-
 import { useI18n } from "vue-i18n";
 
+import { useSetBaseConfigDraft } from "./configDraft.ts";
+
 const { t } = useI18n();
-const configStore = useConfigStore();
+const config = useSetBaseConfigDraft();
 
 // B-31：Bangumi API Key 是可代表用户调用 API 的凭据，默认掩码显示（与 BackupWindow 的加密密钥一致）
 const showBangumiApiKey = ref<boolean>(false);
@@ -30,7 +30,7 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("socialConfig.cacheValidityDays") }}</a-typography-text>
         <a-input-number
-          v-model:value="configStore.socialSiteInformation.cacheDay"
+          v-model:value="config.socialSiteInformation.cacheDay"
           :min="3"
           style="width: min(100%, 420px)"
         />
@@ -40,7 +40,7 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
       </div>
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("socialConfig.requestTimeoutMs") }}</a-typography-text>
-        <a-input-number v-model:value="configStore.socialSiteInformation.timeout" style="width: min(100%, 420px)" />
+        <a-input-number v-model:value="config.socialSiteInformation.timeout" style="width: min(100%, 420px)" />
       </div>
     </section>
 
@@ -50,13 +50,13 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
       </a-typography-text>
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("socialConfig.preferPtgenLabel") }}</a-typography-text>
-        <a-switch v-model:checked="configStore.socialSiteInformation.preferPtGen" />
+        <a-switch v-model:checked="config.socialSiteInformation.preferPtGen" />
       </div>
-      <template v-if="configStore.socialSiteInformation.preferPtGen">
+      <template v-if="config.socialSiteInformation.preferPtGen">
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("socialConfig.ptgenApiAddress") }}</a-typography-text>
           <a-auto-complete
-            v-model:value="configStore.socialSiteInformation.ptGenEndpoint"
+            v-model:value="config.socialSiteInformation.ptGenEndpoint"
             :filter-option="filterPtGenApi"
             :options="ptGenApiOptions"
             style="width: min(100%, 420px)"
@@ -75,7 +75,7 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("socialConfig.anidbClientId") }}</a-typography-text>
         <a-input
-          v-model:value="configStore.socialSiteInformation.socialSite!.anidb.client"
+          v-model:value="config.socialSiteInformation.socialSite!.anidb.client"
           allow-clear
           style="width: min(100%, 420px)"
         >
@@ -91,7 +91,7 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("socialConfig.bangumiApiKey") }}</a-typography-text>
         <a-input
-          v-model:value="configStore.socialSiteInformation.socialSite!.bangumi.apikey"
+          v-model:value="config.socialSiteInformation.socialSite!.bangumi.apikey"
           allow-clear
           style="width: min(100%, 420px)"
           :type="showBangumiApiKey ? 'text' : 'password'"

@@ -163,3 +163,29 @@ describe("fixAllStoredUserInfo（B-18）", () => {
     expect(getCallCount).toBe(writesBefore + 1); // 只有链内读取，没有多余的整份写回
   });
 });
+
+describe("N6：存储里的 __proto__ 键不得改写原型 / 丢条目", () => {
+  it("siteId 为 __proto__ 时按自有属性保留、原型不变、条目不被静默丢弃", async () => {
+    // JSON.parse 会把 "__proto__" 建成**自有可枚举属性**（CreateDataProperty），
+    // 直接 `target["__proto__"] = value` 则会命中原型 setter。这里模拟「导入/存储里带 __proto__ 键」。
+    const storedWithProtoKey = JSON.parse(
+      '{"__proto__":{"2026-10-01":{"ratio":"1.5","seeding":"3"}},"mteam":{"2026-10-02":{"ratio":"2.5"}}}',
+    );
+    backing.clear();
+    await storageLocal.set({ userInfo: storedWithProtoKey });
+
+    await fixAllStoredUserInfo();
+
+    const stored = backing.get("userInfo") as any;
+    // 1) 不污染全局/目标对象原型
+    expect(({} as any).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(stored)).toBe(Object.prototype);
+    // 2) __proto__ 键作为自有属性保留（不是被丢弃），且内容按既有规则修复
+    expect(Object.hasOwn(stored, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(stored, "__proto__")?.value).toEqual({
+      "2026-10-01": { ratio: 1.5, seeding: 3 },
+    });
+    // 3) 正常条目不受影响
+    expect(stored.mteam["2026-10-02"]).toEqual({ ratio: 2.5 });
+  });
+});

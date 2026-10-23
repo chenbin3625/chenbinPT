@@ -6,7 +6,7 @@
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import { AxiosRequestConfig, AxiosResponse } from "axios";
 import Gazelle, { GazelleUtils, SchemaMetadata, detailPageList } from "../schemas/Gazelle";
-import BittorrentSite from "../schemas/AbstractBittorrentSite";
+import BittorrentSite, { isDomNode } from "../schemas/AbstractBittorrentSite";
 import { extractContent, parseValidTimeString, parseValidTimeStringInZone } from "../utils";
 import { parse } from "@ptd/social/entity/anidb";
 
@@ -567,7 +567,16 @@ export default class AnimeBytes extends Gazelle {
     const passKey = this.getFieldData(docElement, {
       selector: "link[href^='/feed/rss_torrents_all/']",
       attr: "href",
-      filters: [{ name: "split", args: ["/", 3] }],
+      // E1-B6：原实现按固定下标 split("/")[3] 取第 4 段。RSS 链接可能是
+      // `/feed/rss_torrents_all/{passkey}`（下标 3 正确），也可能是 `/feed/rss_torrents_all/{username}/{torrent_pass}`
+      //（下标 3 取到 username → 所有 scrape 请求鉴权失败，且失败结果还会被缓存 12 小时）。
+      // 统一取路径最后一段（先去掉 query/hash）：两种形态下都能拿到 passkey，不会比原实现更差。
+      filters: [
+        (href: string) => {
+          const path = String(href ?? "").split(/[?#]/)[0];
+          return path.split("/").filter(Boolean).pop() ?? "";
+        },
+      ],
     });
 
     const baseUserInfo = { username: userName!, passkey: passKey! };
@@ -612,7 +621,7 @@ export default class AnimeBytes extends Gazelle {
     doc: Document | IAnimeBytesJSONResponse,
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
-    if (doc instanceof Node) {
+    if (isDomNode(doc)) {
       return super.transformSearchPage(doc, searchConfig);
     }
 
@@ -636,7 +645,9 @@ export default class AnimeBytes extends Gazelle {
             id: torrent.ID,
             title,
             subTitle: `${torrent.EditionData.EditionTitle ? `${extractContent(torrent.EditionData.EditionTitle).trim()} ${delimiter.trim()}` : ""} ${GazelleUtils.extractTags(torrent.Property, tagKeywords, delimiter)}`,
-            url: `${this.url}${torrentPage}?id=${group.ID}&torrentid=${torrent.ID}`,
+            // E17 同型：用 URL 解析而非字符串拼接 —— 用户自定义站点地址可以没有尾斜杠，
+            // `${this.url}${torrentPage}` 会拼出 `https://animebytes.tvt torrents.php...` 这类坏主机。
+            url: new URL(`${torrentPage}?id=${group.ID}&torrentid=${torrent.ID}`, this.url).toString(),
             link: torrent.Link,
             // SITECORE-1：JSON API 的 UploadTime 是站点墙上时间，按 metadata.timezoneOffset 解析；
             // 未声明时区（非运行期注册的裸 metadata）退回宿主时区，避免把时间戳变成 0

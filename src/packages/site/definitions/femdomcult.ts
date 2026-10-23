@@ -66,7 +66,11 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata!.search!,
     requestConfig: {
       ...SchemaMetadata!.search!.requestConfig!,
+      // E2-03/E2b-14：params 必须展开基类默认值（Luminance 的 `action=advanced`）。
+      // 只写 order_* 会把 `action` 整个丢掉，torrents.php 不再按 title（keywordPath）过滤，
+      // 关键词搜索退化成「站点最新种子」列表。
       params: {
+        ...SchemaMetadata!.search!.requestConfig!.params,
         order_by: "time",
         order_way: "desc",
       },

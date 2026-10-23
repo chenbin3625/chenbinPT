@@ -7,7 +7,7 @@ export const siteMetadata: ISiteMetadata = {
   description:
     "PTLSP是一个集刮削音乐专辑、影视、剧集、游戏、纪录片、动漫、MV等众多资源为一体的综合PT站，本站旗下有着独家音乐专辑刮削制作小组以及独家压制小组",
   tags: ["综合", "音乐"],
-  collaborator: ["CosmoGao", "null"],
+  collaborator: ["CosmoGao"],
 
   type: "private",
   schema: "NexusPHP",

@@ -5,9 +5,9 @@ import {
   ISocialSitePageInformation,
   TSupportSocialSitePageParserMatches,
 } from "../types";
-import { commonParseFactory } from "../utils.ts";
+import { commonParseFactory, normalizeSocialPosterUrl } from "../utils.ts";
 
-const tvmazeUrlPattern = /^(?:https?:\/\/)?(?:www\.)?tvmaze\.com\/shows\/(\d+)(?:\/[^\/]+)?\/?$/;
+const tvmazeUrlPattern = /^(?:https?:\/\/)?(?:[\w-]+\.)?tvmaze\.com\/shows\/(\d+)(?:\/[^\/]+)?\/?$/;
 
 export function build(id: string): string {
   return `https://www.tvmaze.com/shows/${id}`;
@@ -80,7 +80,7 @@ export async function fetchInformation(
     });
 
     resDict.title = data.name;
-    resDict.poster = data.image.medium ?? data.image.original ?? "";
+    resDict.poster = normalizeSocialPosterUrl(data.image.medium ?? data.image.original) ?? "";
     resDict.ratingScore = data.rating.average ?? 0;
   } catch (error) {
     console.warn(error);

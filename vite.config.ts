@@ -11,12 +11,29 @@ import webExtension from "vite-plugin-web-extension";
 
 // @ts-ignore
 import { vitePluginGenerateWebextLocales } from "./vite/plugin/generateWebextLocales.ts";
+// task-12：WAR 的按目标裁剪（firefox 剥离 use_dynamic_url）放在独立模块里，便于单测与门禁断言
+import { getWebAccessibleResources } from "./vite/warResources.ts";
 
 import git from "git-rev-sync";
 import pkg from "./package.json" with { type: "json" };
 
 function base_path(_path = "") {
   return path.resolve(import.meta.dirname, _path);
+}
+
+/**
+ * 读取 git 元数据时允许降级（缺陷清单 G19）。
+ *
+ * `git-rev-sync` 内部执行 `git ...`：源码包（没有 `.git`）或 `git` 不在 PATH 时，
+ * 旧实现会让 `vite build` 在**读取配置阶段**直接抛错。构建元数据（commit/branch/date）
+ * 只用于排查线上问题，不应成为构建的前置条件，因此这里逐个 try/catch 并给 `unknown`/0 兜底。
+ */
+function safeGit<T>(fallback: T, read: () => T): T {
+  try {
+    return read();
+  } catch {
+    return fallback;
+  }
 }
 
 const target = process.env.TARGET || "chrome";
@@ -38,7 +55,11 @@ const permissions = [
 const optionalPermissions = ["nativeMessaging"];
 
 // @ts-ignore
-const git_count = git.count("HEAD");
+const git_count = safeGit(0, () => git.count("HEAD"));
+const git_short = safeGit("unknown", () => git.short(import.meta.dirname));
+const git_long = safeGit("unknown", () => git.long(import.meta.dirname));
+const git_date = safeGit(0, () => +git.date());
+const git_branch = safeGit("unknown", () => git.branch(import.meta.dirname));
 
 /**
  * manifest 的版本号 = `package.json` 的三位版本（如 `0.0.8`），**不再拼接 git 提交计数**。
@@ -55,10 +76,16 @@ const git_count = git.count("HEAD");
  * 与 `__GIT_VERSION__` 中，排查线上问题时依然能定位到具体提交。
  */
 const base_version = pkg.version;
-const commit_version = `${base_version}+${git.short(import.meta.dirname)}`;
+// G19：git 不可用时降级为 "unknown"（version_name 仍是合法字符串，不影响安装/升级）
+const commit_version = `${base_version}+${git_short}`;
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // task-12（Info-10）：**未**设置 `root`。实测把 root 固定为 import.meta.dirname 并不能让
+  // 「从子目录运行」可用（`cd src && vite build --config ../vite.config.ts` 仍会在
+  // web-extension 多页构建里对 .vue 报 PARSE_ERROR；原因不在 root），反而让失败构建的
+  // `emptyOutDir` 作用到仓库根的 dist-*。该问题需要单独排查 webExtension 的输入/alias 解析，
+  // 记录为未修项（见 docs/review-2026-10-23/fix2/tooling.md）。
   build: {
     target: "es2023",
     outDir: `dist-${target}`,
@@ -82,6 +109,11 @@ export default defineConfig({
     webExtension({
       browser: target,
       disableAutoLaunch: true,
+      // 关闭插件自带的 manifest 校验（G19）：`{{chrome}}` / `{{firefox}}` 条件字段是模板语法，
+      // 默认 schema 校验不适用于它们。补偿手段在发布链路里：`scripts/pack-crx.mjs` 的
+      // checkManifestShape 会校验必填结构（manifest_version/name/version/icons/content_scripts/
+      // host_permissions/background/WAR matches），`checkManifestReferences` 校验引用与本地化键；
+      // `scripts/check-bundle-budget.mjs` 另外断言 cs-app 的 import 闭包被 WAR 覆盖。
       skipManifestValidation: true,
       manifest: () => ({
         manifest_version: 3,
@@ -153,37 +185,32 @@ export default defineConfig({
           extension_pages: "script-src 'self';",
         },
 
-        web_accessible_resources: [
-          {
-            resources: ["icons/*", "lib/*", "chenbinpt.css"],
-            matches: ["*://*/*"],
-          },
-          // content script 的按需主逻辑（assets/cs-app.js）及其共享 chunk 依赖链，
-          // 由轻量引导在匹配站点时于页面上下文动态 import 加载（见 issue #1467）。
-          // 使用通配以避免依赖拓扑变化后遗漏新 chunk 导致运行时加载失败。
-          //
-          // ⚠️ 已知风险（Q-4，本轮有意不改行为）：
-          // `matches: ["*://*/*"]` 把 assets/* 与 vendor/* 暴露给**所有站点**，任何网站都可以
-          // fetch 一个已知 URL（例如 assets/cs-app.js，或那个 751 KB 的 pinia chunk）来判断
-          // "访问者装了本扩展" —— 即**扩展指纹识别**。对 PT 用户群体而言这是隐私问题
-          // （站点可以把"装了哪些扩展"作为画像/风控依据），因此这条通配是**有代价的**。
-          //
-          // 若要收窄，正确做法是（不要手写清单）：
-          //   1. 构建期从 rollup 的 chunk 图（`bundle` 的 `generateBundle` 钩子）算出
-          //      assets/cs-app.js 的**传递依赖闭包**，据此生成 `resources` 精确清单；
-          //   2. 在 CI 里断言该清单包含 cs-app.js 及其整条依赖链（缺一项就会在生产环境
-          //      静默 404 → 内容脚本功能整块失效，比指纹识别严重得多）。
-          //
-          // 本轮不做的原因：现有注释指出的失败模式是真实的 —— 手写/静态清单一旦遗漏新 chunk，
-          // 失败发生在**生产环境的运行时**且是静默的（用户在站点上看不到任何提示）；
-          // 而本轮无法做浏览器端验证（装包 + 真实站点跑一遍 cs-app.js 的按需加载）。
-          // 在"能用但可指纹识别"与"可能静默坏掉且无法验证"之间，本轮选择前者，并把
-          // 精确清单 + CI 断言作为后续独立改动。**不要在没有浏览器验证的情况下改成静态清单。**
-          {
-            resources: ["assets/*", "vendor/*"],
-            matches: ["*://*/*"],
-          },
-        ],
+        /**
+         * `web_accessible_resources` 来自 `vite/warResources.json`（G3）。
+         *
+         * 取舍（已知、刻意保留）：
+         * - 第一组（`icons/*`、`lib/*`、`chenbinpt.css`）用 `use_dynamic_url: true`，页面拿不到固定地址；
+         * - 第二组（`assets/*`、`vendor/*`）**必须**用固定扩展 ID：chunk 内的静态 `import` 会按
+         *   `chrome-extension://<id>/...` 解析，动态 URL 会把它们重定向到固定源而被 Chrome 拒绝，
+         *   内容脚本因此无法加载 `assets/cs-app.js`（issue #1467）。
+         *
+         * 代价：任何网页都能用 `chrome-extension://<id>/assets/*` 探测扩展是否安装（扩展 ID 由签名私钥决定，
+         * 对所有用户相同），且暴露面（options/offscreen 的 chunk、全部 vendor）大于真正需要的
+         * 「cs-app 静态 import 闭包」。
+         *
+         * 为什么本轮**不收窄**：正确的收窄方式是从 rollup 产物算出 `assets/cs-app.js` 的传递依赖闭包、
+         * 生成精确清单，并在真实浏览器里验证内容脚本仍能加载；本轮没有浏览器环境，手写/猜测清单
+         * 极易让内容脚本在站点上白屏（错误修复比不修更糟），因此记入 fix report 延期项。
+         *
+         * 安全网（收窄前后都生效）：`scripts/lib/war-coverage.mjs` 会在 `npm run check:bundle`
+         * 与 `npm run pack:crx` 里跟随 cs-app 的相对 import 闭包，断言每个依赖都存在且命中 WAR，
+         * 任何收窄漏项都会让门禁失败，而不是等到用户站点上才发现。
+         *
+         * task-12（P2-8）：源数据仍是 `vite/warResources.json`（Chrome 口径），但 `use_dynamic_url` 是
+         * Chrome 特性；firefox 目标由 `vite/warResources.ts#getWebAccessibleResources` 剥离该键，
+         * 避免 Firefox 安装/AMO 校验出现未知属性警告。`check-bundle-budget` 会按目标断言这一点。
+         */
+        web_accessible_resources: getWebAccessibleResources(target),
       }),
       // vite-plugin-web-extension 会在构造中，将js中引入的css文件自动添加到 manifest 中的 content_scripts 中，我们不需要这种默认行为
       transformManifest: (manifest) => {
@@ -215,7 +242,15 @@ export default defineConfig({
               config.build.rollupOptions.preserveEntrySignatures = "strict";
               // 动态 import 不会自动加载按 chunk 拆分的 css 分片，cs-app 的组件树样式
               // （组件、页面组件等分散在各 chunk 的 css）无法逐份在页面上下文
-              // 引入，故合并为单文件，由 app/init.ts 按固定地址 link
+              // 引入，故合并为单文件，由 app/init.ts 按固定地址 link。
+              //
+              // G20 实测澄清（旧注释说这是「cs-app 的组件树样式」，与产物不符）：
+              // `chenbinpt.css` 实际是 options 页样式（`style.css` + antd reset/覆盖，约 20KB）——
+              // 即每个加载 cs-app 的站点页面都会顺带下载/注入**管理页**专用的样式与 `.ant-*` 覆盖，
+              // 内容脚本自己的组件样式走 `?inline` 打进 JS、不在这个文件里。
+              // 两侧共用一份 CSS 属于跨上下文耦合（改 options 样式会影响站点侧边栏）。
+              // 拆分（让 cs-app 只带自己的样式）会改变构建产物的 asset 划分，需要浏览器验证，
+              // 本轮记为延期项（见 docs/review-2026-10-23/fix-reports/g-tooling.md），先按实际口径留档。
               config.build.cssCodeSplit = false;
               // 关闭 module preload（见 issue #1524）：
               // 该 ESM 入口被 content script 引导在**站点页面文档**里动态 import，而 Vite 生成的
@@ -306,11 +341,11 @@ export default defineConfig({
     __BROWSER__: JSON.stringify(target),
     __EXT_VERSION__: JSON.stringify(`v${commit_version}`),
     __GIT_VERSION__: {
-      short: git.short(import.meta.dirname),
-      long: git.long(import.meta.dirname),
-      date: +git.date(),
+      short: git_short,
+      long: git_long,
+      date: git_date,
       count: git_count,
-      branch: git.branch(import.meta.dirname),
+      branch: git_branch,
     },
     __BUILD_TIME__: +Date.now(),
     __RESOURCE_SITE_ICONS__: fs.readdirSync(base_path("./public/icons/site")),

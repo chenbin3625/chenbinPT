@@ -1,6 +1,7 @@
 import { toMerged } from "es-toolkit";
 import { ETorrentStatus, type ISiteMetadata, type IUserInfo, type ITorrent, type ISearchInput } from "../types";
 import { GazelleBase } from "./Gazelle";
+import { isDocumentNode } from "./AbstractBittorrentSite";
 import { parseSizeString, definedFilters } from "../utils";
 import { matchesSelector, selectElements } from "../utils/selector";
 
@@ -237,7 +238,7 @@ export default class Luminance extends GazelleBase {
     let { keywords, searchEntry, requestConfig } = searchConfig;
 
     // 返回是 Document 的情况才自动生成选择器
-    if (doc instanceof Document) {
+    if (isDocumentNode(doc)) {
       // 自动生成的选择器写入局部副本，避免写回共享的 metadata.search.selectors (P2-15)
       searchEntry = { ...searchEntry, selectors: { ...(searchEntry?.selectors ?? {}) } };
 

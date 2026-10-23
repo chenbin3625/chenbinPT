@@ -2,6 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/hdarea.yml
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdarea.co/config.json
  */
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
 import NexusPHP, {
   CategoryInclbookmarked,
@@ -181,7 +182,7 @@ export const siteMetadata: ISiteMetadata = {
         elementProcess: (element: HTMLElement) => {
           const titleDiv = element.closest("td > div");
           const subtitleEl = titleDiv?.nextElementSibling;
-          if (subtitleEl instanceof HTMLElement && subtitleEl.tagName === "DIV") {
+          if (isElementNode(subtitleEl) && subtitleEl.tagName === "DIV") {
             return subtitleEl.textContent?.trim() ?? "";
           }
           return "";
@@ -315,12 +316,24 @@ export default class HDArea extends NexusPHP {
     flushUserInfo: Partial<IUserInfo>,
   ): Promise<Partial<IUserInfo>> {
     const count = await this.getDataCountFromSeedingPage(flushUserInfo.id as number);
-    return { ...flushUserInfo, seeding: count ?? 0 };
+    // E3-2：解析不到（站点改版 / CF 挑战页 / 登录页 / `data-count` 改名）时**不写** `seeding`，
+    // 而不是写成 0。基类 NexusPHP 的同名方法也只在命中时赋值；写 0 会把「没解析到」持久化成
+    // 「0 个做种」，污染做种量、等级门槛与概览时间线，且这条动态方法不计入 H-6 的 selector 命中统计，
+    // 上层「全部选择器落空即失败」的防改版判据对它完全失效。
+    if (count === null) {
+      return flushUserInfo;
+    }
+    return { ...flushUserInfo, seeding: count };
   }
 
   protected override async parseUserInfoForUploads(flushUserInfo: Partial<IUserInfo>): Promise<Partial<IUserInfo>> {
     const userId = flushUserInfo.id as number;
-    flushUserInfo.uploads = (await this.getDataCountFromSeedingPage(userId, "uploaded")) ?? 0;
+    const count = await this.getDataCountFromSeedingPage(userId, "uploaded");
+    // E3-2：同 parseUserInfoForSeedingStatus —— 没解析到就不写字段（保留上一次的真实值）
+    if (count === null) {
+      return flushUserInfo;
+    }
+    flushUserInfo.uploads = count;
     return flushUserInfo;
   }
 

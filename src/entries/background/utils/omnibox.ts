@@ -53,6 +53,24 @@ chrome.omnibox?.onInputChanged.addListener(async (text, suggest) => {
   suggest(result);
 });
 
+/**
+ * 解析地址栏输入（N4）。
+ *
+ * 建议项的 content 形如 `<方案名> → <搜索词>`，而搜索词本身可能包含 `" → "`（例如从别处复制带箭头的标题）。
+ * 旧实现用 `text.split(splitString)` 后解构 `[solutionName, key]`，多于两段时只取前两段，
+ * 箭头之后的真实搜索词被静默丢弃。这里只按**第一处**分隔符切分。
+ */
+export function splitOmniboxInput(text: string): { solutionName?: string; key: string } {
+  const index = text.indexOf(splitString);
+  if (index === -1) {
+    return { key: text };
+  }
+  return {
+    solutionName: text.slice(0, index),
+    key: text.slice(index + splitString.length),
+  };
+}
+
 // 当用户接收关键字建议时触发
 chrome.omnibox?.onInputEntered.addListener(async (text) => {
   let solutionName = "";
@@ -61,8 +79,9 @@ chrome.omnibox?.onInputEntered.addListener(async (text) => {
 
   if (text.indexOf(splitString) != -1) {
     const solutions = await getSearchSolution(true);
-
-    [solutionName, key] = text.split(splitString);
+    const parsed = splitOmniboxInput(text);
+    solutionName = parsed.solutionName ?? "";
+    key = parsed.key;
 
     let solution = solutions.find((item: ISearchSolution) => {
       return item.name == solutionName;

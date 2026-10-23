@@ -19,7 +19,7 @@ import {
   TagOutlined,
   UpOutlined,
 } from "@ant-design/icons-vue";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import ColumnSelector from "../components/ColumnSelector.vue";
 import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
 import { useI18n } from "vue-i18n";
@@ -55,10 +55,15 @@ import RecheckConfirmDialog from "./RecheckConfirmDialog.vue";
 import {
   torrents,
   selectedDownloaderIds,
+  suspendedDownloaders,
   autoRefreshRunning,
+  autoRefreshUserStopped,
   globalRefreshInterval,
   normalizeTorrentProgress,
   formatTorrentProgressLabel,
+  summarizeBatchResults,
+  formatBatchOpMessage,
+  batchOpColor,
   torrentKey,
   useClientRefresh,
 } from "./utils.ts";
@@ -74,8 +79,11 @@ const {
   activeDownloaderIds,
   loadSingleDownloader,
   scheduleDownloaderRefresh,
+  clearDownloaderTimer,
+  clearAllTimers,
   stopAllTimers,
   resetRefreshState,
+  resumeDownloaderRefresh,
   startAutoRefresh,
   toggleAutoRefresh,
 } = useClientRefresh();
@@ -118,7 +126,14 @@ const totalUpSpeed = computed(() => allTorrents.value.reduce((acc, t) => acc + (
 const totalDlSpeed = computed(() => allTorrents.value.reduce((acc, t) => acc + (t.downloadSpeed ?? 0), 0));
 
 // ── computed ───────────────────────────────────────────────────────────────
-const allTorrents = computed(() => Object.values(torrents.value).flat());
+/**
+ * 当前筛选（已启用 / 已被选中的下载器）里的全部种子。
+ *
+ * D2-10：页头统计（种子数 / 上下行速度）原先用 `Object.values(torrents)`（全部缓存），
+ * 只看某个下载器时统计仍是全部下载器之和；且模块级 `torrents` 不会剔除已停用/已删除下载器的键，
+ * 停用后旧数据会一直计入。这里以 `activeDownloaderIds` 为准，停用/删除的缓存由下方 watcher 清理。
+ */
+const allTorrents = computed(() => activeDownloaderIds.value.flatMap((id) => torrents.value[id] ?? []));
 
 const tableColumns = computed(() =>
   toAntdColumns(fullTableHeader.value, {
@@ -153,6 +168,18 @@ const filteredTorrents = computed(() => {
   );
 });
 
+/**
+ * 批量操作只作用于「当前可见且仍被勾选」的种子（D2-07）。
+ *
+ * antd 的 `selectedRowKeys` 不会在数据源被筛选时主动裁剪：用户先全选、再输入搜索词过滤，
+ * 隐藏行仍留在选中集合里，此时点删除/限速/标签会作用到看不见的行。这里用当前可见集合求交，
+ * 所有批量入口（按钮禁用条件、确认框、批量弹窗）都只使用这个交集。
+ */
+const selectedTorrents = computed(() => {
+  const visibleKeys = new Set(filteredTorrents.value.map((t) => torrentKey(t)));
+  return tableSelected.value.filter((t) => visibleKeys.has(torrentKey(t)));
+});
+
 // 当前选中种子的下载器类型对应的能力元数据（用于显示可用操作）
 const clientMetaMap = ref<Record<string, TorrentClientMetaData>>({});
 
@@ -167,6 +194,18 @@ async function ensureClientMeta(clientId: string) {
 function isFeatureAllowed(clientId: string, feature: keyof TorrentClientMetaData["feature"]): boolean {
   const type = metadataStore.downloaders[clientId]?.type;
   return clientMetaMap.value[type]?.feature?.[feature]?.allowed !== false;
+}
+
+/**
+ * 批量操作的能力门禁（N7）。
+ *
+ * 行内按钮一直按 `isFeatureAllowed` 隐藏，但批量入口原先完全不看能力：对 Aria2/Flood 等
+ * 不支持标签/限速的客户端批量操作，实体按契约返回 false，用户只看到「已设置 0 个」，
+ * 无法判断是「不支持」还是「网络失败」。这里要求所选种子**全部**支持该能力才允许批量操作，
+ * 与行内按钮「不支持就不显示」的语义保持一致。
+ */
+function isFeatureAllowedForAll(list: CTorrent[], feature: keyof TorrentClientMetaData["feature"]): boolean {
+  return list.every((t) => isFeatureAllowed(t.clientId, feature));
 }
 
 // 在表格渲染时按需加载选中/可见种子的客户端能力元数据
@@ -224,7 +263,70 @@ async function loadTorrents() {
   }
 }
 
-onMounted(() => {
+let mounted = false;
+let initialized = false;
+
+/**
+ * 清理「已停用 / 已删除」下载器留下的状态（D2-10 / N14）。
+ *
+ * - `selectedDownloaderIds` 是模块级筛选状态，跨路由保留：用户从「设置 → 下载器」删除某下载器后
+ *   回到本页，原先仍按失效 id 过滤（表格空白、clientName 回退成原始 id、还会继续对它发请求）；
+ * - `torrents` 也只增不减：停用下载器后旧数据一直计入页头统计，直到整页刷新。
+ */
+function pruneInactiveDownloaderState() {
+  const enabledIds = metadataStore.getEnabledDownloaders.map((d) => d.id);
+
+  const nextSelection = selectedDownloaderIds.value.filter((id) => enabledIds.includes(id));
+  if (nextSelection.length !== selectedDownloaderIds.value.length) {
+    selectedDownloaderIds.value = nextSelection;
+  }
+
+  const nextTorrents: Record<string, CTorrent[]> = {};
+  for (const [id, list] of Object.entries(torrents.value)) {
+    if (enabledIds.includes(id)) nextTorrents[id] = list;
+  }
+  if (Object.keys(nextTorrents).length !== Object.keys(torrents.value).length) {
+    torrents.value = nextTorrents;
+  }
+}
+
+watch(
+  () => metadataStore.getEnabledDownloaders.map((d) => d.id),
+  () => {
+    if (initialized) pruneInactiveDownloaderState();
+  },
+);
+
+watch(activeDownloaderIds, (ids, previousIds) => {
+  if (!initialized || !mounted) return;
+  for (const id of previousIds ?? []) {
+    if (!ids.includes(id)) clearDownloaderTimer(id);
+  }
+  for (const id of ids) {
+    if (!previousIds?.includes(id)) {
+      if (autoRefreshRunning.value) scheduleDownloaderRefresh(id);
+      void loadSingleDownloader(id);
+    }
+  }
+});
+watch(globalRefreshInterval, (value) => {
+  if (!initialized || !autoRefreshRunning.value) return;
+  // N5：间隔改为 0 表示关闭自动刷新。原实现只清定时器不清状态：按钮仍显示「停止自动刷新」，
+  // 实际一个定时器都没有。这里直接走 stopAllTimers，让运行状态与「有没有定时器」保持一致。
+  if (value <= 0) {
+    stopAllTimers();
+    return;
+  }
+  for (const id of activeDownloaderIds.value) {
+    clearDownloaderTimer(id);
+    scheduleDownloaderRefresh(id);
+  }
+});
+
+onMounted(async () => {
+  mounted = true;
+  await Promise.all([metadataStore.$onReady(), configStore.$onReady()]);
+  if (!mounted) return;
   // 支持从 SetDownloader 等页面通过 ?downloader=<id> 预选单个下载服务器
   const queryDownloaderId = route.query.downloader as string | undefined;
   let hasQueryDownloader = false;
@@ -235,28 +337,48 @@ onMounted(() => {
     void router.replace({ path: "/my-client" });
   }
 
-  startAutoRefresh();
+  initialized = true;
 
-  if (hasQueryDownloader || configStore.download.initDownloaderTorrentOnEnter || autoRefreshRunning.value) {
+  // D2-06：先记录「挂载前」的自动刷新状态，再决定要不要重新启动。
+  // 原实现无条件 startAutoRefresh()，随后条件里又用刚被置 true 的 autoRefreshRunning 兜底，
+  // 因此 initDownloaderTorrentOnEnter=false 永远被忽略；卸载时 stopAllTimers() 还会把用户
+  // 手动「停止自动刷新」的选择一起复位。
+  const autoRefreshWasRunning = autoRefreshRunning.value;
+
+  // 清理失效下载器的残留状态（停用/删除后再次进入页面）
+  pruneInactiveDownloaderState();
+
+  if (!autoRefreshUserStopped.value) {
+    startAutoRefresh();
+  }
+
+  if (hasQueryDownloader || configStore.download.initDownloaderTorrentOnEnter || autoRefreshWasRunning) {
     void loadTorrents();
   }
 });
 
 onUnmounted(() => {
-  stopAllTimers();
+  mounted = false;
+  initialized = false;
+  // 只清定时器：保留「是否运行 / 用户是否主动停止」的模块级选择，供下次进入页面恢复（D2-06）。
+  clearAllTimers();
 });
 
 // ── actions ───────────────────────────────────────────────────────────────
+/** D2-09：批量操作统一提示「成功 N / 失败 M（首个原因）」，不再只报成功数。 */
+function showBatchResult(results: readonly PromiseSettledResult<unknown>[], successKey: string) {
+  const summary = summarizeBatchResults(results);
+  runtimeStore.showSnakebar(formatBatchOpMessage(t, successKey, summary), { color: batchOpColor(summary) });
+  return summary;
+}
+
 async function pauseTorrents(torrents: CTorrent[]) {
   if (torrents.length === 0) return;
   const results = await Promise.allSettled(
     torrents.map((t) => sendMessage("pauseClientTorrent", { downloaderId: t.clientId, id: t.id })),
   );
-  const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
   // OPTIONSOVERVIEW-9：与 recheckTorrents/moveTorrentsInQueue 对齐 —— 0 个成功不能仍报绿色成功
-  runtimeStore.showSnakebar(t("MyClient.action.pauseSelectedSuccess", { count: succeeded }), {
-    color: succeeded > 0 ? "success" : "error",
-  });
+  showBatchResult(results, "MyClient.action.pauseSelectedSuccess");
   const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
 }
@@ -266,11 +388,8 @@ async function resumeTorrents(torrents: CTorrent[]) {
   const results = await Promise.allSettled(
     torrents.map((t) => sendMessage("resumeClientTorrent", { downloaderId: t.clientId, id: t.id })),
   );
-  const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
   // OPTIONSOVERVIEW-9：同 pauseTorrents，全部失败时用 error 色提示
-  runtimeStore.showSnakebar(t("MyClient.action.resumeSelectedSuccess", { count: succeeded }), {
-    color: succeeded > 0 ? "success" : "error",
-  });
+  showBatchResult(results, "MyClient.action.resumeSelectedSuccess");
   const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
 }
@@ -293,16 +412,46 @@ function openRecheckDialog(torrentList: CTorrent[]) {
   showRecheckDialog.value = true;
 }
 
+/**
+ * 批量限速 / 批量标签入口（N7）。
+ *
+ * 只在「所选种子全部支持该能力」时打开：能力不足时实体按契约返回 false，用户只会看到
+ * 「已设置 0 个」，无法判断是「不支持」还是「临时失败」。按钮的 disabled 条件用同一个判定。
+ */
+function openSpeedLimitDialog() {
+  if (!isFeatureAllowedForAll(selectedTorrents.value, "SpeedLimit")) return;
+  showSpeedLimitDialog.value = true;
+}
+
+function openLabelDialog() {
+  if (!isFeatureAllowedForAll(selectedTorrents.value, "Label")) return;
+  showLabelDialog.value = true;
+}
+
+/**
+ * Aria2 的 `aria2.remove` 不支持同时删除数据（`Aria2.removeTorrent` 在 `removeData=true` 时按契约
+ * 返回 false），因此勾选「同时删除数据」后必然整批失败且没有可读原因（N17）。
+ * 这里在删除弹窗里禁用该选项，避免用户走进必然失败的路径。
+ *
+ * A（REVIEW-FINDINGS P1-7）：实体 type 是 `"Aria2"`（entity/Aria2.ts），旧集合写的是小写
+ * `"aria2"` → 恒不命中、守卫失效。这里统一按 `toLowerCase()` 归一比较。
+ */
+const CLIENT_TYPES_WITHOUT_REMOVE_DATA = new Set(["aria2"]);
+
+const removeDataSupported = computed(() =>
+  toDeleteTorrents.value.every((item) => {
+    const type = metadataStore.downloaders[item.clientId]?.type;
+    return !type || !CLIENT_TYPES_WITHOUT_REMOVE_DATA.has(type.toLowerCase());
+  }),
+);
+
 async function recheckTorrents() {
   const torrentList = toRecheckTorrents.value;
   if (torrentList.length === 0) return;
   const results = await Promise.allSettled(
     torrentList.map((t) => sendMessage("recheckClientTorrent", { downloaderId: t.clientId, id: t.id })),
   );
-  const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
-  runtimeStore.showSnakebar(t("MyClient.action.recheckSelectedSuccess", { count: succeeded }), {
-    color: succeeded > 0 ? "success" : "error",
-  });
+  showBatchResult(results, "MyClient.action.recheckSelectedSuccess");
   const affectedIds = [...new Set(torrentList.map((t) => t.clientId))];
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
 }
@@ -312,12 +461,14 @@ async function moveTorrentsInQueue(torrentList: CTorrent[], direction: TorrentQu
   const results = await Promise.allSettled(
     torrentList.map((t) => sendMessage("moveClientTorrentInQueue", { downloaderId: t.clientId, id: t.id, direction })),
   );
-  const succeeded = results.filter((r) => r.status === "fulfilled" && Boolean(r.value)).length;
-  runtimeStore.showSnakebar(t("MyClient.action.moveQueueSuccess", { count: succeeded }), {
-    color: succeeded > 0 ? "success" : "error",
-  });
+  showBatchResult(results, "MyClient.action.moveQueueSuccess");
   const affectedIds = [...new Set(torrentList.map((t) => t.clientId))];
   await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+}
+
+/** 批量限速 / 批量标签弹窗成功后刷新受影响下载器（D2-09：标签列不再等下一轮自动刷新）。 */
+async function onBatchDialogDone(clientIds: string[]) {
+  await Promise.allSettled(clientIds.map((id) => loadSingleDownloader(id)));
 }
 
 // DOWNLOADER-3：下载器实体用 `return false` 表达「这个客户端没法这样删」，但 `throw` 里原本那句
@@ -364,6 +515,16 @@ function clientIcon(clientId: string) {
   return type ? getDownloaderIcon(type) : undefined;
 }
 
+/**
+ * N6：「{name} 刷新失败 3 次，已暂停自动刷新。点击下载器标签可恢复」——
+ * 标签原先只绑了 @close，点它没有任何反应。只有被暂停时才恢复（平时点击不改动定时器）。
+ */
+function onDownloaderTagClick(clientId: string) {
+  if (suspendedDownloaders.value.has(clientId)) {
+    resumeDownloaderRefresh(clientId);
+  }
+}
+
 /** 清除下载器预选筛选（恢复显示全部下载器） */
 function clearDownloaderFilter() {
   selectedDownloaderIds.value = [];
@@ -386,50 +547,62 @@ function clearDownloaderFilter() {
           <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
           <a-button
-            :disabled="tableSelected.length === 0"
+            :disabled="selectedTorrents.length === 0"
             :title="t('MyClient.resumeSelected')"
-            @click="() => resumeTorrents(tableSelected)"
+            @click="() => resumeTorrents(selectedTorrents)"
             type="link"
             ><template #icon><PlayCircleOutlined /></template>{{ t("MyClient.resumeSelected") }}</a-button
           >
 
           <a-button
-            :disabled="tableSelected.length === 0"
+            :disabled="selectedTorrents.length === 0"
             :title="t('MyClient.pauseSelected')"
-            @click="() => pauseTorrents(tableSelected)"
+            @click="() => pauseTorrents(selectedTorrents)"
             type="text"
             ><template #icon><PauseOutlined /></template>{{ t("MyClient.pauseSelected") }}</a-button
           >
 
           <a-button
-            :disabled="tableSelected.length === 0"
+            :disabled="selectedTorrents.length === 0"
             :title="t('MyClient.deleteSelected')"
-            @click="() => openDeleteDialog(tableSelected)"
+            @click="() => openDeleteDialog(selectedTorrents)"
             type="text"
             danger
             ><template #icon><DeleteOutlined /></template>{{ t("MyClient.deleteSelected") }}</a-button
           >
 
           <a-button
-            :disabled="tableSelected.length === 0"
-            :title="t('MyClient.recheckSelected')"
-            @click="() => openRecheckDialog(tableSelected)"
+            :disabled="selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Recheck')"
+            :title="
+              selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'Recheck')
+                ? t('MyClient.batch.unsupported')
+                : t('MyClient.recheckSelected')
+            "
+            @click="() => openRecheckDialog(selectedTorrents)"
             type="text"
             ><template #icon><ReloadOutlined /></template>{{ t("MyClient.recheckSelected") }}</a-button
           >
 
           <a-button
-            :disabled="tableSelected.length === 0"
-            :title="t('MyClient.speedLimit.batchBtn')"
-            @click="showSpeedLimitDialog = true"
+            :disabled="selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')"
+            :title="
+              selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')
+                ? t('MyClient.batch.unsupported')
+                : t('MyClient.speedLimit.batchBtn')
+            "
+            @click="openSpeedLimitDialog"
             type="text"
             ><template #icon><DashboardOutlined /></template>{{ t("MyClient.speedLimit.batchBtn") }}</a-button
           >
 
           <a-button
-            :disabled="tableSelected.length === 0"
-            :title="t('MyClient.label.batchBtn')"
-            @click="showLabelDialog = true"
+            :disabled="selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Label')"
+            :title="
+              selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'Label')
+                ? t('MyClient.batch.unsupported')
+                : t('MyClient.label.batchBtn')
+            "
+            @click="openLabelDialog"
             type="text"
             ><template #icon><TagOutlined /></template>{{ t("MyClient.label.batchBtn") }}</a-button
           >
@@ -493,7 +666,19 @@ function clearDownloaderFilter() {
         </div>
 
         <div class="my-client-toolbar__filters">
-          <a-tag v-if="selectedDownloaderIds.length === 1" closable color="#1677ff" @close="clearDownloaderFilter"
+          <!-- N6：自动刷新因连续失败被暂停时，文案提示「点击下载器标签可恢复」；标签原先只绑了 @close，
+               点它没有任何反应。这里让标签本身也能恢复该下载器的自动刷新（未暂停时点击无副作用）。 -->
+          <a-tag
+            v-if="selectedDownloaderIds.length === 1"
+            closable
+            color="#1677ff"
+            :title="
+              suspendedDownloaders.has(selectedDownloaderIds[0])
+                ? t('MyClient.autoRefresh.resumeDownloader')
+                : undefined
+            "
+            @click="() => onDownloaderTagClick(selectedDownloaderIds[0])"
+            @close="clearDownloaderFilter"
             ><a-avatar :src="clientIcon(selectedDownloaderIds[0])" :size="20" style="margin-right: 4px" />
             {{ clientName(selectedDownloaderIds[0]) }}
           </a-tag>
@@ -509,7 +694,13 @@ function clearDownloaderFilter() {
       :loading="loading"
       :pagination="tablePagination"
       :row-key="torrentKey"
-      :row-selection="{ selectedRowKeys: tableSelected.map(torrentKey), onChange: onSelectionChange }"
+      :row-selection="{
+        selectedRowKeys: tableSelected.map(torrentKey),
+        onChange: onSelectionChange,
+        // D2-07：保留数据源之外的选中行，避免「筛选后再勾选」把隐藏行静默丢弃
+        // （真正参与批量操作的是 selectedTorrents = 选中集合 ∩ 可见集合）
+        preserveSelectedRowKeys: true,
+      }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"
       @change="onTableChange"
@@ -712,6 +903,8 @@ function clearDownloaderFilter() {
   <DeleteDialog
     v-model="showDeleteDialog"
     :to-delete-ids="toDeleteTorrents.map((t) => torrentKey(t))"
+    :torrents="toDeleteTorrents"
+    :remove-data-supported="removeDataSupported"
     :confirm-delete="confirmDeleteTorrent"
     :failure-hints="deleteFailureHints"
     @all-delete="loadTorrents"
@@ -723,12 +916,13 @@ function clearDownloaderFilter() {
 
   <TorrentDetailDialog v-model="showDetailDialog" :torrent="detailTorrent" />
 
-  <SpeedLimitDialog v-model="showSpeedLimitDialog" :torrents="tableSelected" />
+  <SpeedLimitDialog v-model="showSpeedLimitDialog" :torrents="selectedTorrents" @done="onBatchDialogDone" />
 
-  <LabelDialog v-model="showLabelDialog" :torrents="tableSelected" />
+  <LabelDialog v-model="showLabelDialog" :torrents="selectedTorrents" @done="onBatchDialogDone" />
 
   <RecheckConfirmDialog
     v-model="showRecheckDialog"
+    :torrents="toRecheckTorrents"
     :torrent-count="toRecheckTorrents.length"
     :confirm-fn="recheckTorrents"
   />

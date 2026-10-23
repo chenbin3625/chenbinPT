@@ -59,9 +59,15 @@ const dateUnitToSecondsMap: Record<(typeof dateUnit)[number], number> = {
 };
 
 /**
- * 预编译正则，避免每次调用 parseTimeToLiveToSeconds 都重新编译（原实现每次调用 16 次 new RegExp）
+ * 预编译正则，避免每次调用 parseTimeToLiveToSeconds 都重新编译（原实现每次调用 16 次 new RegExp）。
+ *
+ * E05：多字母单位（`"Minutes"` / `"Day"` / `"Hours"`）此前大小写敏感，首字母大写的英文相对时间
+ * （`"2 Hours ago"`）整段解析失败。这里把每个单位的别名拆成两组：
+ * - 单字母 ASCII 别名（`M`/`m`/`D`/`W`/`Y`/`h`/`s`）**保持大小写敏感**（`M`=月、`m`=分），
+ *   并要求后面不接字母（既支持 `2h30m` 紧凑写法，又不会命中 `hónapja` 这类非英文单词）；
+ * - 多字母别名使用**大小写不敏感**匹配（`i` 标志），不影响数字与单位之间的位置约束。
  */
-const nonStandDateUnitRegexes: Array<[string, RegExp]> = Object.entries(nonStandDateUnitMap).map(([k, v]) => {
+const nonStandDateUnitRegexes: Array<[string, RegExp[]]> = Object.entries(nonStandDateUnitMap).map(([k, v]) => {
   // 再按长度降序排一次：保证「最长匹配优先」不依赖单位表里手写的顺序（见 nonStandDateUnitMap 的说明）
   const longestFirst = [...v].sort((a, b) => b.length - a.length);
   // 单字符 ASCII 单位需要「后面不接字母」的边界：
@@ -77,12 +83,21 @@ const nonStandDateUnitRegexes: Array<[string, RegExp]> = Object.entries(nonStand
   // 正则元字符的条目（如 `{2}`、`+`、`\p`）会让 `new RegExp` 在**模块加载时抛 SyntaxError**，
   // 即整个 datetime 模块不可用（不是等到运行时才失败）。当前表内 35 项已逐一验证可编译；
   // 新增条目请只写纯文本单位，或在此处显式转义。
-  const unitConvArr = longestFirst.map((str) => (/^[A-Za-z]$/.test(str) ? `${str}(?!\\p{L})` : str));
-  return [k, new RegExp(`(\\d+)\\s*(${unitConvArr.join("|")})`, "gu")];
+  const singleCharUnits = longestFirst.filter((str) => /^[A-Za-z]$/.test(str)).map((str) => `${str}(?!\\p{L})`);
+  const multiCharUnits = longestFirst.filter((str) => !/^[A-Za-z]$/.test(str));
+
+  const regexes: RegExp[] = [];
+  if (singleCharUnits.length > 0) {
+    regexes.push(new RegExp(`(\\d+)\\s*(${singleCharUnits.join("|")})`, "gu"));
+  }
+  if (multiCharUnits.length > 0) {
+    regexes.push(new RegExp(`(\\d+)\\s*(${multiCharUnits.join("|")})`, "giu"));
+  }
+  return [k, regexes];
 });
 
 const dateUnitRegexMap = new Map<(typeof dateUnit)[number], RegExp>(
-  dateUnit.map((v) => [v, new RegExp(`([.\\d]+) ?(${v}s?)`)]),
+  dateUnit.map((v) => [v, new RegExp(`([.\\d]+) ?(${v}s?)`, "g")]),
 );
 
 /**
@@ -99,15 +114,17 @@ export function parseTimeToLiveToSeconds(ttl: string): number | string {
   let ttlTemp = ttl;
 
   // 处理原始字符串中的非标准Unit
-  for (const [k, regex] of nonStandDateUnitRegexes) {
-    regex.lastIndex = 0; // 使用模块级 /g 正则，显式复位以保证 replace 行为稳定
-    ttlTemp = ttlTemp.replace(regex, `$1 ${k}`);
+  for (const [k, regexes] of nonStandDateUnitRegexes) {
+    for (const regex of regexes) {
+      regex.lastIndex = 0; // 使用模块级 /g 正则，显式复位以保证 replace 行为稳定
+      ttlTemp = ttlTemp.replace(regex, `$1 ${k}`);
+    }
   }
 
   let seconds = 0;
   for (const [v, regex] of dateUnitRegexMap) {
-    const matched = ttlTemp.match(regex);
-    if (matched) {
+    regex.lastIndex = 0;
+    for (const matched of ttlTemp.matchAll(regex)) {
       parsed = true;
       const amount = parseFloat(matched[1]);
       seconds += amount * dateUnitToSecondsMap[v];
@@ -131,6 +148,71 @@ export function parseTimeToLiveToDate(ttl: string): number | string {
   return +sub(new Date(), { seconds: parsedTTL });
 }
 
+/**
+ * 原生 `Date` 兜底只接受「看起来像日期」的字符串（E04）。
+ *
+ * V8 的 Date 解析极其宽松：`new Date("foo 1")` / `"Released 3"` / `"5 Jan"` 都会被解析成
+ * **2001 年**的某一天，于是「解析失败」被伪装成「有效时间」，且不再走 TTL/年份补全逻辑。
+ * 这里要求输入包含四位年份、完整的数字日期、或「月份名 + 日 + （2/4 位）年份」，才允许原生兜底。
+ *
+ * 注意（P2-A）：`parseTimeWithZone` 的主路径也复用本闸门，因此除了「月+日+年」外还要覆盖
+ * 站点常见的「日+月+年份」写法（`31 Dec 24`），否则这类本来能原生解析的格式会被误判为失败。
+ */
+const nativeDateShapePattern = new RegExp(
+  [
+    "(?<!\\d)(?:1[89]\\d{2}|2\\d{3})(?!\\d)", // 四位年份
+    "\\b\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}\\b", // 01/03/2024、01-03-24
+    "\\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+(?:\\d{4}|\\d{2})(?!\\d|:)", // Mar 10, 24
+    "\\b\\d{1,2}\\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?,?\\s+(?:\\d{4}|\\d{2})(?!\\d|:)", // 31 Dec 24
+  ].join("|"),
+  "i",
+);
+
+/**
+ * 无年份的自然语言日期格式（E04）：V8 对这类输入固定回落到 2001 年，这里用「当前年份」补全。
+ * 只匹配完整的英文月份缩写 + 日（可带时间），避免把 `"1 day"` / `"5 Jan ago"` 误判为有效时间。
+ */
+const noYearTimeFormats = [
+  "MMM d, HH:mm",
+  "MMM d HH:mm",
+  "MMM d, h:mm a",
+  "MMM d h:mm a",
+  "d MMM HH:mm",
+  "MMM d",
+  "d MMM",
+];
+
+/**
+ * 与 `parseValidTimeString` 共用的「字符串 → Date」闸门（E04 + P2-A）。
+ *
+ * V8 的 Date 解析极其宽松：`new Date("foo 1")` / `"Released 3"` / `"5 Jan"` 都会被解析成
+ * **2001 年**的某一天，于是「解析失败」被伪装成「有效时间」。规则：
+ * - 含四位年份 / 完整数字日期 / 「月份名 + 日 + 年份」→ 允许原生 Date 兜底；
+ * - 无年份的「月份名 + 日」→ 用 date-fns 按**当前年份**补全（`Sep 5` / `5 Jan 10:00`）；
+ * - 其它不像日期的串 → 返回 undefined（由调用方决定「原样返回」还是「明确失败」）。
+ *
+ * 注意：`parseTimeWithZone` 的主路径也必须走这里，否则 `"Sep 5"` 这类站点合法格式会经
+ * `new Date()` 变成 2001 年、`"Released 3"` 这类垃圾串会变成「有效时间」（P2-A）。
+ */
+function parseDateLikeString(query: string): Date | undefined {
+  if (nativeDateShapePattern.test(query)) {
+    const nativeDate = new Date(query);
+    return isValid(nativeDate) ? nativeDate : undefined;
+  }
+
+  for (const f of noYearTimeFormats) {
+    try {
+      const time = parse(query, f, new Date());
+      if (isValid(time)) {
+        return time;
+      }
+    } catch {
+      // 继续尝试下一个格式
+    }
+  }
+  return undefined;
+}
+
 export function parseValidTimeString(query: string, formatString: string[] = []): number | string {
   for (const f of [...formatString, "yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss.SSS"]) {
     try {
@@ -143,19 +225,20 @@ export function parseValidTimeString(query: string, formatString: string[] = [])
     }
   }
 
-  // 尝试使用原生 Date 构造函数，它能处理很多常见格式
-  let nativeDate = new Date(query);
-  if (isValid(nativeDate)) {
-    return +nativeDate;
-  }
-
-  return query;
+  // 无年份先按「当前年份」补全（'5 Jan' / 'Sep 5, 10:00'），而不是交给 V8 回落到 2001 年；
+  // 垃圾串（'foo 1' / 'Released 3'）原样返回，由调用方（如 parseFuzzyTime）继续尝试 TTL 解析。
+  const date = parseDateLikeString(query);
+  return date ? +date : query;
 }
 
 // DEFS3-3：允许时间与数值偏移之间存在空白（如 `2024-03-10 10:41 +0800`）。
 // 原生 Date 已能把这类串解析成绝对时间，正则若不识别，下面的 parseValidTimeStringInZone 会把它
 // 当作墙上时间再按站点偏移二次换算（并把宿主时区的 local 字段当成站点时间），结果随运行主机漂移。
-const explicitTimeZonePattern = /[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|[+-]\d{2}:?\d{2})$/i;
+//
+// E06：除 `Z` / `±HH:MM` 外，还要识别 `UTC` / `GMT` 文本后缀（可带数值偏移），否则同样的
+// 「宿主时区二次换算」会让带 UTC/GMT 的时间随运行主机漂移。
+const explicitTimeZonePattern =
+  /[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(?:Z|[+-]\d{2}:?\d{2}|(?:UTC|GMT)(?:[+-]\d{1,2}(?::?\d{2})?)?)$/i;
 const wallTimePattern = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(?::(\d{2})(\.\d+)?)?)?$/;
 
 /**
@@ -273,6 +356,34 @@ function parseTimezoneOffset(value: string): string | null {
 }
 
 /**
+ * 把 Unix 时间戳统一成毫秒：10 位及以下视为秒，其余视为毫秒；非有限值返回 0（解析失败）。
+ */
+function normalizeUnixTimestamp(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.abs(value) < 1e10 ? value * 1000 : value;
+}
+
+/**
+ * 把 8 位紧凑日期 `yyyyMMdd`（如 `"20240301"`）展开成 `"2024-03-01"`；形状不合法返回 null。
+ *
+ * N2：纯数字字符串此前一律被当成 Unix 时间戳，8 位日期会被解析成 1970 年 8 月。
+ */
+function expandCompactYmd(value: string): string | null {
+  if (value.length !== 8) {
+    return null;
+  }
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(4, 6));
+  const day = Number(value.slice(6, 8));
+  if (year < 1900 || year > 2999 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
+/**
  * 将时间解析为时间戳。
  *
  * timezoneOffset 表示**输入时间所采用的时区**，即站点本地时间相对 UTC 的偏移：
@@ -296,11 +407,7 @@ export function parseTimeWithZone(
   // Unix 时间戳（秒/毫秒）本身就是绝对时间，无需也无法再做时区换算
   if (typeof time === "number") {
     // NaN / ±Infinity 不是时间戳，返回安全值而不是把 NaN 扩散给调用方
-    if (!Number.isFinite(time)) {
-      return 0;
-    }
-    // 10 位及以下视为秒级时间戳
-    return String(Math.trunc(time)).length <= 10 ? time * 1000 : time;
+    return normalizeUnixTimestamp(time);
   }
 
   // 空值：`new Date(null)` 是 1970-01-01（静默变成纪元），`new Date("")` 是 Invalid Date，
@@ -309,10 +416,13 @@ export function parseTimeWithZone(
     return 0;
   }
 
-  // 纯数字字符串同样是 Unix 时间戳
+  // 纯数字字符串：8 位 `yyyyMMdd` 按站点时区的墙上日期解析（N2），其余按 Unix 时间戳
   if (/^\d+$/.test(time)) {
-    const timestamp = Number(time);
-    return String(Math.trunc(timestamp)).length <= 10 ? timestamp * 1000 : timestamp;
+    const compactYmd = expandCompactYmd(time);
+    if (compactYmd === null) {
+      return normalizeUnixTimestamp(Number(time));
+    }
+    time = compactYmd;
   }
 
   if (explicitTimeZonePattern.test(time)) {
@@ -335,8 +445,11 @@ export function parseTimeWithZone(
     return Number.isNaN(timestamp) ? 0 : timestamp;
   }
 
-  const date = new Date(time);
-  if (Number.isNaN(date.getTime())) {
+  // P2-A：native Date 兜底同样必须过 E04 闸门：
+  // - "Sep 5" 这类无年份日期按当前年份补全（而不是回落到 2001 年）；
+  // - "foo 1"/"Released 3" 这类垃圾串明确失败返回 0（而不是被 V8 解析成 2001 年的「有效时间」）。
+  const date = parseDateLikeString(time);
+  if (!date) {
     // 无效日期（如 "昨天"）：`format()` 对 Invalid Date 会抛 RangeError，必须先拦截
     return 0;
   }

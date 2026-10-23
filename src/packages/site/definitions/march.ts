@@ -32,6 +32,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "Music/音乐", value: 408 },
         { name: "Others/其他", value: 409 },
       ],
+      // L1：与同文件 medium/codec/standard/team 保持一致（NexusPHP 只认 cat<id>=1，且无 cross 时无法多选）
+      cross: { mode: "append" },
     },
     {
       name: "媒介",

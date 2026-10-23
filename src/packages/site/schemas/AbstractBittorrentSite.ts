@@ -4,6 +4,7 @@ import { chunk, pascalCase, pick, toMerged, union } from "es-toolkit";
 import { type AxiosError, type AxiosRequestConfig, type AxiosResponse } from "axios";
 import PQueue from "p-queue";
 import { supportSocialSite } from "@ptd/social";
+import { buildTrustedHostnames, collectDeclaredRequestHostnames, isHostTrusted } from "../utils/trustedHost";
 
 import { isDebug } from "~/helper.ts";
 
@@ -36,6 +37,7 @@ import {
   parseSizeString,
   parseTimeWithZone,
   parseValidTimeStringInZone,
+  normalizeNumericField,
   tryToNumber,
   hasNonLatinCharacters,
   classifySiteError,
@@ -95,17 +97,6 @@ const allowedLinkProtocols = ["http:", "https:", "magnet:"];
 /** 显式 scheme 的正则：没有 scheme 的输入是相对路径，会由 fixLink 按站点基址解析 */
 const explicitSchemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
-function normalizeSiteHost(host: string): string {
-  const value = host.trim().toLowerCase();
-  return value.startsWith("www.") ? value.slice(4) : value;
-}
-
-function siteHostMatches(host: string, trustedHost: string): boolean {
-  const target = normalizeSiteHost(host);
-  const trusted = normalizeSiteHost(trustedHost);
-  return target === trusted || (target.includes(".") && trusted.includes(".") && target.endsWith(`.${trusted}`));
-}
-
 /**
  * 判断链接的协议是否在白名单内。
  * 没有显式 scheme 的相对路径（`./x`、`x`、`/x`）直接放行——它们最终会落到站点的 http(s) 基址上。
@@ -119,6 +110,88 @@ function hasAllowedLinkProtocol(url: string): boolean {
   return scheme ? allowedLinkProtocols.includes(scheme.toLowerCase()) : true;
 }
 
+/**
+ * 「文本/标识」语义的字段：即使解析结果是纯数字字符串也不能转成 number。
+ *
+ * 背景（E18/E19）：`getFieldData` 历史上把所有纯数字结果 `parseInt`，于是
+ * - 用户名 `123456` / 全数字用户名 → `IUserInfo.name` 变成 number → urlJoin 抛错；
+ * - 标题《1917》《2012》→ `ITorrent.title` 变成 number，破坏 string 契约；
+ * - IMDB/豆瓣等 `ext_*` 标识同理。
+ *
+ * 只有在调用方显式传入字段名（`getFieldsData` / `parseWholeTorrentFromRow`）时才能判断语义；
+ * 两参数调用（站点定义里的历史写法）继续保留「数字字符串 → number」的兼容行为。
+ */
+const stringTypedFieldKeys = new Set<string>([
+  "name",
+  "title",
+  "subTitle",
+  "author",
+  "url",
+  "link",
+  "levelName",
+  "status",
+]);
+
+/** 带前导零的「数字」更像标识（`"007"` / 邮编 / 赛季号）而不是数量，保留字符串避免丢失前导零（E19） */
+const leadingZeroNumberPattern = /^-?0\d/;
+
+/**
+ * 列表页「计数类」数值字段（seeders/leechers/…）。
+ *
+ * selector 零命中时 `getFieldData` 会回落成 `""`（这是引擎既有契约，站点定义有直接探测它的用例，
+ * 不要在这里改）。这些字段的 `"" → 0` 归一放 `parseWholeTorrentFromRow` 组装种子对象时做
+ * （见该方法内 `torrentCountFieldKeys` 循环），只影响 `ITorrent`，不影响 `getFieldData` 的返回值。
+ * 用户信息字段不在此列——它们走 `getFieldsData({dropEmptyMisses})`，零命中保留 undefined（D1-6）。
+ */
+const torrentCountFieldKeys = new Set<string>([
+  "seeders",
+  "leechers",
+  "completed",
+  "comments",
+  "size",
+  "time",
+  "progress",
+]);
+
+/**
+ * 用**惰性文档**解析一段 HTML 片段（E07）。
+ *
+ * `DOMParser().parseFromString()` 生成的文档是惰性的：不执行脚本、不加载图片，
+ * 因此用它替代「活文档 + `document.createElement("span").innerHTML = s`」
+ * （utils/html.ts 的 `extractContent` 以及 NexusPHP 的历史实现）不会把不可信页面内容
+ * 变成扩展上下文里的资源请求/事件源。
+ */
+export function parseInertHtmlFragment(html: string): Document {
+  return new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
+}
+
+/** 同 `parseInertHtmlFragment`，只取纯文本（等价于旧 `extractContent` 的语义） */
+export function extractTextFromHtmlFragment(html: string): string {
+  if (!html) return "";
+  return parseInertHtmlFragment(html).body?.textContent ?? "";
+}
+
+/**
+ * 判断一个值是否是 DOM Document（不依赖跨 realm 的 `instanceof`）。
+ *
+ * happy-dom 的 `DOMParser` 产物不是测试环境全局 `Document` 的实例（H 的 M1 证据），
+ * 而浏览器扩展里 schema 也可能收到来自不同 document 的对象；用 `nodeType === 9` 判定既准确又稳定，
+ * 也让测试不必再 `vi.stubGlobal("Document", ...)` 才能走 DOM 分支。
+ */
+export function isDocumentNode(value: unknown): value is Document {
+  return !!value && typeof value === "object" && (value as { nodeType?: number }).nodeType === 9;
+}
+
+/** 判断一个值是否是 DOM Element（同上，避免跨 realm 的 `instanceof Element` 失配） */
+export function isElementNode(value: unknown): value is Element {
+  return !!value && typeof value === "object" && (value as { nodeType?: number }).nodeType === 1;
+}
+
+/** 判断一个值是否是 DOM 节点（Document/Element/Text/…），用于 getFieldData 区分 DOM 上下文与 JSON 对象 */
+export function isDomNode(value: unknown): value is Node {
+  return !!value && typeof value === "object" && typeof (value as { nodeType?: number }).nodeType === "number";
+}
+
 // 适用于公网BT站点，同时也作为 所有站点方法 的基类
 export default class BittorrentSite {
   public readonly metadata: ISiteMetadata; // 实际过程中使用的配置文件
@@ -128,6 +201,16 @@ export default class BittorrentSite {
   private _rowElementQueryCache = new WeakMap<Element, Map<string, Element | null>>();
   // 逐字段解析计划的记忆化缓存（键为 searchEntry.selectors 对象）
   private _torrentRowParsePlanCache = new WeakMap<object, TorrentRowParsePlanItem[]>();
+
+  // E22 复检 L-5：详情页解析出的下载链接短期实例缓存（键为 torrent 对象身份）。
+  // `getTorrentInfoForVerification` / `downloadTorrent` 会对**同一个 torrent 对象**先后调用
+  // `getTorrentDownloadLink()` 与 `getTorrentDownloadRequestConfig()`（后者内部再调一次前者）；
+  // E22 之后不再写回 `torrent.link`，若下载链接只在详情页 selector 里，这串调用会重复抓详情页。
+  // - 不写回入参、不跨 torrent 对象泄漏（WeakMap，对象被回收即释放）；
+  // - 短 TTL：避免复用已过期的签名下载链接；
+  // - 仅缓存「从详情页解析成功」的结果，torrent.link 本身存在时无需缓存。
+  private _resolvedDownloadLinkCache = new WeakMap<object, { link: string; expires: number }>();
+  private static readonly resolvedDownloadLinkCacheTtl = 60 * 1000;
 
   constructor(metadata: ISiteMetadata, userConfig: ISiteUserConfig = {}) {
     this.metadata = toMerged(metadata, userConfig.merge ?? {});
@@ -163,28 +246,7 @@ export default class BittorrentSite {
       return true;
     }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(link, this.url);
-    } catch {
-      return false;
-    }
-
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return false;
-    }
-
-    const trustedHosts = [this.url, ...(this.metadata.urls ?? []), ...(this.metadata.legacyUrls ?? [])]
-      .map((url) => {
-        try {
-          return new URL(url).hostname;
-        } catch {
-          return "";
-        }
-      })
-      .filter(Boolean);
-
-    return trustedHosts.some((trustedHost) => siteHostMatches(parsed.hostname, trustedHost));
+    return this.isTrustedSiteUrl(link);
   }
 
   get isOnline(): boolean {
@@ -193,6 +255,167 @@ export default class BittorrentSite {
 
   get allowSearch(): boolean {
     return this.isOnline && !!this.metadata.search && !(this.userConfig.allowSearch === false);
+  }
+
+  private _trustedHostnames?: string[];
+
+  /**
+   * 本站点允许发起特权请求的主机集合：`this.url` + `metadata.urls` + `metadata.legacyUrls`。
+   * 与 `isTrustedDownloadLink` 共用同一套比较规则（允许同一注册域的子域，例如 CDN / api 子域）。
+   * metadata 在实例构造后不可变，因此结果可以按实例缓存。
+   *
+   * **最终同源语义（跨范围协调结论，2026-10-23）**：
+   * - 放行：与上述主机**完全相同**，或其中任一主机的**子域**（`cdn.example.com` ∈ `example.com`）；
+   * - 不放行：**兄弟主机**（`api.m-team.cc` ⊄ `kp.m-team.cc`）。这里刻意不按「父域相同」自动放行：
+   *   metadata.urls 里可能存在共享托管域（`foo.github.io`），自动信任父域会把 `*.github.io` 一起放进来；
+   * - 站点若确实使用兄弟 API 主机（如 M-Team 的 `api.<domain>`），在站点类里**显式覆写本 getter** 声明，
+   *   参考 `definitions/mteam.ts` 的 `trustedHostnames` 覆写（只追加由 `apiBaseUrl` 推导的单个主机）。
+   */
+  protected get trustedHostnames(): string[] {
+    // 复用 D2 的公共实现（utils/trustedHost.ts），保证 schema 请求同源校验、offscreen sender 绑定、
+    // 站点定义的 trustedHostnames 覆写三处规则不漂移。
+    // 声明主机来源：this.url + metadata.urls/legacyUrls（支持 rot13）+ metadata 中显式写定的
+    // 绝对请求地址（search/list/detail/download.requestConfig 的 url/baseURL）。
+    this._trustedHostnames ??= buildTrustedHostnames(
+      [this.url, ...(this.metadata.urls ?? []), ...(this.metadata.legacyUrls ?? [])],
+      collectDeclaredRequestHostnames(this.metadata),
+    );
+    return this._trustedHostnames;
+  }
+
+  /**
+   * 判断一个（绝对或相对）链接是否指向本站点：相对路径按 `this.url` 解析，
+   * 只有 http(s) 且主机命中 `trustedHostnames`（含子域）才返回 true。
+   *
+   * 用于两处纵深防御（E3-1 / E12）：
+   * 1. `request()` 拒绝把请求（及其携带的 passkey/token 等凭据）发往站点之外的绝对 URL；
+   * 2. 定义层（hdbits/huno）在注入凭据前复用同一判据。
+   */
+  public isTrustedSiteUrl(url?: string | null): boolean {
+    if (typeof url !== "string" || url.trim() === "") {
+      return false;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(url.trim(), this.url);
+    } catch {
+      return false;
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+
+    return isHostTrusted(parsed.hostname, this.trustedHostnames);
+  }
+
+  /**
+   * 解析一个请求配置最终会打到的绝对 URL（只用于同源校验，不参与实际请求拼接）。
+   * 解析失败返回 undefined，由调用方按「不可信」处理。
+   */
+  public resolveRequestTarget(config: { baseURL?: string; url?: string } | undefined | null): string | undefined {
+    if (!config) return undefined;
+
+    const rawUrl = typeof config.url === "string" ? config.url.trim() : "";
+    const rawBase = typeof config.baseURL === "string" ? config.baseURL.trim() : "";
+
+    const absoluteBase = (() => {
+      if (!rawBase) return this.url;
+      if (explicitSchemePattern.test(rawBase)) return rawBase;
+      try {
+        return new URL(rawBase, this.url).toString();
+      } catch {
+        return undefined;
+      }
+    })();
+
+    try {
+      if (rawUrl) {
+        if (explicitSchemePattern.test(rawUrl)) return new URL(rawUrl).toString();
+        if (rawUrl.startsWith("//")) return new URL(rawUrl, absoluteBase ?? this.url).toString();
+        if (!absoluteBase) return undefined;
+        return new URL(rawUrl, absoluteBase).toString();
+      }
+      return absoluteBase;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 构造并记录一条「请求目标不在站点允许主机内」的错误。
+   * 日志只保留 protocol//host/pathname：请求 URL 可能包含 passkey / token 等凭据，不能进日志/UI。
+   */
+  private untrustedRequestError(targetUrl: string): Error {
+    let safeTarget = "[unparseable]";
+    try {
+      const parsed = new URL(targetUrl);
+      safeTarget = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    } catch {
+      /* 保留占位符 */
+    }
+
+    logMessage(
+      `[Site] ${this.name} blocked request to untrusted host`,
+      { site: this.metadata.id, target: safeTarget },
+      "warn",
+    );
+
+    return new Error(`[PTD] site '${this.metadata.id}' blocked request to untrusted host: ${safeTarget}`);
+  }
+
+  /**
+   * 给请求配置补默认值，并做**同源校验**（E3-1 纵深防御）：绝对 URL、协议相对 URL 或绝对 baseURL
+   * 的目标主机必须命中 `trustedHostnames`，否则在发请求（以及注入凭据）之前直接失败。
+   *
+   * 返回的是**浅拷贝**：`request()` 不再原地修改调用方传入的对象（E12 的根因是
+   * `statusRequestConfig` 这类模块级共享配置被 `baseURL ??=` 写坏，导致跨站点凭据串用）。
+   */
+  protected prepareRequestConfig(axiosConfig: AxiosRequestConfig): AxiosRequestConfig {
+    const config: AxiosRequestConfig = { ...axiosConfig };
+    config.baseURL ??= this.url;
+    config.url ??= "/";
+    config.timeout ??= this.userConfig.timeout ?? 30e3;
+
+    const rawUrl = String(config.url).trim();
+    if (explicitSchemePattern.test(rawUrl) || rawUrl.startsWith("//")) {
+      const resolved = this.resolveRequestTarget({ baseURL: config.baseURL, url: rawUrl });
+      if (!resolved || !this.isTrustedSiteUrl(resolved)) {
+        throw this.untrustedRequestError(resolved ?? rawUrl);
+      }
+      // 归一化成绝对 URL，且显式允许它覆盖 baseURL（否则 axios 会把它当相对路径拼接）
+      config.url = resolved;
+      config.allowAbsoluteUrls = true;
+    } else {
+      // 相对路径：关闭 axios 的「绝对 URL 覆盖 baseURL」能力，作为纵深防御
+      config.allowAbsoluteUrls = false;
+    }
+
+    if (typeof config.baseURL === "string" && explicitSchemePattern.test(config.baseURL.trim())) {
+      if (!this.isTrustedSiteUrl(config.baseURL)) {
+        throw this.untrustedRequestError(config.baseURL);
+      }
+    }
+
+    // 最终拼出的 URL 再过一遍同源校验（防止 baseURL + 畸形 url 组合出别的主机）
+    try {
+      const finalUrl = axios.getUri({
+        baseURL: config.baseURL,
+        url: config.url,
+        params: config.params,
+      });
+      if (finalUrl && !this.isTrustedSiteUrl(finalUrl)) {
+        throw this.untrustedRequestError(finalUrl);
+      }
+    } catch (e) {
+      // untrustedRequestError 必须原样抛出；getUri 自身失败（畸形 baseURL）时保持原行为由 axios 报错
+      if (e instanceof Error && e.message.startsWith("[PTD]")) {
+        throw e;
+      }
+    }
+
+    return config;
   }
 
   get downloadInterval(): number {
@@ -224,15 +447,13 @@ export default class BittorrentSite {
     return (this.userConfig.runtimeSettings?.[key] ?? (await retrieve<T>(this.metadata.id, key))) as T | null;
   }
 
-  public async request<T>(axiosConfig: AxiosRequestConfig, checkLogin: boolean = true): Promise<AxiosResponse<T>> {
-    // 统一设置一些 AxiosRequestConfig， 当作默认值
-    axiosConfig.baseURL ??= this.url;
-    axiosConfig.url ??= "/";
-    axiosConfig.timeout ??= this.userConfig.timeout ?? 30e3;
-
-    // 如果站点有请求延迟，则等待一段时间
-    await this.sleepAction(this.metadata.requestDelay ?? 0);
-
+  /**
+   * 真正的请求执行层（含重试 / CF 判定 / 网络错误包装），不包含登录断言与最终状态码判定。
+   *
+   * 拆出来是为了让改写过 `request()` 的 schema（AvistazNetwork 的 JSON API 分支）能复用同一套
+   * 重试与错误分类语义，而不是自己维护一份「无重试 + 原始 AxiosError」的旁路（D1-1）。
+   */
+  protected async performRequestWithRetry<T>(axiosConfig: AxiosRequestConfig): Promise<AxiosResponse<T>> {
     // 对网络错误（没有拿到 response）/ 超时 / 5xx / 429 做 1~2 次指数退避重试
     const maxRetryTimes = 2;
     const retryableStatusCodes = [429, 500, 502, 503, 504];
@@ -255,7 +476,7 @@ export default class BittorrentSite {
           const doc = req.data;
 
           // 进行简单的检查，防止无意义的替换
-          if (doc instanceof Document && doc.documentElement.outerHTML.includes("__cf_email__")) {
+          if (isDocumentNode(doc) && doc.documentElement.outerHTML.includes("__cf_email__")) {
             const cfProtectSpan = selectElements(".__cf_email__", doc);
 
             cfProtectSpan.forEach((element) => {
@@ -304,6 +525,20 @@ export default class BittorrentSite {
       // 用 NetworkError 标记「网络/超时」来源，便于上层区分「网络问题」与「真正的解析失败」（P1-3）
       throw new NetworkError(`Network Error: ${error?.message || error?.code || "No response received"}`.trim());
     }
+
+    return req;
+  }
+
+  public async request<T>(axiosConfig: AxiosRequestConfig, checkLogin: boolean = true): Promise<AxiosResponse<T>> {
+    // E12：必须先拷贝再补默认值——`statusRequestConfig`（Rartracker）等模块级共享配置被 `??=` 原地写坏后，
+    // 不同站点实例会复用第一个站点的 baseURL，把 A 站的 passkey 写到 B 站名下。
+    // 同时 prepareRequestConfig 会拒绝发往站点之外的绝对 URL（E3-1 纵深防御）。
+    const config = this.prepareRequestConfig(axiosConfig);
+
+    // 如果站点有请求延迟，则等待一段时间
+    await this.sleepAction(this.metadata.requestDelay ?? 0);
+
+    const req = await this.performRequestWithRetry<T>(config);
 
     // 随后检查是否需要登录
     if (checkLogin && !this.loggedCheck(req)) {
@@ -483,7 +718,14 @@ export default class BittorrentSite {
     // 8. 请求页面并转化为document
     try {
       const req = await this.request(requestConfig);
-      result.data = await this.transformSearchPage(req.data, { keywords, searchEntry, requestConfig });
+      result.data = await this.transformSearchPage(req.data, {
+        keywords,
+        searchEntry,
+        // request() 内部会拷贝配置并补全 baseURL/timeout，且不回写传入对象（E12）；
+        // 页面解析（fixLink 补全相对 url/link）需要的是「实际请求配置」，因此优先传 req.config，
+        // 避免再次出现「解析时 baseURL 缺失 → 每行 new URL 抛 Invalid URL」的整站解析失败。
+        requestConfig: req.config ?? requestConfig,
+      });
       result.status = EResultParseStatus.success;
     } catch (e) {
       // P1-3：区分「网络/超时/服务端错误（可重试）」与「真正的解析失败（重试无用）」，
@@ -517,14 +759,23 @@ export default class BittorrentSite {
     let url = uri;
 
     if (uri.length > 0 && !uri.startsWith("magnet:")) {
+      // 相对链接要按「本次解析对应页面的地址」补全，而不是按运行环境的地址补全。
+      //
+      // 关键：传入的 requestConfig 可能仍是**没有补过 baseURL 的原始搜索配置**
+      // （getSearchResult 生成的是 `{ url: "/torrents.php", ... }`；E12 之后 request() 只改自己的
+      // 拷贝，不再把 baseURL 原地写回调用方对象）。旧实现直接 `axios.getUri(requestConfig)` 只会得到
+      // 相对串 "/torrents.php"，随后 `new URL("download.php?id=..", "/torrents.php")` 抛
+      // `TypeError: Invalid URL`，于是**每一行**都解析失败，被上层汇总成
+      // `all N rows failed to parse`（真实站点上所有 NexusPHP 搜索都因此整站报解析错误）。
+      // 这里统一用 resolveRequestTarget 按 this.url 把请求配置解析成绝对页面地址。
+      const requestUrl = this.resolveRequestTarget(requestConfig) ?? this.url;
       if (uri.startsWith("//")) {
         // TESTS-7：原实现 `${urlHelper.protocol}:${uri}` 会拼出 `https:://host/path` 这种 URL 解析器
         // 不接受的畸形串（node 实测 `new URL("https:://host/path")` 抛 Invalid URL），下载必然失败；
         // 协议相对链接的语义就是「沿用基址的协议」，交给 new URL 按基址解析才能得到合法绝对地址。
-        url = new URL(uri, requestConfig.baseURL || this.url).toString();
+        url = new URL(uri, requestUrl).toString();
       } else if (uri.slice(0, 4) !== "http") {
         // 基于请求地址，处理 ./xxx, xxxx, /xxxx 等相对路径
-        const requestUrl = axios.getUri(requestConfig);
         url = new URL(uri, requestUrl).toString();
       }
 
@@ -556,7 +807,12 @@ export default class BittorrentSite {
   protected getFieldsData<
     G extends "search" | "detail" | "userInfo",
     S extends Required<Required<ISiteMetadata>[G]>["selectors"],
-  >(element: Element | object, selectors: S, fields?: (keyof S)[]): { [key in keyof S]?: any } {
+  >(
+    element: Element | object,
+    selectors: S,
+    fields?: (keyof S)[],
+    options: { dropEmptyMisses?: boolean } = {},
+  ): { [key in keyof S]?: any } {
     const ret: { [key in keyof S]?: any } = {};
 
     if (!fields) {
@@ -573,7 +829,15 @@ export default class BittorrentSite {
 
     for (const [key, selector] of Object.entries(pickedSelectors)) {
       // 传入 key 以启用 getFieldData 的「按字段名推导返回类型」重载（见 P2-4）
-      retRecord[key] = this.getFieldData(element, selector, key as keyof Omit<ITorrent, "site">);
+      const value = this.getFieldData(element, selector, key as keyof Omit<ITorrent, "site">);
+
+      // D1-6：用户信息路径不允许把「selector 零命中」回落出来的 "" 当成真实值写入
+      // （否则页面改版/软错误页会把数字字段覆盖成空串，破坏 IUserInfo 的数字契约）。
+      if (options.dropEmptyMisses === true && value === "" && !this.hasFieldMatch(element, selector)) {
+        continue;
+      }
+
+      retRecord[key] = value;
     }
 
     return ret;
@@ -591,7 +855,7 @@ export default class BittorrentSite {
    * 仅缓存 Element 上下文（行元素），Document 等上下文不缓存，以免跨调用读到过期结果。
    */
   private queryRowElement(selector: string, element: Element | Document): Element | undefined {
-    if (!(element instanceof Element)) {
+    if (!isElementNode(element)) {
       return selectElements(selector, element)[0] as Element | undefined;
     }
 
@@ -639,7 +903,7 @@ export default class BittorrentSite {
         // 在每次循环开始前，重置 query 为 undefined
         query = undefined;
 
-        if (element instanceof Node) {
+        if (isDomNode(element)) {
           // 这里我们预定义一个特殊的 Css Selector，即不进行子元素选择
           const another = (
             usedSelector === ":self" ? element : this.queryRowElement(usedSelector, element as Element | Document)
@@ -697,7 +961,11 @@ export default class BittorrentSite {
     // noinspection SuspiciousTypeOfGuard
     if (typeof query === "string") {
       query = query.trim(); // 去除空格
-      if (/^-?\d+$/.test(query)) {
+      // E18/E19：只有「非文本语义 && 纯数字 && 无前导零」的字段才转 number；
+      // 用户名/标题/链接等保持字符串（详见 stringTypedFieldKeys 的说明）。
+      const fieldName = typeof _field === "string" ? _field : undefined;
+      const isStringTypedField = fieldName !== undefined && stringTypedFieldKeys.has(fieldName);
+      if (!isStringTypedField && /^-?\d+$/.test(query) && !leadingZeroNumberPattern.test(query)) {
         // 尽可能的将返回值转成数字类型
         query = isNaN(parseInt(query)) ? 0 : parseInt(query);
       }
@@ -770,7 +1038,7 @@ export default class BittorrentSite {
     let foundElements: any[] = [];
 
     for (const selector of selectorArray) {
-      if (options.isJson || !(context instanceof Document)) {
+      if (options.isJson || !isDocumentNode(context)) {
         // JSON 数据处理
         if (selector === ":self") {
           foundElements = context;
@@ -807,9 +1075,9 @@ export default class BittorrentSite {
     let failedRows = 0; // B-1：解析失败的行数，用于区分「部分坏数据」与「整体解析失败」
 
     // 使用抽象方法处理数组选择器
-    let trs = this.findElementsBySelectors(rowsSelector.selector, doc, { isJson: !(doc instanceof Document) });
+    let trs = this.findElementsBySelectors(rowsSelector.selector, doc, { isJson: !isDocumentNode(doc) });
 
-    if (doc instanceof Document) {
+    if (isDocumentNode(doc)) {
       if (rowsSelector.filter) {
         trs = rowsSelector.filter(trs);
       } else {
@@ -932,7 +1200,11 @@ export default class BittorrentSite {
 
     // 对获取到的种子进行一些通用的处理
     torrent.site ??= this.metadata.id; // 补全种子的 site 属性
-    torrent.id ??= tryToNumber(torrent.url || torrent.link); // 补全种子的 id 属性，如果不存在，则由 url, link 属性替代
+    // DEF1/DEF5 证据：selector 命中但拿到空串时 `??=` 不会补全（"" 不是 nullish），会让 uniqueId 塌缩；
+    // 这里按「缺失或空串」补全 id（0 仍是合法 id，不能用 falsy 判断）。
+    if (torrent.id === undefined || torrent.id === null || torrent.id === "") {
+      torrent.id = tryToNumber(torrent.url || torrent.link); // 补全种子的 id 属性，如果不存在，则由 url, link 属性替代
+    }
     typeof torrent.url != "undefined" && (torrent.url = this.fixLink(torrent.url as string, requestConfig!));
     typeof torrent.link != "undefined" && (torrent.link = this.fixLink(torrent.link as string, requestConfig!));
     if (typeof (torrent.size as unknown) === "string") {
@@ -944,6 +1216,16 @@ export default class BittorrentSite {
     typeof torrent.completed != "undefined" && (torrent.completed = tryToNumber(torrent.completed));
     typeof torrent.comments != "undefined" && (torrent.comments = tryToNumber(torrent.comments));
     typeof torrent.category != "undefined" && (torrent.category = tryToNumber(torrent.category));
+    // E19 补充：计数类字段（torrentCountFieldKeys）selector 零命中时 `getFieldData` 回落 `""`，
+    // 直接写进种子对象会破坏 `ITorrent` 的 number 契约（排序/比较按字符串处理）。
+    // 只在**组装种子对象**的这一步归 0（用 D2 的 normalizeNumericField），不改 `getFieldData` 的
+    // 「零命中 = ""」引擎契约（站点定义有直接探测该行为的用例）。
+    for (const countField of torrentCountFieldKeys) {
+      const countValue = (torrent as Record<string, any>)[countField];
+      if (typeof countValue === "string" && countValue.trim() === "") {
+        (torrent as Record<string, any>)[countField] = normalizeNumericField(countValue, 0);
+      }
+    }
     typeof torrent.status == "undefined" && (torrent.status = ETorrentStatus.unknown);
 
     // 仅当设置了时区偏移时，才进行转换
@@ -965,7 +1247,7 @@ export default class BittorrentSite {
       const tags: ITorrentTag[] = [];
       const tagConfigs = searchConfig.searchEntry.selectors.tags;
 
-      if (row instanceof Element) {
+      if (isElementNode(row)) {
         const tagSelectors = tagConfigs.map(({ selector }) => selector).filter(Boolean) as string[];
 
         // 合并为一次候选查询，再用 matchesSelector 判定归属，避免为每个 tag 都做一次整行 DOM 查询
@@ -1036,7 +1318,8 @@ export default class BittorrentSite {
 
     // 如果有 keywords 选择器，则获取当前搜索页的关键词
     if (searchEntry.selectors.keywords) {
-      retData.keywords = this.getFieldData(doc, searchEntry.selectors.keywords as IElementQuery);
+      // E18 附带项：关键词是文本，不能因为「1917」这类纯数字查询被 getFieldData 转成 number
+      retData.keywords = String(this.getFieldData(doc, searchEntry.selectors.keywords as IElementQuery) ?? "");
       delete searchEntry.selectors.keywords; // 删除 keywords 选择器，避免污染后续的种子解析
     } else {
       // 参照 searchEntry 中的 keywordPath 来获取关键词
@@ -1044,16 +1327,18 @@ export default class BittorrentSite {
       const [keywordField, keywordParams] = keywordPath.split(".");
 
       // 首先尝试使用 getFieldData 获取关键词
-      retData.keywords = this.getFieldData(doc, {
-        selector: [
-          keywordField === "params" ? `input[name="${keywordParams}"]` : false,
-          // E-1：这里要取的是关键词参数名（keywordParams，如 searchstr），
-          // 而不是 keywordField（字面量 "data"），否则会生成 input[name="data"] 永远匹配不到。
-          keywordField === "data" ? `form[method="post" i] input[name="${keywordParams}"]` : false,
-        ].filter(Boolean) as string[],
-        elementProcess: (el: HTMLInputElement) => el.value,
-        text: "",
-      });
+      retData.keywords = String(
+        this.getFieldData(doc, {
+          selector: [
+            keywordField === "params" ? `input[name="${keywordParams}"]` : false,
+            // E-1：这里要取的是关键词参数名（keywordParams，如 searchstr），
+            // 而不是 keywordField（字面量 "data"），否则会生成 input[name="data"] 永远匹配不到。
+            keywordField === "data" ? `form[method="post" i] input[name="${keywordParams}"]` : false,
+          ].filter(Boolean) as string[],
+          elementProcess: (el: HTMLInputElement) => el.value,
+          text: "",
+        }) ?? "",
+      );
 
       // 如果没有获取到关键词，则尝试从 URL 中解析
       if (retData.keywords === "") {
@@ -1075,7 +1360,13 @@ export default class BittorrentSite {
         requestConfig: { url: parsedListPageUrl },
       });
     } catch (e) {
-      console.error(`[PTD] site '${this.name}' transformListPage Error:`, e);
+      // D1-7：列表页解析失败目前没有 UI 错误通道（IParsedTorrentListPage 无 status），
+      // 至少写入扩展日志（用户可导出），而不是只留在页面 console 里。
+      logMessage(
+        `[Site] ${this.name} transformListPage failed`,
+        { site: this.metadata.id, url: parsedListPageUrl.split("?")[0], error: siteErrorLogData(e) },
+        "warn",
+      );
     }
 
     return retData;
@@ -1118,7 +1409,11 @@ export default class BittorrentSite {
     if (!torrent.title) {
       // SITECORE-6：<title> 位于 <head>，原选择器 `html > body > title` 在标准 HTML 下恒为 0 命中，
       // getFieldData 会回落到 text: ""，于是未声明 detail.title 的站点标题永远为空且无任何告警。
-      torrent.title = this.getFieldData(parsedDetailsPage, { text: "", selector: ["head > title"] });
+      //
+      // E18 复检 L-1：这里是两参数调用，`getFieldData` 会保留「数字字符串 → number」的历史兼容行为，
+      // 于是纯数字标题（《1917》《2012》）在详情页路径仍会变成 number，破坏 `ITorrent.title: string`。
+      // 显式传入字段名 "title" 以启用文本字段白名单（不改变其它两参数调用的兼容语义）。
+      torrent.title = this.getFieldData(parsedDetailsPage, { text: "", selector: ["head > title"] }, "title");
     }
 
     if (torrent.link) {
@@ -1136,19 +1431,34 @@ export default class BittorrentSite {
    * @param torrent
    */
   public async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    if (!torrent.link && this.metadata?.detail?.selectors?.link) {
+    let resolvedLink = torrent.link;
+    let resolvedFromDetailPage = false;
+
+    if (!resolvedLink && this.metadata?.detail?.selectors?.link) {
+      // E22 复检 L-5：同一个 torrent 对象在「校验 → 下载」链路里会被连续调用两次本方法
+      // （`getTorrentDownloadRequestConfig` 内部也会调），这里复用短期的详情页解析结果，
+      // 避免仅靠详情页提供下载链接的站点每次都被抓两遍详情页。
+      const cached = this._resolvedDownloadLinkCache.get(torrent);
+      if (cached && cached.expires > Date.now()) {
+        resolvedLink = cached.link;
+      }
+    }
+
+    if (!resolvedLink && this.metadata?.detail?.selectors?.link) {
       if (!torrent.url || !this.isTrustedDownloadLink(torrent.url)) {
         throw new Error(`Rejected detail URL outside site host allowlist for ${this.metadata.id}`);
       }
       const { data } = await this.request<any>(
         toMerged({ responseType: "document", url: torrent.url }, this.metadata.detail?.requestConfig ?? {}),
       );
-      torrent.link = this.getFieldData(data, this.metadata.detail.selectors.link) as string;
+      // 显式传字段名 "link"：link 属于字符串语义字段，避免纯数字形式的链接被 getFieldData 转成 number
+      resolvedLink = this.getFieldData(data, this.metadata.detail.selectors.link, "link");
+      resolvedFromDetailPage = true;
     }
 
     // E-9：链接缺失（或 fixLink 因协议不在白名单内返回空串）时必须明确失败，
     // 否则会先拼出 "undefined<后缀>" 这类脏 URL，下游只能拿到费解的 404。
-    if (!torrent.link) {
+    if (!resolvedLink) {
       // 报错信息里的 url 只保留 path：详情页 URL 可能带 passkey 等凭据，不应进入 UI/日志
       const safeUrl = torrent.url ? torrent.url.split("?")[0] : "";
       throw new Error(
@@ -1156,12 +1466,17 @@ export default class BittorrentSite {
       );
     }
 
-    if (this.userConfig.downloadLinkAppendix) {
-      // 如果用户配置了下载链接后缀，则在链接后追加
-      torrent.link = `${torrent.link}${this.userConfig.downloadLinkAppendix}`;
+    if (resolvedFromDetailPage && typeof resolvedLink === "string") {
+      this._resolvedDownloadLinkCache.set(torrent, {
+        link: resolvedLink,
+        expires: Date.now() + BittorrentSite.resolvedDownloadLinkCacheTtl,
+      });
     }
 
-    return torrent.link;
+    // E22：追加用户配置的下载链接后缀，但**不写回** torrent.link（见上）
+    return this.userConfig.downloadLinkAppendix
+      ? `${resolvedLink}${this.userConfig.downloadLinkAppendix}`
+      : resolvedLink;
   }
 
   /**

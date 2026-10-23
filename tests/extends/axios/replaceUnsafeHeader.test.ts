@@ -13,7 +13,7 @@
  * - 并发同 key 请求只安装一次，最后一个请求结束/失败才按 id 删除规则；
  * - 安装失败不写缓存，后续请求会重试。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/messages.ts", () => ({
   sendMessage: vi.fn(),
@@ -124,12 +124,24 @@ describe("toExactUrlRegexFilter", () => {
     expect(/^[\x00-\x7F]*$/.test(filter)).toBe(true);
     expect(new RegExp(filter).test(new URL("https://例子.com/路径?q=值").href)).toBe(true);
   });
+
+  it("输入 URL 自带 fragment 时仍匹配实际无 fragment 的网络请求", () => {
+    const re = new RegExp(toExactUrlRegexFilter("https://api.example.com/v1/thing?q=1#details"));
+    expect(re.test("https://api.example.com/v1/thing?q=1")).toBe(true);
+    expect(re.test("https://api.example.com/v1/thing?q=1#details")).toBe(true);
+    expect(re.test("https://api.example.com/v1/thing?q=2")).toBe(false);
+  });
 });
 
 describe("DNR 规则生命周期", () => {
   beforeEach(() => {
     sendMessageMock.mockReset();
     sendMessageMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    // 个别用例用假时钟验证「等在途删除的上限」，失败/超时时也要还原
+    vi.useRealTimers();
   });
 
   it("并发同 key 只安装一次，最后一个请求结束才按 id 删除规则", async () => {
@@ -162,32 +174,113 @@ describe("DNR 规则生命周期", () => {
     expect(removeCalls[0]![1]).toBe(rule.id);
   });
 
-  it("安装失败不写缓存：下一个请求会重新安装（可重试）", async () => {
+  it("安装失败不写缓存：同一 key 的下一个请求会重新安装（可重试）", async () => {
     const { instance, requestInterceptors } = createFakeAxios();
     setupReplaceUnsafeHeader(instance);
 
+    // G13：必须复用**同一个 URL**。旧用例两次 makeConfig() 会自增出不同 URL，
+    // 而 dnrRuleCache 的 key 含 URL —— 即使旧实现「失败也写缓存」，第二个请求也是新 key、
+    // 照样会安装，用例抓不到回归。这里固定 url，让第二次请求真的命中同一个 key。
+    const url = "/v1/fail-retry";
+
     sendMessageMock.mockRejectedValueOnce(new Error("install failed"));
-    await expect(requestInterceptors[0]!.fulfilled(makeConfig())).rejects.toThrow("install failed");
+    await expect(requestInterceptors[0]!.fulfilled(makeConfig({ url }))).rejects.toThrow("install failed");
     expect(callsOf("updateDNRSessionRules")).toHaveLength(1);
 
     // 旧实现会把失败的规则留在缓存里，第二个请求直接命中缓存不再安装 → header 丢失
-    await requestInterceptors[0]!.fulfilled(makeConfig());
+    await requestInterceptors[0]!.fulfilled(makeConfig({ url }));
     expect(callsOf("updateDNRSessionRules")).toHaveLength(2);
   });
 
-  it("请求失败同样释放规则，不退化成 TTL 常驻", async () => {
+  it("请求失败同样释放规则，不退化成 TTL 常驻（同一 key 复验）", async () => {
     const { instance, requestInterceptors, responseInterceptors } = createFakeAxios();
     setupReplaceUnsafeHeader(instance);
 
-    const config = makeConfig();
+    // G13：同上，第二次请求必须与第一次同 key，才能证明「规则真的被释放」
+    const url = "/v1/release-retry";
+    const config = makeConfig({ url });
     await requestInterceptors[0]!.fulfilled(config);
 
     const error = { config };
     await expect(responseInterceptors[0]!.rejected!(error)).rejects.toBe(error);
     expect(callsOf("removeDNRSessionRuleById")).toHaveLength(1);
 
-    // 规则删除后，新的请求必须重新安装
-    await requestInterceptors[0]!.fulfilled(makeConfig());
+    // 规则删除后，同 key 的新请求必须重新安装（旧 TTL 实现会命中残留缓存，不会安装）
+    await requestInterceptors[0]!.fulfilled(makeConfig({ url }));
+    expect(callsOf("updateDNRSessionRules")).toHaveLength(2);
+  });
+
+  it("删除与重装串行化：同 key 的下一次安装会等同 id 的删除完成（G2）", async () => {
+    const { instance, requestInterceptors, responseInterceptors } = createFakeAxios();
+    setupReplaceUnsafeHeader(instance);
+
+    const url = "/v1/serialized-removal";
+    let releaseRemoval!: () => void;
+    sendMessageMock.mockImplementation((type: string) => {
+      if (type === "removeDNRSessionRuleById") {
+        // 删除消息在途（模拟 background 处理 remove 晚于 update 的乱序窗口）
+        return new Promise<void>((resolve) => {
+          releaseRemoval = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    // 第一次请求安装 → 结束 → 发出删除（此时删除 promise 挂起）
+    const first = makeConfig({ url });
+    await requestInterceptors[0]!.fulfilled(first);
+    responseInterceptors[0]!.fulfilled({ config: first });
+    expect(callsOf("removeDNRSessionRuleById")).toHaveLength(1);
+    expect(callsOf("updateDNRSessionRules")).toHaveLength(1);
+
+    // 同一内容的下一条请求：删除还没完成，安装必须排在它之后（不能出现 remove 覆盖 update）
+    const second = makeConfig({ url });
+    let secondSettled = false;
+    const pendingSecond = requestInterceptors[0]!.fulfilled(second).then(() => {
+      secondSettled = true;
+    });
+    // 多轮微任务后仍不应安装（说明在等删除完成，而不是依赖隐式的消息顺序）
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(callsOf("updateDNRSessionRules")).toHaveLength(1);
+    expect(secondSettled).toBe(false);
+
+    releaseRemoval();
+    await pendingSecond;
+    expect(callsOf("updateDNRSessionRules")).toHaveLength(2);
+    expect(secondSettled).toBe(true);
+  });
+
+  it("删除消息卡住时安装最多等 5s，不会永久排队（G2 活性兜底）", async () => {
+    vi.useFakeTimers();
+    const { instance, requestInterceptors, responseInterceptors } = createFakeAxios();
+    setupReplaceUnsafeHeader(instance);
+
+    const url = "/v1/stuck-removal";
+    // 删除消息永不 resolve（模拟 background 被杀/端口挂起）
+    sendMessageMock.mockImplementation((type: string) => {
+      if (type === "removeDNRSessionRuleById") return new Promise<void>(() => undefined);
+      return Promise.resolve(undefined);
+    });
+
+    const first = makeConfig({ url });
+    await requestInterceptors[0]!.fulfilled(first);
+    responseInterceptors[0]!.fulfilled({ config: first });
+
+    const second = makeConfig({ url });
+    let secondSettled = false;
+    const pendingSecond = requestInterceptors[0]!.fulfilled(second).then(() => {
+      secondSettled = true;
+    });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(callsOf("updateDNRSessionRules")).toHaveLength(1);
+    expect(secondSettled).toBe(false);
+
+    // 超过 5s 的等待上限后排空安装（否则「安装」会被一条卡死的删除消息永久挂住）
+    await vi.advanceTimersByTimeAsync(5_001);
+    await pendingSecond;
+    expect(secondSettled).toBe(true);
     expect(callsOf("updateDNRSessionRules")).toHaveLength(2);
   });
 

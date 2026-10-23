@@ -284,3 +284,202 @@ describe("qBittorrent：sync/maindata 缓存一致性（M-2 / L-3）", () => {
     expect((await (client as any).getSyncData()).tags).toEqual(["a", "b", "c", "d"]);
   });
 });
+
+/** C1 修复轮回归：QB-1 / QB-2 / QB-3 / QB-4 / QB-5 / N-5 */
+describe("qBittorrent：C1 修复轮", () => {
+  const rawTorrent = (state: string, overrides: Record<string, any> = {}) => ({
+    name: "Torrent",
+    hash: "HASH",
+    magnet_uri: "",
+    added_on: 0,
+    size: 100,
+    progress: 1,
+    dlspeed: 0,
+    upspeed: 0,
+    priority: 0,
+    num_seeds: 0,
+    num_complete: 0,
+    num_leechs: 0,
+    num_incomplete: 0,
+    ratio: 1,
+    eta: 0,
+    state,
+    seq_dl: false,
+    f_l_piece_prio: false,
+    completion_on: 0,
+    tracker: "",
+    dl_limit: -1,
+    up_limit: -1,
+    downloaded: 0,
+    uploaded: 0,
+    downloaded_session: 0,
+    uploaded_session: 0,
+    amount_left: 0,
+    save_path: "/downloads",
+    completed: 0,
+    max_ratio: -1,
+    max_seeding_time: -1,
+    ratio_limit: -1,
+    seeding_time_limit: -1,
+    seen_complete: 0,
+    last_activity: 0,
+    total_size: 100,
+    time_active: 0,
+    category: "",
+    tags: "",
+    ...overrides,
+  });
+
+  const apiKeyClient = () => createClient({ username: "", password: "qbt_api_key" });
+
+  beforeEach(() => {
+    axiosMock.request.mockReset();
+    axiosMock.post.mockReset();
+  });
+
+  it("QB-1：qBittorrent 5.x 的 stoppedUP/stoppedDL/forcedMetaDL 映射正确", async () => {
+    const client = apiKeyClient();
+    axiosMock.request.mockResolvedValue({
+      data: {
+        rid: 1,
+        full_update: true,
+        torrents: {
+          A: rawTorrent("stoppedUP"),
+          B: rawTorrent("stoppedDL"),
+          C: rawTorrent("forcedMetaDL"),
+          D: rawTorrent("pausedUP"),
+        },
+      },
+    });
+
+    const list = await client.getAllTorrents();
+    expect(list.map((t) => `${(t.raw as any).state}->${t.state}`)).toEqual([
+      "stoppedUP->paused",
+      "stoppedDL->paused",
+      "forcedMetaDL->downloading",
+      "pausedUP->paused",
+    ]);
+  });
+
+  it("QB-2：凭据错误时并发请求只发起一次失败登录，且不再发业务请求", async () => {
+    axiosMock.post.mockRejectedValue(Object.assign(new Error("Forbidden"), { response: { status: 403 } }));
+    const client = createClient();
+
+    const results = await Promise.allSettled([
+      client.getClientStatus(),
+      client.getAllTorrents(),
+      client.getClientFreeSpace(),
+    ]);
+
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    expect(axiosMock.post).toHaveBeenCalledTimes(1);
+    expect(axiosMock.request).not.toHaveBeenCalled();
+  });
+
+  it("QB-3：读取 label 取 torrents[].tags 的第一个 tag", async () => {
+    const client = apiKeyClient();
+    axiosMock.request.mockResolvedValue({
+      data: { rid: 1, full_update: true, torrents: { A: rawTorrent("uploading", { tags: "movie, tv" }) } },
+    });
+
+    const [torrent] = await client.getAllTorrents();
+    expect(torrent.label).toBe("movie");
+  });
+
+  it("QB-3：setTorrentLabel 加法语义——只 addTags，不删除种子上其它 tag", async () => {
+    const client = apiKeyClient();
+    const calls: any[] = [];
+    axiosMock.request.mockImplementation(async (config: any) => {
+      calls.push(config);
+      if (String(config.url).endsWith("/torrents/info")) {
+        return { data: [{ hash: "HASH", tags: "old,tv" }] };
+      }
+      return { data: "Ok." };
+    });
+
+    await expect(client.setTorrentLabel("HASH", "movie")).resolves.toBe(true);
+
+    const urls = calls.map((config) => config.url);
+    // 复检 RB-3：加法语义不再 removeTags（qB tags 是多值属性且有外部写入者），也不再写 category
+    expect(urls).toContain("/api/v2/torrents/addTags");
+    expect(urls).not.toContain("/api/v2/torrents/removeTags");
+    expect(urls).not.toContain("/api/v2/torrents/setCategory");
+    expect(calls.find((config) => String(config.url).endsWith("addTags")).data).toEqual({
+      hashes: "HASH",
+      tags: "movie",
+    });
+  });
+
+  it("QB-3：setTorrentLabel 空标签时才清空该种子的全部 tags（显式删除语义）", async () => {
+    const client = apiKeyClient();
+    const calls: any[] = [];
+    axiosMock.request.mockImplementation(async (config: any) => {
+      calls.push(config);
+      if (String(config.url).endsWith("/torrents/info")) {
+        return { data: [{ hash: "HASH", tags: "old,tv" }] };
+      }
+      return { data: "Ok." };
+    });
+
+    await expect(client.setTorrentLabel("HASH", "   ")).resolves.toBe(true);
+
+    const urls = calls.map((config) => config.url);
+    expect(urls).not.toContain("/api/v2/torrents/addTags");
+    expect(calls.find((config) => String(config.url).endsWith("removeTags")).data).toEqual({
+      hashes: "HASH",
+      tags: "old,tv",
+    });
+  });
+
+  it("QB-4：addAtPaused=false/true 都显式下发 paused/stopped", async () => {
+    const client = apiKeyClient();
+    let captured: any;
+    axiosMock.request.mockImplementation(async (config: any) => {
+      captured = config;
+      return { data: "Ok." };
+    });
+
+    await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: false,
+      localDownload: true,
+    });
+    expect((captured.data as FormData).get("paused")).toBe("false");
+    expect((captured.data as FormData).get("stopped")).toBe("false");
+
+    await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: true,
+      localDownload: true,
+    });
+    expect((captured.data as FormData).get("paused")).toBe("true");
+    expect((captured.data as FormData).get("stopped")).toBe("true");
+  });
+
+  it("QB-5：使用 category: 前缀时不改写调用方的 advanceAddTorrentOptions", async () => {
+    const client = apiKeyClient();
+    axiosMock.request.mockResolvedValue({ data: "Ok." });
+    const advanceAddTorrentOptions = { autoTMM: false };
+
+    await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: false,
+      localDownload: true,
+      savePath: "category:movies",
+      advanceAddTorrentOptions,
+    });
+
+    expect(advanceAddTorrentOptions).toEqual({ autoTMM: false });
+  });
+
+  it("N-5：addTorrent 遇到 HTTP 错误时返回 success=false + message，而不是 reject", async () => {
+    const client = apiKeyClient();
+    axiosMock.request.mockRejectedValue(
+      Object.assign(new Error("Request failed with status code 409"), { response: { status: 409 } }),
+    );
+
+    await expect(
+      client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+        addAtPaused: false,
+        localDownload: true,
+      }),
+    ).resolves.toMatchObject({ success: false, message: expect.stringContaining("409") });
+  });
+});

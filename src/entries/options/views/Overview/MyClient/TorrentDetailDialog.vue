@@ -35,10 +35,16 @@ import type {
 } from "@ptd/downloader";
 import { sendMessage } from "@/messages.ts";
 import { formatRatio, formatSize, formatDate, isRatioHealthy } from "@/options/utils.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import TorrentStateTd from "./TorrentStateTd.vue";
-import { createTorrentLoadGuard, finishTorrentLoad } from "./utils.ts";
+import {
+  createTorrentLoadGuard,
+  finishTorrentLoad,
+  formatTorrentProgressLabel,
+  normalizeTorrentProgress,
+} from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
 const { torrent } = defineProps<{
@@ -46,6 +52,7 @@ const { torrent } = defineProps<{
 }>();
 
 const { t } = useI18n();
+const runtimeStore = useRuntimeStore();
 
 const activeTab = ref<string>("info");
 
@@ -81,6 +88,9 @@ const trackers = ref<CTorrentTracker[]>([]);
 const trackersLoading = ref(false);
 const trackersGuard = createGuard();
 const trackerInput = ref("");
+// N8：Tracker 增删 / 文件优先级执行的防重复与反馈
+const trackerOpLoading = ref(false);
+const filePriorityLoading = ref(false);
 
 const allPriorityItems: Array<{ title: string; value: TorrentFilePriority }> = [
   { title: t("MyClient.detail.prioritySkip"), value: "skip" },
@@ -140,25 +150,33 @@ async function loadFiles() {
 async function updateFilePriority(file: CTorrentFile, priority: TorrentFilePriority | null) {
   if (!torrent || !priority || priority === file.priority) return;
   const requestKey = filesGuard.begin();
+  filePriorityLoading.value = true;
   try {
     const ok = await sendMessage("setClientTorrentFilePriority", {
       downloaderId: torrent.clientId,
       torrent,
       selections: [{ index: file.index, priority }],
     });
-    if (ok) {
-      // 弹窗已关闭 / 已换成别的种子时不改本地展示，避免用陈旧的 record.index 污染下一个种子的文件列表
-      filesGuard.commit(
-        requestKey,
-        () => {
-          file.priority = priority;
-          file.wanted = priority !== "skip";
-        },
-        false,
-      );
+    // N8：接口用 false 表达失败；原先什么都不做（无提示、下拉显示值与实际不一致）
+    if (ok === false) {
+      runtimeStore.showSnakebar(t("MyClient.detail.updateFilePriorityFailure"), { color: "error" });
+      return;
     }
+    // 弹窗已关闭 / 已换成别的种子时不改本地展示，避免用陈旧的 record.index 污染下一个种子的文件列表
+    filesGuard.commit(
+      requestKey,
+      () => {
+        file.priority = priority;
+        file.wanted = priority !== "skip";
+      },
+      false,
+    );
+    runtimeStore.showSnakebar(t("MyClient.detail.updateFilePrioritySuccess"), { color: "success" });
   } catch {
-    // 静默失败，优先级保持原值
+    // N8：异常同样要有反馈（原先完全静默）
+    runtimeStore.showSnakebar(t("MyClient.detail.updateFilePriorityFailure"), { color: "error" });
+  } finally {
+    filePriorityLoading.value = false;
   }
 }
 
@@ -195,11 +213,16 @@ async function loadTrackers() {
 
 async function addTracker() {
   const requestKey = trackersGuard.begin();
-  if (!torrent || !requestKey || !trackerInput.value.trim()) return;
+  if (!torrent || !requestKey || !trackerInput.value.trim() || trackerOpLoading.value) return;
   const url = trackerInput.value.trim();
+  trackerOpLoading.value = true;
   try {
     const ok = await sendMessage("addClientTorrentTracker", { downloaderId: torrent.clientId, torrent, url });
-    if (!ok) return;
+    // N8：`ok === false` 是「客户端拒绝」（URL 非法、已存在等），原先直接 return，点按钮毫无反应
+    if (ok === false) {
+      runtimeStore.showSnakebar(t("MyClient.detail.addTrackerFailure"), { color: "error" });
+      return;
+    }
     const trackerList = await sendMessage("getClientTorrentTrackersDetail", {
       downloaderId: torrent.clientId,
       torrent,
@@ -207,28 +230,38 @@ async function addTracker() {
     if (trackersGuard.commit(requestKey, () => (trackers.value = trackerList))) {
       trackerInput.value = "";
     }
+    runtimeStore.showSnakebar(t("MyClient.detail.addTrackerSuccess"), { color: "success" });
   } catch {
-    // 静默失败
+    runtimeStore.showSnakebar(t("MyClient.detail.addTrackerFailure"), { color: "error" });
+  } finally {
+    trackerOpLoading.value = false;
   }
 }
 
 async function removeTracker(tracker: CTorrentTracker) {
   const requestKey = trackersGuard.begin();
-  if (!torrent || !requestKey) return;
+  if (!torrent || !requestKey || trackerOpLoading.value) return;
+  trackerOpLoading.value = true;
   try {
     const ok = await sendMessage("removeClientTorrentTracker", {
       downloaderId: torrent.clientId,
       torrent,
       url: tracker.url,
     });
-    if (!ok) return;
+    if (ok === false) {
+      runtimeStore.showSnakebar(t("MyClient.detail.removeTrackerFailure"), { color: "error" });
+      return;
+    }
     const trackerList = await sendMessage("getClientTorrentTrackersDetail", {
       downloaderId: torrent.clientId,
       torrent,
     });
     trackersGuard.commit(requestKey, () => (trackers.value = trackerList));
+    runtimeStore.showSnakebar(t("MyClient.detail.removeTrackerSuccess"), { color: "success" });
   } catch {
-    // 静默失败
+    runtimeStore.showSnakebar(t("MyClient.detail.removeTrackerFailure"), { color: "error" });
+  } finally {
+    trackerOpLoading.value = false;
   }
 }
 
@@ -268,8 +301,17 @@ function onTabChange(value: string | null | undefined) {
   }
 }
 
-async function copyToClipboard(text: string) {
-  await navigator.clipboard.writeText(text);
+/**
+ * N9：clipboard 在页面失焦 / 权限被拒 / 非安全上下文时会 reject。
+ * 原先模板直接 `@click="copyToClipboard(...)"`：成功没有反馈，失败变成 unhandled rejection。
+ */
+async function copyToClipboard(text: string, successKey: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    runtimeStore.showSnakebar(t(successKey), { color: "success" });
+  } catch {
+    runtimeStore.showSnakebar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
+  }
 }
 
 function magnetLink(torrent: CTorrent): string {
@@ -325,14 +367,14 @@ function formatTimestamp(timestamp: number | undefined): string {
                         :title="t('MyClient.detail.copyHash')"
                         type="text"
                         size="small"
-                        @click="copyToClipboard(torrent.infoHash)"
+                        @click="copyToClipboard(torrent.infoHash, 'MyClient.detail.copyHashSuccess')"
                         ><template #icon><CopyOutlined /></template
                       ></a-button>
                       <a-button
                         :title="t('MyClient.detail.copyMagnet')"
                         type="text"
                         size="small"
-                        @click="copyToClipboard(magnetLink(torrent))"
+                        @click="copyToClipboard(magnetLink(torrent), 'MyClient.detail.copyMagnetSuccess')"
                         ><template #icon><LinkOutlined /></template
                       ></a-button>
                     </a-flex>
@@ -353,7 +395,8 @@ function formatTimestamp(timestamp: number | undefined): string {
                   <a-list-item>
                     <a-list-item-meta>
                       <template #avatar><CheckCircleOutlined /></template>
-                      <template #title>{{ torrent.progress.toFixed(2) }}%</template>
+                      <!-- N10：实体漏填 progress 时 toFixed 会抛 TypeError 让整个弹窗崩掉 -->
+                      <template #title>{{ formatTorrentProgressLabel(torrent.progress) }}</template>
                     </a-list-item-meta>
                   </a-list-item>
                   <a-list-item>
@@ -423,7 +466,8 @@ function formatTimestamp(timestamp: number | undefined): string {
               <a-list-item>
                 <a-list-item-meta>
                   <template #avatar><CalendarOutlined /></template>
-                  <template #title>{{ formatDate(torrent.dateAdded * 1000) }}</template>
+                  <!-- N10：Aria2 的 dateAdded 恒为 0，formatDate(0) 会显示 1970 年；用 formatTimestamp 兜底成 "-" -->
+                  <template #title>{{ formatTimestamp(torrent.dateAdded) }}</template>
                 </a-list-item-meta>
               </a-list-item>
             </a-list>
@@ -476,12 +520,13 @@ function formatTimestamp(timestamp: number | undefined): string {
                   <span style="font-size: 12px">{{ formatSize(record.size) }}</span>
                 </template>
                 <template v-else-if="column.key === 'progress'">
-                  <span style="font-size: 12px">{{ record.progress.toFixed(1) }}%</span>
+                  <span style="font-size: 12px">{{ normalizeTorrentProgress(record.progress).toFixed(1) }}%</span>
                 </template>
                 <template v-else-if="column.key === 'priority'">
                   <a-select
                     v-if="featureAllowed('FilePriority')"
                     :value="record.priority"
+                    :disabled="filePriorityLoading"
                     :options="priorityItems"
                     :field-names="{ label: 'title', value: 'value' }"
                     size="small"
@@ -548,7 +593,7 @@ function formatTimestamp(timestamp: number | undefined): string {
                   <span style="font-size: 12px">{{ record.client || "-" }}</span>
                 </template>
                 <template v-else-if="column.key === 'progress'">
-                  <span style="font-size: 12px">{{ record.progress.toFixed(1) }}%</span>
+                  <span style="font-size: 12px">{{ normalizeTorrentProgress(record.progress).toFixed(1) }}%</span>
                 </template>
                 <template v-else-if="column.key === 'downloadSpeed'">
                   <span style="font-size: 12px">{{ formatSize(record.downloadSpeed) }}/s</span>
@@ -575,11 +620,16 @@ function formatTimestamp(timestamp: number | undefined): string {
             <a-row align="middle" :gutter="8" style="margin-bottom: 8px">
               <a-col flex="1 1 0">
                 <a-form-item :label="t('MyClient.detail.addTrackerTitle')">
-                  <a-input v-model:value="trackerInput" @keyup.enter="addTracker" />
+                  <a-input v-model:value="trackerInput" :disabled="trackerOpLoading" @keyup.enter="addTracker" />
                 </a-form-item>
               </a-col>
               <a-col style="flex: none">
-                <a-button :disabled="!trackerInput.trim()" type="primary" @click="addTracker">
+                <a-button
+                  :disabled="!trackerInput.trim() || trackerOpLoading"
+                  :loading="trackerOpLoading"
+                  type="primary"
+                  @click="addTracker"
+                >
                   {{ t("MyClient.detail.addTrackerTitle") }}
                 </a-button>
               </a-col>
@@ -654,6 +704,7 @@ function formatTimestamp(timestamp: number | undefined): string {
                 </template>
                 <template v-else-if="column.key === 'action'">
                   <a-button
+                    :disabled="trackerOpLoading"
                     type="text"
                     size="small"
                     :title="t('MyClient.detail.removeTracker')"

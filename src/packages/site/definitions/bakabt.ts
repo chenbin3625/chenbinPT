@@ -73,7 +73,9 @@ export const siteMetadata: ISiteMetadata = {
         filter: (rows: HTMLElement[] | null): HTMLElement[] | null => {
           if (!Array.isArray(rows)) return rows;
           return rows.filter((row) => {
-            if (row.classList.contains("torrent_alt") && row.textContent === "Alternative versions: ") {
+            // E1b-C15：原实现用 `row.textContent === "Alternative versions: "` 精确比较（含尾随空格），
+            // 站点只要改一个空格/换行，判定就恒为 false，被留下来的 torrent_alt 行会解析出标题为空的废条目。
+            if (row.classList.contains("torrent_alt") && row.textContent?.trim() === "Alternative versions:") {
               return false;
             }
             return true;
@@ -111,7 +113,24 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       size: { selector: ".size", filters: [{ name: "parseSize" }] },
-      completed: { selector: ".peers:first", filters: [{ name: "split", args: ["/", 0] }, { name: "trim" }] },
+      completed: {
+        // E1b-C13：BakaBT 的 .peers 单元格文本形如 "123k / 12 / 3"（grabs / seeders / leechers），
+        // 首段是 grabs 且可能带 k 缩写。原实现只 split + trim，得到 "123k" 字符串（ITorrent.completed 应为 number），
+        // 排序/统计会得到 NaN。这里把 k 展开成数量级再转数字（兼容 "12.3k"）。
+        selector: ".peers:first",
+        filters: [
+          { name: "split", args: ["/", 0] },
+          { name: "trim" },
+          (q: string) => {
+            const text = String(q ?? "")
+              .replace(/,/g, "")
+              .trim();
+            const value = Number.parseFloat(text);
+            if (!Number.isFinite(value)) return 0;
+            return /k$/i.test(text) ? Math.round(value * 1000) : value;
+          },
+        ],
+      },
       seeders: { selector: ".peers a:nth-child(1)" },
       leechers: { selector: ".peers a:nth-child(2)" },
       tags: [
@@ -168,7 +187,14 @@ export const siteMetadata: ISiteMetadata = {
           name: { selector: "a.username" },
           levelName: {
             selector: "h2 > span",
-            filters: [(query: string) => query.match(/^\((.+?) - (.+?)\)$/)![2]],
+            filters: [
+              (query: string) => {
+                // E1b-C16：原实现直接 `match(...)![2]`，文案不符合 "(X - Y)" 时 match 为 null，
+                // 会抛 TypeError 让整次用户信息刷新变成 parseError；拿不到就退化为原始文本。
+                const matched = query.match(/^\((.+?) - (.+?)\)$/);
+                return matched ? matched[2] : query.trim();
+              },
+            ],
           },
           messageCount: { selector: "a[href='/inbox.php'] > strong", filters: [{ name: "parseNumber" }] },
           joinTime: {
@@ -189,16 +215,11 @@ export const siteMetadata: ISiteMetadata = {
             selector: "td:contains('Downloaded') + td",
             filters: [{ name: "split", args: ["-", 0] }, { name: "parseSize" }],
           },
-          ratio: {
-            selector: "td:contains('Share ratio') + td > span",
-            filters: [
-              (query: string) => {
-                if (query === "∞") return -1; // Infinity 不能通过 sendMessage 传递，会导致无返回，使用 -1 替代，前端会自动处理的
-                const ratioStr = query.replace(/,/g, "");
-                return definedFilters.parseNumber(ratioStr);
-              },
-            ],
-          },
+          // E1-C2 / E15：站点用 "∞" 表示「无下载量（分享率无限）」。原实现把它映射成 -1 哨兵；
+          // level.ts 的 fixRatio 现在会把 -1 视为 Infinity（D2 已修），但 -1 仍会被持久化进 userInfo
+          // 并污染其它直接读取 ratio 的消费者（备份/导出/统计），语义上也不是真实分享率。
+          // 因此这里不输出 ratio，交给引擎按 uploaded/downloaded 推导
+          //（downloaded == 0 && uploaded > 0 → Infinity，UI 显示 ∞，等级判定同样正确）。
           bonus: { selector: "td:contains('Bonus Points') + td", filters: [{ name: "parseNumber" }] },
           uploads: { selector: "li#uploaded_tab > a", filters: [{ name: "parseNumber" }] },
           seeding: { selector: "li#active_tab > a", filters: [{ name: "parseNumber" }] },

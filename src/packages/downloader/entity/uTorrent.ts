@@ -20,7 +20,14 @@ import {
 } from "../types";
 import urlJoin from "url-join";
 import axios from "axios";
-import { extractMagnetHash, getRemoteTorrentFile } from "../utils";
+import { extractMagnetHash, getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
+
+/** uTorrent WebUI 在 token 失效时返回 400 invalid request（部分版本 401/403） */
+function isUtorrentAuthError(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } } | undefined)?.response?.status;
+  return status === 400 || status === 401 || status === 403;
+}
 
 export const clientConfig: TorrentClientConfig = {
   type: "uTorrent",
@@ -127,6 +134,8 @@ type TorrentData = [
 
 interface BaseUtorrentResponse {
   build: number;
+  /** uTorrent 对失败的 add/操作常以 HTTP 200 + error 字段返回 */
+  error?: string;
 }
 
 interface VersionResponse extends BaseUtorrentResponse {
@@ -175,51 +184,84 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
   readonly address: string;
 
   private _sid: string | null = null;
+  /** token 单飞去重（PKG-1）：并发首请求共享同一次 /token.html */
+  private _sidPromise: Promise<boolean> | null = null;
 
   constructor(options: Partial<TorrentClientConfig>) {
     super({ ...clientConfig, ...options });
 
-    // 修正GUI地址
+    // 修正GUI地址（N-2：只看 pathname，避免主机名/路径片段里含 "gui" 时误判成已带 /gui/）
     this.address = this.config.address;
-    if (this.address.indexOf("gui") === -1) {
+    let pathname = "";
+    try {
+      pathname = new URL(this.address).pathname;
+    } catch (e) {
+      pathname = "";
+    }
+    if (!/(^|\/)gui\/?$/i.test(pathname)) {
       this.address = urlJoin(this.address, "/gui/"); // 注意，最后一个slashes一定要存在
-    } else if (!/\/gui\/$/.exec(this.address)) {
-      this.address = this.address + "/";
+    } else if (!/\/(gui)\/$/i.test(this.address)) {
+      this.address = this.address.replace(/\/?$/, "/");
     }
   }
 
   private async getSessionId(): Promise<string> {
     if (this._sid === null) {
-      await this.login();
+      if (!this._sidPromise) {
+        this._sidPromise = this.login().finally(() => {
+          this._sidPromise = null;
+        });
+      }
+      const ok = await this._sidPromise;
+      if (!ok || this._sid === null) {
+        throw new Error("uTorrent: 获取 token 失败（请检查 WebUI 地址/用户名/密码）");
+      }
     }
     return this._sid as string;
   }
 
   private async login(): Promise<boolean> {
-    const req = await axios.get<string>("/token.html", {
-      baseURL: this.address,
-      params: {
-        t: Date.now().toString(),
-      },
-      auth: {
-        username: this.config.username,
-        password: this.config.password,
-      },
-      withCredentials: true,
-      timeout: this.config.timeout,
-    });
+    try {
+      const req = await axios.get<string>("/token.html", {
+        baseURL: this.address,
+        params: {
+          t: Date.now().toString(),
+        },
+        auth: {
+          username: this.config.username,
+          password: this.config.password,
+        },
+        withCredentials: true,
+        timeout: this.config.timeout,
+      });
 
-    const match = />([^<]+)</.exec(req.data);
-    if (match) {
-      this._sid = match[match.length - 1];
-      return true;
+      const match = />([^<]+)</.exec(req.data);
+      if (match) {
+        this._sid = match[match.length - 1];
+        return true;
+      }
+      this._sid = null;
+      return false;
+    } catch (e) {
+      this._sid = null;
+      return false;
     }
-
-    return false;
   }
 
   async ping(): Promise<boolean> {
-    return await this.login();
+    /**
+     * 测试连接时强制重新取 token（避免旧 token 掩盖客户端重启/地址错误），但必须走
+     * `getSessionId()` 的单飞路径：`ping()` 与业务请求并发时，直接调 `login()` 会另起一次
+     * `/token.html`（uTorrent 新 token 可能顶掉旧 token，导致业务请求 400 再重试）。
+     */
+    this._sid = null;
+    this._sidPromise = null;
+    try {
+      await this.getSessionId();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   protected async getClientVersionFromRemote(): Promise<string> {
@@ -243,104 +285,200 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
       [key: string]: any;
     } = {},
   ): Promise<T> {
-    const _sid = await this.getSessionId();
-
     if (action) {
       params.action = action;
     }
 
-    return (
-      await axios.get<T>(this.address, {
-        params: {
-          token: _sid,
-          t: Date.now().toString(),
-          ...params,
-        },
-        auth: {
-          username: this.config.username,
-          password: this.config.password,
-        },
-        withCredentials: true,
-        responseType: "json",
-        timeout: this.config.timeout,
-      })
-    ).data;
+    const doRequest = async (sid: string) =>
+      (
+        await axios.get<T>(this.address, {
+          params: {
+            token: sid,
+            t: Date.now().toString(),
+            ...params,
+          },
+          auth: {
+            username: this.config.username,
+            password: this.config.password,
+          },
+          withCredentials: true,
+          responseType: "json",
+          timeout: this.config.timeout,
+        })
+      ).data;
+
+    /**
+     * 复检 RB-2：uTorrent WebUI 对**失败的操作**（pause/remove/recheck/setprio/setprops…）返回
+     * HTTP 200 + `{ build, error }`，axios 不会 reject。以前除 `addTorrent` 外都没检查 `error`，
+     * 于是这些操作在「客户端明确拒绝了」时仍返回 true，MyClient 会显示「已暂停 N 个」但实际没生效。
+     * 这里在统一出口抛错，让各操作的 catch 变成 false（addTorrent 走自己的 POST，保留自行判读）。
+     */
+    const assertNoBusinessError = (data: T): T => {
+      const error = (data as BaseUtorrentResponse | undefined)?.error;
+      if (typeof error === "string" && error.length > 0) {
+        throw new Error(`uTorrent: ${error}`);
+      }
+      return data;
+    };
+
+    let sid = await this.getSessionId();
+    try {
+      return assertNoBusinessError(await doRequest(sid));
+    } catch (e) {
+      /**
+       * UT-1：uTorrent WebUI 的 token 会在客户端重启或空闲超时后失效，
+       * 此时接口返回 HTTP 400 `invalid request`。以前 token 永久缓存、失败不重取，
+       * 实例（被 offscreen 长期持有）生命周期内所有请求都会失败。
+       * 这里清空 token、重新登录并重试一次。
+       */
+      if (!isUtorrentAuthError(e)) {
+        throw e;
+      }
+      this._sid = null;
+      this._sidPromise = null;
+      sid = await this.getSessionId();
+      return assertNoBusinessError(await doRequest(sid));
+    }
   }
 
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    const _sid = await this.getSessionId();
+    try {
+      let formData: FormData | null = new FormData();
+      const params: { [key: string]: any } = {
+        // 注意： uTorrent 对参数顺序有要求，必须要按照下面顺序，否则会报 invalid request 错误
+        token: "", // 发送前填入当前 token
+        action: "", // 空白占位，后面会覆写的
+        download_dir: 0,
+        path: options.savePath ? options.savePath : "",
+      };
 
-    let formData: FormData | null = new FormData();
-    const params: { [key: string]: any } = {
-      // 注意： uTorrent 对参数顺序有要求，必须要按照下面顺序，否则会报 invalid request 错误
-      token: _sid,
-      action: "", // 空白占位，后面会覆写的
-      download_dir: 0,
-      path: options.savePath ? options.savePath : "",
-    };
+      let torrentInfoHash: string | null;
+      if (url.startsWith("magnet:") || !options.localDownload) {
+        formData = null;
+        params.action = "add-url";
+        params.s = url;
 
-    let torrentInfoHash: string | null;
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      formData = null;
-      params.action = "add-url";
-      params.s = url;
+        torrentInfoHash = extractMagnetHash(url);
+      } else {
+        params.action = "add-file";
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption || {}),
+        });
 
-      torrentInfoHash = extractMagnetHash(url);
-    } else {
-      params.action = "add-file";
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption || {}),
-      });
+        torrentInfoHash = torrent.info?.infoHash;
 
-      torrentInfoHash = torrent.info?.infoHash;
+        formData.append("torrent_file", torrent.metadata.blob(), torrent.name);
+      }
 
-      formData.append("torrent_file", torrent.metadata.blob(), torrent.name);
+      const postTorrent = async (sid: string) => {
+        params.token = sid;
+        return (
+          await axios.post<BaseUtorrentResponse>(this.address, formData, {
+            params: params,
+            auth: {
+              username: this.config.username,
+              password: this.config.password,
+            },
+            withCredentials: true,
+            timeout: this.config.timeout,
+          })
+        ).data;
+      };
+
+      let sid = await this.getSessionId();
+      let addResponse: BaseUtorrentResponse;
+      try {
+        addResponse = await postTorrent(sid);
+      } catch (e) {
+        // UT-1：token 失效（400 invalid request）时重取 token 并重试一次
+        if (!isUtorrentAuthError(e)) {
+          throw e;
+        }
+        this._sid = null;
+        this._sidPromise = null;
+        sid = await this.getSessionId();
+        addResponse = await postTorrent(sid);
+      }
+
+      // UT-2：uTorrent 对失败的 add 常以 HTTP 200 + `{"build":..., "error":"..."}` 返回，
+      // 以前丢弃响应体、无条件 success=true，导致「下载历史成功但客户端里没有任务」。
+      if (addResponse?.error) {
+        addResult.success = false;
+        addResult.message = String(addResponse.error);
+        return addResult;
+      }
+
+      addResult.success = true;
+
+      if (torrentInfoHash) {
+        // 添加种子后，根据本地获取的 infoHash 值设置对应属性（失败降级为 message，不改变 success）
+        const warnings: string[] = [];
+        const trySet = async (task: () => Promise<unknown>, name: string) => {
+          try {
+            // 操作型方法现在失败会返回 false（不再抛错），false 同样视为「设置未生效」
+            if ((await task()) === false) {
+              warnings.push(name);
+            }
+          } catch (e) {
+            warnings.push(name);
+          }
+        };
+
+        if (options.addAtPaused) {
+          await trySet(() => this.pauseTorrent(torrentInfoHash!), "暂停");
+        }
+
+        const label = options.label;
+        if (label) {
+          await trySet(
+            () =>
+              this.setTorrentProp(torrentInfoHash!, {
+                s: "label",
+                v: label,
+              }),
+            "标签",
+          );
+        }
+
+        const uploadSpeedLimit = options.uploadSpeedLimit;
+        if (uploadSpeedLimit && uploadSpeedLimit > 0) {
+          // Upload speed limit in bytes/sec for uTorrent
+          await trySet(
+            () =>
+              this.setTorrentProp(torrentInfoHash!, {
+                s: "ulrate",
+                v: uploadSpeedLimit * 1024 * 1024,
+              }),
+            "上传限速",
+          );
+        }
+
+        if (warnings.length > 0) {
+          // UT-2：种子已添加，但部分设置未生效 → 作为 warning message 回传（download.ts 写入 warningMessage）
+          addResult.message = `种子已添加，但以下设置未生效：${warnings.join("、")}（可稍后重试）`;
+        }
+      } else if (options.addAtPaused || options.label || (options.uploadSpeedLimit && options.uploadSpeedLimit > 0)) {
+        /**
+         * DOWNLOADER-8：「链接直发」且给的是 http(s) .torrent 直链时，add-url 不回 infoHash，
+         * extractMagnetHash 也拿不到，于是上面的暂停/标签/上传限速被整段跳过。
+         * 种子本身已添加（仍是成功），但必须把「这些设置未生效」回传给调用方，不再静默丢弃。
+         */
+        addResult.message =
+          "uTorrent add-url 未返回 infoHash，添加后暂停 / 标签 / 上传限速设置未生效（可改用「本地中转」推送以避免）";
+      }
+
+      this.invalidateSuggestListCache();
+    } catch (e) {
+      // N-5：把网络/协议错误转成 CAddTorrentResult，而不是让 addTorrent 直接 reject。
+      // SEC-1：URL 脱敏后再写日志（PT 站下载链接通常带 passkey）。
+      addResult.success = false;
+      addResult.message = e instanceof Error ? e.message : String(e);
+      logMessage("[uTorrent] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
     }
 
-    await axios.post<BaseUtorrentResponse>(this.address, formData, {
-      params: params,
-      auth: {
-        username: this.config.username,
-        password: this.config.password,
-      },
-      withCredentials: true,
-      timeout: this.config.timeout,
-    });
-
-    if (torrentInfoHash) {
-      // 添加种子后，根据本地获取的 infoHash 值设置对应属性
-      if (options.addAtPaused) {
-        await this.pauseTorrent(torrentInfoHash);
-      }
-
-      if (options.label) {
-        await this.setTorrentProp(torrentInfoHash, {
-          s: "label",
-          v: options.label,
-        });
-      }
-
-      if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
-        // Upload speed limit in bytes/sec for uTorrent
-        await this.setTorrentProp(torrentInfoHash, {
-          s: "ulrate",
-          v: options.uploadSpeedLimit * 1024 * 1024,
-        });
-      }
-    } else if (options.addAtPaused || options.label || (options.uploadSpeedLimit && options.uploadSpeedLimit > 0)) {
-      /**
-       * DOWNLOADER-8：「链接直发」且给的是 http(s) .torrent 直链时，add-url 不回 infoHash，
-       * extractMagnetHash 也拿不到，于是上面的暂停/标签/上传限速被整段跳过。
-       * 种子本身已添加（仍是成功），但必须把「这些设置未生效」回传给调用方，不再静默丢弃。
-       */
-      addResult.message =
-        "uTorrent add-url 未返回 infoHash，添加后暂停 / 标签 / 上传限速设置未生效（可改用「本地中转」推送以避免）";
-    }
-
-    addResult.success = true;
     return addResult;
   }
 
@@ -356,24 +494,23 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
       const done = progress >= 100;
       const isCompleted = progress >= 100;
 
+      /**
+       * UT-3：按 uTorrent WebUI getStatusInfo 的优先级判断：ERROR → CHECKING → PAUSED → STARTED → QUEUED。
+       * 以前 STARTED 在 CHECKING/ERROR 之前，带 started 位的校验中/出错种子会被判成 downloading/seeding。
+       */
       let state = CTorrentState.unknown;
-      if (torrentState & STATE_PAUSED) {
-        state = CTorrentState.paused;
-      } else if (torrentState & STATE_STARTED) {
-        if (done) {
-          state = CTorrentState.seeding;
-        } else {
-          state = CTorrentState.downloading;
-        }
+      if (torrentState & STATE_ERROR) {
+        state = CTorrentState.error;
       } else if (torrentState & STATE_CHECKING) {
         state = CTorrentState.checking;
-      } else if (torrentState & STATE_ERROR) {
-        state = CTorrentState.error;
+      } else if (torrentState & STATE_PAUSED) {
+        state = CTorrentState.paused;
+      } else if (torrentState & STATE_STARTED) {
+        state = done ? CTorrentState.seeding : CTorrentState.downloading;
       } else if (torrentState & STATE_QUEUED) {
         state = CTorrentState.queued;
-      } else if (done) {
-        state = CTorrentState.paused;
       } else {
+        // 未 started 也未 queued/error/checking = 已停止
         state = CTorrentState.paused;
       }
 
@@ -409,19 +546,32 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
 
   // 注意：uTorrent的pause, resume, remove均直接返回true，因为接口没返回具体成功没成功
   async pauseTorrent(id: string): Promise<boolean> {
-    await this.request<BaseUtorrentResponse>("pause", { hash: id });
-    return true;
+    try {
+      await this.request<BaseUtorrentResponse>("pause", { hash: id });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async resumeTorrent(id: string): Promise<boolean> {
-    await this.request<BaseUtorrentResponse>("start", { hash: id });
-    return true;
+    try {
+      await this.request<BaseUtorrentResponse>("start", { hash: id });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async removeTorrent(id: string, removeData: boolean = false): Promise<boolean> {
-    const action = removeData ? "removedatatorrent" : "removetorrent";
-    await this.request<BaseUtorrentResponse>(action, { hash: id });
-    return true;
+    try {
+      const action = removeData ? "removedatatorrent" : "removetorrent";
+      await this.request<BaseUtorrentResponse>(action, { hash: id });
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async getTorrentTrackers(torrent: string | CTorrent): Promise<string[]> {
@@ -431,37 +581,54 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
 
   // 重新校验种子
   override async recheckTorrent(id: string): Promise<boolean> {
-    await this.request<BaseUtorrentResponse>("recheck", { hash: id });
-    return true;
+    try {
+      await this.request<BaseUtorrentResponse>("recheck", { hash: id });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 调整种子在队列中的位置
   override async moveTorrentInQueue(id: string, direction: TorrentQueueDirection): Promise<boolean> {
-    const actionMap: Record<TorrentQueueDirection, string> = {
-      top: "queuetop",
-      up: "queueup",
-      down: "queuedown",
-      bottom: "queuebottom",
-    };
-    await this.request<BaseUtorrentResponse>(actionMap[direction], { hash: id });
-    return true;
+    try {
+      const actionMap: Record<TorrentQueueDirection, string> = {
+        top: "queuetop",
+        up: "queueup",
+        down: "queuedown",
+        bottom: "queuebottom",
+      };
+      await this.request<BaseUtorrentResponse>(actionMap[direction], { hash: id });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 设置单个种子的速度限制（单位 KiB/s，0 表示不限速；uTorrent 使用 bytes/s）
   override async setTorrentSpeedLimit(id: string, limits: TorrentSpeedLimit): Promise<boolean> {
-    if (typeof limits.download !== "undefined") {
-      await this.setTorrentProp(id, { s: "dlrate", v: limits.download > 0 ? limits.download * 1024 : 0 });
+    try {
+      if (typeof limits.download !== "undefined") {
+        await this.setTorrentProp(id, { s: "dlrate", v: limits.download > 0 ? limits.download * 1024 : 0 });
+      }
+      if (typeof limits.upload !== "undefined") {
+        await this.setTorrentProp(id, { s: "ulrate", v: limits.upload > 0 ? limits.upload * 1024 : 0 });
+      }
+      return true;
+    } catch (e) {
+      return false;
     }
-    if (typeof limits.upload !== "undefined") {
-      await this.setTorrentProp(id, { s: "ulrate", v: limits.upload > 0 ? limits.upload * 1024 : 0 });
-    }
-    return true;
   }
 
   // 设置单个种子的标签
   override async setTorrentLabel(id: string, label: string): Promise<boolean> {
-    await this.setTorrentProp(id, { s: "label", v: label });
-    return true;
+    try {
+      await this.setTorrentProp(id, { s: "label", v: label });
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -518,11 +685,15 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
     }
 
     for (const [priority, indices] of grouped) {
-      await this.request<BaseUtorrentResponse>("setprio", {
-        hash,
-        p: priority,
-        f: indices.join(","),
-      });
+      try {
+        await this.request<BaseUtorrentResponse>("setprio", {
+          hash,
+          p: priority,
+          f: indices.join(","),
+        });
+      } catch (e) {
+        return false;
+      }
     }
     return true;
   }
@@ -553,26 +724,34 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
 
   // 新增 tracker: action=setprops（trackers 全量替换，先读后加）
   override async addTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    const hash = this.getTorrentHash(torrent);
-    const urls = (await this.getTorrentTrackersDetail(hash)).map((tracker) => tracker.url);
-    if (urls.includes(url)) {
+    try {
+      const hash = this.getTorrentHash(torrent);
+      const urls = (await this.getTorrentTrackersDetail(hash)).map((tracker) => tracker.url);
+      if (urls.includes(url)) {
+        return true;
+      }
+      urls.push(url);
+      await this.request<BaseUtorrentResponse>("setprops", { hash, s: "trackers", v: urls.join("\r\n") });
       return true;
+    } catch (e) {
+      return false;
     }
-    urls.push(url);
-    await this.request<BaseUtorrentResponse>("setprops", { hash, s: "trackers", v: urls.join("\r\n") });
-    return true;
   }
 
   // 删除 tracker: action=setprops（trackers 全量替换，先读后删）
   override async removeTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    const hash = this.getTorrentHash(torrent);
-    const trackers = await this.getTorrentTrackersDetail(hash);
-    const urls = trackers.filter((tracker) => tracker.url !== url).map((tracker) => tracker.url);
-    if (urls.length === trackers.length) {
+    try {
+      const hash = this.getTorrentHash(torrent);
+      const trackers = await this.getTorrentTrackersDetail(hash);
+      const urls = trackers.filter((tracker) => tracker.url !== url).map((tracker) => tracker.url);
+      if (urls.length === trackers.length) {
+        return true;
+      }
+      await this.request<BaseUtorrentResponse>("setprops", { hash, s: "trackers", v: urls.join("\r\n") });
       return true;
+    } catch (e) {
+      return false;
     }
-    await this.request<BaseUtorrentResponse>("setprops", { hash, s: "trackers", v: urls.join("\r\n") });
-    return true;
   }
 }
 

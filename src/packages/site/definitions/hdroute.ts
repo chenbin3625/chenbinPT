@@ -4,6 +4,7 @@
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/hdroute.org/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/hdroute.json
  */
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import PrivateSite from "../schemas/AbstractPrivateSite";
 import { type ISiteMetadata, type ITorrent, type ISearchInput } from "../types";
 import { extractTextExcluding } from "../utils";
@@ -105,7 +106,10 @@ export const siteMetadata: ISiteMetadata = {
       link: {
         selector: [".buttonDownloadSection .buttonDownload", ".buttonDownload"],
         attr: "onclick",
-        filters: [(query: string) => query.match(/location\.href=['"](download\.php\?id=\d+)/)?.[1] || ""],
+        // E3-16：原正则只捕获到 `download.php?id=<digits>`，把 `&sign=…`/`&key=…` 一类签名参数截掉了。
+        // 这里保留完整的 `location.href` 目标（相对地址由基类 fixLink 补全为站内绝对地址），
+        // 站点一旦给下载链接加签名也不会 403。
+        filters: [(query: string) => query.match(/location\.href\s*=\s*['"]([^'"]+)/)?.[1] || ""],
       },
       size: {
         selector: makeSelector("torrent_size"),
@@ -251,7 +255,19 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   noLoginAssert: {
-    urlPatterns: [/login|signin|auth|verify|checkpoint|returnto/gi],
+    // E13 同型：原 `/login|signin|auth|verify|checkpoint|returnto/gi` 对完整 responseURL 做裸子串匹配，
+    // 搜索关键词（`search.php?search=login`）、含 auth/verify 的站内路径都会被误判成「需要重新登录」。
+    // 收窄为「路径段上的登录端点 + 登录跳转查询参数」：
+    // - HDRoute 实际登录端点是 `login.php?action=login`（Jackett hdroute.yml 的 login.path），
+    //   另外兼容 NexusPHP 常见的 `takelogin.php` / `signin.php`；
+    // - `action=login` / `mod=logging`（Discuz 型跳转）与 `returnto=` 只在查询参数位置命中，
+    //   不会误伤搜索词。
+    urlPatterns: [
+      /(?:^|\/)(?:login|takelogin|signin)\.php(?:[?#]|$)/i,
+      /(?:^|\/)(?:doLogin|verify|checkpoint|twofactor)(?:\.php)?(?:[?#]|$)/i,
+      /[?&](?:action=login|mod=logging)(?:&|$)/i,
+      /[?&]returnto=/i,
+    ],
     httpStatusCodes: [401, 403, 302],
   },
 };
@@ -264,7 +280,7 @@ export default class HDRoute extends PrivateSite {
   ): Promise<Partial<ITorrent>> {
     const parsedTorrent = await super.parseWholeTorrentFromRow(torrent, row, searchConfig);
 
-    if (row instanceof Element) {
+    if (isElementNode(row)) {
       const detailLink = row.querySelector<HTMLAnchorElement>("a[href*='details.php?id=']");
       const detailHref = detailLink?.getAttribute("href")?.trim() || "";
 
@@ -292,7 +308,13 @@ export default class HDRoute extends PrivateSite {
     }
 
     parsedTorrent.site = this.metadata.id;
-    return parsedTorrent.title && parsedTorrent.id ? parsedTorrent : ({} as Partial<ITorrent>);
+    // E3-3：解析失败必须**抛错**，不能返回 `{}`。
+    // 基类 transformSearchPage 只把「抛异常的行」计入 failedRows（返回的空对象会被无条件 push 成一条
+    // 只有 undefined 字段的空白结果，且仍报 success），`:870-873`「整页 0 有效行即报错」的语义也依赖它。
+    if (!parsedTorrent.title || !parsedTorrent.id) {
+      throw new Error("HDRoute row parse failed: title/id missing");
+    }
+    return parsedTorrent;
   }
 
   public override async transformDetailPage(doc: Document): Promise<ITorrent> {

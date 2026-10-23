@@ -20,7 +20,9 @@ function createChromeMock() {
       getContexts,
     },
     offscreen: {
-      Reason: { DOM_PARSER: "DOM_PARSER" },
+      // Info-5：background/utils/offscreen.ts 现在同时声明 DOM_PARSER + BLOBS（offscreen 里用
+      // DOMParser 解析页面、用 URL.createObjectURL 生成种子/备份 Blob URL）
+      Reason: { DOM_PARSER: "DOM_PARSER", BLOBS: "BLOBS" },
       createDocument,
     },
   });

@@ -6,10 +6,13 @@
  * 以及进度列的 `width: "72"` 与 `normalizeTorrentProgress` 的写法）。那是"模板和脚本里写了这些字"。
  *
  * 现在**真实挂载视图并观察副作用**（只有 `@/messages.ts` 与 8 个子对话框被替换）：
- * - 首次加载：挂载后确实向后台发了 `getClientTorrents`，而且发请求时自动刷新**已经**在跑
- *   （顺序：startAutoRefresh 先于 loadTorrents）；
- * - 卸载：停止自动刷新并复位状态；
- * - 进度列：表头列宽稳定 72px，单元格展示的是**归一化后**的百分比（12.6 → 13%，120 → 100%）。
+ * - 首次加载：默认配置（`initDownloaderTorrentOnEnter=true`）下挂载后确实向后台发了
+ *   `getClientTorrents`；
+ * - `initDownloaderTorrentOnEnter=false` 时进入页面不立即加载（D2-06：原实现因为
+ *   `autoRefreshRunning` 刚被置 true 而恒为真，配置被忽略）；
+ * - 卸载只清定时器、保留用户手动「停止自动刷新」的选择（D2-06）；
+ * - 间隔改为 0 时运行状态跟随定时器一起停止（N5）；
+ * - 进度列：表头列宽稳定 120px，单元格展示的是**归一化后**的百分比（12.6 → 13%，120 → 100%）。
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -106,9 +109,6 @@ const TORRENTS_FROM_CLIENT = [
   },
 ];
 
-/** 发出 getClientTorrents 时自动刷新是否已经在跑（用来断言 onMounted 里的先后顺序） */
-let autoRefreshRunningWhenLoaded: boolean[] = [];
-
 let MyClientView: any;
 let configStore: any;
 let metadataStore: any;
@@ -138,11 +138,9 @@ async function setupStores() {
   utils.selectedDownloaderIds.value = [];
   utils.globalRefreshInterval.value = utils.DEFAULT_CLIENT_REFRESH_INTERVAL_SECONDS;
 
-  autoRefreshRunningWhenLoaded = [];
   sendMessageMock.mockReset();
-  sendMessageMock.mockImplementation(async (type: string, payload: any) => {
+  sendMessageMock.mockImplementation(async (type: string) => {
     if (type === "getClientTorrents") {
-      autoRefreshRunningWhenLoaded.push(utils.autoRefreshRunning.value);
       return JSON.parse(JSON.stringify(TORRENTS_FROM_CLIENT)); // 模拟结构化克隆
     }
     return undefined;
@@ -156,6 +154,38 @@ beforeEach(async () => {
 });
 
 describe("我的下载器页面自动刷新", () => {
+  it("配置水合后才首次加载，并在新下载器启用或间隔变化后继续刷新", async () => {
+    const { pinia, meta } = await setupStores();
+    const ready = Promise.withResolvers<void>();
+    meta.downloaders = {};
+    meta.$onReady = () => ready.promise;
+    utils.globalRefreshInterval.value = 0.02;
+    const view = mountOptionsView(MyClientView, { pinia, router: true });
+    try {
+      await view.settle(35);
+      expect(sendMessageMock.mock.calls.filter(([type]) => type === "getClientTorrents")).toHaveLength(0);
+
+      meta.downloaders["d1"] = { id: "d1", type: "qbittorrent", name: "qb", enabled: true };
+      ready.resolve();
+      await vi.waitFor(() => expect(utils.torrents.value["d1"]).toHaveLength(2));
+      meta.downloaders["d2"] = { id: "d2", type: "qbittorrent", name: "qb2", enabled: true };
+      await vi.waitFor(() =>
+        expect(sendMessageMock.mock.calls.some(([type, id]) => type === "getClientTorrents" && id === "d2")).toBe(true),
+      );
+      const before = sendMessageMock.mock.calls.filter(
+        ([type, id]) => type === "getClientTorrents" && id === "d1",
+      ).length;
+      utils.globalRefreshInterval.value = 0.01;
+      await vi.waitFor(() =>
+        expect(
+          sendMessageMock.mock.calls.filter(([type, id]) => type === "getClientTorrents" && id === "d1").length,
+        ).toBeGreaterThan(before),
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("新配置默认进入页面即加载下载器种子", () => {
     const config = configStore();
     expect(config.download.initDownloaderTorrentOnEnter).toBe(true);
@@ -166,7 +196,7 @@ describe("我的下载器页面自动刷新", () => {
     expect(utils.globalRefreshInterval.value).toBe(30);
   });
 
-  it("页面打开：先启动自动刷新，再触发首次加载（后台真的收到了请求）", async () => {
+  it("页面打开（默认配置）：加载种子并开启自动刷新", async () => {
     const { pinia } = await setupStores();
 
     expect(utils.autoRefreshRunning.value, "挂载前不应处于自动刷新状态").toBe(false);
@@ -179,13 +209,6 @@ describe("我的下载器页面自动刷新", () => {
       .filter(([type]) => type === "getClientTorrents")
       .map(([, id]) => id);
     expect(requestedIds, "进入页面应加载已启用下载器的种子").toContain("d1");
-
-    // 顺序：startAutoRefresh() 在 loadTorrents() 之前（否则首轮加载不会被纳入自动刷新状态）
-    expect(autoRefreshRunningWhenLoaded.length).toBeGreaterThan(0);
-    expect(
-      autoRefreshRunningWhenLoaded.every((running) => running === true),
-      "首次加载时自动刷新应已在运行",
-    ).toBe(true);
     expect(utils.autoRefreshRunning.value).toBe(true);
 
     // 首轮数据确实落到了模块状态（证明后台往返链路可用，而不是只发了个请求）
@@ -195,19 +218,63 @@ describe("我的下载器页面自动刷新", () => {
     view.unmount();
   });
 
-  it("页面卸载：停止自动刷新并复位状态", async () => {
+  it("D2-06：initDownloaderTorrentOnEnter=false 时进入页面不立即加载", async () => {
+    const { pinia, config } = await setupStores();
+    config.download.initDownloaderTorrentOnEnter = false;
+
+    const view = mountOptionsView(MyClientView, { pinia, router: true });
+    await view.settle(150);
+
+    expect(
+      sendMessageMock.mock.calls.filter(([type]) => type === "getClientTorrents"),
+      "关闭「进入页面自动加载」后不应立即请求下载器种子",
+    ).toHaveLength(0);
+
+    view.unmount();
+  });
+
+  it("D2-06：卸载只清定时器，保留用户手动停止自动刷新的选择", async () => {
     const { pinia } = await setupStores();
     const view = mountOptionsView(MyClientView, { pinia, router: true });
     await view.settle(120);
     expect(utils.autoRefreshRunning.value).toBe(true);
 
+    // 模拟用户点了「停止自动刷新」（真实的 stopAutoRefresh 会同时置 running=false 与 userStopped=true）
+    utils.autoRefreshRunning.value = false;
+    utils.autoRefreshUserStopped.value = true;
+
     const callsBeforeUnmount = sendMessageMock.mock.calls.length;
     view.unmount();
     await new Promise((resolve) => setTimeout(resolve, 60));
-
-    expect(utils.autoRefreshRunning.value, "卸载后不应再处于自动刷新状态").toBe(false);
     // 卸载后不再有新请求（定时器确实被清掉了）
     expect(sendMessageMock.mock.calls.length).toBe(callsBeforeUnmount);
+
+    // 重新进入页面：不能把「用户手动停止」的选择复位
+    const secondView = mountOptionsView(MyClientView, { pinia, router: true });
+    await secondView.settle(150);
+    expect(utils.autoRefreshRunning.value, "重进页面不应自动恢复自动刷新").toBe(false);
+    expect(utils.autoRefreshUserStopped.value).toBe(true);
+
+    const callsAfterRemount = sendMessageMock.mock.calls.length;
+    await secondView.settle(600);
+    expect(sendMessageMock.mock.calls.length, "用户已停止自动刷新时不应有定时轮询").toBe(callsAfterRemount);
+
+    secondView.unmount();
+    utils.autoRefreshUserStopped.value = false;
+  });
+
+  it("N5：刷新间隔改为 0 时运行状态与定时器一起停止", async () => {
+    const { pinia } = await setupStores();
+    const view = mountOptionsView(MyClientView, { pinia, router: true });
+    await view.settle(120);
+    expect(utils.autoRefreshRunning.value).toBe(true);
+
+    utils.globalRefreshInterval.value = 0;
+    await view.settle(20);
+
+    expect(utils.autoRefreshRunning.value, "间隔为 0 时不应仍显示「运行中」").toBe(false);
+
+    view.unmount();
   });
 });
 

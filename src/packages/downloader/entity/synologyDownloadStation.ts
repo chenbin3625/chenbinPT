@@ -16,7 +16,8 @@ import {
 } from "../types";
 import urlJoin from "url-join";
 import axios, { AxiosRequestConfig } from "axios";
-import { getRemoteTorrentFile } from "../utils";
+import { getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
+import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 export const clientConfig: TorrentClientConfig = {
   type: "synologyDownloadStation",
@@ -406,19 +407,44 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
 
   private _sessionId?: string;
   private _apiInfo?: SynologyInfoApiResponseData;
+  /** 登录单飞去重（PKG-1）：并发请求共享同一次 login，避免互相顶掉 sid（106） */
+  private _loginPromise: Promise<boolean> | null = null;
 
   constructor(options: Partial<TorrentClientConfig> = {}) {
     super({ ...clientConfig, ...options });
   }
 
-  private async getSessionId(): Promise<string> {
-    if (!this._sessionId) {
-      await this.login();
+  /**
+   * 登录单飞。`force` 用于会话失效后强制重登（会先丢弃旧 sid）。
+   */
+  private async ensureLogin(force = false): Promise<boolean> {
+    if (!force && this._sessionId) {
+      return true;
     }
-    return this._sessionId as string;
+    if (!this._loginPromise) {
+      if (force) {
+        this._sessionId = undefined;
+      }
+      this._loginPromise = this.login().finally(() => {
+        this._loginPromise = null;
+      });
+    }
+    return await this._loginPromise;
   }
 
-  private async getApiInfo(): Promise<SynologyInfoApiResponseData> {
+  private async getSessionId(): Promise<string> {
+    if (!this._sessionId) {
+      await this.ensureLogin();
+    }
+    // N-6：以前登录失败时会返回 undefined as string（FormData 分支甚至会把 `_sid=undefined` 发出去），
+    // 这里统一抛错，让调用方拿到明确失败原因。
+    if (!this._sessionId) {
+      throw new Error("Synology Download Station: 登录失败（账号/密码错误，或未关闭两步验证）");
+    }
+    return this._sessionId;
+  }
+
+  private async getApiInfo(): Promise<SynologyInfoApiResponseData | undefined> {
     if (!this._apiInfo) {
       // 我们不捕捉此处的错误
       const req = await this.request<SynologyInfoApiResponseData>("query.cgi", {
@@ -433,7 +459,7 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
         this._apiInfo = req.data;
       }
     }
-    return this._apiInfo as SynologyInfoApiResponseData;
+    return this._apiInfo;
   }
 
   // 核心请求方法
@@ -453,6 +479,7 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
   private async requestEntryCGI<T>(
     field: DSRequestField | FormData,
     skipAuthRetry = false,
+    authRetry = true,
   ): Promise<SynologyResponse<T>> {
     // 覆写 _sid 参数
     const sid = await this.getSessionId();
@@ -478,11 +505,14 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
        * 105 / 106（会话超时、会话被顶替）说明缓存的 sid 已失效：
        * 清空缓存并重登一次再重试。此前 `_sessionId` 永久缓存，
        * 会话一旦过期，整个实例生命周期内所有请求都会失败。
+       *
+       * SY-3：105 同时也表示「权限不足」，对确定需要管理员权限的调用（如获取版本）传 authRetry=false，
+       * 避免把权限错误当成会话过期去重登、并顶掉当前有效 sid。
        */
-      if (!skipAuthRetry && typeof code === "number" && SYNOLOGY_SESSION_ERROR_CODES.includes(code)) {
+      if (authRetry && !skipAuthRetry && typeof code === "number" && SYNOLOGY_SESSION_ERROR_CODES.includes(code)) {
         this._sessionId = undefined;
-        if (await this.login()) {
-          return await this.requestEntryCGI<T>(field, true);
+        if (await this.ensureLogin(true)) {
+          return await this.requestEntryCGI<T>(field, true, authRetry);
         }
       }
 
@@ -497,16 +527,18 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
 
   // 请求登录并获得sid信息
   private async login(): Promise<boolean> {
-    const apiInfo = await this.getApiInfo();
-
-    /**
-     * fix: https://github.com/ronggang/PT-Plugin-Plus/issues/687
-     * 由于 DSM 7 以上， SYNO.API.Auth 接口当 version 为 2 时，会直接报 103 错误
-     * 此时将 version 指到 3，可以正常获得 sid
-     */
-    const loginVersion = (apiInfo["SYNO.API.Auth"]?.maxVersion || 6) >= 7 ? 3 : 2;
-
     try {
+      // SY-4：getApiInfo 可能返回 undefined（地址填错/返回 HTML、或 SYNO.API.Info 失败），
+      // 这里必须放在 try 内并用可选链，避免 ping() 抛出 `Cannot read properties of undefined`。
+      const apiInfo = await this.getApiInfo();
+
+      /**
+       * fix: https://github.com/ronggang/PT-Plugin-Plus/issues/687
+       * 由于 DSM 7 以上， SYNO.API.Auth 接口当 version 为 2 时，会直接报 103 错误
+       * 此时将 version 指到 3，可以正常获得 sid
+       */
+      const loginVersion = (apiInfo?.["SYNO.API.Auth"]?.maxVersion ?? 6) >= 7 ? 3 : 2;
+
       const req = await this.request<{ sid: string }>("auth.cgi", {
         /**
          * 登录参数必须走 POST body：此前用 `params` 且未指定 `method`，
@@ -542,7 +574,7 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
   async ping(): Promise<boolean> {
     // 测试连接即重新登录：不能复用可能已失效的 _sessionId（此前它被永久缓存）
     this._sessionId = undefined;
-    return this.login();
+    return await this.ensureLogin(true);
   }
 
   override async getClientStatus(): Promise<TorrentClientStatus> {
@@ -568,88 +600,117 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
   }
 
   protected async getClientVersionFromRemote(): Promise<string> {
-    const data = await this.requestEntryCGI<{
-      packages: Array<{
-        id: string;
-        name: string;
-        timestamp: number;
-        version: string;
-        additional?: any;
-      }>;
-      total: number;
-    }>({
-      api: "SYNO.Core.Package",
-      method: "list",
-      version: 2,
-    });
+    try {
+      // SY-3：SYNO.Core.Package list 需要管理员权限；普通账号会返回 105（权限不足），
+      // 105 与「会话超时」同码。这里显式关闭认证重试，失败时降级为空版本，而不是清 sid 重登。
+      const data = await this.requestEntryCGI<{
+        packages: Array<{
+          id: string;
+          name: string;
+          timestamp: number;
+          version: string;
+          additional?: any;
+        }>;
+        total: number;
+      }>(
+        {
+          api: "SYNO.Core.Package",
+          method: "list",
+          version: 2,
+        },
+        false,
+        false,
+      );
 
-    let dsmVersion = "";
-    if (data.success) {
-      const dsmDetails = data.data.packages.find((pkg) => pkg.id === "DownloadStation");
-      dsmVersion = dsmDetails?.version ?? "";
+      if (data.success) {
+        const dsmDetails = data.data.packages.find((pkg) => pkg.id === "DownloadStation");
+        return dsmDetails?.version ?? "";
+      }
+      return "";
+    } catch (e) {
+      return "";
     }
-
-    return dsmVersion;
   }
 
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
+    let addedTaskId: string | undefined;
 
-    // 基本参数
-    const params: DSRequestField = {
-      api: "SYNO.DownloadStation2.Task",
-      method: "create",
-      version: 2,
-      create_list: false,
-    };
+    try {
+      // 基本参数
+      const params: DSRequestField = {
+        api: "SYNO.DownloadStation2.Task",
+        method: "create",
+        version: 2,
+        create_list: false,
+      };
 
-    /**
-     * destination 和 type 很奇怪，不包一层的话，会报 对应项 缺失。。。。。
-     *
-     * - 对于 destination:
-     *    如果外部不传入 savePath ，我们须设置一个空值出来，否则 DSM 会报 error_code 120
-     *    此时 DSM 会将文件放置在 默认目的地文件夹
-     */
-    params.destination = `"${options.savePath || ""}"`;
+      /**
+       * destination 和 type 很奇怪，不包一层的话，会报 对应项 缺失。。。。。
+       *
+       * - 对于 destination:
+       *    如果外部不传入 savePath ，我们须设置一个空值出来，否则 DSM 会报 error_code 120
+       *    此时 DSM 会将文件放置在 默认目的地文件夹
+       *
+       * SY-5：用 JSON.stringify 生成带引号的字符串，避免路径含 `"` / `\` 时拼出非法 JSON。
+       */
+      params.destination = JSON.stringify(options.savePath || "");
 
-    let postData;
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      params.type = '"url"';
-      params.url = [url];
-      postData = params;
-    } else {
-      params.type = '"file"';
-      params.file = ["torrent"];
-      postData = transObjToData(params, true);
+      let postData;
+      if (url.startsWith("magnet:") || !options.localDownload) {
+        params.type = '"url"';
+        params.url = [url];
+        postData = params;
+      } else {
+        params.type = '"file"';
+        params.file = ["torrent"];
+        postData = transObjToData(params, true);
 
-      // 获得本地请求的种子内容
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption || {}),
-      });
+        // 获得本地请求的种子内容
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption || {}),
+        });
 
-      postData.append("torrent", torrent.metadata.blob(), torrent.name);
-    }
+        postData.append("torrent", torrent.metadata.blob(), torrent.name);
+      }
 
-    const req = await this.requestEntryCGI<{
-      list_id: any[] /* 不知道具体返回情况 */;
-      task_id: string[];
-    }>(postData);
+      const req = (await this.requestEntryCGI<{
+        list_id: any[] /* 不知道具体返回情况 */;
+        task_id: string[];
+      }>(postData)) as SynologySuccessResponse<{ list_id: any[]; task_id: string[] }>;
 
-    // DS不支持在添加的时候设置暂停状态，所以我们要在添加后暂停对应任务
-    if (req.success) {
-      if (options.addAtPaused && req.data.task_id.length > 0) {
-        await this.pauseTorrent(req.data.task_id[0]);
+      addedTaskId = req.data?.task_id?.[0];
+
+      // SY-1：DS 不支持在添加时设置暂停，只能添加后再 pause。pause 失败不能让「已添加」变成「失败」：
+      // 降级为 warning message（download.ts 会写入 warningMessage），success 仍为 true。
+      if (options.addAtPaused) {
+        if (addedTaskId) {
+          try {
+            const paused = await this.pauseTorrent(addedTaskId);
+            if (!paused) {
+              addResult.message = "任务已添加，但设置为暂停失败（任务可能已在运行）";
+            }
+          } catch (e) {
+            addResult.message = "任务已添加，但设置为暂停失败（任务可能已在运行）";
+          }
+        } else {
+          addResult.message = "任务已添加，但未返回 task_id，未能设置为暂停";
+        }
       }
 
       // Note: Synology Download Station does not support upload speed limit configuration
       // The uploadSpeedLimit feature is not implemented as it's not supported by the API
-    }
 
-    // 添加异常处理方法
-    addResult.success = req.success ?? false;
-    if (!addResult.success) {
-      addResult.message = req;
+      addResult.success = true;
+      addResult.id = addedTaskId;
+      this.invalidateSuggestListCache();
+    } catch (e) {
+      // N-5：把 API 错误转成 CAddTorrentResult，而不是让 addTorrent 直接 reject。
+      // SEC-1：URL 脱敏后再写日志（PT 站下载链接通常带 passkey）。
+      addResult.success = false;
+      addResult.message = e instanceof Error ? e.message : String(e);
+      logMessage("[Synology] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
     }
 
     return addResult;
@@ -682,7 +743,7 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
       total: number;
     }>;
 
-    return req.data.task
+    let returnTorrents = req.data.task
       .filter((s) => s.type === "bt" /** 只选择bt种子返回 */)
       .map((task) => {
         let state = CTorrentState.unknown;
@@ -694,9 +755,14 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
               break;
 
             case "seeding":
+              state = CTorrentState.seeding;
+              break;
+
+            // SY-6：字符串接口里 finished/finishing 表示「已完成、不再做种」，
+            // 与数值接口的 TASK_FINISHED/TASK_FINISHING（映射 paused）统一。
             case "finished":
             case "finishing":
-              state = CTorrentState.seeding;
+              state = CTorrentState.paused;
               break;
 
             case "paused":
@@ -785,28 +851,44 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
           clientId: this.config.id,
         } as CTorrent<rawTask>;
       });
+
+    // N-3：基类契约 getTorrentsBy({complete}) 在本覆写里曾被完全丢弃（返回全部任务）；
+    // 这里补成本地过滤，与 Transmission/Deluge 的覆写行为一致。
+    if (filter.complete) {
+      returnTorrents = returnTorrents.filter((task) => task.isCompleted);
+    }
+
+    return returnTorrents;
   }
 
   async pauseTorrent(id: string): Promise<boolean> {
-    return (
-      await this.requestEntryCGI({
-        id: id,
-        api: "SYNO.DownloadStation2.Task",
-        method: "pause",
-        version: 2,
-      })
-    ).success;
+    try {
+      return (
+        await this.requestEntryCGI({
+          id: id,
+          api: "SYNO.DownloadStation2.Task",
+          method: "pause",
+          version: 2,
+        })
+      ).success;
+    } catch (e) {
+      return false;
+    }
   }
 
   async resumeTorrent(id: string): Promise<boolean> {
-    return (
-      await this.requestEntryCGI({
-        id: id,
-        api: "SYNO.DownloadStation2.Task",
-        method: "resume",
-        version: 2,
-      })
-    ).success;
+    try {
+      return (
+        await this.requestEntryCGI({
+          id: id,
+          api: "SYNO.DownloadStation2.Task",
+          method: "resume",
+          version: 2,
+        })
+      ).success;
+    } catch (e) {
+      return false;
+    }
   }
 
   /**
@@ -821,19 +903,29 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
    * @param removeData
    */
   async removeTorrent(id: any, removeData: boolean | undefined): Promise<boolean> {
+    // SY-2（延期）：DS 的「只删任务、保留文件」语义依赖 `force_complete` 的真实行为，
+    // 且在错误方向上可能误删用户数据，需要真实 DSM 实测后再改；当前保持「未勾选删除数据就拒绝执行」。
     if (!removeData) {
       return false;
     }
-    return (
-      await this.requestEntryCGI({
-        id: id,
-        api: "SYNO.DownloadStation2.Task",
-        method: "delete",
-        version: 2,
-        // Delete tasks and force to move uncompleted download files to the destination.
-        force_complete: false,
-      })
-    ).success;
+    try {
+      const success = (
+        await this.requestEntryCGI({
+          id: id,
+          api: "SYNO.DownloadStation2.Task",
+          method: "delete",
+          version: 2,
+          // Delete tasks and force to move uncompleted download files to the destination.
+          force_complete: false,
+        })
+      ).success;
+      if (success) {
+        this.invalidateSuggestListCache();
+      }
+      return success;
+    } catch (e) {
+      return false;
+    }
   }
 
   async getTorrentTrackers(_torrent: string | CTorrent): Promise<string[]> {

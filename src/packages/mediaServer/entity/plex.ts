@@ -172,8 +172,14 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
   }
 
   public override async ping(): Promise<boolean> {
-    const serverIdentity = await this.getServerIdentity();
-    return !!serverIdentity;
+    // C2-M-1：`ping()` 的契约是 Promise<boolean>（见 types.ts 的 AbstractMediaServer），
+    // 与 emby/jellyfin/fnos 一致：网络不可达、超时、令牌失效等一律返回 false 而不是 reject。
+    try {
+      const serverIdentity = await this.getServerIdentity();
+      return !!serverIdentity;
+    } catch {
+      return false;
+    }
   }
 
   public override async getSearchResult(
@@ -233,10 +239,13 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
       result.options = config;
       result.status = EResultParseStatus.success;
     } catch (e) {
+      // C2-M-2：与 emby/jellyfin/fnos 对齐 —— 只有 401 是认证问题（needLogin），
+      // 其余（超时、网络不可达、解析异常等）统一落 parseError，并把真实原因交给 UI。
       if (e instanceof AxiosError && e.response?.status === 401) {
         result.status = EResultParseStatus.needLogin;
+      } else {
+        result.status = EResultParseStatus.parseError;
       }
-      // 与 emby / jellyfin 一致：把真实原因交给 UI，而不是落回「未知错误」
       result.errorMessage = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
 

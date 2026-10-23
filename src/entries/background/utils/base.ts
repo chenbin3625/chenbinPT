@@ -63,6 +63,14 @@ const downloadTracking = new Map<number, DownloadTrackingRecord>();
 const siteDownloadAt = new Map<string, number>();
 let downloadTrackingLoaded: Promise<void> | null = null;
 let siteDownloadAtLoaded: Promise<void> | null = null;
+let siteDownloadPersistence: Promise<void> = Promise.resolve();
+let downloadTrackingChain: Promise<unknown> = Promise.resolve();
+
+function enqueueDownloadTracking<T>(task: () => Promise<T>): Promise<T> {
+  const next = downloadTrackingChain.then(task, task);
+  downloadTrackingChain = next.catch(() => undefined);
+  return next;
+}
 
 function getSessionStorageArea(): chrome.storage.StorageArea | undefined {
   return globalThis.chrome?.storage?.session;
@@ -99,35 +107,36 @@ async function persistDownloadTracking(): Promise<void> {
 }
 
 async function settleTrackedDownload(chromeDownloadId: number, state: DownloadTrackingState): Promise<void> {
-  await loadDownloadTracking();
-  const record = downloadTracking.get(chromeDownloadId);
-  if (!record) {
-    return;
-  }
-  record.state = state;
-  await persistDownloadTracking();
-
-  try {
-    if (typeof record.downloadId === "number") {
-      await sendMessage("settleBrowserDownload", {
-        downloadId: record.downloadId,
-        state,
-        reservation: record.reservation,
-      });
-    } else if (record.blobUrl) {
-      await sendMessage("releaseBrowserDownloadBlob", {
-        chromeDownloadId,
-        state,
-        blobUrl: record.blobUrl,
-      });
+  await enqueueDownloadTracking(async () => {
+    await loadDownloadTracking();
+    const record = downloadTracking.get(chromeDownloadId);
+    if (!record) {
+      return;
     }
-    downloadTracking.delete(chromeDownloadId);
+    record.state = state;
     await persistDownloadTracking();
-  } catch (error) {
-    // Keep the terminal record in session storage. A later SW startup or a new
-    // registration can retry the handoff without losing the final state.
-    logBackgroundError("Failed to forward settled browser download", error);
-  }
+
+    try {
+      if (typeof record.downloadId === "number") {
+        await sendMessage("settleBrowserDownload", {
+          downloadId: record.downloadId,
+          state,
+          reservation: record.reservation,
+        });
+      } else if (record.blobUrl) {
+        await sendMessage("releaseBrowserDownloadBlob", {
+          chromeDownloadId,
+          state,
+          blobUrl: record.blobUrl,
+        });
+      }
+      downloadTracking.delete(chromeDownloadId);
+      await persistDownloadTracking();
+    } catch (error) {
+      // Keep the terminal record in session storage for the next SW startup.
+      logBackgroundError("Failed to forward settled browser download", error);
+    }
+  });
 }
 
 async function flushPendingDownloadSettlements(): Promise<void> {
@@ -156,19 +165,23 @@ chrome.downloads?.onChanged?.addListener((delta) => {
 });
 
 onMessage("registerDownloadTracking", async ({ data }) => {
-  await loadDownloadTracking();
-  downloadTracking.set(data.chromeDownloadId, {
-    downloadId: data.downloadId,
-    reservation: data.reservation,
+  await enqueueDownloadTracking(async () => {
+    await loadDownloadTracking();
+    downloadTracking.set(data.chromeDownloadId, {
+      downloadId: data.downloadId,
+      reservation: data.reservation,
+    });
+    await persistDownloadTracking();
   });
-  await persistDownloadTracking();
   await flushPendingDownloadSettlements();
 });
 
 onMessage("registerBlobDownloadTracking", async ({ data }) => {
-  await loadDownloadTracking();
-  downloadTracking.set(data.chromeDownloadId, { blobUrl: data.blobUrl });
-  await persistDownloadTracking();
+  await enqueueDownloadTracking(async () => {
+    await loadDownloadTracking();
+    downloadTracking.set(data.chromeDownloadId, { blobUrl: data.blobUrl });
+    await persistDownloadTracking();
+  });
   await flushPendingDownloadSettlements();
 });
 
@@ -181,7 +194,7 @@ async function loadSiteDownloadAt(): Promise<void> {
       const stored = await getSessionStorageArea()?.get(SITE_DOWNLOAD_INTERVAL_KEY);
       const table = stored?.[SITE_DOWNLOAD_INTERVAL_KEY] as Record<string, unknown> | undefined;
       for (const [site, at] of Object.entries(table ?? {})) {
-        if (typeof at === "number" && Number.isFinite(at)) {
+        if (typeof at === "number" && Number.isFinite(at) && !siteDownloadAt.has(site)) {
           siteDownloadAt.set(site, at);
         }
       }
@@ -193,13 +206,17 @@ async function loadSiteDownloadAt(): Promise<void> {
 }
 
 async function persistSiteDownloadAt(): Promise<void> {
-  try {
-    await getSessionStorageArea()?.set({
-      [SITE_DOWNLOAD_INTERVAL_KEY]: Object.fromEntries(siteDownloadAt.entries()),
-    });
-  } catch (error) {
-    logBackgroundError("Failed to persist site download interval state", error);
-  }
+  const next = siteDownloadPersistence.then(async () => {
+    try {
+      await getSessionStorageArea()?.set({
+        [SITE_DOWNLOAD_INTERVAL_KEY]: Object.fromEntries(siteDownloadAt.entries()),
+      });
+    } catch (error) {
+      logBackgroundError("Failed to persist site download interval state", error);
+    }
+  });
+  siteDownloadPersistence = next;
+  await next;
 }
 
 onMessage("getSiteDownloadAt", async ({ data: site }) => {
@@ -253,6 +270,8 @@ void flushPendingDownloadSettlements();
  * writeChain 的作用因此收敛为「串行化 SW 内部的读改写」，而不是「跨上下文互斥」。
  */
 const storageReadCache = new Map<string, unknown>();
+const storageReadVersions = new Map<string, number>();
+const storageReadInFlight = new Map<string, Promise<unknown>>();
 
 /**
  * 写入成功后同步更新读缓存。
@@ -264,6 +283,7 @@ const storageReadCache = new Map<string, unknown>();
  */
 export function invalidateStorageReadCache(key: TExtensionStorageKey): void {
   storageReadCache.delete(key);
+  storageReadVersions.set(key, (storageReadVersions.get(key) ?? 0) + 1);
 }
 
 /**
@@ -273,6 +293,7 @@ export function invalidateStorageReadCache(key: TExtensionStorageKey): void {
  * 若 `setItem` 失败（配额、SW 在写入中途被回收等），缓存不会被污染成从未落盘的内容。
  */
 function commitStorageReadCache(key: TExtensionStorageKey, value: unknown): void {
+  storageReadVersions.set(key, (storageReadVersions.get(key) ?? 0) + 1);
   storageReadCache.set(key, value);
 }
 
@@ -282,6 +303,7 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
   }
   for (const key of Object.keys(changes)) {
     storageReadCache.delete(key);
+    storageReadVersions.set(key, (storageReadVersions.get(key) ?? 0) + 1);
   }
 });
 
@@ -333,10 +355,25 @@ export async function getExtStorageCached<T extends TExtensionStorageKey>(key: T
   if (storageReadCache.has(key)) {
     return storageReadCache.get(key) as IExtensionStorageSchema[T];
   }
-
-  const value = await extStorage.getItem(key);
-  storageReadCache.set(key, value);
-  return value as IExtensionStorageSchema[T];
+  const pending = storageReadInFlight.get(key);
+  if (pending) {
+    await pending;
+    return getExtStorageCached(key);
+  }
+  const version = storageReadVersions.get(key) ?? 0;
+  const read = extStorage.getItem(key);
+  storageReadInFlight.set(key, read);
+  try {
+    const value = await read;
+    if ((storageReadVersions.get(key) ?? 0) !== version) {
+      storageReadInFlight.delete(key);
+      return getExtStorageCached(key);
+    }
+    storageReadCache.set(key, value);
+    return value as IExtensionStorageSchema[T];
+  } finally {
+    if (storageReadInFlight.get(key) === read) storageReadInFlight.delete(key);
+  }
 }
 
 /**

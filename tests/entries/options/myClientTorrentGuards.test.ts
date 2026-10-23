@@ -54,7 +54,10 @@ describe("B-29：表格行 key 必须带下载器 ID", () => {
     const source = readSource(MY_CLIENT_INDEX);
 
     expect(source).toMatch(/:row-key="torrentKey"/);
-    expect(source).toMatch(/:row-selection="\{ selectedRowKeys: tableSelected\.map\(torrentKey\)/);
+    // D2-07：row-selection 改成多行对象（加 preserveSelectedRowKeys），这里只要求
+    // selectedRowKeys 仍由 torrentKey 复合键生成
+    expect(source).toMatch(/:row-selection="\{[\s\S]*?selectedRowKeys: tableSelected\.map\(torrentKey\)/);
+    expect(source).toMatch(/preserveSelectedRowKeys: true/);
     expect(source).not.toMatch(/:row-key="\(record: any\) => record\.id"/);
   });
 });

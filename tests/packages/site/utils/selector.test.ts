@@ -783,7 +783,6 @@ function coverageOf(tag: string): { seen: number; matched: number; ratio: number
 
 describe("选择器层 / Sizzle 差分", () => {
   it("源码里全部 Sizzle/selectElements 调用点都可提取", () => {
-    // eslint-disable-next-line no-console
     console.log(
       `[extract] files=${extraction.fileCount} callSites=${extraction.callSiteCount} ` +
         `resolvable=${extraction.resolvableCallSiteCount} dynamic=${extraction.dynamicCallSiteCount} ` +
@@ -941,7 +940,7 @@ describe("选择器层 / Sizzle 差分", () => {
         }
       }
     }
-    // eslint-disable-next-line no-console
+
     console.log(`[matchesSelector] checked=${checked}`);
     expect(failures.length, `${failures.length} mismatches:\n${failures.slice(0, 20).join("\n")}`).toBe(0);
   });
@@ -955,16 +954,16 @@ describe("选择器层 / Sizzle 差分", () => {
       const matched = (matchedByTag.get(tag) ?? new Set<string>()).size;
       totalSeen += seen.size;
       totalMatched += matched;
-      // eslint-disable-next-line no-console
+
       console.log(`[coverage:${tag}] seen=${seen.size} matched=${matched}`);
     }
-    // eslint-disable-next-line no-console
+
     console.log(
       `[coverage] assertions=${assertionCount} selectors=${totalSeen} matched=${totalMatched} ` +
         `callSite=${callSite.matched}/${callSite.seen} dynamic=${dynamic.matched}/${dynamic.seen}`,
     );
     // 调用点选择器里没能在任何 fixture 上命中的（用于人工确认不是"空集 vs 空集"）
-    // eslint-disable-next-line no-console
+
     console.log(`[coverage:callSite-missed] ${JSON.stringify(callSite.missed)}`);
 
     expect(assertionCount).toBeGreaterThan(10000);

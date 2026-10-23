@@ -28,7 +28,13 @@ const showPassword = ref<boolean>(false);
 
 const nameRules = [formValidateRules.require(t("SetDownloader.editor.nameTip"))];
 const addressRules = [formValidateRules.url(t("SetDownloader.editor.addressTip"))];
-const sortIndexRules = [formValidateRules.require()];
+// F2-Low-07：`formValidateRules.require` 用 `!!v` 判断，排序号 0 会被判成「未填写」。
+// 排序号是数字字段，这里改为只拒绝 null / undefined / 空串（0 合法）。
+const sortIndexRequiredRule = (v: unknown): boolean | string =>
+  (typeof v === "number" && Number.isFinite(v)) ||
+  (v !== undefined && v !== null && v !== "") ||
+  t("common.form.required");
+const sortIndexRules = [sortIndexRequiredRule];
 
 function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown): string | undefined {
   for (const rule of rules) {
@@ -45,6 +51,17 @@ const sortIndexError = computed(() => firstError(sortIndexRules, clientConfig.va
 // 与迁移前 PtdForm 广播的「表单是否合法」语义一致：任一字段的 rules 未通过即为不合法
 const formValid = computed(() => !nameError.value && !addressError.value && !sortIndexError.value);
 
+// F2-Medium-03 / Low-04：表单有效性必须**持续**驱动「确定」按钮，而不是只在「测试连接」后刷新一次。
+// 旧实现只在 `@after:check-connect` 里 emit（且表达式 `formValid && true` 恒真），
+// 于是点过一次测试连接后，清空名称/地址仍然可以保存。
+watch(
+  formValid,
+  (valid) => {
+    emits("update:configValid", valid);
+  },
+  { immediate: true },
+);
+
 // 兼容「恢复备份 / 旧版本导入」得到的下载器配置：那类配置可能没有 feature 字段，
 // 而模板里的 v-model:checked="clientConfig.feature!.X" 需要该对象存在，否则渲染期抛 TypeError。
 watch(
@@ -56,7 +73,7 @@ watch(
 );
 
 async function checkConnect() {
-  if (formValid) {
+  if (formValid.value) {
     const client = await getDownloader(clientConfig.value!);
     return await client.ping();
   }
@@ -188,13 +205,8 @@ async function checkConnect() {
         </a-row>
       </div>
 
-      <ConnectCheckButton
-        :check-fn="checkConnect"
-        :reset-timeout="3e3"
-        @after:check-connect="
-          () => emits('update:configValid', formValid && true) // 不管是否测试成功，都允许用户进行下一步操作（保存下载服务器配置）
-        "
-      />
+      <!-- 「测试连接」只负责连通性提示；保存门禁由上面的 formValid 持续驱动 -->
+      <ConnectCheckButton :check-fn="checkConnect" :reset-timeout="3e3" />
 
       <a-alert v-if="clientMeta?.warning" show-icon type="warning">
         <template #message>

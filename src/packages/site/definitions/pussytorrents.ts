@@ -5,7 +5,7 @@
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import type { ISearchInput, ISiteMetadata, ITorrent, IUserInfo } from "../types";
 import { EResultParseStatus } from "../types";
-import { parseSizeString, createDocument } from "../utils";
+import { logMessage, parseSizeString, createDocument, siteErrorLogData } from "../utils";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 
 interface SnatchListResponseData {
@@ -48,7 +48,7 @@ export const siteMetadata: ISiteMetadata = {
       if (keywords) {
         delete requestConfig!.params?.keywords;
         keywords = keywords.replace(/(^|\s)-/, "");
-        requestConfig!.url = baseUrl + "?query=" + keywords;
+        requestConfig!.url = baseUrl + "?query=" + encodeURIComponent(keywords);
       }
       return requestConfig!;
     },
@@ -94,25 +94,7 @@ export const siteMetadata: ISiteMetadata = {
         fields: ["uploaded", "downloaded", "levelName", "joinTime", "numericId"],
       },
       {
-        // seeding, seedingSize - 第一步：GET请求初始化页面
-        requestConfig: {
-          url: "/user/account/snatchlist",
-          responseType: "document",
-          params: {
-            userID: "PLACEHOLDER",
-          },
-        },
-        requestConfigTransformer: (config: any, lastUserInfo: any) => {
-          if (lastUserInfo && lastUserInfo.numericId) {
-            config.params.userID = lastUserInfo.numericId;
-          }
-          return config;
-        },
-        assertion: { id: "userID" },
-        fields: [],
-      },
-      {
-        // seeding, seedingSize - 第二步：POST请求获取数据
+        // seeding, seedingSize: GET 初始化由本站 request 在 POST 前执行
         requestConfig: {
           url: "/user/account/snatchlist",
           method: "POST",
@@ -185,25 +167,7 @@ export const siteMetadata: ISiteMetadata = {
         fields: ["seeding", "seedingSize"],
       },
       {
-        // uploads - 第一步：GET请求初始化页面
-        requestConfig: {
-          url: "/user/account/uploadedtorrents",
-          responseType: "document",
-          params: {
-            userID: "PLACEHOLDER",
-          },
-        },
-        requestConfigTransformer: (config: any, lastUserInfo: any) => {
-          if (lastUserInfo && lastUserInfo.numericId) {
-            config.params.userID = lastUserInfo.numericId;
-          }
-          return config;
-        },
-        assertion: { id: "userID" },
-        fields: [],
-      },
-      {
-        // uploads - 第二步：POST请求获取数据
+        // uploads: GET 初始化由本站 request 在 POST 前执行
         requestConfig: {
           url: "/user/account/uploadedtorrents",
           method: "POST",
@@ -348,4 +312,39 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class PussyTorrents extends PrivateSite {
   readonly siteMetadata = siteMetadata;
+
+  public override async request<T>(config: AxiosRequestConfig, checkLogin = true): Promise<AxiosResponse<T>> {
+    const isStatsPost =
+      config.method?.toUpperCase() === "POST" &&
+      (config.url === "/user/account/snatchlist" || config.url === "/user/account/uploadedtorrents");
+
+    if (isStatsPost) {
+      // REVIEW-FINDINGS site-defs #1：本定义原始 DataTables 流程是「先 GET 同端点初始化页面 → 再 POST 取数据」，
+      // 但旧 userInfo.process 里两个 GET 步骤因 `fields: []` 被引擎的「所需字段都已有则跳过」判据整段跳过
+      //（从未真正发出）。这里在 request() 出口补回该握手：GET 响应只需触发站点会话/页面初始化，内容丢弃。
+      // 约束：
+      // 1) 只对这两个统计端点生效，下载/搜索等其它请求不受影响；
+      // 2) 先遵守站点 requestDelay，避免 GET+POST 两连发被当成刷站；
+      // 3) GET 失败只记 warn，不阻断后续 POST —— 握手是可选增强；若站点确实依赖它，POST 会按原有错误路径失败。
+      await this.sleepAction(this.metadata.userInfo?.requestDelay ?? this.metadata.requestDelay ?? 0);
+      try {
+        await super.request<Document>(
+          {
+            url: config.url,
+            responseType: "document",
+            params: { userID: (config.data as Record<string, unknown> | undefined)?.userID },
+          },
+          checkLogin,
+        );
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} stats page init GET failed, continue with POST`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
+      }
+    }
+
+    return super.request<T>(config, checkLogin);
+  }
 }

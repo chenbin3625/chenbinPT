@@ -38,7 +38,11 @@ async function loadFlushFn() {
   setActivePinia(createPinia());
   const runtime = await import("@/options/stores/runtime.ts");
   const mod = await import("@/options/views/Overview/MyData/utils/lastUserData.ts");
-  return { flushSiteLastUserInfo: mod.flushSiteLastUserInfo, runtimeStore: runtime.useRuntimeStore() };
+  return {
+    flushSiteLastUserInfo: mod.flushSiteLastUserInfo,
+    reconcileFlushPlan: mod.reconcileFlushPlan,
+    runtimeStore: runtime.useRuntimeStore(),
+  };
 }
 
 /** 等待 pending 的 promise 链（catch/finally）跑完 */
@@ -103,5 +107,37 @@ describe("刷新数据：失败必须给出用户反馈", () => {
       siteId: "testsite",
       queueConcurrency: 5,
     });
+  });
+});
+
+describe("F17：恢复出来的「刷新中」残留必须对账", () => {
+  beforeEach(() => {
+    openMock.mockReset();
+    sendMessageMock.mockReset();
+  });
+
+  it("没有在途请求的 flushPlan 在页面加载时复位（不再永久显示「取消刷新」）", async () => {
+    const { reconcileFlushPlan, runtimeStore } = await loadFlushFn();
+    runtimeStore.userInfo.flushPlan["stale-site"] = true;
+
+    expect(reconcileFlushPlan()).toBe(true);
+    expect(runtimeStore.userInfo.flushPlan["stale-site"]).toBe(false);
+  });
+
+  it("同一页面内确实仍在刷新的站点不会被误复位", async () => {
+    let resolve!: (value: unknown) => void;
+    sendMessageMock.mockImplementation(() => new Promise((res) => (resolve = res)));
+    const { flushSiteLastUserInfo, reconcileFlushPlan, runtimeStore } = await loadFlushFn();
+
+    flushSiteLastUserInfo(["testsite"]);
+    await flushMicrotasks();
+
+    expect(reconcileFlushPlan(), "在途请求仍存在，不应被当作恢复残留").toBe(false);
+    expect(runtimeStore.userInfo.flushPlan["testsite"]).toBe(true);
+
+    resolve({ site: "testsite", status: 0, updateAt: Date.now() });
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(runtimeStore.userInfo.flushPlan["testsite"]).toBe(false);
   });
 });

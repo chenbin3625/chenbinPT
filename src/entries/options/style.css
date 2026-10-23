@@ -790,7 +790,11 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.search-filter-bar + .ant-table-wrapper {
+  margin-top: 0;
 }
 
 /* 筛选项容器：宽度按内容自适应，空间不足时自己换行；min-width: 0 让它能被压缩。 */
@@ -882,6 +886,31 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 搜索结果页标题列的种子标签：点击即按该标签筛选（配合 TorrentTitleTd 的 tagFilterable）。
+ *
+ * 用 box-shadow 而不是 border 画「环」：a-tag 自带 border 与固定内边距，加 border 会让标签在
+ * 悬停 / 激活切换时抖动 1~2px；box-shadow 不占布局空间，标签位置保持稳定。
+ * hover 用 1px 细环表示「可点」，激活态用 2px 粗环表示「已生效」：粗细不同，
+ * 悬停在已激活标签上时也能从环宽看出它仍处于筛选态（激活规则写在 hover 之后并同时命中 :hover）。 */
+.ptd-torrent-tag--filterable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.ptd-torrent-tag--filterable:hover {
+  box-shadow: 0 0 0 1px var(--ptd-primary, #1677ff);
+}
+
+.ptd-torrent-tag--filterable:focus-visible {
+  outline: 2px solid var(--ptd-primary, #1677ff);
+  outline-offset: 1px;
+}
+
+.ptd-torrent-tag--filtered,
+.ptd-torrent-tag--filtered:hover {
+  box-shadow: 0 0 0 2px var(--ptd-primary, #1677ff);
 }
 
 /* 搜索结果页底部多选操作条（SelectionBar）：仅在选中种子后出现，不使用 alert 样式。

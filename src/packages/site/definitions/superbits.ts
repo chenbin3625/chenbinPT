@@ -2,6 +2,7 @@
  * Superbits - 基于 rartracker 的瑞典 BT 站点
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/superbits.yml
  */
+import { isDomNode } from "../schemas/AbstractBittorrentSite";
 import type { ISiteMetadata, ITorrent, ISearchInput, ITorrentTag } from "../types";
 import Rartracker from "../schemas/Rartracker";
 import { SchemaMetadata } from "../schemas/Rartracker";
@@ -166,7 +167,7 @@ export default class Superbits extends Rartracker {
   ): Partial<ITorrent> {
     const tags: ITorrentTag[] = torrent.tags || [];
 
-    if (!(row instanceof Node)) {
+    if (!isDomNode(row)) {
       const raw = row as unknown as ISuperbitsTorrent;
       if (raw.frileech === 1) tags.push({ name: "Free", color: "blue" });
       if (raw.swesub === 1) tags.push({ name: "SweSub" });

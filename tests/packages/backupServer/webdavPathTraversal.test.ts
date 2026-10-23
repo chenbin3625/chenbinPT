@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
 vi.mock("webdav", () => ({ AuthType: { Digest: "digest" }, createClient: vi.fn() }));
 
-import WebDAV from "@ptd/backupServer/entity/WebDAV.ts";
+import WebDAV, { sanitizeWebdavPath } from "@ptd/backupServer/entity/WebDAV.ts";
 
 /** 实体构造函数在基类中是 protected（应用侧通过 getBackupServer() 创建），测试里用一次类型断言绕过可见性 */
 const WebDAVCtor = WebDAV as unknown as new (config: any) => WebDAV;
@@ -72,5 +72,25 @@ describe("WebDAV.getFile / deleteFile：路径清理（M-9）", () => {
     await server.getFile("PTD_backup_20261004T021500.zip");
 
     expect(client.getFileContents.mock.calls[0]![0]).toBe("/PTD_backup_20261004T021500.zip");
+  });
+
+  /**
+   * 复检 P2（D）：单次解码挡不住多重编码。
+   * `..%252f..%252fetc%252fpasswd` 解码一次得到 `..%2f..%2fetc%2fpasswd`，
+   * 若不继续解码就会作为「合法段」传给客户端，服务端再解码一次即变成 `../../etc/passwd`。
+   */
+  it("多重编码的 ../ 也会被逐层解码并清理（getFile / deleteFile）", async () => {
+    const { server, client } = createServer();
+
+    await server.getFile("..%252f..%252fetc%252fpasswd");
+    expect(client.getFileContents.mock.calls[0]![0]).toBe("/etc/passwd");
+
+    await server.deleteFile("..%252f..%252fetc%252fpasswd");
+    expect(client.deleteFile.mock.calls[0]![0]).toBe("/etc/passwd");
+  });
+
+  it("三层编码同样收敛到不动点（纯函数）", () => {
+    expect(sanitizeWebdavPath("..%25252f..%25252fetc%25252fpasswd")).toBe("etc/passwd");
+    expect(sanitizeWebdavPath("a%2520b/PTD_backup.zip")).toBe("a b/PTD_backup.zip");
   });
 });

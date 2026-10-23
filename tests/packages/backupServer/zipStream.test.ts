@@ -7,7 +7,7 @@
  * 2. 产物是**标准 ZIP**，能被真实恢复路径 `jsZipBlobToBackupData`（JSZip）完整读回；
  * 3. 备份格式约定不变：文件名仍为 `<key>.json` + `manifest.json`，
  *    manifest 中有 `files[*].{name,hash}`（MD5）与 `encryption: true`，解密后数据与原始一致；
- * 4. 未加密路径仍走 JSZip + DEFLATE，且两条路径都能往返。
+ * 4. 未加密路径走同一个流式写出器（compress=true → raw deflate），两条路径都能往返。
  */
 import JSZip from "jszip";
 import CryptoJS from "crypto-js";
@@ -129,7 +129,21 @@ describe("加密备份走流式写出器后的往返（真实恢复路径）", (
   });
 });
 
-describe("未加密备份仍走 JSZip + DEFLATE 且可往返", () => {
+describe("C2-I-B1：导出不修改入参对象", () => {
+  it("backupDataToJSZipBlob 不再就地 delete data.manifest", async () => {
+    const data: any = {
+      config: { lang: "zh_CN" },
+      manifest: { version: "chenbinPT (v0.0.10)", time: 1, files: {} },
+    };
+    const snapshot = JSON.parse(JSON.stringify(data));
+
+    await backupDataToJSZipBlob(data);
+
+    expect(data).toEqual(snapshot);
+  });
+});
+
+describe("未加密备份仍走 DEFLATE 且可往返", () => {
   it("导出 → 恢复数据一致，manifest.encryption 为 false", async () => {
     const data = makeBackupData();
     const blob = await backupDataToJSZipBlob(JSON.parse(JSON.stringify(data)), "");

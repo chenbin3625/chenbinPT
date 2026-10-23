@@ -109,6 +109,47 @@ describe("logger 脱敏（L-7）", () => {
     expect(getLoggerItems()[1]!.msg).toBe("path only: https://pt.site/download.php");
   });
 
+  it("URL 的 userinfo 凭据（user:pass@host）被抹掉，但保留 host（2026-10-24 P2-2）", async () => {
+    const { logger, getLoggerItems } = await loadLoggerModule();
+
+    logger({
+      msg: "webdav: https://alice:s3cr3t@dav.example.com/backup/file.zip",
+    });
+    logger({
+      msg: "downloader: http://user:p%40ss@qbit.example.com:8080/api/v2/auth/login",
+    });
+
+    const [first, second] = getLoggerItems();
+    expect(first!.msg).toBe("webdav: https://***@dav.example.com/backup/file.zip");
+    expect(second!.msg).toBe("downloader: http://***@qbit.example.com:8080/api/v2/auth/login");
+    expect(first!.msg).not.toContain("s3cr3t");
+    expect(second!.msg).not.toContain("p%40ss");
+  });
+
+  it("path 里普通的 @（如 /user/@name）不被误当成 userinfo 抹掉", async () => {
+    const { logger, getLoggerItems } = await loadLoggerModule();
+
+    logger({ msg: "https://site.example/user/@name/profile?id=1" });
+
+    expect(getLoggerItems()[0]!.msg).toBe("https://site.example/user/@name/profile?id=***");
+  });
+
+  it("不就地改写调用方对象（2026-10-24 logger handoff）", async () => {
+    const { logger, getLoggerItems } = await loadLoggerModule();
+
+    const callerItem = { msg: "url: https://pt.site/dl?passkey=secret", data: { link: "https://pt.site/dl?token=t" } };
+    const callerSnapshot = structuredClone(callerItem);
+    logger(callerItem);
+
+    // 调用方对象保持原样（不新增 id/time、不把 msg/data 替换成脱敏值）
+    expect(callerItem).toEqual(callerSnapshot);
+    // 缓冲里保存的是脱敏后的副本
+    const [item] = getLoggerItems();
+    expect(item).not.toBe(callerItem);
+    expect(item!.msg).toBe("url: https://pt.site/dl?passkey=***");
+    expect(item!.data).toEqual({ link: "https://pt.site/dl?token=***" });
+  });
+
   it("落盘到 sessionStorage 的内容也已经是脱敏后的（不会绕过脱敏）", async () => {
     vi.useFakeTimers();
     try {

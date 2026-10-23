@@ -74,7 +74,9 @@ export const siteMetadata: ISiteMetadata = {
   timezoneOffset: "+0800",
 
   type: "private",
-  schema: "TNode",
+  // Info-46：schemas/ 下没有 TNode 引擎，实际基类是本文件导出的 default class（extends PrivateSite）。
+  // schema 写真实基类名，避免「误删 default class 后静默回落裸 AbstractPrivateSite」且无类型错误。
+  schema: "AbstractPrivateSite",
 
   urls: ["uggcf://muhdhr.va/"],
 

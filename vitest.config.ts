@@ -26,22 +26,19 @@ export default defineConfig({
     // 站点解析大量依赖 DOM（DOMParser / Element.matches / innerHTML），
     // happy-dom 比 jsdom 快且足够覆盖这些 API。
     environment: "happy-dom",
-    // 只收 tests/ 下的 vitest 用例；tests/unit.test.mts 是 tsx 直跑的旧用例集（npm run test:legacy），
-    // 它带 process.exit 且没有 test() 块，不能被 vitest 收集。
+    // 只收 tests/ 下的 vitest 用例。
+    // `tests/unit.test.mts` 是 tsx 直跑的旧用例集（npm run test:legacy）：它带 process.exit、
+    // 顶层直接断言、没有 test() 块，**不能被 vitest 收集**（收集会以 "No test suite found" 失败）。
+    // 因此 G10 的「让 .mts 进 vitest」只做了安全的那一半：`.mts` 已加入 tsconfig.json 的 include，
+    // 受 vue-tsc 类型检查保护；把它改写成 describe/it 并合并进 `npm test` 属测试体系重构，见 fix report 延期项。
     include: ["tests/**/*.test.ts"],
-    // 测试会模拟扩展全局 API（chrome.storage、消息监听器等）；文件间共享这些宿主桩时，
-    // Vitest 默认并行执行会互相覆盖模块状态，导致整套测试随机超时。显式串行化文件，
-    // 保证 `npm test` 与单文件运行一致。
+    // 保留文件串行（G9 延期项）：`fileParallelism: false` 让 193 个文件的 `npm test` 约 3 分钟。
+    // 报告建议先恢复并行再逐文件修污染，但本轮 19 个修复任务并发、且纪律禁止跑全量测试，
+    // 无法验证「并行下全部文件稳定」——在没有全量 soak 的情况下改并行会让门禁随机变红。
+    // 因此本轮只做了低风险的一半：恢复 Vitest 的 performance diagnostics（默认开启），
+    // 让「环境/隔离/转换很贵」的信号重新可见；恢复并行由 Lead 在集成阶段单独验证。
     fileParallelism: false,
     // 显式 import { describe, it, expect } from "vitest"，不注入全局，避免污染 src 的类型
     globals: false,
-    experimental: {
-      diagnostics: {
-        environment: false,
-        import: false,
-        isolate: false,
-        transform: false,
-      },
-    },
   },
 });

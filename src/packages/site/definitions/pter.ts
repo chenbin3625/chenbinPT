@@ -146,7 +146,7 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.search?.advanceKeywordParams!,
       douban: {
         requestConfigTransformer: ({ requestConfig: config }) => {
-          set(config!, "params.search_area", 5); // params "&search_area=4"
+          set(config!, "params.search_area", 5); // params "&search_area=5"（4=IMDB, 5=豆瓣）
           return config!;
         },
       },

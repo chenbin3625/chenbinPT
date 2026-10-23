@@ -155,7 +155,16 @@ const FNOS_SEARCH_FIELDS = [
 
 export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   private static sessionCache = new Map<string, IFnOSSession>();
+  /** 海报 data URL 缓存（按条目数 + 字节预算双重淘汰，见 C2-M-5） */
   private static posterUrlCache = new Map<string, string>();
+  private static posterUrlCacheBytes = 0;
+
+  private static readonly POSTER_CACHE_MAX_ENTRIES = 300;
+  /** 海报缓存占用的字符串字节上限（UTF-16 下大致为 2 字节/字符） */
+  private static readonly POSTER_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+
+  /** C2-M-4：登录单飞——并发 401 时只允许一个 AuthenticateByName 在途，其余请求复用同一个 Promise */
+  private loginInFlight?: Promise<IFnOSSession>;
 
   /** /Users/{id}/Views 的结果缓存（按实例，避免每次搜索重复请求） */
   private viewIdsPromise?: Promise<string[]>;
@@ -223,29 +232,55 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       return existingSession;
     }
 
-    const response = await axios.request<IFnOSLoginResponse>({
-      baseURL: this.apiBaseUrl,
-      url: "/Users/AuthenticateByName",
-      method: "POST",
-      timeout: this.config.timeout,
-      responseType: "json",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Emby-Authorization": this.getAuthorizationHeader(),
-      },
-      data: {
-        Username: this.config.auth.username,
-        Pw: this.config.auth.password,
-      },
-    });
+    // C2-M-4：合并在途登录。一次搜索里 getViewIds/多条 queryItems/多张海报可能同时 401，
+    // 旧实现会让它们各自 AuthenticateByName（登录风暴），并把 N 个 token 依次写回缓存。
+    const inFlightLogin = this.loginInFlight;
+    if (inFlightLogin) {
+      if (!force) {
+        return await inFlightLogin;
+      }
+      // force 刷新也先等前一个在途登录结束，避免"以旧顶新"；随后若 session 已被刷新则直接复用
+      await inFlightLogin.catch(() => undefined);
+      const refreshedSession = this.session;
+      if (refreshedSession) {
+        return refreshedSession;
+      }
+    }
 
-    const session = {
-      apikey: response.data.AccessToken,
-      userId: response.data.User.Id,
-      sessionId: response.data.SessionInfo?.Id,
-    };
-    this.setSession(session);
-    return session;
+    const loginPromise = (async () => {
+      const response = await axios.request<IFnOSLoginResponse>({
+        baseURL: this.apiBaseUrl,
+        url: "/Users/AuthenticateByName",
+        method: "POST",
+        timeout: this.config.timeout,
+        responseType: "json",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Emby-Authorization": this.getAuthorizationHeader(),
+        },
+        data: {
+          Username: this.config.auth.username,
+          Pw: this.config.auth.password,
+        },
+      });
+
+      const session = {
+        apikey: response.data.AccessToken,
+        userId: response.data.User.Id,
+        sessionId: response.data.SessionInfo?.Id,
+      };
+      this.setSession(session);
+      return session;
+    })();
+
+    this.loginInFlight = loginPromise;
+    try {
+      return await loginPromise;
+    } finally {
+      if (this.loginInFlight === loginPromise) {
+        this.loginInFlight = undefined;
+      }
+    }
   }
 
   protected async request<T = any, D = any>(
@@ -374,17 +409,32 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   }
 
   private setPosterCache(cacheKey: string, posterUrl: string) {
+    // C2-M-5：旧实现只按「条目数 > 300 删 1 条」控制，data URL 单张可达数百 KB，
+    // 最坏情况常驻 tens-of-MB。这里同时按 UTF-16 字符数估算字节预算（约 2 字节/字符），
+    // 超预算时从最旧条目开始淘汰。
+    const previous = FnOS.posterUrlCache.get(cacheKey);
+    if (previous) {
+      FnOS.posterUrlCacheBytes -= previous.length * 2;
+      FnOS.posterUrlCache.delete(cacheKey);
+    }
+
     FnOS.posterUrlCache.set(cacheKey, posterUrl);
-    if (FnOS.posterUrlCache.size <= 300) {
-      return;
-    }
+    FnOS.posterUrlCacheBytes += posterUrl.length * 2;
 
-    const firstCachedKey = FnOS.posterUrlCache.keys().next().value as string | undefined;
-    if (!firstCachedKey) {
-      return;
+    while (
+      FnOS.posterUrlCache.size > FnOS.POSTER_CACHE_MAX_ENTRIES ||
+      FnOS.posterUrlCacheBytes > FnOS.POSTER_CACHE_MAX_BYTES
+    ) {
+      const oldestKey = FnOS.posterUrlCache.keys().next().value as string | undefined;
+      if (oldestKey === undefined || FnOS.posterUrlCache.size <= 1) {
+        break;
+      }
+      const oldestValue = FnOS.posterUrlCache.get(oldestKey);
+      FnOS.posterUrlCache.delete(oldestKey);
+      if (oldestValue) {
+        FnOS.posterUrlCacheBytes -= oldestValue.length * 2;
+      }
     }
-
-    FnOS.posterUrlCache.delete(firstCachedKey);
   }
 
   private async buildMediaItem(item: IFnOSQueryItem): Promise<IMediaServerItem<IFnOSQueryItem>> {
@@ -420,8 +470,10 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
 
   private getItemUrl(item: IFnOSQueryItem) {
     if (item.Type === "Movie") {
-      const movieGuid = item.ImageTags?.Primary ?? item.MediaSources?.[0]?.Id ?? item.Id;
-      return urlJoin(this.webBaseUrl, `/movie/${movieGuid}`);
+      // C2-M-3：ImageTags.Primary 是封面图的 tag 哈希（换封面即变），不是影片主键；
+      // 与 Series 分支保持一致，优先用 item.Id，其余仅作兜底。
+      const movieId = item.Id || item.MediaSources?.[0]?.Id || item.ImageTags?.Primary || "";
+      return urlJoin(this.webBaseUrl, `/movie/${movieId}`);
     }
 
     if (item.Type === "Series") {

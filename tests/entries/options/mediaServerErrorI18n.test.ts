@@ -23,6 +23,24 @@ const REQUIRED_KEYS = [
   "MediaServerEntity.error.unknown",
   "MediaServerEntity.error.updateFailed",
   "common.insecureAddressWarning",
+  // F4：本次修复在 MyClient / DownloadHistory / KeepUploadTask / MediaServerEntity 里新引用的 key。
+  // 其中几条是复用其它命名空间的现成文案（专用 key 待 G 在语言包里补充，见 fix report）；
+  // 列在这里是为了挡住「key 拼错/路径写错 → 用户看到原始 key」这类回归。
+  "DownloadHistory.detail.errorMessage",
+  "SearchEntity.ActionTd.copyLinkSuccess",
+  "SearchEntity.ActionTd.copyLinkFailed",
+  "SearchEntity.noSiteToSearch",
+  "SetBackup.RestoreDialog.loadFailure",
+  "SentToDownloaderDialog.sendSummary",
+  "SentToDownloaderDialog.sendSummaryFailed",
+  "SentToDownloaderDialog.sendSummaryPending",
+  "MyClient.detail.addTrackerSuccess",
+  "MyClient.detail.addTrackerFailure",
+  "MyClient.detail.removeTrackerSuccess",
+  "MyClient.detail.removeTrackerFailure",
+  "MyClient.detail.updateFilePrioritySuccess",
+  "MyClient.detail.updateFilePriorityFailure",
+  "MyClient.autoRefresh.resumeDownloader",
 ];
 
 for (const [locale, messages] of LOCALES) {

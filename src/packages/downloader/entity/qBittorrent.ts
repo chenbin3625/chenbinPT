@@ -122,6 +122,11 @@ enum QbittorrentTorrentState {
   Error = "error", // Some error occurred, applies to paused torrents
   PausedUP = "pausedUP", // Torrent is paused and has finished downloading
   PausedDL = "pausedDL", // Torrent is paused and has NOT finished downloading
+  // QB-1：qBittorrent 5.0（WebAPI 2.11.0）把 pausedUP/pausedDL 改名为 stoppedUP/stoppedDL，
+  // 并新增 forcedMetaDL（强制下载元数据阶段）。缺这三个值会让 5.x 的暂停/停止种子映射成 unknown。
+  StoppedUP = "stoppedUP", // Torrent is stopped and has finished downloading
+  StoppedDL = "stoppedDL", // Torrent is stopped and has NOT finished downloading
+  ForcedMetaDL = "forcedMetaDL", // Torrent is being forced to download metadata
   QueuedUP = "queuedUP", // Queuing is enabled and torrent is queued for upload
   QueuedDL = "queuedDL", // Queuing is enabled and torrent is queued for download
   Uploading = "uploading", // Torrent is being seeded and data is being transferred
@@ -182,6 +187,17 @@ interface rawTorrent {
   time_active: number;
 
   category: string; // Category name
+  /** 逗号分隔的 tag 列表（qBittorrent 4.3+；label 语义统一到 tags，见 QB-3） */
+  tags?: string;
+}
+
+/** 取第一个 tag 作为 CTorrent.label（label 语义统一到 tags，见 QB-3） */
+function primaryTag(tags: string | undefined): string | undefined {
+  const first = (tags ?? "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)[0];
+  return first || undefined;
 }
 
 interface QbittorrentTorrent extends CTorrent<rawTorrent> {
@@ -301,6 +317,10 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   readonly version = "v0.1.0";
 
   isLogin: boolean | null = null;
+  /** 登录单飞去重（QB-2/PKG-1）：并发请求共享同一次登录，避免一次页面加载打出多次失败登录触发 IP 封禁 */
+  private loginPromise: Promise<boolean> | null = null;
+  /** 登录失败后的冷却截止时间：冷却期内不再重试登录，避免轮询把 qBittorrent 的失败计数打满（QB-2） */
+  private loginCooldownUntil = 0;
   private syncData: rawSyncMaindata = { rid: 0 };
   private lastSyncTimestamp: number = 0;
   private webApiVersion: string | null = null;
@@ -321,18 +341,57 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   async ping(): Promise<boolean> {
     try {
       if (this.isApiKeyAuth) {
-        const version = await this.getClientVersion();
-        this.isLogin = !!version;
+        // API Key 认证不依赖 SID，也不应使用 getClientVersion() 的本地缓存：
+        // 否则首次成功后客户端已停止/Key 已撤销时，「测试连接」仍会显示成功。
+        await this.request<string>("/app/version", {}, true);
+        this.isLogin = true;
       } else {
-        const pong = await this.login();
-        // qbittorrent 5.2.0+ returns 204 No Content with empty body, older versions return 200 OK with "Ok." body
-        this.isLogin = pong.data === "Ok." || pong.status === 204;
+        this.isLogin = await this.loginOnce(true);
       }
 
       return this.isLogin;
     } catch (e) {
       return false;
     }
+  }
+
+  /**
+   * 单飞登录：并发请求共享同一次登录；`force` 强制重新登录（SID 过期 / 测试连接）。
+   * 登录失败返回 false（不抛错），由 request() 决定是否继续。
+   */
+  private async loginOnce(force = false): Promise<boolean> {
+    if (!force && this.isLogin) {
+      return true;
+    }
+
+    if (!this.loginPromise) {
+      this.loginPromise = this.login()
+        .then((pong) => {
+          // qbittorrent 5.2.0+ returns 204 No Content with empty body, older versions return 200 OK with "Ok." body
+          const ok = pong.data === "Ok." || pong.status === 204;
+          this.isLogin = ok;
+          if (ok) {
+            this.loginCooldownUntil = 0;
+          } else {
+            // 服务端明确回了「Fails.」= 凭据错误：冷却 60s，避免轮询反复失败登录触发 IP 封禁
+            this.loginCooldownUntil = Date.now() + 60e3;
+          }
+          return ok;
+        })
+        .catch((e) => {
+          this.isLogin = false;
+          // 只有「服务端明确拒绝（401/403）」才进入冷却；网络错误不冷却，网络恢复后可立即重试
+          if (isAuthError(e)) {
+            this.loginCooldownUntil = Date.now() + 60e3;
+          }
+          return false;
+        })
+        .finally(() => {
+          this.loginPromise = null;
+        });
+    }
+
+    return await this.loginPromise;
   }
 
   protected async getClientVersionFromRemote(): Promise<string> {
@@ -363,17 +422,19 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     const { server_state } = await this.getSyncData();
 
     for (const [key, convertKey] of convertMaps) {
-      if (server_state?.[key]) {
-        retStatus[convertKey] = Number(server_state[key]);
+      const value = server_state?.[key];
+      if (typeof value !== "undefined" && value !== null) {
+        retStatus[convertKey] = Number(value);
       }
     }
 
     return retStatus as TorrentClientStatus;
   }
 
-  override async getClientFreeSpace(): Promise<number> {
+  override async getClientFreeSpace(): Promise<number | "N/A"> {
     const syncData = await this.getSyncData();
-    return syncData.server_state?.["free_space_on_disk"] as number;
+    const freeSpace = syncData.server_state?.["free_space_on_disk"];
+    return typeof freeSpace === "number" ? freeSpace : "N/A";
   }
 
   // qbt 默认Session时长 3600s，一次登录应该足够进行所有操作
@@ -394,8 +455,16 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     config: AxiosRequestConfig = {},
     skipAuthRetry = false,
   ): Promise<AxiosResponse<T>> {
-    if (this.isLogin === null && !this.isApiKeyAuth) {
-      await this.ping();
+    if (!this.isApiKeyAuth && !this.isLogin) {
+      /**
+       * QB-2：登录失败时直接抛认证错误，不再「照发业务请求 → 收到 401 → 再登录一次」。
+       * 这样单个请求最多只产生一次失败登录，并发请求再由 loginPromise 合并成一次，
+       * 避免用户填错密码后打开 MyClient 时瞬间打出 6 次失败登录（qBittorrent 默认 5 次即封禁 IP 1 小时）。
+       */
+      const inCooldown = Date.now() < this.loginCooldownUntil;
+      if (inCooldown || !(await this.loginOnce())) {
+        throw new Error("qBittorrent: 登录失败（用户名/密码错误，或 IP 已被封禁）");
+      }
     }
 
     if (config.method?.toLowerCase() === "post") {
@@ -438,7 +507,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
        */
       if (!skipAuthRetry && !this.isApiKeyAuth && isAuthError(e)) {
         this.isLogin = null;
-        if (await this.ping()) {
+        if (await this.loginOnce(true)) {
           try {
             return await this.request<T>(path, config, true);
           } catch (retryError) {
@@ -501,95 +570,105 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    const formData = new FormData();
-    const advanceAddTorrentOptions = (options.advanceAddTorrentOptions ?? {}) as Record<
-      TQBittorrentAdvanceAddTorrentOptionsKey,
-      any
-    >;
+    try {
+      const formData = new FormData();
+      // QB-5：克隆调用方对象，避免使用 category: 前缀时把 autoTMM 写回调用方的 advanceAddTorrentOptions
+      const advanceAddTorrentOptions = { ...(options.advanceAddTorrentOptions ?? {}) } as Record<
+        TQBittorrentAdvanceAddTorrentOptionsKey,
+        any
+      >;
 
-    // 处理链接
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      formData.append("urls", url);
-    } else {
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption || {}),
+      // 处理链接
+      if (url.startsWith("magnet:") || !options.localDownload) {
+        formData.append("urls", url);
+      } else {
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption || {}),
+        });
+
+        formData.append("torrents", torrent.metadata.blob(), torrent.name);
+      }
+
+      // 将通用字段转成qbt字段
+      if (options.savePath) {
+        // 如果是 qBittorrent 的分类，则设置 autoTMM = true & category = savePath.replace(category_prefix, "")
+        if (options.savePath.startsWith(category_prefix)) {
+          advanceAddTorrentOptions.autoTMM = true; // 开启自动管理
+          formData.append("category", options.savePath.replace(category_prefix, "")); // 分类名称
+        } else {
+          formData.append("savepath", options.savePath); // Download folder
+        }
+      }
+
+      if (options.label) {
+        formData.append("tags", options.label); // Tags for the torrent
+      }
+
+      // QB-4：显式下发暂停/开始，让「自动开始」选项不被客户端的全局偏好覆盖。
+      // 同时发送新旧两个参数，让 qBittorrent 自动选择识别：
+      // qBittorrent < 5.1.0 使用 'paused'，qBittorrent 5.1.0+ 使用 'stopped'。
+      if (typeof options.addAtPaused !== "undefined") {
+        formData.append("paused", options.addAtPaused ? "true" : "false");
+        formData.append("stopped", options.addAtPaused ? "true" : "false");
+      }
+
+      if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
+        // Upload speed limit in bytes/sec, -1 means no limit
+        formData.append("upLimit", (options.uploadSpeedLimit * 1024 * 1024).toString());
+      }
+
+      // 处理高级选项（Boolean类型）
+      for (const key of QBittorrentAdvanceAddTorrentOptionsBooleanKey) {
+        if (advanceAddTorrentOptions[key] === true) {
+          formData.append(key, "true");
+        }
+      }
+
+      // qBittorrent < v5.2.0 returns "Ok." or "Fails." as plain text;
+      // qBittorrent >= v5.2.0 returns a JSON object with counts and IDs.
+      const res = await this.request<"Ok." | "Fails." | QBittorrentAddTorrentResponse>("/torrents/add", {
+        method: "post",
+        data: formData,
       });
 
-      formData.append("torrents", torrent.metadata.blob(), torrent.name);
-    }
-
-    // 将通用字段转成qbt字段
-    if (options.savePath) {
-      // 如果是 qBittorrent 的分类，则设置 autoTMM = true & category = savePath.replace(category_prefix, "")
-      if (options.savePath.startsWith(category_prefix)) {
-        advanceAddTorrentOptions.autoTMM = true; // 开启自动管理
-        formData.append("category", options.savePath.replace(category_prefix, "")); // 分类名称
+      if (typeof res.data === "object" && res.data !== null) {
+        // qBittorrent >= v5.2.0 JSON response
+        const jsonData = res.data as QBittorrentAddTorrentResponse;
+        // M-27：链接直发时 qBittorrent 解析不出 infoHash，会返回 202 + pending_count>0（已异步入队，稍后才知道结果）。
+        // 这是「已接受」而不是失败；只有 failure_count>0 或什么都没接受时才判失败。
+        const accepted = (jsonData.success_count ?? 0) + (jsonData.pending_count ?? 0);
+        addResult.success = accepted > 0 && (jsonData.failure_count ?? 0) === 0;
+        if (addResult.success && jsonData.added_torrent_ids?.length) {
+          addResult.id = jsonData.added_torrent_ids[0];
+        }
+        if (!addResult.success) {
+          addResult.message = {
+            success_count: jsonData.success_count ?? 0,
+            failure_count: jsonData.failure_count ?? 0,
+            pending_count: jsonData.pending_count ?? 0,
+            added_torrent_ids: jsonData.added_torrent_ids ?? [],
+          } as CAddTorrentResult["message"];
+          return addResult;
+        }
       } else {
-        formData.append("savepath", options.savePath); // Download folder
+        // qBittorrent < v5.2.0 plain text response
+        addResult.success = res.data === "Ok.";
+        if (!addResult.success) {
+          addResult.message = res.data;
+          return addResult;
+        }
       }
+
+      this.invalidateSyncCache();
+      this.invalidateSuggestListCache();
+    } catch (e) {
+      // N-5：把 HTTP/RPC 失败转成 CAddTorrentResult，而不是让 addTorrent 直接 reject
+      //（调用方据此写入更可读的失败原因；分类不存在 409、无效种子 415 等都会走到这里）
+      addResult.success = false;
+      addResult.message = e instanceof Error ? e.message : String(e);
     }
 
-    if (options.label) {
-      formData.append("tags", options.label); // Tags for the torrent
-    }
-
-    if (options.addAtPaused) {
-      // 同时发送新旧两个参数，让 qBittorrent 自动选择识别
-      // qBittorrent < 5.1.0 使用 'paused' 参数
-      formData.append("paused", options.addAtPaused ? "true" : "false");
-      // qBittorrent 5.1.0+ 使用 'stopped' 参数
-      formData.append("stopped", options.addAtPaused ? "true" : "false");
-    }
-
-    if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
-      // Upload speed limit in bytes/sec, -1 means no limit
-      formData.append("upLimit", (options.uploadSpeedLimit * 1024 * 1024).toString());
-    }
-
-    // 处理高级选项（Boolean类型）
-    for (const key of QBittorrentAdvanceAddTorrentOptionsBooleanKey) {
-      if (advanceAddTorrentOptions[key] === true) {
-        formData.append(key, "true");
-      }
-    }
-
-    // qBittorrent < v5.2.0 returns "Ok." or "Fails." as plain text;
-    // qBittorrent >= v5.2.0 returns a JSON object with counts and IDs.
-    const res = await this.request<"Ok." | "Fails." | QBittorrentAddTorrentResponse>("/torrents/add", {
-      method: "post",
-      data: formData,
-    });
-
-    if (typeof res.data === "object" && res.data !== null) {
-      // qBittorrent >= v5.2.0 JSON response
-      const jsonData = res.data as QBittorrentAddTorrentResponse;
-      // M-27：链接直发时 qBittorrent 解析不出 infoHash，会返回 202 + pending_count>0（已异步入队，稍后才知道结果）。
-      // 这是「已接受」而不是失败；只有 failure_count>0 或什么都没接受时才判失败。
-      const accepted = (jsonData.success_count ?? 0) + (jsonData.pending_count ?? 0);
-      addResult.success = accepted > 0 && (jsonData.failure_count ?? 0) === 0;
-      if (addResult.success && jsonData.added_torrent_ids?.length) {
-        addResult.id = jsonData.added_torrent_ids[0];
-      }
-      if (!addResult.success) {
-        addResult.message = {
-          success_count: jsonData.success_count ?? 0,
-          failure_count: jsonData.failure_count ?? 0,
-          pending_count: jsonData.pending_count ?? 0,
-          added_torrent_ids: jsonData.added_torrent_ids ?? [],
-        } as CAddTorrentResult["message"];
-        return addResult;
-      }
-    } else {
-      // qBittorrent < v5.2.0 plain text response
-      addResult.success = res.data === "Ok.";
-      if (!addResult.success) {
-        addResult.message = res.data;
-        return addResult;
-      }
-    }
-
-    this.invalidateSyncCache();
     return addResult;
   }
 
@@ -600,6 +679,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
 
       switch (torrent.state) {
         case QbittorrentTorrentState.ForcedDL:
+        case QbittorrentTorrentState.ForcedMetaDL:
         case QbittorrentTorrentState.Downloading:
         case QbittorrentTorrentState.MetaDL:
         case QbittorrentTorrentState.StalledDL:
@@ -615,9 +695,11 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
           state = CTorrentState.seeding;
           break;
         case QbittorrentTorrentState.PausedDL:
+        case QbittorrentTorrentState.StoppedDL:
           state = CTorrentState.paused;
           break;
         case QbittorrentTorrentState.PausedUP:
+        case QbittorrentTorrentState.StoppedUP:
           // state = 'completed';
           state = CTorrentState.paused;
           break;
@@ -651,7 +733,8 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
         dateAdded: torrent.added_on,
         isCompleted,
         progress: torrent.progress * 100,
-        label: torrent.category,
+        // QB-3：label 语义统一到 tags（读写/建议列表三处一致）；category 仍通过 savePath 的 category: 前缀表达
+        label: primaryTag(torrent.tags),
         savePath: torrent.save_path,
         totalSize: torrent.total_size,
         ratio: torrent.ratio,
@@ -667,37 +750,50 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
 
   // 注意方法虽然支持一次对多个种子进行操作，但仍建议每次均只操作一个种子
   async pauseTorrent(hashes: string | string[] | "all"): Promise<boolean> {
-    const data = {
-      hashes: hashes === "all" ? "all" : normalizePieces(hashes),
-    };
-    // qBittorrent 5.0+ (WebAPI 2.11.0+) renamed /torrents/pause to /torrents/stop
-    const endpoint = (await this.isApiVersionAtLeast(2, 11)) ? "/torrents/stop" : "/torrents/pause";
-    await this.request(endpoint, { method: "post", data });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      const data = {
+        hashes: hashes === "all" ? "all" : normalizePieces(hashes),
+      };
+      // qBittorrent 5.0+ (WebAPI 2.11.0+) renamed /torrents/pause to /torrents/stop
+      const endpoint = (await this.isApiVersionAtLeast(2, 11)) ? "/torrents/stop" : "/torrents/pause";
+      await this.request(endpoint, { method: "post", data });
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 注意方法虽然支持一次对多个种子进行操作，但仍建议每次均只操作一个种子
   async removeTorrent(hashes: string | string[] | "all", removeData: boolean = false): Promise<boolean> {
-    const data = {
-      hashes: hashes === "all" ? "all" : normalizePieces(hashes),
-      deleteFiles: removeData,
-    };
-    await this.request("/torrents/delete", { method: "post", data });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      const data = {
+        hashes: hashes === "all" ? "all" : normalizePieces(hashes),
+        deleteFiles: removeData,
+      };
+      await this.request("/torrents/delete", { method: "post", data });
+      this.invalidateSyncCache();
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 注意方法虽然支持一次对多个种子进行操作，但仍建议每次均只操作一个种子
-  async resumeTorrent(hashes: string | string[] | "all"): Promise<any> {
-    const data = {
-      hashes: hashes === "all" ? "all" : normalizePieces(hashes),
-    };
-    // qBittorrent 5.0+ (WebAPI 2.11.0+) renamed /torrents/resume to /torrents/start
-    const endpoint = (await this.isApiVersionAtLeast(2, 11)) ? "/torrents/start" : "/torrents/resume";
-    await this.request(endpoint, { method: "post", data });
-    this.invalidateSyncCache();
-    return true;
+  async resumeTorrent(hashes: string | string[] | "all"): Promise<boolean> {
+    try {
+      const data = {
+        hashes: hashes === "all" ? "all" : normalizePieces(hashes),
+      };
+      // qBittorrent 5.0+ (WebAPI 2.11.0+) renamed /torrents/resume to /torrents/start
+      const endpoint = (await this.isApiVersionAtLeast(2, 11)) ? "/torrents/start" : "/torrents/resume";
+      await this.request(endpoint, { method: "post", data });
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   private async getClientCategories(): Promise<Record<string, { name: string; savePath: string }>> {
@@ -720,13 +816,16 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   }
 
   async getTorrentTrackers(torrent: CTorrent): Promise<string[]> {
-    // 首先尝试从 torrent.magnet_uri 中解析出 tracker 列表
-    if (typeof torrent === "object" && typeof torrent?.raw?.magnet_uri === "string") {
+    // 首先尝试从 torrent.magnet_uri 中解析出 tracker 列表（磁链里带 tr= 参数）
+    if (typeof torrent === "object" && typeof torrent?.raw?.magnet_uri === "string" && torrent.raw.magnet_uri) {
       const queryString = torrent.raw.magnet_uri.split("?")[1] || "";
       const params = new URLSearchParams(queryString);
-
-      // URLSearchParams 已经会对参数值进行解码，这里直接返回即可，避免二次解码导致 tracker URL 被破坏
-      return params.getAll("tr");
+      const magnetTrackers = params.getAll("tr");
+      // magnet_uri 是「推入时」的快照，客户端内后来增删的 tracker 不会反映在里面；
+      // 只有它确实解析出 tracker 时才优先使用，否则回退到实时 WebAPI（避免返回空列表）。
+      if (magnetTrackers.length > 0) {
+        return magnetTrackers;
+      }
     }
 
     // 不然，则从客户端直接请求获取
@@ -737,67 +836,119 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
 
   // 重新校验种子
   override async recheckTorrent(id: any): Promise<boolean> {
-    await this.request("/torrents/recheck", {
-      method: "post",
-      data: { hashes: normalizePieces(id) },
-    });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      await this.request("/torrents/recheck", {
+        method: "post",
+        data: { hashes: normalizePieces(id) },
+      });
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 调整种子在队列中的位置
   override async moveTorrentInQueue(id: any, direction: TorrentQueueDirection): Promise<boolean> {
-    const endpointMap: Record<TorrentQueueDirection, string> = {
-      top: "/torrents/topPrio",
-      up: "/torrents/increasePrio",
-      down: "/torrents/decreasePrio",
-      bottom: "/torrents/bottomPrio",
-    };
-    await this.request(endpointMap[direction], {
-      method: "post",
-      data: { hashes: normalizePieces(id) },
-    });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      const endpointMap: Record<TorrentQueueDirection, string> = {
+        top: "/torrents/topPrio",
+        up: "/torrents/increasePrio",
+        down: "/torrents/decreasePrio",
+        bottom: "/torrents/bottomPrio",
+      };
+      await this.request(endpointMap[direction], {
+        method: "post",
+        data: { hashes: normalizePieces(id) },
+      });
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 设置单个种子的速度限制（单位 KiB/s，0 表示不限速；qBittorrent 使用 bytes/s，-1 表示不限速）
   override async setTorrentSpeedLimit(id: any, limits: TorrentSpeedLimit): Promise<boolean> {
-    const hash = normalizePieces(id);
-    const requests: Promise<any>[] = [];
+    try {
+      const hash = normalizePieces(id);
+      const requests: Promise<any>[] = [];
 
-    if (typeof limits.download !== "undefined") {
-      requests.push(
-        // qBittorrent WebAPI 只有 setDownloadLimit / setUploadLimit，没有 setLimit
-        this.request("/torrents/setDownloadLimit", {
-          method: "post",
-          data: { hashes: hash, limit: limits.download > 0 ? limits.download * 1024 : -1 },
-        }),
-      );
+      if (typeof limits.download !== "undefined") {
+        requests.push(
+          // qBittorrent WebAPI 只有 setDownloadLimit / setUploadLimit，没有 setLimit
+          this.request("/torrents/setDownloadLimit", {
+            method: "post",
+            data: { hashes: hash, limit: limits.download > 0 ? limits.download * 1024 : -1 },
+          }),
+        );
+      }
+
+      if (typeof limits.upload !== "undefined") {
+        requests.push(
+          this.request("/torrents/setUploadLimit", {
+            method: "post",
+            data: { hashes: hash, limit: limits.upload > 0 ? limits.upload * 1024 : -1 },
+          }),
+        );
+      }
+
+      await Promise.all(requests);
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
     }
-
-    if (typeof limits.upload !== "undefined") {
-      requests.push(
-        this.request("/torrents/setUploadLimit", {
-          method: "post",
-          data: { hashes: hash, limit: limits.upload > 0 ? limits.upload * 1024 : -1 },
-        }),
-      );
-    }
-
-    await Promise.all(requests);
-    this.invalidateSyncCache();
-    return true;
   }
 
-  // 设置单个种子的分类（qBittorrent 的 label 即 category）
+  /**
+   * 设置单个种子的标签（QB-3：label 语义统一到 qBittorrent 的 tags）。
+   *
+   * 读取端（getAllTorrents.label / getClientLabels）都基于 tags，这里也必须写 tags，
+   * 才能保证「推送时设置的标签」在 MyClient 列表里可见、且修改标签不会变成新建分类。
+   *
+   * 复检 RB-3：**加法语义**。qBittorrent 的 tags 是多值属性，并且有本插件之外的写入者
+   * （手动标签、自动分类/ratio 规则、qB 插件等）。旧实现「先 removeTags 其它 tag 再 addTags」
+   * 会让一次「设置标签」不可逆清空种子上其它标签；改为：
+   * - label 非空：只 `addTags`（qB 对已存在的 tag 幂等），不删除任何现有 tag；
+   * - label 为空串：用户显式要求清除标签，此时才 `removeTags` 现有全部 tags。
+   * 代价：MyClient 列表的 label 列仍只显示第一个 tag（getAllTorrents 的取舍见 `primaryTag`），
+   * 设置后若目标 tag 不是第一个，列表可能仍显示旧主标签 —— 这是「不破坏外部标签」的必然取舍。
+   */
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
-    await this.request("/torrents/setCategory", {
-      method: "post",
-      data: { hashes: normalizePieces(id), category: label },
-    });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      const hash = normalizePieces(id);
+      const target = label.trim();
+
+      if (target) {
+        // 加法：不读当前 tags、不删任何 tag（多一次 /torrents/info 也无必要）
+        await this.request("/torrents/addTags", {
+          method: "post",
+          data: { hashes: hash, tags: target },
+        });
+      } else {
+        // 空标签 = 清空该种子的 tags（显式删除语义）
+        const { data: infos } = await this.request<Array<{ hash: string; tags?: string }>>("/torrents/info", {
+          params: { hashes: hash },
+        });
+        const currentTags = (infos?.[0]?.tags ?? "")
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean);
+        if (currentTags.length > 0) {
+          await this.request("/torrents/removeTags", {
+            method: "post",
+            data: { hashes: hash, tags: currentTags.join(",") },
+          });
+        }
+      }
+
+      this.invalidateSyncCache();
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -866,7 +1017,6 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     this.invalidateSyncCache();
     return true;
   }
-
   // peer 列表: GET /sync/torrentPeers（注意拼写为 torrentPeers 单数词，peers 为按 peer id 键控的对象）
   override async getTorrentPeers(torrent: string | CTorrent): Promise<CTorrentPeer[]> {
     const { data } = await this.request<{
@@ -935,21 +1085,29 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
 
   // 新增 tracker: POST /torrents/addTrackers
   override async addTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    await this.request("/torrents/addTrackers", {
-      method: "post",
-      data: { hash: this.getTorrentHash(torrent), urls: url },
-    });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      await this.request("/torrents/addTrackers", {
+        method: "post",
+        data: { hash: this.getTorrentHash(torrent), urls: url },
+      });
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 删除 tracker: POST /torrents/removeTrackers
   override async removeTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
-    await this.request("/torrents/removeTrackers", {
-      method: "post",
-      data: { hash: this.getTorrentHash(torrent), urls: url },
-    });
-    this.invalidateSyncCache();
-    return true;
+    try {
+      await this.request("/torrents/removeTrackers", {
+        method: "post",
+        data: { hash: this.getTorrentHash(torrent), urls: url },
+      });
+      this.invalidateSyncCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 }

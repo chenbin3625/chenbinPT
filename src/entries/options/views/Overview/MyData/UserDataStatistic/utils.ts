@@ -196,3 +196,97 @@ export function sumUserInfoFieldByDate(
     return total;
   });
 }
+
+/** ECharts tooltip 字符串会按 HTML 插入（默认 `renderMode: 'html'`），任何拼进去的外部字符串都必须转义 */
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+/**
+ * F1（统计页 tooltip XSS）：站点名来自 `metadataStore.getSiteName()`，其 `merge.name` 是用户
+ * 可编辑、也可从备份恢复的任意字符串。修复前它被原样拼进 tooltip 的文本节点与属性值
+ * （`alt="${siteName}"`），一个 `"` 就能闭合属性，进而注入 `<img onerror=...>` 在扩展页执行。
+ */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => HTML_ESCAPE_MAP[char]!);
+}
+
+export interface IPerSiteTooltipOptions {
+  formatValue: (value: number) => string;
+  /** 站点 id → 展示名（内部自行转义） */
+  siteName: (siteId: string) => string;
+  /** 站点 id → favicon 地址（内部自行转义） */
+  siteFavicon: (siteId: string) => string;
+  translate: (key: string, params?: Record<string, unknown>) => string;
+  isHighlighted: (seriesIndex: number | undefined) => boolean;
+  hideThreshold: number;
+}
+
+/**
+ * 统计页「分站点」柱状图的 tooltip formatter。
+ *
+ * 从 `UserDataStatistic/Index.vue` 抽出为纯函数：一是让 XSS 修复可以被行为化测试覆盖，
+ * 二是把所有拼接进 HTML 的字符串（日期、站点名、favicon、颜色、系列名）统一走 `escapeHtml`。
+ */
+export function buildPerSiteTooltipFormatter(options: IPerSiteTooltipOptions) {
+  return function (params: any[]): string {
+    let ret = "";
+    const date = params?.[0]?.name ?? "No Date";
+    ret += `<span style="font-weight: 600">${escapeHtml(date)}</span><br>`;
+
+    const hasData = params.some((x) => Number(x.data));
+    const totalCount = params.reduce((acc, cur) => acc + (Number(cur.data) || 0), 0);
+    let thresholdSite = 0;
+
+    if (hasData) {
+      ret += '<table style="width: 100%;">';
+      ret += `<tr style="border-bottom: 1pt solid black;; font-weight: 600"><td style="padding-right: 12px">${escapeHtml(
+        options.translate("UserDataStatistic.chart.totalLabel"),
+      )}</td><td style="text-align: right; padding-right: 12px">${options.formatValue(
+        totalCount,
+      )}</td><td style="text-align: right">100%</td></tr>`;
+
+      // 复制后再排序：不原地改写 ECharts 传进来的数组
+      const sortedParams = [...params].sort((a, b) => b.data - a.data);
+
+      for (const data of sortedParams) {
+        const dataValue = Number(data.data) || 0;
+        if (dataValue === 0) continue;
+
+        const site = data.seriesName;
+        const siteName = escapeHtml(options.siteName(site));
+        const siteFavicon = escapeHtml(options.siteFavicon(site));
+        const precentValue = (dataValue / totalCount) * 100;
+        const isHighlightSite = options.isHighlighted(data.seriesIndex);
+
+        if (!isHighlightSite && Math.abs(precentValue) < options.hideThreshold) {
+          thresholdSite++;
+          continue;
+        }
+
+        ret += `<tr style='${isHighlightSite ? `color: ${escapeHtml(data.color)};` : ""}'>
+<td style="padding-right: 12px"><div style="display: inline-flex; align-items: center"><img src="${siteFavicon}" style="width:16px; height: 16px; ; margin-right: 4px" alt="${siteName}">${siteName}</div></td>
+<td style="text-align: right; padding-right: 12px">${options.formatValue(dataValue)}</td>
+<td style="text-align: right">${precentValue.toFixed(2)}%</td>
+</tr>`;
+      }
+
+      if (thresholdSite > 0) {
+        ret += `<tr><td colspan="3" style="text-align: right">${options.translate(
+          "UserDataStatistic.chart.hiddenSites",
+          { count: thresholdSite },
+        )}</td></tr>`;
+      }
+
+      ret += "</table>";
+    } else {
+      ret += options.translate("UserDataStatistic.chart.noData");
+    }
+
+    return ret;
+  };
+}

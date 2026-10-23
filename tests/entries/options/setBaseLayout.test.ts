@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 
 import { routerInstance } from "@/options/plugins/router.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -165,5 +166,79 @@ describe("SetBase 备份设置不再提供 PTPP 导入入口", () => {
 
     expect(source, "不应再引入 PTPP 恢复对话框").not.toMatch(/RestorePtppUserDataDialog/);
     expect(source, "不应再静态 import JSZip").not.toMatch(/from\s+"jszip"|require\("jszip"\)/);
+  });
+});
+
+describe("F2-N1：SetBase 草稿 + 显式保存语义", () => {
+  async function mountSetBaseBackupTab() {
+    const pinia = prepareOptionsPinia();
+    const config = useConfigStore(pinia);
+    config.backup.encryptionKey = "old-key";
+    const save = vi.fn(async () => {});
+    config.$save = save;
+
+    const { default: SetBaseIndex } = await import("@/options/views/Settings/SetBase/Index.vue");
+    const { default: BackupWindow } = await import("@/options/views/Settings/SetBase/BackupWindow.vue");
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/settings/base/backup", name: "SetBaseBackup", component: BackupWindow },
+        { path: "/:pathMatch(.*)*", name: "Fallback", component: { template: "<div />" } },
+      ],
+    });
+    await router.push({ name: "SetBaseBackup" });
+    await router.isReady();
+
+    const view = mountOptionsView(SetBaseIndex, { pinia, plugins: [router] });
+    await view.settle(150);
+    return { view, config, save };
+  }
+
+  function typeEncryptionKey(input: HTMLInputElement, value: string) {
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("输入加密密钥只进草稿：其它页面任何一次 $save 都不会把它静默落盘，点保存才写回", async () => {
+    const { view, config, save } = await mountSetBaseBackupTab();
+    try {
+      const input = view.$<HTMLInputElement>('.ptd-set-base-form input[type="password"]');
+      expect(input, "备份页签应渲染出加密密钥输入框").not.toBeNull();
+
+      typeEncryptionKey(input!, "new-key");
+      await view.settle(60);
+
+      // 关键断言：store（也就是任何一次 $save 实际落盘的内容）必须还是旧密钥
+      expect(config.backup.encryptionKey, "未点保存时不得改写 store").toBe("old-key");
+
+      // 模拟其它页面触发的整份保存（例如表格排序后的 updateTableBehavior → $save）
+      await config.$save();
+      expect(config.backup.encryptionKey, "其它 $save 不得把未确认的密钥写盘").toBe("old-key");
+
+      // 草稿期间其它上下文改了无关字段：保存时不能被草稿快照回滚
+      config.theme = "dark";
+
+      view.$<HTMLButtonElement>(".set-base-save")!.click();
+      await vi.waitFor(() => expect(config.backup.encryptionKey).toBe("new-key"));
+      expect(config.theme, "只合并本次真正改动的叶子，不回滚其它上下文的改动").toBe("dark");
+      expect(save).toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("未点保存就离开页签/页面时，草稿改动被丢弃", async () => {
+    const { view, config } = await mountSetBaseBackupTab();
+    try {
+      const input = view.$<HTMLInputElement>('.ptd-set-base-form input[type="password"]')!;
+      typeEncryptionKey(input, "discarded-key");
+      await view.settle(60);
+      expect(config.backup.encryptionKey).toBe("old-key");
+
+      view.unmount();
+      expect(config.backup.encryptionKey, "离开后草稿不得被任何后续 $save 带进 store").toBe("old-key");
+    } finally {
+      // 已 unmount
+    }
   });
 });

@@ -11,10 +11,14 @@ vi.mock("axios", async (importOriginal) => {
 
 import Plex from "@ptd/mediaServer/entity/plex.ts";
 import FnOS from "@ptd/mediaServer/entity/fnos.ts";
+import Emby from "@ptd/mediaServer/entity/emby.ts";
+import Jellyfin from "@ptd/mediaServer/entity/jellyfin.ts";
 
 const poster = new Blob(["image"], { type: "image/png" });
 const PlexCtor = Plex as unknown as new (config: any) => Plex;
 const FnOSCtor = FnOS as unknown as new (config: any) => FnOS;
+const EmbyCtor = Emby as unknown as new (config: any) => Emby;
+const JellyfinCtor = Jellyfin as unknown as new (config: any) => Jellyfin;
 
 describe("媒体海报令牌不进入 URL", () => {
   it("Plex 从认证头拉取海报并返回 Data URL", async () => {
@@ -97,5 +101,47 @@ describe("媒体海报令牌不进入 URL", () => {
       releasePosters();
     }
     await pending;
+  });
+
+  it.each([
+    ["Emby", EmbyCtor, "emby", "X-Emby-Token", "private-emby-token"],
+    ["Jellyfin", JellyfinCtor, "jellyfin", "Authorization", 'MediaBrowser Token="private-jellyfin-token"'],
+  ])("%s 通过认证头抓取受保护海报，失败时不影响搜索结果", async (_name, Ctor, type, header, expected) => {
+    const server = new Ctor({
+      id: "media-1",
+      type,
+      name: type,
+      address: "https://media.example",
+      auth: { apikey: type === "emby" ? "private-emby-token" : "private-jellyfin-token", userId: "" },
+      timeout: 5000,
+    });
+    axiosMock.request.mockReset().mockImplementation(async (config: any) => {
+      if (config.url === "/Items") {
+        return {
+          status: 200,
+          data: {
+            Items: ["one", "two"].map((Id) => ({
+              Id,
+              Name: Id,
+              ServerId: "server",
+              RunTimeTicks: 0,
+              MediaType: "Movie",
+            })),
+          },
+        };
+      }
+      if (config.url === "/Items/one/Images/Primary") return { data: poster };
+      throw new Error("poster unavailable");
+    });
+
+    const result = await server.getSearchResult();
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].poster).toMatch(/^data:image\/png;base64,/);
+    expect(result.items[1].poster).toBe("");
+    const requests = axiosMock.request.mock.calls.map(([config]) => config);
+    expect(requests.filter((request) => request.responseType === "blob")).toHaveLength(2);
+    expect(requests[1].headers[header]).toBe(expected);
+    expect(requests[1].url).not.toContain("private-");
+    expect(requests[1].baseURL).not.toContain("private-");
   });
 });

@@ -75,7 +75,9 @@ export const siteMetadata: ISiteMetadata = {
       category: {
         selector: ":self",
         data: "categoryId",
-        filters: [(query: string) => categoryMap[Number(query)]],
+        // L5：categoryMap 只登记了 id 1/2，站点新增分类时原写法返回 undefined（分类列变空且无告警）；
+        // 未命中时回落到原始 id（与 desitorrents / teamhd 等 Unit3D 定义一致），完全缺值时保持 undefined。
+        filters: [(query: number | string) => categoryMap[Number(query)] ?? (query === "" ? undefined : query)],
       },
       subTitle: {
         selector: "span.torrent-quality-score__value",

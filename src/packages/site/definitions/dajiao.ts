@@ -19,5 +19,6 @@ export const siteMetadata: ISiteMetadata = {
 
   isDead: true,
 
-  officialGroupPattern: [/DJWEB|DJTV/i],
+  // E2b-04：死站不再保留生效的 officialGroupPattern（types/site.ts 建议死站只留 urls/描述）
+  // officialGroupPattern: [/DJWEB|DJTV/i],
 };

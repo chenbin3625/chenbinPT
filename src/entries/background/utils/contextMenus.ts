@@ -109,6 +109,9 @@ export function buildContextMenusContextKey(input: IContextMenusKeyInput): strin
     solutions,
     sites,
     downloaders,
+    // Info-3：$date:YYYY$ / $date:MM$ / $date:DD$ 模板在构建菜单时求值；摘要不含日期会让
+    // 跨午夜后的菜单继续显示昨天的目录名，直到其它输入变化触发重建。把「当前日期」纳入摘要。
+    date: dateFormat(new Date(), "yyyy-MM-dd"),
   });
 }
 
@@ -199,7 +202,52 @@ function addContextMenu(data: chrome.contextMenus.CreateProperties) {
     delete data.onclick; // 删除 onclick 属性，因为 chrome.contextMenus.create 不支持直接传入 onclick
   }
 
-  chrome.contextMenus?.create(data);
+  const menuId = data.id;
+  const contextMenus = chrome.contextMenus;
+  if (!contextMenus) {
+    return data.id;
+  }
+
+  // N3/G2：create 失败（最常见是 id 重复）只会写 chrome.runtime.lastError，不会抛错。
+  // **不删除已注册的 handler**：duplicate id 说明浏览器侧旧菜单项仍然存在且可点，删除 handler 会
+  // 让「冷启动第一次点击」静默无效（A3 的回归）；其它错误下保留 handler 也无害（该 id 没有被创建）。
+  const handleCreated = () => {
+    const error = chrome.runtime?.lastError;
+    if (!error) {
+      return;
+    }
+    if (activeCreateTracker) {
+      activeCreateTracker.failures += 1;
+    }
+    logBackgroundError(`Failed to create context menu "${String(menuId)}"`, error.message);
+  };
+
+  const tracker = activeCreateTracker;
+  if (tracker) {
+    // 构建批次内：记录 Promise，等待 initContextMenus 汇总失败后再决定是否提交 lastBuiltContextKey
+    tracker.pending.push(
+      new Promise<void>((resolve) => {
+        try {
+          contextMenus.create(data, () => {
+            handleCreated();
+            resolve();
+          });
+        } catch (e) {
+          logBackgroundError(`Failed to create context menu "${String(menuId)}"`, e);
+          tracker.failures += 1;
+          resolve();
+        }
+      }),
+    );
+  } else {
+    // 构建批次外（onMessage addContextMenu 等）：只上报，不影响构建状态
+    try {
+      contextMenus.create(data, handleCreated);
+    } catch (e) {
+      logBackgroundError(`Failed to create context menu "${String(menuId)}"`, e);
+    }
+  }
+
   return data.id;
 }
 
@@ -212,12 +260,57 @@ function removeContextMenu(id: string) {
 
 onMessage("removeContextMenu", async ({ data }) => removeContextMenu(data));
 
-function clearContextMenus() {
-  chrome.contextMenus?.removeAll().catch((e) => logBackgroundError("Failed to clear context menus", e));
+/**
+ * 清除所有右键菜单。
+ *
+ * G2：必须等 `removeAll` 真正完成后再 create。旧实现不 await，而 `create` 紧跟其后：
+ * 浏览器侧旧菜单项尚未删完时，同 id 的 create 会报 duplicate id（菜单项静默缺失/点击丢失的现实来源）。
+ */
+async function clearContextMenus(): Promise<void> {
   contextMenusClickEventBus.clear();
+  const contextMenus = chrome.contextMenus;
+  if (!contextMenus) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    try {
+      // 用 callback 形式兼容不支持 Promise 的实现（Firefox 的 chrome.* 命名空间）
+      contextMenus.removeAll(() => {
+        const error = chrome.runtime?.lastError;
+        if (error) {
+          logBackgroundError("Failed to clear context menus (removeAll)", error.message);
+        }
+        resolve();
+      });
+      // 兜底：极少数环境既不调用 callback 也不返回 Promise 时，不让后续重建永久挂起
+      setTimeout(resolve, 0);
+    } catch (e) {
+      logBackgroundError("Failed to clear context menus", e);
+      resolve();
+    }
+  });
 }
 
 onMessage("clearContextMenus", async () => clearContextMenus());
+
+/**
+ * 通知发送统一出口（N5）。
+ *
+ * `chrome.notifications.create` 在 MV3 返回 Promise：图标路径错误、系统禁用通知、参数非法都会 reject。
+ * 旧实现直接调用（不 await 也不 catch），失败会变成 unhandled rejection 且用户/开发者都看不到原因
+ * （链接推送「成功/失败」通知都可能根本不出现）。这里统一吞掉 rejection 并转进 logger 通道。
+ */
+export function showNotificationSafely(options: chrome.notifications.NotificationCreateOptions): void {
+  try {
+    const result = chrome.notifications?.create(options);
+    if (result && typeof (result as Promise<string>).catch === "function") {
+      void (result as Promise<string>).catch((e) => logBackgroundError("Failed to show notification", e));
+    }
+  } catch (e) {
+    logBackgroundError("Failed to show notification", e);
+  }
+}
 
 async function downloadLinkPush(
   link: string,
@@ -266,7 +359,7 @@ async function downloadLinkPush(
           ? "notificationSendLinkToDownloaderFailure"
           : "notificationSendLinkToDownloaderSuccess";
 
-      chrome.notifications.create({
+      showNotificationSafely({
         type: "basic",
         iconUrl: chrome.runtime.getURL("icons/logo/128.png"),
         title: chrome.i18n.getMessage("extName"),
@@ -274,7 +367,7 @@ async function downloadLinkPush(
       });
     })
     .catch(() => {
-      chrome.notifications.create({
+      showNotificationSafely({
         type: "basic",
         iconUrl: chrome.runtime.getURL("icons/logo/128.png"),
         title: chrome.i18n.getMessage("extName"),
@@ -303,7 +396,11 @@ async function createSearchMenu(baseMenuId: string, options: ICreateSearchMenuOp
   } = options;
 
   // 基本关键词搜索
+  // A3：必须给**确定性 id**。旧实现对这一项不传 id，`addContextMenu` 每次构建都用 nanoid 生成新 id，
+  // 而 SW 被回收后浏览器侧仍保留旧菜单；点击唤醒 SW 后 eventBus 是按新 id 重建的，旧 id 永远查不到，
+  // 于是「右键 → 搜索 → 在默认方案中搜索」在 SW 回收后的第一次点击被静默丢弃。
   addContextMenu({
+    id: `${baseMenuId}**Search-In-Default`,
     parentId: baseMenuId,
     title: chrome.i18n.getMessage("contextMenuSearchInDefault"),
     contexts: ["selection"],
@@ -409,6 +506,41 @@ async function createSearchMenu(baseMenuId: string, options: ICreateSearchMenuOp
 let lastBuiltContextKey: string | null = null;
 let buildChain: Promise<void> = Promise.resolve();
 
+/**
+ * G2：当前构建批次的 `contextMenus.create` 结果追踪。
+ *
+ * `create` 的失败只写 `chrome.runtime.lastError`（异步回调，不抛错），所以必须在构建结束前
+ * 等所有 create 回调到齐，才能判断本次构建是否真的成功（决定是否提交 `lastBuiltContextKey`）。
+ * buildChain 保证同一时刻只有一个构建，模块级单例即可。
+ */
+type TContextMenuCreateTracker = { failures: number; pending: Promise<void>[] };
+let activeCreateTracker: TContextMenuCreateTracker | null = null;
+
+/** create 失败后的重建重试（失败不提交 key；下次事件或短期重试会重建并重试失败项） */
+const CONTEXT_MENU_BUILD_RETRY_DELAY = 1000;
+const MAX_CONTEXT_MENU_BUILD_RETRIES = 3;
+let pendingBuildRetry: ReturnType<typeof setTimeout> | null = null;
+let consecutiveBuildFailures = 0;
+
+function scheduleContextMenusBuildRetry(): void {
+  if (consecutiveBuildFailures >= MAX_CONTEXT_MENU_BUILD_RETRIES) {
+    logBackgroundError(
+      `Context menu build failed ${consecutiveBuildFailures} times in a row, stop retrying until the next event`,
+    );
+    return;
+  }
+  consecutiveBuildFailures += 1;
+  if (pendingBuildRetry !== null) {
+    return;
+  }
+  const timer = setTimeout(() => {
+    pendingBuildRetry = null;
+    scheduleContextMenusBuild().catch((err) => logBackgroundError("Failed to retry context menu build", err));
+  }, CONTEXT_MENU_BUILD_RETRY_DELAY);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  pendingBuildRetry = timer;
+}
+
 async function initContextMenus(tab: chrome.tabs.Tab) {
   // 这里不处理 https://github.com/chenbin3625/chenbinPT/pull/470#discussion_r2295102201 提到的情况，因为会导致后面的type错误
   const tabHost = getHostFromUrl(tab.url || "https://example.com");
@@ -439,8 +571,8 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
     return;
   }
 
-  // 清除原来的菜单
-  clearContextMenus();
+  // 清除原来的菜单（G2：必须 await removeAll，否则 create 与 removeAll 竞态会 duplicate id）
+  await clearContextMenus();
 
   // 如果配置中禁用右键菜单，则不进行任何操作
   if (configStore?.contextMenus?.enabled === false) {
@@ -449,170 +581,197 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
     return;
   }
 
-  // 创建关键字搜索菜单，所有页面可用
-  if (configStore.contextMenus?.allowSelectionTextSearch ?? true) {
-    // 创建基础菜单
-    const baseSearchMenusId = addContextMenu({
-      id: `${contextMenusId}**Search`,
-      title: chrome.i18n.getMessage("contextMenuSearch"),
-      contexts: ["selection"],
-    });
-    await createSearchMenu(baseSearchMenusId);
-  }
+  // G2：本批次 create 结果追踪；有失败项时不提交 lastBuiltContextKey，下次事件/重试会重建。
+  const createTracker: TContextMenuCreateTracker = { failures: 0, pending: [] };
+  activeCreateTracker = createTracker;
+  try {
+    // 创建关键字搜索菜单，所有页面可用
+    if (configStore.contextMenus?.allowSelectionTextSearch ?? true) {
+      // 创建基础菜单
+      const baseSearchMenusId = addContextMenu({
+        id: `${contextMenusId}**Search`,
+        title: chrome.i18n.getMessage("contextMenuSearch"),
+        contexts: ["selection"],
+      });
+      await createSearchMenu(baseSearchMenusId);
+    }
 
-  // 创建社交链接搜索菜，所有页面可用
-  if (configStore.contextMenus?.allowSocialLinkSearch ?? true) {
-    // 豆瓣链接
-    const donbanMenuId = addContextMenu({
-      id: `${contextMenusId}**SearchByDoubanLink`,
-      title: chrome.i18n.getMessage("contextMenuSearchWithDouban"),
-      contexts: ["link"],
-      targetUrlPatterns: ["*://movie.douban.com/subject/*"],
-    });
-    await createSearchMenu(donbanMenuId, {
-      extraCreateMenuProperties: {
+    // 创建社交链接搜索菜，所有页面可用
+    if (configStore.contextMenus?.allowSocialLinkSearch ?? true) {
+      // 豆瓣链接
+      const donbanMenuId = addContextMenu({
+        id: `${contextMenusId}**SearchByDoubanLink`,
+        title: chrome.i18n.getMessage("contextMenuSearchWithDouban"),
         contexts: ["link"],
         targetUrlPatterns: ["*://movie.douban.com/subject/*"],
-      },
-      selectionTextFilterFn: (info) => {
-        const failSearchText = info?.selectionText ?? "";
-        if (info?.linkUrl) {
-          const link = info.linkUrl.match(/subject\/(\d+)/);
-          return link ? `douban|${link[1]}` : failSearchText;
-        }
-        return failSearchText;
-      },
-    });
-
-    // IMDb 链接
-    const imdbMenuId = addContextMenu({
-      id: `${contextMenusId}**SearchByIMDbLink`,
-      title: chrome.i18n.getMessage("contextMenuSearchWithIMDb"),
-      contexts: ["link"],
-      targetUrlPatterns: ["*://www.imdb.com/title/tt*"],
-    });
-
-    await createSearchMenu(imdbMenuId, {
-      extraCreateMenuProperties: {
-        contexts: ["link"],
-        targetUrlPatterns: ["*://www.imdb.com/title/tt*"],
-      },
-      selectionTextFilterFn: (info) => {
-        const failSearchText = info?.selectionText ?? "";
-        if (info?.linkUrl) {
-          const link = info.linkUrl.match(/(tt\d+)/);
-          return link ? `imdb|${link[1]}` : failSearchText;
-        }
-        return failSearchText;
-      },
-    });
-  }
-
-  // 创建下载链接菜单，所有页面可用
-  if (configStore.contextMenus?.allowLinkDownloadPush ?? true) {
-    // 查找是否有可用的下载服务器
-    // BACKGROUNDSHARED-4：站点排除（downloader.excludedSites）此前只在 options 聚合搜索页生效，
-    // 站点页右键这个最常用入口完全忽略它。这里对齐 metadata store 的 getEnabledDownloadersBySite：
-    // 仅在 config.download.allowDownloaderFilterForSite 打开时过滤（该开关默认关闭，关闭时排除列表本就不生效），
-    // 且当前标签页不在任何站点时不过滤。
-    const allowDownloaderFilterForSite = configStore.download?.allowDownloaderFilterForSite === true;
-    const downloaders = Object.values(metadataStore.downloaders ?? {})
-      .filter((x) => !!x.enabled)
-      .filter(
-        (x) => !allowDownloaderFilterForSite || !thisTabSiteId || !(x.excludedSites ?? []).includes(thisTabSiteId),
-      )
-      .sort((a, b) => (b.sortIndex ?? 100) - (a.sortIndex ?? 100));
-
-    if (downloaders.length > 0) {
-      // 创建基础菜单
-      const baseLinkDownloadPushMenuId = addContextMenu({
-        id: `${contextMenusId}**Link-Download-Push`,
-        title: chrome.i18n.getMessage("contextMenuSendToDownloader"),
-        contexts: ["link"],
       });
-
-      // 跳转到 options 页面实现高级推送
-      addContextMenu({
-        id: `${baseLinkDownloadPushMenuId}**Link-Push`,
-        parentId: baseLinkDownloadPushMenuId,
-        title: chrome.i18n.getMessage("contextMenuSendToDownloaderAdvanced"),
-        contexts: ["link"],
-        onclick: (info) => {
-          openOptionsPage({ path: "/link-push", query: { link: info.linkUrl! } });
+      await createSearchMenu(donbanMenuId, {
+        extraCreateMenuProperties: {
+          contexts: ["link"],
+          targetUrlPatterns: ["*://movie.douban.com/subject/*"],
+        },
+        selectionTextFilterFn: (info) => {
+          const failSearchText = info?.selectionText ?? "";
+          if (info?.linkUrl) {
+            const link = info.linkUrl.match(/subject\/(\d+)/);
+            return link ? `douban|${link[1]}` : failSearchText;
+          }
+          return failSearchText;
         },
       });
 
-      // 在 contextMenus 环境下，很多动态参数无法获取，因此要在生成的菜单栏中滤去
-      const EXCLUDE_FOLDER_KEYWORDS = [
-        "<...>", // chrome 在 service worker 环境下，无法使用 window.prompt 进行输入的文件夹
-        "$search:", // 不存在search相关参数
-        // 大概率也不可能存在下面和 torrent 相关的参数
-        "$torrent.title$",
-        "$torrent.subTitle$",
-        "$torrent.category$",
-      ];
+      // IMDb 链接
+      const imdbMenuId = addContextMenu({
+        id: `${contextMenusId}**SearchByIMDbLink`,
+        title: chrome.i18n.getMessage("contextMenuSearchWithIMDb"),
+        contexts: ["link"],
+        targetUrlPatterns: ["*://www.imdb.com/title/tt*"],
+      });
 
-      // 为每个下载器创建子菜单
-      for (const downloader of downloaders) {
-        const downloaderPushSubMenuId = addContextMenu({
-          id: `${baseLinkDownloadPushMenuId}**${downloader.id}`,
-          parentId: baseLinkDownloadPushMenuId,
-          title: chrome.i18n.getMessage("contextMenuSendToDownloaderIn", [downloader.name, downloader.address]),
+      await createSearchMenu(imdbMenuId, {
+        extraCreateMenuProperties: {
           contexts: ["link"],
-          // 此处不用担心子目录问题，因为如果有子目录，此处的 onclick 不会被 chrome 触发
-          onclick: (info, tab) => {
-            downloadLinkPush(info.linkUrl!, downloader, undefined, tab?.title, tab?.url);
+          targetUrlPatterns: ["*://www.imdb.com/title/tt*"],
+        },
+        selectionTextFilterFn: (info) => {
+          const failSearchText = info?.selectionText ?? "";
+          if (info?.linkUrl) {
+            const link = info.linkUrl.match(/(tt\d+)/);
+            return link ? `imdb|${link[1]}` : failSearchText;
+          }
+          return failSearchText;
+        },
+      });
+    }
+
+    // 创建下载链接菜单，所有页面可用
+    if (configStore.contextMenus?.allowLinkDownloadPush ?? true) {
+      // 查找是否有可用的下载服务器
+      // BACKGROUNDSHARED-4：站点排除（downloader.excludedSites）此前只在 options 聚合搜索页生效，
+      // 站点页右键这个最常用入口完全忽略它。这里对齐 metadata store 的 getEnabledDownloadersBySite：
+      // 仅在 config.download.allowDownloaderFilterForSite 打开时过滤（该开关默认关闭，关闭时排除列表本就不生效），
+      // 且当前标签页不在任何站点时不过滤。
+      const allowDownloaderFilterForSite = configStore.download?.allowDownloaderFilterForSite === true;
+      const downloaders = Object.values(metadataStore.downloaders ?? {})
+        .filter((x) => !!x.enabled)
+        .filter(
+          (x) => !allowDownloaderFilterForSite || !thisTabSiteId || !(x.excludedSites ?? []).includes(thisTabSiteId),
+        )
+        .sort((a, b) => (b.sortIndex ?? 100) - (a.sortIndex ?? 100));
+
+      if (downloaders.length > 0) {
+        // 创建基础菜单
+        const baseLinkDownloadPushMenuId = addContextMenu({
+          id: `${contextMenusId}**Link-Download-Push`,
+          title: chrome.i18n.getMessage("contextMenuSendToDownloader"),
+          contexts: ["link"],
+        });
+
+        // 跳转到 options 页面实现高级推送
+        addContextMenu({
+          id: `${baseLinkDownloadPushMenuId}**Link-Push`,
+          parentId: baseLinkDownloadPushMenuId,
+          title: chrome.i18n.getMessage("contextMenuSendToDownloaderAdvanced"),
+          contexts: ["link"],
+          onclick: (info) => {
+            openOptionsPage({ path: "/link-push", query: { link: info.linkUrl! } });
           },
         });
 
-        let suggestFolders = (downloader.suggestFolders ?? []).filter(
-          (f) => !EXCLUDE_FOLDER_KEYWORDS.some((keywords) => f.includes(keywords)),
-        );
+        // 在 contextMenus 环境下，很多动态参数无法获取，因此要在生成的菜单栏中滤去
+        const EXCLUDE_FOLDER_KEYWORDS = [
+          "<...>", // chrome 在 service worker 环境下，无法使用 window.prompt 进行输入的文件夹
+          "$search:", // 不存在search相关参数
+          // 大概率也不可能存在下面和 torrent 相关的参数
+          "$torrent.title$",
+          "$torrent.subTitle$",
+          "$torrent.category$",
+        ];
 
-        // 如果没有当前站点，则不显示 $torrent.site$
-        if (thisTabSiteId) {
-          suggestFolders = suggestFolders.map((f) => f.replace("$torrent.site$", thisTabSiteId));
-        } else {
-          suggestFolders = suggestFolders.filter((f) => !f.includes("$torrent.site$"));
-        }
+        // 为每个下载器创建子菜单
+        for (const downloader of downloaders) {
+          const downloaderPushSubMenuId = addContextMenu({
+            id: `${baseLinkDownloadPushMenuId}**${downloader.id}`,
+            parentId: baseLinkDownloadPushMenuId,
+            title: chrome.i18n.getMessage("contextMenuSendToDownloaderIn", [downloader.name, downloader.address]),
+            contexts: ["link"],
+            // 此处不用担心子目录问题，因为如果有子目录，此处的 onclick 不会被 chrome 触发
+            onclick: (info, tab) => {
+              downloadLinkPush(info.linkUrl!, downloader, undefined, tab?.title, tab?.url);
+            },
+          });
 
-        // 如果没有当前站点名称，则不显示 $torrent.siteName$
-        if (thisTabSiteName) {
-          suggestFolders = suggestFolders.map((f) => f.replace("$torrent.siteName$", thisTabSiteName));
-        } else {
-          suggestFolders = suggestFolders.filter((f) => !f.includes("$torrent.siteName$"));
-        }
+          let suggestFolders = (downloader.suggestFolders ?? []).filter(
+            (f) => !EXCLUDE_FOLDER_KEYWORDS.some((keywords) => f.includes(keywords)),
+          );
 
-        // 替换 $date:YYYY$ 等日期变量
-        const nowDate = new Date();
-        suggestFolders = suggestFolders.map((f) =>
-          f
-            .replace("$date:YYYY$", dateFormat(nowDate, "yyyy"))
-            .replace("$date:MM$", dateFormat(nowDate, "MM"))
-            .replace("$date:DD$", dateFormat(nowDate, "dd")),
-        );
+          // 如果没有当前站点，则不显示 $torrent.site$
+          if (thisTabSiteId) {
+            suggestFolders = suggestFolders.map((f) => f.replace("$torrent.site$", thisTabSiteId));
+          } else {
+            suggestFolders = suggestFolders.filter((f) => !f.includes("$torrent.site$"));
+          }
 
-        if (suggestFolders.length > 0) {
-          suggestFolders = ["", ...suggestFolders]; // 添加一个空字符串作为默认选项
+          // 如果没有当前站点名称，则不显示 $torrent.siteName$
+          if (thisTabSiteName) {
+            suggestFolders = suggestFolders.map((f) => f.replace("$torrent.siteName$", thisTabSiteName));
+          } else {
+            suggestFolders = suggestFolders.filter((f) => !f.includes("$torrent.siteName$"));
+          }
 
-          for (let suggestFolder of suggestFolders) {
-            addContextMenu({
-              id: `${downloaderPushSubMenuId}**${suggestFolder}`,
-              parentId: downloaderPushSubMenuId,
-              title: `-> ${suggestFolder || chrome.i18n.getMessage("contextMenuSendToDownloaderDefaultFolder")}`, // 如果是空字符串，则显示为 "默认文件夹"
-              contexts: ["link"],
-              onclick: (info, tab) => {
-                downloadLinkPush(info.linkUrl!, downloader, suggestFolder, tab?.title, tab?.url);
-              },
-            });
+          // 替换 $date:YYYY$ 等日期变量
+          const nowDate = new Date();
+          suggestFolders = suggestFolders.map((f) =>
+            f
+              .replace("$date:YYYY$", dateFormat(nowDate, "yyyy"))
+              .replace("$date:MM$", dateFormat(nowDate, "MM"))
+              .replace("$date:DD$", dateFormat(nowDate, "dd")),
+          );
+
+          // N3：变量替换后多个模板可能收敛成同一个最终目录；菜单 id 由最终目录派生，
+          // 重复 id 会让 chrome.contextMenus.create 失败（只写 lastError），对应菜单项静默缺失。
+          suggestFolders = [...new Set(suggestFolders)];
+
+          if (suggestFolders.length > 0) {
+            // 添加一个空字符串作为默认选项；用户配置里若本身就含空串，先滤掉避免生成重复菜单 id。
+            suggestFolders = ["", ...suggestFolders.filter((folder) => folder !== "")];
+
+            for (const suggestFolder of suggestFolders) {
+              addContextMenu({
+                id: `${downloaderPushSubMenuId}**${suggestFolder}`,
+                parentId: downloaderPushSubMenuId,
+                title: `-> ${suggestFolder || chrome.i18n.getMessage("contextMenuSendToDownloaderDefaultFolder")}`, // 如果是空字符串，则显示为 "默认文件夹"
+                contexts: ["link"],
+                onclick: (info, tab) => {
+                  downloadLinkPush(info.linkUrl!, downloader, suggestFolder, tab?.title, tab?.url);
+                },
+              });
+            }
           }
         }
       }
     }
+
+    // 等所有 create 回调到齐（失败只写异步 lastError），才能判断本次构建是否真的成功
+    await Promise.all(createTracker.pending);
+  } finally {
+    if (activeCreateTracker === createTracker) {
+      activeCreateTracker = null;
+    }
+  }
+
+  if (createTracker.failures > 0) {
+    // G2：构建有失败项 → 不提交 key（否则失败项要等到上下文变化才会恢复），并安排一次短期重建重试。
+    logBackgroundError(
+      `Context menu build finished with ${createTracker.failures} create failure(s), will rebuild when possible`,
+    );
+    scheduleContextMenusBuildRetry();
+    return;
   }
 
   // 构建成功后才记录 key：中途抛错（如 contextMenus API 失败）时保持 key 不变，
   // 下一次调度会重新构建，而不会把失败的构建当成成功永久跳过。
+  consecutiveBuildFailures = 0;
   lastBuiltContextKey = contextKey;
 }
 /**

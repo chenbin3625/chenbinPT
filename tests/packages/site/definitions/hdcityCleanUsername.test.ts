@@ -9,6 +9,11 @@
  * 等价性依据：被排除元素的 `textContent` 是自身固有属性，不会因为兄弟/子元素先被删除而改变，
  * 所以"静态列表逐个 remove"与"遍历时按谓词跳过"保留的元素集合完全一致。
  * 这里用**旧实现本身**作为对照，覆盖嵌套、大小写、父/子同时命中、无命中、空结果回落等形态。
+ *
+ * H-I3：等价性断言只能防「新实现输出漂移」，不能防「实现退回 cloneNode 深拷贝」（输出相同、性能回退），
+ * 而且 legacy 实现是测试内复制的一份，会与真实历史实现各自漂移。因此补一条结构性断言：
+ * 把被测元素的 `cloneNode` 换成 spy，断言生产实现从未调用它 —— 这才是 P2-14「不再深克隆」的回归网。
+ * 本文件只保证「输出等价 + 不深克隆」，不承诺 future 的其它性能特征。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -87,5 +92,26 @@ describe("hdcity cleanUsername：与克隆+删除的旧实现等价", () => {
 
   it("全部被清理时回落到 element.textContent.trim()", () => {
     expect(cleanUsername(makeElement("<span><i>star</i></span>"))).toBe("star");
+  });
+
+  it("生产实现不再深克隆（P2-14 的性能修复本身）", () => {
+    const element = makeElement("<span><i>star</i>UserName</span>");
+    const cloneNode = vi.fn(() => {
+      throw new Error("cleanUsername 不应再 cloneNode 深拷贝");
+    });
+    Object.defineProperty(element, "cloneNode", { value: cloneNode, configurable: true });
+
+    expect(cleanUsername(element)).toBe("UserName");
+    // 旧实现对顶层元素 cloneNode(true)；退回该实现时这里会记录到一次调用（或直接抛错）
+    expect(cloneNode).not.toHaveBeenCalled();
+  });
+
+  it("嵌套/父命中形态同样不深克隆", () => {
+    const element = makeElement("<div><span>keep</span><i>starbig</i></div>");
+    const cloneNode = vi.fn();
+    Object.defineProperty(element, "cloneNode", { value: cloneNode, configurable: true });
+
+    expect(cleanUsername(element)).toBe("keep");
+    expect(cloneNode).not.toHaveBeenCalled();
   });
 });

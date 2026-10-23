@@ -2,6 +2,7 @@ import { matchesSelector, selectElements } from "../utils/selector";
 import { toMerged } from "es-toolkit";
 
 import PrivateSite from "./AbstractPrivateSite";
+import { isElementNode } from "./AbstractBittorrentSite";
 import { parseSizeString, parseTimeToLiveToDate, mapWithConcurrency, logMessage, siteErrorLogData } from "../utils";
 import {
   ETorrentStatus,
@@ -708,7 +709,14 @@ export default class Gazelle extends GazelleBase {
         // 取出此组内的所有种子
         const groupTorrentEls = getElUntilClass(trs, i, groupClasses);
         i += groupTorrentEls.length - 1;
-        const groupTorrents = await this.transformGroupTorrents(tr, groupTorrentEls, {
+        // D1-4：`getElUntilClass` 从 currentIndex 开始 push，返回值第 0 项就是 group 行本身；
+        // 它只用于让上面的 i 自增正确。group 行不是种子行，不能被 transformGroupTorrents 当行解析
+        //（否则每页每个组都会虚增 1 条 _searchRowFailures；若 fork 的 group 行也带下载链接，
+        // 还会产出一条标题/ID 都是组信息的错误种子）。
+        const childTorrentEls = groupTorrentEls.filter(
+          (el) => !this.torrentClasses.group.some((className) => el.classList.contains(className)),
+        );
+        const groupTorrents = await this.transformGroupTorrents(tr, childTorrentEls, {
           keywords,
           searchEntry,
           requestConfig,
@@ -784,7 +792,8 @@ export default class Gazelle extends GazelleBase {
      * <tr class="group_torrent groupid_${id}">...</tr>
      */
     let rowSpan = 0;
-    if (group instanceof HTMLTableRowElement) {
+    // H-M1 同型：不依赖跨 realm 的 instanceof（happy-dom 的 DOMParser 产物/跨 document 节点）
+    if (isElementNode(group) && group.tagName === "TR") {
       rowSpan = Array.from(group.querySelectorAll<HTMLTableCellElement>("td[rowspan]")).reduce(
         (acc, td) => acc + (td.rowSpan > 1 ? 1 : 0),
         0,

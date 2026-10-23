@@ -9,6 +9,23 @@ function isRepairableRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * 把键写成**自有数据属性**（N6）。
+ *
+ * `target["__proto__"] = value` 会命中 `Object.prototype.__proto__` 的 setter：输出对象的原型被改写，
+ * 而 `__proto__` 本身不会成为自有属性 —— 于是从 `chrome.storage`（含用户导入的备份）里读到的
+ * `__proto__` 键会在「修复 → 整份写回」时被静默丢弃。`JSON.parse` 用 CreateDataProperty 建自有属性，
+ * 所以这里也用 `Object.defineProperty` 保持同样的语义（键名本身仍会被后续 JSON 序列化保留）。
+ * `constructor` / `prototype` 是普通数据属性，直接赋值即可。
+ */
+function setOwnKey(target: Record<string, any>, key: string, value: unknown): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+    return;
+  }
+  target[key] = value;
+}
+
 // 修复用户信息中的坏数据
 function fixStoredUserInfo(userInfo: Partial<IStoredUserInfo>): { fixed: IStoredUserInfo; hasChanges: boolean } {
   const fixed = { ...userInfo } as IStoredUserInfo;
@@ -88,15 +105,16 @@ export async function fixAllStoredUserInfo(): Promise<void> {
         // 现在逐层做形状守卫：不可修复的条目原样保留（丢弃等于静默删用户历史），只记录日志。
         if (!isRepairableRecord(siteUserInfo)) {
           skippedCount += 1;
-          fixedUserInfoData[siteId] = siteUserInfo as unknown as TUserInfoStorageSchema[string];
+          setOwnKey(fixedUserInfoData as Record<string, any>, siteId, siteUserInfo);
           continue;
         }
 
-        fixedUserInfoData[siteId] = {};
+        const fixedSiteUserInfo: Record<string, IStoredUserInfo> = {};
+        setOwnKey(fixedUserInfoData as Record<string, any>, siteId, fixedSiteUserInfo);
         for (const [date, userInfo] of Object.entries(siteUserInfo)) {
           if (!isRepairableRecord(userInfo)) {
             skippedCount += 1;
-            fixedUserInfoData[siteId][date] = userInfo as unknown as IStoredUserInfo;
+            setOwnKey(fixedSiteUserInfo as Record<string, any>, date, userInfo);
             continue;
           }
 
@@ -107,7 +125,7 @@ export async function fixAllStoredUserInfo(): Promise<void> {
             hasChanges = true;
           }
 
-          fixedUserInfoData[siteId][date] = result.fixed;
+          setOwnKey(fixedSiteUserInfo as Record<string, any>, date, result.fixed);
         }
       }
 

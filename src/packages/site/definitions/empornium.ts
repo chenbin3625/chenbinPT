@@ -125,6 +125,20 @@ export const siteMetadata: ISiteMetadata = {
           "i.icon_torrent_disk.grabbed": ETorrentStatus.inactive, // 未完成!
         },
       },
+      // E2-11/E2b-18：status 已改用 `<i class="torrent_icons ...">` 图标，progress 却仍继承
+      // Luminance 的 `span.icon_disk_seed`（元素名与类名都对不上 → 做种中进度恒 0）。
+      // 这里同时保留两种结构：<i> 图标优先，取不到再回落到基类的 span。
+      progress: {
+        selector: [
+          "a[href*='torrents.php?action=download'] .icon_stack > i:first-child",
+          "a[href*='torrents.php?action=download'] span",
+        ],
+        text: 0,
+        case: {
+          "i.torrent_icons.seeding": 100,
+          "span.icon_disk_seed": 100,
+        },
+      },
     },
   },
 

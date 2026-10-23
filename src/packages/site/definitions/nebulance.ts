@@ -9,6 +9,7 @@ import {
   createDocument,
   parseValidTimeStringInZone,
   buildCategoryOptionsFromList,
+  logMessage,
   type timezoneOffset,
 } from "../utils.ts";
 
@@ -26,9 +27,20 @@ export const parseNblOverlayTime = (dateStr: string, offset: timezoneOffset): nu
   return typeof parsed === "number" ? parsed : 0;
 };
 
-function createOverlayDocument(overlayScriptEl: Element): Document {
-  const overlayDocRawStr = overlayScriptEl.textContent.match(/"(.*)"/s)![1];
-  return createDocument(JSON.parse(`"${overlayDocRawStr}"`));
+/**
+ * L12：overlay 脚本内容 → 内嵌 HTML 文档。站点改模板、脚本不含 JSON 字符串、或 JSON.parse 失败时
+ * 返回 null（原实现用 `match(...)![1]` 与裸 JSON.parse，会抛 TypeError）。调用方按「单行失败」处理，
+ * 避免 top10 列表因为一行异常就把整页种子列表变成空。
+ */
+function createOverlayDocument(overlayScriptEl: Element | null | undefined): Document | null {
+  const rawText = overlayScriptEl?.textContent ?? "";
+  const match = rawText.match(/"(.*)"/s);
+  if (!match) return null;
+  try {
+    return createDocument(JSON.parse(`"${match[1]}"`));
+  } catch {
+    return null;
+  }
 }
 
 export const siteMetadata: ISiteMetadata = {
@@ -78,6 +90,10 @@ export const siteMetadata: ISiteMetadata = {
       url: "/torrents.php",
       responseType: "document",
       params: {
+        // L10：params 会被整体替换（不是深合并），必须展开父层 Gazelle 的 searchsubmit=1。
+        // keywordPath/searchtext 已按上游参考实现（PT-Plugin-Plus nebulance.io：queryString=searchtext=$key$）核对，
+        // 站点读取的正是 searchtext，故保持不变。
+        ...SchemaMetadata.search!.requestConfig!.params,
         order_by: "time",
         order_way: "desc",
         tags_type: 1,
@@ -173,9 +189,12 @@ export const siteMetadata: ISiteMetadata = {
         title: {
           selector: "> td > script",
           elementProcess: (el: HTMLElement) => {
+            // L12：top10 走 transformListPage → transformSearchPage 的整体 try/catch（没有 per-row 隔离），
+            // 一行 overlay 解析失败会让整页 torrents 变成 []。这里退化为空标题、保留该行。
             const overlayDoc = createOverlayDocument(el);
+            if (!overlayDoc) return "";
             const lastTd = selectElements("td:last", overlayDoc)[0];
-            return lastTd.textContent.trim();
+            return lastTd?.textContent?.trim() ?? "";
           },
         },
         size: {}, // from innerText
@@ -386,6 +405,15 @@ export default class Nebulance extends Gazelle {
       try {
         const overlayScriptEl = selectElements("div.tagssh > script", tr)[0];
         const overlayDoc = createOverlayDocument(overlayScriptEl);
+        // L12：overlay 缺失/解析失败时跳过该行（保持搜索路径「单行失败只丢一行」的既有策略）
+        if (!overlayDoc) {
+          logMessage(
+            `[PTD] site '${this.name}' overlay script missing or unparsable, skip row`,
+            { site: this.metadata.id, row: (tr as Element)?.textContent?.slice(0, 200) },
+            "debug",
+          );
+          continue;
+        }
         const title = selectElements("table.overlay tr:nth-child(3) > td", overlayDoc)[0].textContent;
 
         const rightTd = selectElements("td.rightOverlay", overlayDoc)[0];

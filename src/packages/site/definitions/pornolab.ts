@@ -4,7 +4,7 @@
  */
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import type { ISiteMetadata, ITorrent } from "../types.ts";
-import { buildCategoryOptionsFromDict } from "../utils.ts";
+import { buildCategoryOptionsFromDict, parseSizeString } from "../utils.ts";
 
 const categoryMap: Record<number, string> = {
   1670: "Erotic & Softcore",
@@ -237,7 +237,12 @@ export const siteMetadata: ISiteMetadata = {
               const sizeTds = el.querySelectorAll<HTMLElement>("tr > td:nth-child(6) > u");
               let seedingSize = 0;
               sizeTds.forEach((e) => {
-                seedingSize += parseInt(e.innerText || e.textContent);
+                // E5-2：第 6 列是带单位的体积文本（`1.5 GB` / `742 MB`），parseInt 会把小数与单位全部截断。
+                // 千分位/欧式小数逗号交给 parseSizeString 处理（不要预先 replace(',')）。
+                const text = (e.innerText || e.textContent || "").trim();
+                if (text) {
+                  seedingSize += parseSizeString(text);
+                }
               });
               return seedingSize;
             },

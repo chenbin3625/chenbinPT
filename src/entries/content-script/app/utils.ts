@@ -1,7 +1,6 @@
 import { computed, shallowRef, ref, toValue } from "vue";
-import { uniq } from "es-toolkit";
 import type { TSupportSocialSite } from "@ptd/social";
-import { getSite as createSiteInstance, type ITorrent } from "@ptd/site";
+import { getSite as createSiteInstance, type ISiteMetadata, type ITorrent } from "@ptd/site";
 import { getHostFromUrl, restoreSecureLink } from "@ptd/site/utils/html.ts";
 import type BittorrentSite from "@ptd/site/schemas/AbstractBittorrentSite.ts";
 
@@ -19,6 +18,21 @@ import { useConfigStore } from "@/options/stores/config.ts";
 export const siteInstance = shallowRef<BittorrentSite>();
 let clipboardFallbackContainer: HTMLElement | undefined;
 
+/**
+ * L4：创建 / 复用 `siteInstance` 时对应的站点用户配置快照。
+ * options 侧修改站点配置（URL / merge / 搜索入口）后，同一 SPA 页面内的复用实例必须失效重建。
+ */
+let siteInstanceConfigSnapshot: string | undefined;
+
+function snapshotSiteUserConfig(config: unknown): string {
+  try {
+    return JSON.stringify(config ?? {});
+  } catch {
+    // 配置里出现不可序列化值（理论上不会有）：退化为「总是认为变了」，宁可多重建一次
+    return String(Math.random());
+  }
+}
+
 export function setClipboardFallbackContainer(container?: HTMLElement): void {
   clipboardFallbackContainer = container;
 }
@@ -34,54 +48,193 @@ export interface IPtdData {
 export const pageType = ref<TPageType>("unknown");
 let pageTypeRequestId = 0;
 
-export async function updatePageType(ptdData: IPtdData = {}) {
-  const metadataStore = useMetadataStore();
-  const requestId = ++pageTypeRequestId;
+/** 尝试解析 URL；失败返回 undefined（不抛错） */
+function tryParseUrl(value: string, base?: string): URL | undefined {
+  try {
+    return base === undefined ? new URL(value) : new URL(value, base);
+  } catch {
+    return undefined;
+  }
+}
 
-  pageType.value = "unknown"; // 重置为 unknown
-  siteInstance.value = undefined;
-  const url = location.href;
-
-  if (ptdData.socialSite) {
-    pageType.value = "social";
-  } else if (ptdData.siteId) {
-    const siteConfig = await metadataStore.getSiteUserConfig(ptdData.siteId);
-    if (requestId !== pageTypeRequestId) return;
-    siteInstance.value = await createSiteInstance(ptdData.siteId, siteConfig);
-    if (requestId !== pageTypeRequestId) return;
-
-    if (siteInstance.value) {
-      const metadata = siteInstance.value.metadata;
-
-      // 首先判断是否为 list 页面
-      let listUrlPatterns = [];
-      if (metadata.list && metadata.list.length > 0) {
-        listUrlPatterns = metadata.list.flatMap((item) => item.urlPattern ?? []).filter(Boolean);
-      } else {
-        listUrlPatterns = uniq([
-          ...(metadata.search?.requestConfig?.url ? [metadata.search.requestConfig.url] : []),
-          ...(Object.values(metadata.searchEntry ?? {}).map((entry) => entry.requestConfig?.url) ?? []),
-        ]).filter(Boolean);
-      }
-
-      const excludeListUrlPatterns =
-        metadata.list?.flatMap((item) => item.excludeUrlPattern ?? []).filter(Boolean) ?? [];
-
-      if (
-        listUrlPatterns.some((pattern) => new RegExp(pattern!, "i").test(url)) &&
-        !excludeListUrlPatterns.some((pattern) => new RegExp(pattern!, "i").test(url))
-      ) {
-        pageType.value = "list";
-      } else {
-        // 如果不是 list 页面，再判断是否为 detail 页面
-        let detailUrlPatterns = metadata.detail?.urlPattern ?? [];
-
-        if (detailUrlPatterns.some((pattern) => new RegExp(pattern, "i").test(url))) {
-          pageType.value = "detail";
-        }
-      }
+/**
+ * 安全地测试站点定义里的 URL 模式。
+ *
+ * `TPattern` 允许 string 与 RegExp 两种形态：
+ * - 字符串按旧语义 `new RegExp(pattern, "i")` 编译；
+ * - RegExp 对象保留自身的 `m`/`s`/`u` 等 flags，但**缺少 `i` 时补上**（K / REVIEW-FINDINGS）。
+ *   旧实现是 `new RegExp(regexp, "i")`：`i` 始终存在、其它 flags 被抹掉；本轮 CS-1 一度改成
+ *   「完全保留自身 flags」，于是 `myanonamouse` 等定义为小写、实际 URL 大小写混用的站点会漏判。
+ *   这里取两者兼容：`i` 一定生效，其它 flags 不再被抹掉。
+ * 非法正则一律视为「不匹配」而不是抛错 —— 站点定义或用户自定义地址里一个笔误不应该让整个面板
+ * （list/detail 都不识别）失效。
+ */
+export function testUrlPattern(pattern: unknown, url: string): boolean {
+  if (typeof pattern === "string") {
+    if (pattern === "") return false;
+    try {
+      return new RegExp(pattern, "i").test(url);
+    } catch {
+      return false;
     }
   }
+  if (pattern instanceof RegExp) {
+    try {
+      const flags = pattern.flags.includes("i") ? pattern.flags : `${pattern.flags}i`;
+      return new RegExp(pattern.source, flags).test(url);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** pathname 归一化：去掉末尾多余 `/`，根路径保留 `"/"` */
+function normalizePathname(pathname: string): string {
+  if (!pathname || pathname === "/") return "/";
+  return pathname.replace(/\/+$/, "") || "/";
+}
+
+/**
+ * CS-1：没有声明 `metadata.list` 的站点，`search.requestConfig.url` / `searchEntry[*].requestConfig.url`
+ * 是**路径**（`/`、`/torrents.php`、`/api/torrents`、`/user/$id$`…），不是正则。
+ *
+ * 旧实现直接 `new RegExp(url, "i").test(location.href)`：`/` 能命中任何页面，URL 里的 `.`、`?`、`$`
+ * 也被当成元字符。这里改为：把配置里的 url 解析成（同源的）绝对地址后只比较 **pathname**：
+ * - 精确匹配；非根路径同时允许目录前缀匹配（`/browse`、`/browse/` 都能命中 `/browse/2`，L7）；
+ * - 根路径 `/` 只匹配首页，不再「匹配一切」；
+ * - 跨 host 的 API 地址（如 `https://api.x/api/torrents`）不是页面路径，直接跳过。
+ */
+function isInferredListPage(patterns: unknown[], pageUrl: string): boolean {
+  const page = tryParseUrl(pageUrl);
+  if (!page) return false;
+  const pagePath = normalizePathname(page.pathname);
+
+  for (const pattern of patterns) {
+    if (typeof pattern !== "string" || pattern === "") continue;
+
+    const target = tryParseUrl(pattern, page.origin);
+    if (!target || (target.protocol !== "http:" && target.protocol !== "https:")) continue;
+    if (!isTrustedHost(target.host, [page.host]) && !isTrustedHost(page.host, [target.host])) continue;
+
+    const targetPath = normalizePathname(target.pathname);
+    if (targetPath === pagePath) return true;
+    // L7（CS-1 复检）：推断型 url 的非根路径一律视为「目录前缀」——分页形态为路径段的站点
+    // （`/browse` → 第 2 页 `/browse/2`）不再从第 2 页起被判成 unknown。
+    // 根路径 `/` 仍只匹配首页（否则会命中所有页面）；detail 判定已在 detectPageType 里先执行。
+    if (targetPath !== "/" && pagePath.startsWith(`${targetPath}/`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 根据站点 metadata 与当前 URL 判定页面类型（纯函数，便于单测与复用）。
+ *
+ * 判定顺序（CS-1）：
+ * 1. 站点**显式声明**的 `metadata.list[].urlPattern` 优先（可用 `excludeUrlPattern` 排除误判）；
+ * 2. 再判 `metadata.detail.urlPattern`；
+ * 3. 仅当站点完全没有 `list` 声明时，才使用「把 search/searchEntry 的 url 当列表页路径」的推断。
+ *    推断型 list 放在 detail 之后：`learnflakes` 这类站点的搜索 url 是 `/`（pathname 为根），
+ *    若 list 优先，详情页会被永远判成列表页。
+ */
+export function detectPageType(metadata: ISiteMetadata | undefined, url: string): TPageType {
+  if (!metadata) return "unknown";
+
+  const listItems = metadata.list ?? [];
+  const explicitListPatterns = listItems.flatMap((item) => item.urlPattern ?? []).filter(Boolean);
+  const excludeListPatterns = listItems.flatMap((item) => item.excludeUrlPattern ?? []).filter(Boolean);
+  const detailPatterns = metadata.detail?.urlPattern ?? [];
+
+  if (explicitListPatterns.length > 0) {
+    const matchedList = explicitListPatterns.some((pattern) => testUrlPattern(pattern, url));
+    const excluded = excludeListPatterns.some((pattern) => testUrlPattern(pattern, url));
+    if (matchedList && !excluded) return "list";
+  }
+
+  if (detailPatterns.some((pattern) => testUrlPattern(pattern, url))) return "detail";
+
+  // 声明了 list 但没有写 urlPattern 的站点（如 audiobookbay）保持旧语义：不猜测列表页。
+  if (listItems.length === 0) {
+    const inferredPatterns = [
+      metadata.search?.requestConfig?.url,
+      ...Object.values(metadata.searchEntry ?? {}).map((entry) => entry.requestConfig?.url),
+    ].filter(Boolean) as string[];
+    if (isInferredListPage(inferredPatterns, url)) return "list";
+  }
+
+  return "unknown";
+}
+
+/** 当前站点实例的基址；相对链接的「真实解析结果」依赖它（见 isTrustedTorrentLink 的 B2-6 说明） */
+export function getCurrentSiteBaseUrl(): string | undefined {
+  try {
+    const url = siteInstance.value?.url as unknown;
+    return typeof url === "string" && url !== "" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function updatePageType(ptdData: IPtdData = {}) {
+  const requestId = ++pageTypeRequestId;
+
+  if (ptdData.socialSite) {
+    siteInstance.value = undefined;
+    pageType.value = "social";
+    return;
+  }
+
+  if (!ptdData.siteId) {
+    siteInstance.value = undefined;
+    pageType.value = "unknown";
+    return;
+  }
+
+  // CS-2：URL 变化（SPA 列表↔详情）重新求值时复用已创建的站点实例，避免每次都动态 import
+  // 站点定义 + clone metadata；只有站点变了才重建。
+  //
+  // L4（复检）：只比较 siteId 不够 —— 用户在 options 里改了站点 URL / merge / 搜索入口后回到
+  // 同一 SPA 页面，复用旧实例会一直用旧配置（直到整页刷新）。这里把创建实例时的用户配置快照
+  // 与当前配置比对，变化即视为「站点配置变了」并重建实例。
+  let instance = siteInstance.value;
+  const needsNewInstance = !instance || instance.metadata?.id !== ptdData.siteId;
+  if (needsNewInstance) {
+    const metadataStore = useMetadataStore();
+    pageType.value = "unknown"; // 站点实例重建期间先不要按旧类型渲染动作
+    siteInstance.value = undefined;
+
+    const siteConfig = await metadataStore.getSiteUserConfig(ptdData.siteId);
+    if (requestId !== pageTypeRequestId) return;
+    instance = await createSiteInstance(ptdData.siteId, siteConfig);
+    // Info 4：先校验再赋值。旧实现先写入再检查，过期请求晚 resolve 时会覆盖新实例。
+    if (requestId !== pageTypeRequestId) return;
+    siteInstance.value = instance;
+    siteInstanceConfigSnapshot = snapshotSiteUserConfig(siteConfig);
+  } else {
+    // 复用时检查配置是否在 options 侧被改过（getSiteUserConfig 读的是内存 pinia state，开销可忽略）
+    const metadataStore = useMetadataStore();
+    const siteConfig = await metadataStore.getSiteUserConfig(ptdData.siteId);
+    if (requestId !== pageTypeRequestId) return;
+    if (snapshotSiteUserConfig(siteConfig) !== siteInstanceConfigSnapshot) {
+      pageType.value = "unknown";
+      siteInstance.value = undefined;
+      instance = await createSiteInstance(ptdData.siteId, siteConfig);
+      if (requestId !== pageTypeRequestId) return;
+      siteInstance.value = instance;
+      siteInstanceConfigSnapshot = snapshotSiteUserConfig(siteConfig);
+    }
+  }
+
+  if (requestId !== pageTypeRequestId) return;
+  if (!instance) {
+    pageType.value = "unknown";
+    return;
+  }
+
+  pageType.value = detectPageType(instance.metadata, location.href);
 }
 
 /**
@@ -179,15 +332,36 @@ export function subscribeUrlChange(handler: () => void): () => void {
  * 不做这一步的后果：列表页 → 详情页（pushState）后 pageType 仍是 "list"，
  * 「复制链接 / 本地下载 / 推送到下载器」会按列表页解析详情页（未解析到种子，或复制到上一页的链接）。
  *
- * 幂等：用「上一次求值的 URL」比对，`replaceState` 回写同址、同一 URL 的重复事件都不会重复求值；
+ * 幂等：用「上一次看到过的 URL」比对，`replaceState` 回写同址、同一 URL 的重复事件都不会重复求值；
  * `updatePageType` 内部另有请求序号守卫，处理并发求值的竞态。
+ *
+ * CS-2：可选 `isActive` 门控 —— 悬浮菜单收起时不求值（仍推进幂等游标），由调用方在展开时
+ * 用当前 URL 求值一次。
  */
-export function installPageTypeUrlWatcher(ptdData: IPtdData = {}): () => void {
-  let lastHandledUrl = location.href;
+export interface IInstallPageTypeUrlWatcherOptions {
+  /**
+   * 是否处于「需要求值」的状态（例如悬浮菜单已展开）。
+   * 返回 false 时跳过本次求值；调用方在展开时用当前 URL 求值一次即可（CS-2）。
+   */
+  isActive?: () => boolean;
+}
+
+export function installPageTypeUrlWatcher(
+  ptdData: IPtdData = {},
+  options: IInstallPageTypeUrlWatcherOptions = {},
+): () => void {
+  // 「已看到过」的 URL 用于幂等（replaceState 同址回写、多条通路重复派发）。
+  // 注意：收起来时也要推进它 —— 否则「A →（收起）B → 收起）A」会让 A 被当成已求值。
+  let lastSeenUrl = location.href;
 
   return subscribeUrlChange(() => {
-    if (location.href === lastHandledUrl) return; // 幂等
-    lastHandledUrl = location.href;
+    const currentUrl = location.href;
+    if (currentUrl === lastSeenUrl) return; // 幂等
+    lastSeenUrl = currentUrl;
+
+    // CS-2：菜单收起时不求值（避免同一页面行为取决于是否发生过 pushState、也避免每次 SPA
+    // 跳转都白建一次站点实例）。展开时由 App.vue 的点击处理用**当前** URL 求值一次。
+    if (options.isActive && !options.isActive()) return;
 
     // 求值失败不打断页面导航：URL 再变化时会重新求值，这里没有其它可用的诊断通道
     void updatePageType(ptdData).catch(() => {
@@ -339,21 +513,32 @@ export function isTrustedHost(host: string, trustedHosts: Iterable<string>): boo
  *
  * - 缺失（`undefined`/`null`）或空串：没有可请求的地址。空串是 `fixLink` 拒绝危险 scheme、
  *   或选择器未命中时的标记，后续由站点层明确失败（`getTorrentDownloadLink` 会抛错），不是跨站请求；
- * - 纯相对链接（`download.php?id=1`）：只能由站点自身的 base 解析，同样不构成跨站请求；
- * - 协议相对链接（`//host/x`）会指向任意主机，必须拒绝；
- * - http(s) 且能解析出 host：host 必须落在站点已知 host 内；
+ * - 相对链接（`download.php?id=1`、`/dl/1`）：会被站点层用**站点基址**解析成绝对地址，
+ *   因此这里也必须按同一语义解析后再校验 host（B2-6）。`URL.parse()` 返回 null **不等于**安全：
+ *   `///evil.tld/x`、`/\evil.tld/x`、`\\evil.tld/x` 这类串在 `new URL(value, siteBase)` 下都会
+ *   解析到别的 host。没有站点基址（实例未就绪）时无法判断，保守拒绝；
+ * - http(s)：host 必须落在站点已知 host 内；
  * - `magnet:` 没有 host，放行（它的来源站点由载荷里的其它字段决定，而我们已经强制改成当前站点）。
  */
-export function isTrustedTorrentLink(link: unknown, trustedHosts: Iterable<string>): boolean {
+export function isTrustedTorrentLink(
+  link: unknown,
+  trustedHosts: Iterable<string>,
+  baseUrl: string | undefined = getCurrentSiteBaseUrl(),
+): boolean {
   if (link === undefined || link === null) return true;
   if (typeof link !== "string") return false;
 
   const value = link.trim();
   if (value === "") return true;
-  if (value.startsWith("//")) return false;
+  if (value.startsWith("magnet:")) return true;
 
-  const url = URL.parse(value);
-  if (!url) return true; // 纯相对链接
+  let url = URL.parse(value);
+  if (!url) {
+    if (!baseUrl) return false; // 没有基址时无法确定相对链接会落到哪个 host
+    url = tryParseUrl(value, baseUrl) ?? null;
+    if (!url) return false;
+  }
+
   if (url.protocol === "magnet:") return true;
   if (!ALLOWED_TORRENT_LINK_PROTOCOLS.has(url.protocol)) return false;
 
@@ -365,10 +550,19 @@ export function isTrustedTorrentLink(link: unknown, trustedHosts: Iterable<strin
  * - `link`：下载请求真正会打到的地址（`downloadTorrent` 里的 `downloadRequestConfig.url`）；
  * - `url`：详情页地址；当 `link` 缺失且站点定义了 `detail.selectors.link` 时，
  *   `getTorrentDownloadLink` 会**带着扩展权限去抓这个地址**。
+ *
+ * `baseUrl` 是相对链接的解析基址（默认取当前站点实例的 url），见 `isTrustedTorrentLink`。
  */
-export function isTrustedTorrent(torrent: ITorrent | undefined, trustedHosts: Iterable<string>): boolean {
+export function isTrustedTorrent(
+  torrent: ITorrent | undefined,
+  trustedHosts: Iterable<string>,
+  baseUrl: string | undefined = getCurrentSiteBaseUrl(),
+): boolean {
   if (!torrent) return false;
-  return isTrustedTorrentLink(torrent.link, trustedHosts) && isTrustedTorrentLink(torrent.url, trustedHosts);
+  return (
+    isTrustedTorrentLink(torrent.link, trustedHosts, baseUrl) &&
+    isTrustedTorrentLink(torrent.url, trustedHosts, baseUrl)
+  );
 }
 
 /**
@@ -383,7 +577,26 @@ export function isTrustedTorrent(torrent: ITorrent | undefined, trustedHosts: It
  */
 export async function getTrustedLinkHosts(siteId?: string): Promise<Set<string>> {
   const hosts = new Set<string>();
-  const metadata = siteInstance.value?.metadata;
+  let metadata = siteInstance.value?.metadata;
+  if (!metadata && siteId) {
+    // B（REVIEW-FINDINGS P1-12）：菜单从未展开时 siteInstance 尚未创建。这里**带上用户配置**
+    // 创建实例（用户自定义 URL / merge 才会出现在 metadata.urls 里，legacy / 兄弟域名链接的
+    // host 校验依赖它），并在成功后回填 siteInstance，后续页面类型判定直接复用。
+    try {
+      const metadataStore = useMetadataStore();
+      // 直接读内存里的站点配置：getSiteUserConfig 在 sites 为空时会走后台消息（一次性成本高、
+      // 且在消息通道不可用的宿主里会挂起），这里只需要「已水合的用户配置」用于 host 校验。
+      const siteConfig = (metadataStore.sites?.[siteId] ?? {}) as Record<string, unknown>;
+      const site = await createSiteInstance(siteId, siteConfig);
+      metadata = site?.metadata;
+      if (site && !siteInstance.value) {
+        siteInstance.value = site;
+        siteInstanceConfigSnapshot = snapshotSiteUserConfig(siteConfig);
+      }
+    } catch {
+      // 站点定义不可用时退回 siteHostMap + 当前 host 的兜底（不阻塞拖拽投放）
+    }
+  }
 
   for (const url of [...(metadata?.urls ?? []), ...(metadata?.legacyUrls ?? [])]) {
     hosts.add(getHostFromUrl(restoreSecureLink(url)));
@@ -435,11 +648,11 @@ export async function ensureTrustedTorrentLink(torrent: ITorrent | undefined, si
  */
 export function getIDFromURL(url?: URL | null): string {
   if (!url) return "";
-  // 尝试从 searchParams 中提取 id
+  // 尝试从 searchParams 中提取 id。参数存在但值为空（`?id=&tid=5`）时继续看下一个，
+  // 旧实现会直接返回空串、不再尝试 `tid`（Info 7）。
   for (const i of ["id", "tid", "torrent_id", "torrentId", "hash", "hash_id"]) {
-    if (url.searchParams.has(i)) {
-      return url.searchParams.get(i) || "";
-    }
+    const value = url.searchParams.get(i);
+    if (value) return value;
   }
   // 如果无法从 searchParams 中解出 id，则尝试从 pathname 中提取 id
   if (url.pathname) {

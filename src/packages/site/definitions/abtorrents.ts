@@ -110,6 +110,8 @@ export const siteMetadata: ISiteMetadata = {
         { name: "包含死种", value: 1 },
         { name: "仅死种", value: 2 },
       ],
+      // E1-A2：分类面板首项是「仅活种」(0)，但 search.requestConfig.params.incldead 默认写 1，
+      // 不选任何状态时实际请求的是「包含死种」，与面板显示不一致。默认值以面板首项为准（见下方 params）。
     },
     {
       name: "仅免费",
@@ -123,7 +125,8 @@ export const siteMetadata: ISiteMetadata = {
       url: "/browse.php",
       params: {
         searchin: "title",
-        incldead: 1,
+        // E1-A2：与分类面板首项「仅活种」对齐（原值 1 = 包含死种）
+        incldead: 0,
         only_free: 0,
       },
     },

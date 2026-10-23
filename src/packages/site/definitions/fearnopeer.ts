@@ -5,16 +5,18 @@ import { type ISiteMetadata } from "../types";
 // import { SchemaMetadata } from "../schemas/Unit3D.ts";
 // import { buildCategoryOptionsFromDict, buildCategoryOptionsFromList } from "../utils";
 
-const categoryMap: Record<number, string> = {
-  1: "Movie",
-  2: "TV",
-  3: "Music",
-  6: "Anime",
-  4: "Games",
-  5: "Apps",
-  9: "Sport",
-  11: "Assorted",
-};
+// E2b-04 / E2-26：本文件是死站（isDead），原 categoryMap 只被下面注释掉的 category 配置引用，
+// 属未使用变量；与历史 category 配置一起留档在注释中。
+// const categoryMap: Record<number, string> = {
+//   1: "Movie",
+//   2: "TV",
+//   3: "Music",
+//   6: "Anime",
+//   4: "Games",
+//   5: "Apps",
+//   9: "Sport",
+//   11: "Assorted",
+// };
 
 export const siteMetadata: ISiteMetadata = {
   // ...SchemaMetadata,
@@ -230,6 +232,9 @@ export const siteMetadata: ISiteMetadata = {
 
    */
 
+  // E2b-04：死站不再保留生效的等级表（避免静态工具把死站当成有判级能力的活跃站），
+  // 历史等级表仅留档在注释中（与 cnscg/concen 的做法一致）。
+  /*
   levelRequirements: [
     {
       id: 1,
@@ -298,4 +303,5 @@ export const siteMetadata: ISiteMetadata = {
       privilege: "下载队列60个，直接发布种子，可以寄出邀请，可以无视H&R，双倍上传",
     },
   ],
+  */
 };

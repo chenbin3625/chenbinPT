@@ -2,6 +2,7 @@ import urlJoin from "url-join";
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
+import { getBackupRequestTimeout } from "../utils.ts";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption, IBackupMetadata } from "../type";
 
@@ -85,17 +86,39 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
   private async request<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
     return await axios.request<T>({
       baseURL: this.address,
-      timeout: 45e3,
+      timeout: getBackupRequestTimeout(this.userConfig),
       ...config,
     });
+  }
+
+  /**
+   * C2-B-3：OWSS 的错误响应是 HTTP 200 + `{error}` / `{code,msg}`（见 OWSSResponse 注释），
+   * axios 不会 reject。旧实现直接 `data.data` 取值 → list 静默返回 []、addFile/deleteFile 静默 false，
+   * 用户/自动备份日志完全看不到原因。这里统一校验并抛出可读错误。
+   */
+  private expectData<T>(resp: OWSSResponse<T>, action: string): T {
+    if (resp?.error) {
+      throw new Error(`OWSS ${action} failed: ${resp.error.msg ?? JSON.stringify(resp.error)}`);
+    }
+    if (resp?.code !== undefined) {
+      throw new Error(`OWSS ${action} failed: [${String(resp.code)}] ${resp.message ?? resp.msg ?? ""}`.trim());
+    }
+    if (resp?.msg || resp?.message) {
+      throw new Error(`OWSS ${action} failed: ${resp.msg ?? resp.message}`);
+    }
+    if (resp?.data === undefined || resp?.data === null) {
+      throw new Error(`OWSS ${action} failed: empty response`);
+    }
+    return resp.data;
   }
 
   public async ping(): Promise<boolean> {
     try {
       const { data } = await this.request<OWSSResponse<OWSSRawList[]>>({
         url: "/list",
+        params: { page: 1, pageSize: 1 },
       });
-      return Array.isArray(data.data);
+      return Array.isArray(this.expectData(data, "ping"));
     } catch (e) {
       // P1-5：ping 失败由返回值 false 表达，但保留失败原因便于排查（鉴权码、地址、网络等）
       logMessage("[OWSS] ping 失败", { error: e instanceof Error ? e.message : String(e) });
@@ -104,54 +127,78 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
   }
 
   public async list(options: IBackupFileListOption = {}): Promise<IBackupFileInfo[]> {
-    const { data: listData } = await this.request<OWSSResponse<OWSSRawList[]>>({
-      url: "/list",
-      params: options,
-    });
-
-    const backupFiles: IBackupFileInfo[] = [];
-
-    if (listData.data) {
-      listData.data.forEach((value) => {
-        const { name: filename, time, size } = value;
-        backupFiles.push({
-          filename,
-          time,
-          size,
-          path: filename,
-        } as IBackupFileInfo);
+    try {
+      const { data: listData } = await this.request<OWSSResponse<OWSSRawList[]>>({
+        url: "/list",
+        // C2-B-3：上游 `/list` 默认 `page=1&pageSize=10`（OWSS storage.ts getResourceList 默认参数），
+        // 不显式传 pageSize=-1 时最多只返回 10 条，导致历史备份不可见、保留策略永远看不到更老的文件。
+        params: { ...options, page: 1, pageSize: -1 },
       });
-    }
 
-    return backupFiles;
+      const rawList = this.expectData(listData, "list");
+      if (!Array.isArray(rawList)) {
+        throw new Error("OWSS list failed: data is not an array");
+      }
+
+      return rawList.map(
+        ({ name: filename, time, size }) => ({ filename, time, size, path: filename }) as IBackupFileInfo,
+      );
+    } catch (e) {
+      this.logBackupFailure("list", e);
+      throw e;
+    }
   }
 
   public async addFile(fileName: string, file: IBackupData): Promise<boolean> {
-    const formData = new FormData();
-    formData.append("name", fileName);
-    formData.append("data", await this.backupDataToJSZipBlob(file), fileName);
+    try {
+      const formData = new FormData();
+      formData.append("name", fileName);
+      formData.append("data", await this.backupDataToJSZipBlob(file), fileName);
 
-    const { data } = await this.request<OWSSResponse<boolean>>({
-      method: "post",
-      url: "/add",
-      data: formData,
-    });
-    return !!data.data;
+      const { data } = await this.request<OWSSResponse<boolean>>({
+        method: "post",
+        url: "/add",
+        data: formData,
+      });
+      const result = this.expectData(data, "addFile");
+      if (!result) {
+        throw new Error("OWSS addFile failed: server rejected the upload");
+      }
+      return true;
+    } catch (e) {
+      // SERVERSSOCIAL-3：失败必须记录原因（地址/授权码/体积限制/网络等）
+      this.logBackupFailure("addFile", e);
+      return false;
+    }
   }
 
   public async deleteFile(path: string): Promise<boolean> {
-    const { data } = await this.request<OWSSResponse<boolean>>({
-      method: "post",
-      url: urlJoin("/delete", path),
-    });
-    return !!data.data;
+    try {
+      const { data } = await this.request<OWSSResponse<boolean>>({
+        method: "post",
+        url: urlJoin("/delete", path),
+      });
+      const result = this.expectData(data, "deleteFile");
+      if (!result) {
+        throw new Error("OWSS deleteFile failed: server rejected the request");
+      }
+      return true;
+    } catch (e) {
+      this.logBackupFailure("deleteFile", e);
+      return false;
+    }
   }
 
   public async getFile(path: string): Promise<IBackupData> {
-    const { data } = await this.request<Blob>({
-      url: urlJoin("/get", path),
-      responseType: "blob",
-    });
-    return await this.jsZipBlobToBackupData(data);
+    try {
+      const { data } = await this.request<Blob>({
+        url: urlJoin("/get", path),
+        responseType: "blob",
+      });
+      return await this.jsZipBlobToBackupData(data);
+    } catch (e) {
+      this.logBackupFailure("getFile", e);
+      throw e;
+    }
   }
 }

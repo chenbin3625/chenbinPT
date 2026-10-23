@@ -18,7 +18,7 @@
 import CryptoJS from "crypto-js";
 import axios, { AxiosRequestConfig } from "axios";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { getBackupRequestTimeout, validateBackupPayload } from "../utils";
+import { getBackupRequestTimeout, macMatches, validateBackupPayload } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type {
   IBackupConfig,
@@ -66,6 +66,7 @@ export const serverMetaData: IBackupMetadata<CookieCloudConfig> = {
       name: "Headers",
       key: "headers",
       type: "strings",
+      secret: true,
       description: "CookieCloud 的鉴权 Headers，如果没有，请留空。如果有，则一行一个，格式为 key: value",
     },
   ],
@@ -112,26 +113,41 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
     return this.userConfig.password!;
   }
 
+  /**
+   * 复检 P2（E）：uuid 会进入 URL 路径（`/get/<uuid>`）和加密口令，必须先归一化：
+   * - 去空白、拒绝空值/控制字符（旧实现会把空值拼成 `/get/`，服务端返回的是「根路径」页面，
+   *   axios 随即报 JSON 解析错误，用户完全看不出是 uuid 没填）；
+   * - 路径拼接处统一 `encodeURIComponent`，避免 uuid 含 `/`、`?`、`#` 等字符时请求打到别的路由。
+   */
+  private getNormalizedUuid(): string {
+    const raw = typeof this.userConfig.uuid === "string" ? this.userConfig.uuid.trim() : "";
+    if (!raw) {
+      throw new Error("CookieCloud uuid 未配置");
+    }
+    if (/[\u0000-\u001f\u007f]/.test(raw)) {
+      throw new Error("CookieCloud uuid 含有非法控制字符");
+    }
+    return raw;
+  }
+
   private get fileCacheKey(): string {
     return [this.userConfig.address, this.userConfig.uuid, this.userConfig.password].join("|");
   }
 
   private async request<T>(url: string, config: AxiosRequestConfig = {}) {
-    const headers = {
-      ...(config.headers ?? {}),
-      "Content-Type": "application/json",
-    };
+    const headers = new axios.AxiosHeaders(config.headers as ConstructorParameters<typeof axios.AxiosHeaders>[0]);
+    headers.set("Content-Type", "application/json");
 
     if (this.userConfig.headers?.trim().length > 0) {
-      let extraHeaderPairs = this.userConfig.headers?.trim().split("\n");
-      extraHeaderPairs.forEach((extraHeaderPair, index) => {
-        let extraHeaderPairKV = String(extraHeaderPair).split(":");
-        if (extraHeaderPairKV?.length > 1) {
-          // @ts-expect-error
-          // 原因：header 名来自用户配置文本，headers 对象没有字符串索引签名
-          headers[extraHeaderPairKV[0]] = extraHeaderPairKV[1];
+      for (const line of this.userConfig.headers.split(/\r?\n/)) {
+        const separator = line.indexOf(":");
+        if (separator <= 0) continue;
+        const name = line.slice(0, separator).trim();
+        const value = line.slice(separator + 1).trim();
+        if (name && !/[\r\n]/.test(value)) {
+          headers.set(name, value);
         }
-      });
+      }
     }
 
     return axios.request<T>({
@@ -167,6 +183,8 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
       fileName,
       path: "",
       size: "N/A",
+      // C2-B-7：manifest 必须带 time，否则删除后 list() 会展示一条 time=undefined 的幽灵条目
+      time: new Date().getTime(),
       files: {}, // 这里我们制空，减少上传体积
     } as ICookieCloudManifest;
 
@@ -177,8 +195,16 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
       manifest,
     };
 
-    // 按照 CookieCloud 的流程对数据进行加密
-    const theKey = CryptoJS.MD5(`${this.userConfig.uuid}-${this.userConfig.password}`).toString().substring(0, 16);
+    // 按照 CookieCloud 的流程对数据进行加密（uuid 归一化：防空白/非法字符进入口令与请求体）
+    let uuid: string;
+    try {
+      uuid = this.getNormalizedUuid();
+    } catch (e) {
+      // addFile 的契约是 Promise<boolean>：配置非法也要用返回值表达失败（并留原因）
+      this.logBackupFailure("addFile", e);
+      return false;
+    }
+    const theKey = CryptoJS.MD5(`${uuid}-${this.userConfig.password}`).toString().substring(0, 16);
     fileData.integritySalt = CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Base64);
     fileData.integrity = CryptoJS.HmacSHA256(
       JSON.stringify({
@@ -187,20 +213,22 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
         ptd_data: fileData.ptd_data,
         manifest: fileData.manifest,
       }),
-      cookieCloudIntegrityKey(`${this.userConfig.uuid}-${this.userConfig.password}`, fileData.integritySalt),
+      cookieCloudIntegrityKey(`${uuid}-${this.userConfig.password}`, fileData.integritySalt),
     ).toString();
     const encryptedFileData = CryptoJS.AES.encrypt(JSON.stringify(fileData), theKey).toString();
 
     try {
       const updateResp = await this.request<{ action: "done" | "error" }>("/update", {
         method: "POST",
-        data: { uuid: this.userConfig.uuid, encrypted: encryptedFileData },
+        data: { uuid, encrypted: encryptedFileData },
       });
       if (updateResp.data.action === "done") {
         // 服务器数据已变化，作废本地短 TTL 缓存
         CookieCloud.fileCache.delete(this.fileCacheKey);
         return true;
       }
+      // 复检 P2（次要合集）：服务端返回非 done 时旧实现静默 return false，无处排查
+      logMessage("[CookieCloud] 上传备份数据失败", { uuid, action: updateResp.data?.action ?? "unknown" });
     } catch (e) {
       // P1-5：写入失败由返回值 false 表达，但必须记录原因（服务器不可达、uuid/password 错误、
       // 加密数据超过服务端体积限制等），否则用户只能看到「备份失败」而无法定位。
@@ -214,7 +242,10 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
   }
 
   public async deleteFile(path: string): Promise<boolean> {
-    return await this.addFile("", { cookie: {} }); // 直接更新数据为 { cookie_data: {} }
+    // C2-B-7：CookieCloud 不支持历史删除，语义是「把远端数据清空」。旧实现 `addFile("", { cookie: {} })`
+    // 会写入一个多余的 `cookie` 字段，并在历史列表里留下 fileName 为空、time 缺失的幽灵条目。
+    // 这里用一个空的合法备份对象覆盖：cookie_data 置空、ptd_data 为空、manifest 自带 time。
+    return await this.addFile("", { cookies: {} });
   }
 
   public async getFile(path: string): Promise<IBackupData> {
@@ -246,9 +277,10 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
   }
 
   private async fetchFile(): Promise<IBackupData> {
-    const fileResp = await this.request<{ encrypted: string }>(`/get/${this.userConfig.uuid}`);
+    const uuid = this.getNormalizedUuid();
+    const fileResp = await this.request<{ encrypted: string }>(`/get/${encodeURIComponent(uuid)}`);
     if (fileResp.data?.encrypted) {
-      const theKey = CryptoJS.MD5(`${this.userConfig.uuid}-${this.userConfig.password}`).toString().substring(0, 16);
+      const theKey = CryptoJS.MD5(`${uuid}-${this.userConfig.password}`).toString().substring(0, 16);
       const decrypted = CryptoJS.AES.decrypt(fileResp.data.encrypted, theKey).toString(CryptoJS.enc.Utf8);
       const parsed = JSON.parse(decrypted, (key, value) =>
         key === "__proto__" ? undefined : value,
@@ -265,9 +297,10 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
             ptd_data: parsed.ptd_data,
             manifest: parsed.manifest,
           }),
-          cookieCloudIntegrityKey(`${this.userConfig.uuid}-${this.userConfig.password}`, parsed.integritySalt),
+          cookieCloudIntegrityKey(`${uuid}-${this.userConfig.password}`, parsed.integritySalt),
         ).toString();
-        if (expectedIntegrity !== parsed.integrity) {
+        // 复检 P2（E）：MAC 比较必须常量时间（复用 utils 的 macMatches），不能用 `!==`。
+        if (!macMatches(expectedIntegrity, parsed.integrity)) {
           throw new Error("CookieCloud backup integrity check failed");
         }
       }
@@ -309,11 +342,12 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
 
     // list() 与恢复流程共用同一份 getFile 结果（短 TTL），避免为读 manifest 再全量下载+解密一次
     const file = await this.getFile("");
-    if (file.manifest) {
+    // C2-B-7：删除（清空远端数据）后 manifest.fileName 为空，不应作为「一条备份历史」展示
+    if (file.manifest && file.manifest.fileName) {
       list.push({
         filename: file.manifest.fileName,
         path: "",
-        time: file.manifest.time!,
+        time: file.manifest.time ?? 0,
         size: file.manifest.size ?? "N/A",
       });
     }

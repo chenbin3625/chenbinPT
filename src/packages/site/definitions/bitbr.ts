@@ -48,7 +48,11 @@ export const siteMetadata: ISiteMetadata = {
         selector: "span.medium",
         elementProcess: (element: HTMLElement) => {
           const match = (element.textContent ?? "").match(/Ratio:\s*(.*?)\s+Uploaded:/);
-          return match ? match[1].replace(/,/g, "").trim() : undefined;
+          // E1-C19：IUserInfo.ratio 是 number，userInfo 路径没有 tryToNumber 收尾；
+          // 原实现返回 "1.23" 字符串，会让分享率排序 /「距下一级」计算按字符串或 NaN 处理。
+          if (!match) return undefined;
+          const ratio = Number.parseFloat(match[1].replace(/,/g, "").trim());
+          return Number.isFinite(ratio) ? ratio : undefined;
         },
       },
 

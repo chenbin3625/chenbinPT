@@ -11,9 +11,22 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { defineComponent, h, ref } from "vue";
 
 import { analyzeRestoreSecurity, summarizeRestoreResult } from "@/options/views/Settings/SetBackup/restoreSecurity.ts";
+import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
+
+const mocks = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
+  parseFile: vi.fn(),
+}));
+
+vi.mock("@/messages.ts", () => ({ sendMessage: mocks.sendMessage, onMessage: vi.fn() }));
+vi.mock("@ptd/backupServer/utils.ts", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  jsZipBlobToBackupData: mocks.parseFile,
+}));
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const readSource = (path: string) => readFileSync(resolve(repoRoot, path), "utf8");
@@ -171,5 +184,71 @@ describe("S-1：恢复结果报告的翻译", () => {
     ]);
 
     expect(summarizeRestoreResult({ success: false, rolledBack: true }).success).toBe(false);
+  });
+});
+
+// ── Low-T1：把「接线」从源码正则改成真实挂载行为断言 ────────────────────────────
+
+describe("S-1：RestoreDialog 真实接线（Low-T1）", () => {
+  it("警示里列出服务器名；恢复服务器开关默认关闭；点确定透传 restoreBackupServers=false", async () => {
+    document.body.innerHTML = "";
+    const pinia = prepareOptionsPinia();
+    const { useConfigStore } = await import("@/options/stores/config.ts");
+    // 避免 resetDialog 读到真实 storage：直接给一个解密密钥
+    useConfigStore(pinia).backup.encryptionKey = "test-key";
+
+    const localBackup = {
+      manifest: { version: "0.0.0.0", files: { metadata: 1, cookies: 1 } },
+      metadata: backupWithServers.metadata,
+      cookies: {},
+    };
+    mocks.parseFile.mockReset().mockResolvedValue(localBackup);
+    mocks.sendMessage.mockReset().mockResolvedValue({ success: true });
+
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const { default: RestoreDialog } = await import("@/options/views/Settings/SetBackup/RestoreDialog.vue");
+    const open = ref(false);
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(RestoreDialog as any, {
+            modelValue: open.value,
+            "onUpdate:modelValue": (v: boolean) => (open.value = v),
+          }),
+      }),
+      { pinia, router: true },
+    );
+
+    try {
+      open.value = true;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const input = document.body.querySelector<HTMLInputElement>('input[type="file"]')!;
+      Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "backup.zip")] });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const warning = document.querySelector<HTMLElement>(".ant-modal .ant-alert-warning");
+      expect(warning, "含备份服务器配置时必须显示警示").not.toBeNull();
+      expect(warning!.textContent, "警示必须列出备份里的服务器名").toContain("my-webdav");
+
+      const serverSwitchLabel = i18nInstance.global
+        .t("SetBackup.RestoreDialog.restoreBackupServers", { count: 2 })
+        .trim();
+      const serverCheckbox = Array.from(
+        document.querySelectorAll<HTMLElement>(".ant-modal .ant-checkbox-wrapper"),
+      ).find((node) => (node.textContent ?? "").includes(serverSwitchLabel));
+      expect(serverCheckbox, "应渲染「同时恢复备份服务器配置」开关").toBeDefined();
+      expect(serverCheckbox!.querySelector<HTMLInputElement>("input")!.checked, "默认必须关闭").toBe(false);
+
+      document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const restoreCall = mocks.sendMessage.mock.calls.find(([type]) => type === "restoreBackupData");
+      expect(restoreCall, "应发出 restoreBackupData").toBeDefined();
+      expect(restoreCall![1].restoreOptions.restoreBackupServers, "未勾选时不得透传 true").toBe(false);
+      expect(restoreCall![1].restoreOptions.fields).toEqual(expect.arrayContaining(["metadata", "cookies"]));
+    } finally {
+      view.unmount();
+    }
   });
 });

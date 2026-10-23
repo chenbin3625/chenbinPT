@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, watch } from "vue";
+import { computed, nextTick, watch } from "vue";
 import dayjs from "dayjs";
 import { useI18n } from "vue-i18n";
 import { addDays, startOfDay } from "date-fns";
@@ -11,6 +11,11 @@ import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import DownloaderLabel from "@/options/components/DownloaderLabel.vue";
 import { setDateRangeByDatePicker, getThisDateUnitRange } from "@/options/directives/useAdvanceFilter.ts";
+import {
+  cycleKeywordFilterState,
+  keywordFilterStateOf,
+  resolveFiniteRangeDays,
+} from "@/options/views/Overview/DownloadHistory/advanceFilter.ts";
 
 const showDialog = defineModel<boolean>();
 
@@ -23,10 +28,49 @@ const {
   advanceItemPropsRef,
   advanceFilterDictRef,
   reBuildFilterCountRef,
-  toggleKeywordStateFn,
   reBuildAdvanceFilter,
   updateTableFilterValueFn,
 } = tableCustomFilter;
+
+/**
+ * I1：站点 / 下载器的「三态」复选框。
+ *
+ * 原先同时绑 `@click.stop="toggleKeywordStateFn"` 与 `@update:checked`，真实事件顺序（click 先于
+ * update:checked）下三态被打乱：「既不在 required 也不在 exclude」的状态不可达，用户无法单独取消
+ * 某个筛选项（只能整体重置）。这里用单一 handler 实现 required → exclude → none 循环，
+ * 不再依赖 checkbox 自身的 checked 变更，因此也不需要 `@update:checked`。
+ */
+function cycleKeywordState(field: "siteId" | "downloaderId", value: string) {
+  cycleKeywordFilterState(advanceFilterDictRef.value[field] as any, value);
+}
+
+function keywordStateOf(field: "siteId" | "downloaderId", value: string) {
+  return keywordFilterStateOf(advanceFilterDictRef.value[field] as any, value);
+}
+
+/**
+ * I2：日期滑块的可用区间。
+ *
+ * `generateRangeField()` 在没有任何可解析时间戳时返回 `[-Infinity, Infinity]`（下载历史为空 /
+ * 尚未加载完时打开弹窗）。把 Infinity 直接交给 a-slider 的 :min/:max 会得到 NaN 位置的手柄，
+ * 自定义日期挑选也不可用。这里回落到「最近 30 天 ~ 现在」作为**展示**区间，
+ * 但不改写字典（`[-Infinity, Infinity]` 仍表示「不参与日期筛选」）。
+ */
+const downloadAtRange = computed<[number, number]>(() =>
+  resolveFiniteRangeDays(advanceItemPropsRef.value.downloadAt?.range as [number, number] | undefined),
+);
+
+/** 滑块显示值：字典里缺省/无限区间时按全范围展示（拖动前不改写字典） */
+const downloadAtSliderValue = computed<[number, number]>({
+  get: (): [number, number] => {
+    const value = advanceFilterDictRef.value.downloadAt as [number, number] | undefined;
+    if (!value || !Number.isFinite(value[0]) || !Number.isFinite(value[1])) return downloadAtRange.value;
+    return [value[0], value[1]];
+  },
+  set: (value: [number, number]) => {
+    advanceFilterDictRef.value.downloadAt = value;
+  },
+});
 
 function updateTableFilter() {
   updateTableFilterValueFn();
@@ -78,17 +122,9 @@ watch(showDialog, (open) => {
       <a-row :gutter="0">
         <a-col v-for="site in advanceItemPropsRef.siteId" :key="`${reBuildFilterCountRef}_${site}`" :span="12" :sm="6">
           <a-checkbox
-            :checked="advanceFilterDictRef.siteId.required.includes(site)"
-            :indeterminate="advanceFilterDictRef.siteId.exclude.includes(site)"
-            @click.stop="() => toggleKeywordStateFn('siteId', site)"
-            @update:checked="
-              (checked: boolean) => {
-                const current = advanceFilterDictRef.siteId.required;
-                advanceFilterDictRef.siteId.required = checked
-                  ? Array.from(new Set([...current, site]))
-                  : current.filter((x: any) => x !== site);
-              }
-            "
+            :checked="keywordStateOf('siteId', site) === 'required'"
+            :indeterminate="keywordStateOf('siteId', site) === 'exclude'"
+            @click.prevent.stop="() => cycleKeywordState('siteId', site)"
           >
             <SiteFavicon :site-id="site" :size="16" style="margin-right: 8px" />
             <SiteName :site-id="site" tag="span" style="text-decoration: none" />
@@ -106,17 +142,9 @@ watch(showDialog, (open) => {
           :sm="12"
         >
           <a-checkbox
-            :checked="advanceFilterDictRef.downloaderId.required.includes(downloader)"
-            :indeterminate="advanceFilterDictRef.downloaderId.exclude.includes(downloader)"
-            @click.stop="() => toggleKeywordStateFn('downloaderId', downloader)"
-            @update:checked="
-              (checked: boolean) => {
-                const current = advanceFilterDictRef.downloaderId.required;
-                advanceFilterDictRef.downloaderId.required = checked
-                  ? Array.from(new Set([...current, downloader]))
-                  : current.filter((x: any) => x !== downloader);
-              }
-            "
+            :checked="keywordStateOf('downloaderId', downloader) === 'required'"
+            :indeterminate="keywordStateOf('downloaderId', downloader) === 'exclude'"
+            @click.prevent.stop="() => cycleKeywordState('downloaderId', downloader)"
           >
             <DownloaderLabel :downloader="downloader" />
           </a-checkbox>
@@ -132,27 +160,18 @@ watch(showDialog, (open) => {
               v-for="dateUnit in ['day', 'week', 'month', 'quarter', 'year'] as const"
               :key="dateUnit"
               style="margin-right: 4px"
-              @click="
-                () =>
-                  (advanceFilterDictRef.downloadAt = getThisDateUnitRange(
-                    dateUnit,
-                    advanceItemPropsRef.downloadAt.range,
-                  ))
-              "
+              @click="() => (advanceFilterDictRef.downloadAt = getThisDateUnitRange(dateUnit, downloadAtRange))"
             >
               {{ t(`common.AdvanceFilterGenerateDialog.dateUnit.${dateUnit}`) }}
             </a-tag>
             <a-popover placement="top" trigger="click">
               <template #content>
                 <a-range-picker
-                  :value="[
-                    dayjs(advanceItemPropsRef.downloadAt.range[0]),
-                    dayjs(advanceItemPropsRef.downloadAt.range[1]),
-                  ]"
+                  :value="[dayjs(downloadAtRange[0]), dayjs(downloadAtRange[1])]"
                   :disabled-date="
                     (date: any) =>
-                      date.isBefore(dayjs(startOfDay(new Date(advanceItemPropsRef.downloadAt.range[0]))), 'day') ||
-                      date.isAfter(dayjs(addDays(new Date(advanceItemPropsRef.downloadAt.range[1]), 1)), 'day')
+                      date.isBefore(dayjs(startOfDay(new Date(downloadAtRange[0]))), 'day') ||
+                      date.isAfter(dayjs(addDays(new Date(downloadAtRange[1]), 1)), 'day')
                   "
                   @change="
                     (values: any) => {
@@ -172,11 +191,11 @@ watch(showDialog, (open) => {
                  拖动一次就把元组改写成标量，「生成」时 stringifyFilterDictFn 的 `.map()` 抛 TypeError，
                  弹窗既不关闭也无提示。 -->
             <a-slider
-              v-model:value="advanceFilterDictRef.downloadAt"
+              v-model:value="downloadAtSliderValue"
               range
-              :marks="tickMarks(advanceItemPropsRef.downloadAt.ticks)"
-              :max="advanceItemPropsRef.downloadAt.range[1]"
-              :min="advanceItemPropsRef.downloadAt.range[0]"
+              :marks="tickMarks(advanceItemPropsRef.downloadAt?.ticks)"
+              :max="downloadAtRange[1]"
+              :min="downloadAtRange[0]"
               :step="60 * 1000"
               :tip-formatter="(value: number) => formatDate(value ?? 0, 'yyyy-MM-dd HH:mm')"
               style="padding: 0 24px"

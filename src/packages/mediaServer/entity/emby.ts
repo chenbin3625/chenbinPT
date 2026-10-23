@@ -10,6 +10,8 @@ import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import urlJoin from "url-join";
 import { toMerged } from "es-toolkit";
 import { EResultParseStatus } from "@ptd/site";
+import { mapWithConcurrency } from "@ptd/site/utils/helper.ts";
+import { blobToDataUrl } from "../utils.ts";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "Emby 是一款家庭媒体库管理软件，能整理服务器上的音视频并流式传输到客户端设备，提供良好的影音体验",
@@ -137,6 +139,17 @@ export default class Emby extends AbstractMediaServer<IEmbyConfig> {
     return axios.request<T>(config);
   }
 
+  private async getPoster(id: string): Promise<string> {
+    try {
+      const response = await this.request<Blob>(`/Items/${encodeURIComponent(id)}/Images/Primary`, {
+        responseType: "blob",
+      });
+      return await blobToDataUrl(response.data);
+    } catch {
+      return "";
+    }
+  }
+
   public override async ping(): Promise<boolean> {
     try {
       const response = await this.request<IEmbySystemInfo>("/System/Info", { responseType: "json" });
@@ -196,7 +209,7 @@ export default class Emby extends AbstractMediaServer<IEmbyConfig> {
         const {
           data: { Items = [] },
         } = response;
-        for (const item of Items) {
+        result.items = await mapWithConcurrency(Items, 5, async (item) => {
           // 处理搜索结果
 
           const mediaItem: IMediaServerItem<IEmbyQueryItem> = {
@@ -208,7 +221,7 @@ export default class Emby extends AbstractMediaServer<IEmbyConfig> {
             format: item.Container,
             size: item.Size,
             duration: item.RunTimeTicks / 10000000, // 10000 ticks = 1 ms, 10000 ms = 1 s
-            poster: urlJoin(this.apiBaseUrl, `/Items/${item.Id}/Images/Primary`),
+            poster: await this.getPoster(item.Id),
             tags: item.GenreItems?.map((tag) => ({
               name: tag.Name,
               url: this.webBaseUrl + `#!/list/list.html?genreId=${tag.Id}&serverId=${item.ServerId}`,
@@ -225,13 +238,13 @@ export default class Emby extends AbstractMediaServer<IEmbyConfig> {
             },
             raw: item,
           };
-          result.items.push(mediaItem);
-        }
+          return mediaItem;
+        });
         result.options = config;
         result.status = EResultParseStatus.success;
-      } else {
-        result.status = EResultParseStatus.needLogin;
       }
+      // C2-M-7：axios 默认 validateStatus 只放行 2xx，非 2xx 会走下面的 catch；
+      // 这里不再保留不可达的 `else { needLogin }`，401→needLogin / 其它→parseError 的映射集中在 catch。
     } catch (e) {
       // 401 是认证问题（needLogin），其余（超时、网络不可达、解析异常等）不是认证问题，
       // 需要把真实错误带回去，避免 UI 统一提示「请检查认证信息」误导排障（#1396）

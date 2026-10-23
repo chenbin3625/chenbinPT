@@ -133,8 +133,11 @@ export const siteMetadata: ISiteMetadata = {
       completed: {
         selector: "div:nth-child(8)",
         filters: [
+          // E2b-23：该列可能为空 / 只有图标 / 只显示 "-"，原来的 `match(...)![1]` 会抛 TypeError，
+          // 父类逐行 catch 会把整行丢弃 —— 用户看到的是「这些种子凭空消失」而不是 completed=0。
           (query: string) => {
-            return query.match(/(\d+)/)![1];
+            const queryMatch = String(query ?? "").match(/(\d+)/);
+            return queryMatch ? queryMatch[1] : 0;
           },
         ],
       },
@@ -171,27 +174,34 @@ export const siteMetadata: ISiteMetadata = {
           uploaded: {
             selector: ["span:has(img[src*='uploaded'])"],
             filters: [
+              // E2-10：statusbar 里这段 span 的文本通常只有数值（「上传/下载」由图标表达），
+              // 原正则强制要求文本里出现「Uploaded/上传量」，命中不到就静默写 0。
+              // 这里直接取第一个体积数值，带不带标签前缀都能解析。
               (query: string) => {
-                const queryMatch = query.replace(/,/g, "").match(/(上[传傳]量|Uploaded).+?([\d.]+ ?[ZEPTGMK]?i?B)/);
-                return queryMatch && queryMatch.length === 3 ? parseSizeString(queryMatch[2]) : 0;
+                const queryMatch = String(query ?? "")
+                  .replace(/,/g, "")
+                  .match(/([\d.]+ ?[ZEPTGMK]?i?B)/i);
+                return queryMatch ? parseSizeString(queryMatch[1]) : 0;
               },
             ],
           },
           downloaded: {
             selector: ["span:has(img[src*='downloaded'])"],
             filters: [
+              // E2-10：同上，避免下载量为 0 导致分享率/等级被误算
               (query: string) => {
-                const queryMatch = query.replace(/,/g, "").match(/(下[载載]量|Downloaded).+?([\d.]+ ?[ZEPTGMK]?i?B)/);
-                return queryMatch && queryMatch.length === 3 ? parseSizeString(queryMatch[2]) : 0;
+                const queryMatch = String(query ?? "")
+                  .replace(/,/g, "")
+                  .match(/([\d.]+ ?[ZEPTGMK]?i?B)/i);
+                return queryMatch ? parseSizeString(queryMatch[1]) : 0;
               },
             ],
           },
           bonus: {
             selector: [".statusbar a[href*='shop.php']"],
             filters: [
-              (query: string) => {
-                return query ? parseFloat(query.replace(/[\s,]/g, "")) : 0;
-              },
+              // E2-10：文本可能带「FLCoins:」之类前缀，原先直接 parseFloat 整串会得到 NaN
+              { name: "parseNumber" },
             ],
           },
         },

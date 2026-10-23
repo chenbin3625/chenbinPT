@@ -17,48 +17,188 @@ const FATAL_ERRORS = [
   "Access to the specified native messaging host is forbidden.",
 ];
 
-/** Methods the bridge will proxy to sendMessage(). Everything else is rejected. */
-const ALLOWED_METHODS = new Set([
-  // Site config
+/**
+ * 原生宿主可调用的方法白名单（A4）。
+ *
+ * 原则：**只读 + 不返回任何凭据**。原生宿主是本机进程（仓库内没有它的实现，其访问控制无法验证），
+ * 因此不能把「扩展页面级」能力整体交给它。本次收缩移除了：
+ * - 凭据读取：`getSiteUserConfig`（inputSetting/runtimeSettings 含 passkey/authkey/token）、
+ *   `getDownloaderConfig`（地址 + 用户名/密码）、`getTorrentDownloadLink` / `getTorrentInfoForVerification`
+ *   （返回/使用带 authkey 的下载链接），以及会改变站点 favicon 缓存的 `clearSiteFaviconCache`；
+ * - 破坏性写操作：`downloadTorrent`、`deleteDownloadHistoryById`、`clearDownloadHistory`、
+ *   `removeSiteUserInfo`、`createKeepUploadTask` / `updateKeepUploadTask` / `deleteKeepUploadTask` /
+ *   `clearKeepUploadTasks`、`cancelUserInfoQueue`（会打断用户正在进行的刷新）。
+ * 写操作若将来确实需要由 CLI 触发，应由用户在打开的 options 页面显式确认后由扩展页发起，而不是经桥接静默执行。
+ *
+ * 纵深防御：即使列在这里的方法，返回值也会再经过 `sanitizeBridgeResult()` 深度脱敏
+ * （敏感字段名 + URL 里的凭据查询参数），避免站点/下载器返回的对象夹带凭据。
+ * 注意 sender→site 绑定（A2）由 offscreen 侧负责（B1），本文件只保证「桥接不再放大暴露面」。
+ */
+export const ALLOWED_METHODS = new Set([
+  // 站点 / 搜索（只读，结果经脱敏）
   "getSiteList",
-  "getSiteUserConfig",
   "getSiteFavicon",
-  "clearSiteFaviconCache",
-  // Search
   "getSiteSearchResult",
   "getMediaServerSearchResult",
-  // Download and downloader
+  // 下载器状态（只读；不含配置/密码）
   "getDownloaderList",
-  "getDownloaderConfig",
   "getDownloaderVersion",
   "getDownloaderStatus",
-  "getTorrentDownloadLink",
-  "getTorrentInfoForVerification",
-  "downloadTorrent",
+  // 下载历史（只读，结果经脱敏；downloadRequestConfig 会被整体剔除）
   "getDownloadHistory",
   "getDownloadHistoryById",
-  "deleteDownloadHistoryById",
-  "clearDownloadHistory",
-  // User info
+  // 用户信息（只读或幂等刷新；不含凭据）
   "getSiteUserInfoResult",
-  "cancelUserInfoQueue",
   "getSiteUserInfo",
-  "removeSiteUserInfo",
-  // Keep-upload
+  // 辅种任务（只读；不开放 create/update/delete/clear）
   "getKeepUploadTasks",
   "getKeepUploadTaskById",
-  "createKeepUploadTask",
-  "updateKeepUploadTask",
-  "deleteKeepUploadTask",
-  "clearKeepUploadTasks",
 ]);
+
+/**
+ * 结果里出现这些键名就整项剔除：凭据/会话/请求配置（`downloadRequestConfig` 可能含 Cookie、
+ * Authorization 等敏感请求头，`addTorrentOptions` 同理）。
+ */
+const SENSITIVE_RESULT_KEY_PATTERN =
+  /(?:passkey|pass_key|authkey|auth_key|torrent_?pass|token|password|passwd|secret|cookie|authorization|api[_-]?key|rsskey|csrf|inputsetting|runtimesettings|downloadrequestconfig|addtorrentoptions)/i;
+
+/** URL/字符串里的凭据查询参数值统一替换为 `***`（保留参数名，避免改变结构）。 */
+const SENSITIVE_QUERY_PARAM_PATTERN =
+  /([?&](?:authkey|auth_key|torrent_pass|passkey|pass_key|token|apikey|api_key|rsskey|csrf|downhash)=)[^&#]*/gi;
+
+const CREDENTIAL_LIKE_PATH_SEGMENT = /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,}$/;
+const URL_USERINFO_PATTERN = /^((?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)[^/?#\s]*@/g;
+
+function redactStringCredentials(text: string): string {
+  let res = text.replace(URL_USERINFO_PATTERN, "$1***@");
+  if (res.includes("/")) {
+    res = res.replace(/(?:https?:\/\/[^/?#\s]+)?\/[^\s?#]*/g, (path) => {
+      return path
+        .split("/")
+        .map((segment) => (CREDENTIAL_LIKE_PATH_SEGMENT.test(segment) ? "***" : segment))
+        .join("/");
+    });
+  }
+  return res.replace(SENSITIVE_QUERY_PARAM_PATTERN, "$1***");
+}
+
+const MAX_SANITIZE_DEPTH = 12;
+
+/**
+ * 桥接返回值的深度脱敏。
+ *
+ * 不是可选的「润色」：`getSiteSearchResult` 返回的 `torrent.link` 在 Gazelle 系站点上是
+ * `...&authkey=…&torrent_pass=…`（见 `GazelleJSONAPI.ts`），NexusPHP 上是 `&downhash=...`，
+ * Rartracker 上 passkey 在路径中，`getDownloadHistory` 还会带 `downloadRequestConfig`。
+ * 这些字段如果原样发给原生宿主，等于把 A1/A2 的凭据泄漏面换了一条路径。
+ */
+export function sanitizeBridgeResult(
+  value: unknown,
+  seen: WeakMap<object, unknown> = new WeakMap(),
+  inStack: WeakSet<object> = new WeakSet(),
+  depth = 0,
+): unknown {
+  if (typeof value === "string") {
+    return redactStringCredentials(value);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (depth > MAX_SANITIZE_DEPTH || inStack.has(value)) {
+    return undefined;
+  }
+  if (seen.has(value)) {
+    return seen.get(value);
+  }
+
+  inStack.add(value);
+
+  if (Array.isArray(value)) {
+    const arr: unknown[] = [];
+    for (const item of value) {
+      arr.push(sanitizeBridgeResult(item, seen, inStack, depth + 1));
+    }
+    inStack.delete(value);
+    seen.set(value, arr);
+    return arr;
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (SENSITIVE_RESULT_KEY_PATTERN.test(key)) {
+      continue;
+    }
+    const sanitized = sanitizeBridgeResult(item, seen, inStack, depth + 1);
+    if (sanitized !== undefined) {
+      out[key] = sanitized;
+    }
+  }
+  inStack.delete(value);
+  seen.set(value, out);
+  return out;
+}
+
+const MAX_PARAMS_DEPTH = 8;
+
+/** 只接受 JSON 可往返的「普通值」：拒绝 undefined/函数/symbol/bigint/类实例/超深嵌套。 */
+function isBridgeParamValue(value: unknown, depth: number): boolean {
+  if (value === null) {
+    return true;
+  }
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+      return true;
+    case "object":
+      break;
+    default:
+      return false;
+  }
+  if (depth >= MAX_PARAMS_DEPTH) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.every((item) => isBridgeParamValue(item, depth + 1));
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    return false;
+  }
+  return Object.values(value as Record<string, unknown>).every((item) => isBridgeParamValue(item, depth + 1));
+}
+
+/** 少数方法的标的 id 必须是固定基本类型，避免把任意对象塞进业务路径。 */
+const REQUIRED_PRIMITIVE_PARAM: Partial<Record<string, "string" | "number">> = {
+  getDownloaderVersion: "string",
+  getDownloaderStatus: "string",
+  getDownloadHistoryById: "number",
+  getSiteUserInfo: "string",
+  getKeepUploadTaskById: "string",
+};
+
+/** 返回错误文案表示不合法；`undefined` 表示通过。 */
+export function validateBridgeParams(method: string, params: unknown): string | undefined {
+  if (params !== undefined && !isBridgeParamValue(params, 0)) {
+    return "params must be a JSON-serializable plain value";
+  }
+  const required = REQUIRED_PRIMITIVE_PARAM[method];
+  if (required && typeof params !== required) {
+    return `params for '${method}' must be a ${required}`;
+  }
+  return undefined;
+}
 
 // ── Module-scoped state ──────────────────────────────────────────────
 
 let port: chrome.runtime.Port | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
-let enabled = true;
+/**
+ * A4：默认**关闭**。桥接只在用户显式开启（options 页面开关）并授予 `nativeMessaging` 权限后才连接；
+ * 旧实现默认 true 意味着用户一授予权限、宿主就被自动赋予上述能力，没有任何二次确认。
+ */
+let enabled = false;
 let state: BridgeState = "no-permission";
 let lastError: string | undefined;
 let intentionalDisconnect = false;
@@ -278,11 +418,23 @@ function connect() {
       return;
     }
 
+    // A4：桥接参数必须做形状校验 —— 旧实现把宿主传来的 params 原样塞进业务消息路径。
+    const paramsError = validateBridgeParams(method, params);
+    if (paramsError) {
+      currentPort.postMessage({
+        type: "response",
+        id,
+        error: { code: "INVALID_PARAMS", message: paramsError },
+      });
+      return;
+    }
+
     try {
       await setupOffscreenDocument();
       const result = await sendMessage(method as any, params);
       if (port === currentPort) {
-        currentPort.postMessage({ type: "response", id, result });
+        // A4：返回值深度脱敏（URL 凭据参数、敏感字段名），避免把站点/下载器返回的凭据转给宿主。
+        currentPort.postMessage({ type: "response", id, result: sanitizeBridgeResult(result) });
       }
     } catch (e: any) {
       if (port === currentPort) {
@@ -328,8 +480,9 @@ async function init() {
   const permissionGranted = await checkPermission();
 
   // Refresh enabled flag
+  // A4：默认关闭 —— 只有用户显式开启过（storage 里明确写入 true）才连接。
   const stored = await chrome.storage.local.get(ENABLED_KEY);
-  enabled = stored[ENABLED_KEY] !== false; // default true
+  enabled = stored[ENABLED_KEY] === true;
 
   if (!permissionGranted) {
     disconnect(true);

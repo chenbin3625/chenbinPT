@@ -18,6 +18,7 @@ const backing = new Map<string, unknown>();
 const changeListeners: Array<(changes: StorageChange, areaName: string) => void> = [];
 let setItemShouldFail = false;
 let getCallCount = 0;
+let holdNextRead: ((value: unknown) => Promise<unknown>) | null = null;
 
 function emitChanges(changes: StorageChange) {
   for (const listener of changeListeners) {
@@ -28,6 +29,11 @@ function emitChanges(changes: StorageChange) {
 const storageLocal = {
   get: (key: string) => {
     getCallCount++;
+    if (holdNextRead) {
+      const hold = holdNextRead;
+      holdNextRead = null;
+      return hold(backing.get(key)).then((value) => ({ [key]: value }));
+    }
     return Promise.resolve(backing.has(key) ? { [key]: backing.get(key) } : {});
   },
   set: (items: Record<string, unknown>) => {
@@ -92,6 +98,7 @@ describe("存储读缓存：写入失败不得污染缓存（L-8）", () => {
     backing.clear();
     getCallCount = 0;
     setItemShouldFail = false;
+    holdNextRead = null;
     emitChanges({ userInfo: { oldValue: undefined, newValue: undefined } });
     emitChanges({ metadata: { oldValue: undefined, newValue: undefined } });
     emitChanges({ config: { oldValue: undefined, newValue: undefined } });
@@ -155,5 +162,23 @@ describe("存储读缓存：写入失败不得污染缓存（L-8）", () => {
     const readsBefore = getCallCount;
     expect(await getExtStoragePathCached("config", "userInfo.queueConcurrency")).toBe(2);
     expect(getCallCount).toBe(readsBefore);
+  });
+
+  it("旧异步读取晚于写入返回时不能回填旧缓存，等待读取者也拿到新值", async () => {
+    await seed("metadata", { revision: 1 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    holdNextRead = async (snapshot) => {
+      await gate;
+      return snapshot;
+    };
+    const first = getExtStorageCached("metadata");
+    const second = getExtStorageCached("metadata");
+    await patchExtStoragePathLocal("metadata", "revision", 2);
+    release();
+
+    expect(await first).toEqual({ revision: 2 });
+    expect(await second).toEqual({ revision: 2 });
+    expect(await getExtStorageCached("metadata")).toEqual({ revision: 2 });
   });
 });

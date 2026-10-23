@@ -19,7 +19,7 @@ import { useDisplay } from "@/options/composables/useDisplay.ts";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
-import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
+import { formatDateTimeForTable } from "@/options/utils.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import type { ITorrentDownloadMetadata, TTorrentDownloadKey } from "@/shared/types.ts";
 
@@ -39,6 +39,7 @@ import {
   downloadStatusMap,
   tableCustomFilter,
   clearWatchingMap,
+  pickVisibleDownloadHistoryIds,
   throttleLoadDownloadHistory,
   isLoadingDownloadHistory,
 } from "./utils.ts"; // <-- 主要方法
@@ -101,6 +102,15 @@ const tablePagination = computed(() =>
     configStore.updateTableBehavior("DownloadHistory", "itemsPerPage", v),
   ),
 );
+
+/**
+ * 当前可见且仍被勾选的记录（N3）。
+ *
+ * antd 的 `selectedRowKeys` 在数据源被筛选时不会裁剪/通知，批量删除/重下若直接用
+ * `tableSelected` 会把被筛选隐藏的记录一起处理（下载历史没有回收站）。
+ */
+const visibleSelectedIds = computed(() => pickVisibleDownloadHistoryIds(tableSelected.value, filteredTableData.value));
+
 function onSelectionChange(keys: (string | number)[]) {
   tableSelected.value = keys as TTorrentDownloadKey[];
 }
@@ -130,8 +140,19 @@ function reDownloadTorrent(downloadHistoryIds: TTorrentDownloadKey[]) {
 const showDeleteDialog = ref<boolean>(false);
 const toDeleteIds = ref<TTorrentDownloadKey[]>([]);
 
+/** 删除确认框里列出的对象（标题），让用户能核对「删的是哪几条」而不是只看数量（N3） */
+const TITLE_PREVIEW_LIMIT = 100;
+const toDeleteTitles = computed(() =>
+  toDeleteIds.value
+    .slice(0, TITLE_PREVIEW_LIMIT)
+    .map((id) => downloadHistory.value[id]?.title ?? String(id))
+    .filter((title) => !!title),
+);
+const hasMoreDeleteTitles = computed(() => toDeleteIds.value.length > TITLE_PREVIEW_LIMIT);
+
 async function deleteDownloadHistory(downloadHistoryIds: TTorrentDownloadKey[]) {
-  toDeleteIds.value = downloadHistoryIds;
+  // 防御：即使调用方传入了被隐藏的记录，也只删除当前可见的（按钮已经用 visibleSelectedIds 禁用）
+  toDeleteIds.value = pickVisibleDownloadHistoryIds(downloadHistoryIds, filteredTableData.value);
   showDeleteDialog.value = true;
 }
 
@@ -152,11 +173,15 @@ function downloadStatusMeta(status: ITorrentDownloadMetadata["downloadStatus"]) 
 }
 
 onMounted(() => {
-  throttleLoadDownloadHistory();
+  // N4：loadDownloadHistory 内部已经 catch 并提示；这里 return 的 promise 只是让 lint 知道已被处理
+  void throttleLoadDownloadHistory();
 });
 
 onUnmounted(() => {
   clearWatchingMap();
+  // 卸载时加载可能仍在途：复位 loading，否则重新进入页面时重入保护会把新一轮加载直接挡掉，
+  // 页面会停在「加载中」直到旧请求返回（而旧请求已经因 epoch 失效不会写回数据）。
+  isLoadingDownloadHistory.value = false;
 });
 </script>
 
@@ -169,25 +194,25 @@ onUnmounted(() => {
           color="green"
           :icon="SyncOutlined"
           :text="t('DownloadHistory.refresh')"
-          @click="() => throttleLoadDownloadHistory()"
+          @click="() => void throttleLoadDownloadHistory()"
         />
 
         <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
         <NavButton
-          :disabled="tableSelected.length === 0"
+          :disabled="visibleSelectedIds.length === 0"
           color="primary"
           :icon="DownloadOutlined"
           :text="t('DownloadHistory.reDownload')"
-          @click="() => reDownloadTorrent(tableSelected)"
+          @click="() => reDownloadTorrent(visibleSelectedIds)"
         />
 
         <NavButton
-          :disabled="tableSelected.length === 0"
+          :disabled="visibleSelectedIds.length === 0"
           :text="t('common.remove')"
           color="error"
           :icon="MinusOutlined"
-          @click="deleteDownloadHistory(tableSelected)"
+          @click="deleteDownloadHistory(visibleSelectedIds)"
         />
 
         <div style="flex: 1 1 auto"></div>
@@ -206,7 +231,12 @@ onUnmounted(() => {
       :loading="isLoadingDownloadHistory"
       :pagination="tablePagination"
       :row-key="'id'"
-      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
+      :row-selection="{
+        selectedRowKeys: tableSelected,
+        onChange: onSelectionChange,
+        // 保留数据源之外的选中行（真正参与批量操作的是 visibleSelectedIds = 选中 ∩ 可见）
+        preserveSelectedRowKeys: true,
+      }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"
       @change="onTableChange"
@@ -282,8 +312,16 @@ onUnmounted(() => {
     v-model="showDeleteDialog"
     :to-delete-ids="toDeleteIds"
     :confirm-delete="confirmDeleteDownloadHistory"
-    @all-delete="() => throttleLoadDownloadHistory()"
-  />
+    @all-delete="() => void throttleLoadDownloadHistory()"
+  >
+    <!-- N3：确认框列出待删除的下载记录标题 -->
+    <template #append-text>
+      <div v-if="toDeleteTitles.length > 0" class="download-history-delete-list">
+        <div v-for="(title, index) in toDeleteTitles" :key="index" :title="title">{{ title }}</div>
+        <div v-if="hasMoreDeleteTitles">…</div>
+      </div>
+    </template>
+  </DeleteDialog>
 
   <a-modal v-model:open="showDownloadDetailDialog" :footer="null" :width="800">
     <!-- DOWNLOADER-8：告警与失败原因必须分开渲染 —— 降级记录 downloadStatus 仍是 completed，
@@ -314,3 +352,24 @@ onUnmounted(() => {
     <pre> {{ JSON.stringify(downloadDetail, null, 2) }}</pre>
   </a-modal>
 </template>
+
+<style scoped>
+.download-history-delete-list {
+  max-height: 160px;
+  margin: 8px 0 0;
+  overflow-y: auto;
+  text-align: left;
+  word-break: break-all;
+}
+
+.download-history-delete-list > div {
+  position: relative;
+  padding-left: 14px;
+}
+
+.download-history-delete-list > div::before {
+  content: "•";
+  position: absolute;
+  left: 2px;
+}
+</style>

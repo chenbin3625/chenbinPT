@@ -52,8 +52,10 @@ export const stopEventPropagation = (...args: unknown[]) => {
 export const formValidateRules: Record<string, (args?: any) => (v: any) => boolean | string> = {
   // OPTIONSSETTINGS-8：默认文案必须走 i18n —— 旧实现硬编码英文，调用方（Editor.vue 的站点名/排序/URL
   // 校验）不传文案时，中文界面也会显示 "Item is required" / "Not url"。
+  // F1（原 D1-Low-07）：显式放行数值 0 —— 「排序」字段把 0 当作合法值（想排到最后），
+  // 而 `!!0 === false` 会把 0 判成未填写、让确定按钮永远禁用。
   require: (args: string = i18n.t("common.form.required")) => {
-    return (v: any) => !!v || args;
+    return (v: any) => v === 0 || !!v || args;
   },
   url: (args: string = i18n.t("common.form.invalidUrl")) => {
     return (v: any) => /^(https?):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;[\]]+[-A-Za-z0-9+&@#/%=~_|]$/.test(v) || args;
@@ -114,6 +116,14 @@ export const formatTimeAgo = (sourceDate: Date | number | string, options: forma
   const nowDate = new Date();
 
   const { weekOnly = false, spacer = " " } = options;
+
+  // F1（Info-I3）：未来时间（时钟偏差、站点返回的 joinTime/updateAt 在未来）会让下面所有
+  // `differenceIn*` 变成负数，落进最后的 `else` 分支显示「< 1 分钟前」——比显示真实日期更误导。
+  // 统一返回「-」，与 formatRatio / MyData 的「无数据」约定一致。
+  const sourceTimestamp = sourceDate instanceof Date ? sourceDate.getTime() : new Date(sourceDate).getTime();
+  if (!Number.isFinite(sourceTimestamp) || sourceTimestamp > nowDate.getTime()) {
+    return "-";
+  }
 
   if (weekOnly) {
     const weeks = differenceInWeeks(nowDate, sourceDate);
@@ -235,3 +245,29 @@ export const simplifyNumber = (num: number | string, spacer: string = ""): strin
   // 小于1000的数字直接返回
   return numValue.toFixed(2);
 };
+
+/**
+ * 动态替换值（来自页面 / 搜索框 / 站点定义）的最大长度，避免把整个标题塞进目录名。
+ *
+ * OUI-4：`$search:keyword$` / `$torrent.title$` 等值最终会被拼进下载器的保存路径 / 标签，
+ * 属于「页面内容 → 下载器路径」的注入面（Info8）。这里统一清洗**替换值**（不动模板本身，
+ * 模板里的 `/` 是用户自己配置的路径分隔符）：
+ * - 路径分隔符（`/`、`\`）与 `../`：可让保存路径逃出用户配置的目录（目录穿越）；
+ * - NUL 及其它控制字符：会截断路径 / 破坏下载器解析；
+ * - `<>:"|?*`：Windows 客户端（qBittorrent 等在 Windows 上）的非法文件名字符。
+ *
+ * 分隔符与非法字符替换为 `-`、控制字符替换为空格、连续点折叠为单个点、空白压缩、限长 200。
+ */
+export const DYNAMIC_REPLACE_VALUE_MAX_LENGTH = 200;
+
+export function sanitizeDynamicReplaceValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/[\u0000-\u001f\u007f]/g, " ") // NUL / 控制字符
+    .replace(/[\\/]+/g, "-") // 路径分隔符（含目录穿越所需的 `/`、`\`）
+    .replace(/\.{2,}/g, ".") // 连续点（`..` 是父目录）
+    .replace(/[<>:"|?*]/g, "-") // 跨平台非法文件名字符
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, DYNAMIC_REPLACE_VALUE_MAX_LENGTH);
+}

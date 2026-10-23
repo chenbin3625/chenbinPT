@@ -5,6 +5,7 @@
  */
 import type { ISiteMetadata, IUserInfo } from "../types.ts";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
+import { isDocumentNode } from "../schemas/AbstractBittorrentSite";
 import { parseSizeString, buildCategoryOptionsFromDict } from "../utils.ts";
 import { selectElements } from "../utils/selector";
 
@@ -99,7 +100,7 @@ const categoryMap: Record<number, string> = {
   100: "ESport",
   6: "European Soccer",
   101: "EuroCup",
-  102: "Ultimate Diskk",
+  102: "Ultimate Disk",
   104: "WinterOlympicGames",
   52: "Field Hockey",
   103: "Basketball Champions",
@@ -107,9 +108,12 @@ const categoryMap: Record<number, string> = {
   57: "NRL",
 };
 
+// L-5：XBTIT 对无数据列常输出 `-` / `N/A` / 空白，`Number(...)` 会得到 NaN 并写进 completed
+// （下游比较/排序出现 NaN）。非有限值统一回落 0。
 const statsFilter = (query?: string) => {
   if (!query || query.startsWith("--")) return 0;
-  return Number(query);
+  const value = Number(query);
+  return Number.isFinite(value) ? value : 0;
 };
 
 export const siteMetadata: ISiteMetadata = {
@@ -122,7 +126,9 @@ export const siteMetadata: ISiteMetadata = {
   timezoneOffset: "+0300",
 
   type: "private",
-  schema: "XBTIT",
+  // Info-46 / L-3：schemas/ 下没有 XBTIT 引擎，实际基类是本文件导出的 default class（extends PrivateSite）。
+  // schema 写真实基类名，避免「误删 default class 后静默回落裸 AbstractPrivateSite」且无类型错误。
+  schema: "AbstractPrivateSite",
 
   urls: ["uggcf://fcbegfphyg.bet/"],
 
@@ -307,7 +313,7 @@ export default class SportsCult extends PrivateSite {
     flushUserInfo: Partial<IUserInfo>,
     dataDocument: any,
   ): Promise<Partial<IUserInfo>> {
-    if (!(dataDocument instanceof Document)) return flushUserInfo;
+    if (!isDocumentNode(dataDocument)) return flushUserInfo;
 
     const seedingTrs = selectElements("#mcol div.b-content table.lista:eq(2) tbody tr:gt(1)", dataDocument);
     const seedingNum = seedingTrs.length;

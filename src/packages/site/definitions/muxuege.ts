@@ -100,6 +100,8 @@ export const siteMetadata: ISiteMetadata = {
         { value: 12, name: "TPTV" },
         { value: 13, name: "Mweb" },
       ],
+      // L1：与同文件 cat/medium/codec/standard 一致（NexusPHP 只认 team<id>=1，且无 cross 时无法多选）
+      cross: { mode: "append" },
     },
     CategoryIncldead,
     CategorySpstate,

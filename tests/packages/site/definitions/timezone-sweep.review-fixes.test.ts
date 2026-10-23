@@ -12,14 +12,17 @@
  * - 第四波补齐第二波漏掉的四个站点：anthelion / brokenstones（匿名 filter 里叠宿主偏移）、
  *   hdspace（宿主日历构造 Today/Yesterday）、pussytorrents（`new Date(...)` 直接解析）。
  *
- * 断言取的都是「与宿主时区无关的绝对时间戳」（用 `Date.parse` 带显式偏移计算期望值），
- * 因此在本机 +0800 与 CI 的其它时区下结果一致；站点声明的偏移（+1200 / -0500 / +0000）
- * 与宿主不同，旧实现按宿主解析会得到另一个值，所以这些用例在改动被还原时会变红。
- * 注意：站点声明 +0000 时，旧实现在 `TZ=UTC` 下会「碰巧」得到正确值，区分力来自
- * `TZ=Asia/Shanghai` / `TZ=America/New_York` 两次运行；覆盖 `timezoneOffset` 的用例
- * （-0500）在三种时区下都有区分力。
+ * 断言取的都是「与宿主时区无关的绝对时间戳」（用 `Date.parse` 带显式偏移计算期望值）。
+ *
+ * H-L2：原文件头声称「区分力来自两次 TZ 运行」，但代码里从未设置 TZ —— 站点声明 +0000 的用例
+ * 在 UTC 机器上会「碰巧」通过、+0800 的用例在 +0800 开发机上会「碰巧」通过，回归网随宿主机漂移。
+ * 现在**每条时间用例都在 UTC / Asia/Shanghai / America/New_York 三种宿主下各跑一次**
+ * （`tests/helpers/timezoneMatrix.ts`，运行期切换 `process.env.TZ`）；失败信息带 `[TZ=...]`，
+ * 把「按宿主时区解析」的实现回退进去时至少有一种宿主会立刻变红。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { TIMEZONE_MATRIX, itAcrossTimezones } from "../../../helpers/timezoneMatrix.ts";
 
 // 站点定义会连带引入 @ptd/site 的运行时依赖（messages.ts 用到 __BROWSER__ 与 chrome API），
 // 这里给出最小桩（与 defs-2a.review-fixes.test.ts 一致），避免为纯配置断言去跑整个扩展环境。
@@ -55,8 +58,25 @@ async function makeProbe(metadata: any, timezoneOffset?: string) {
   return new Probe({ ...metadata, ...(timezoneOffset ? { timezoneOffset } : {}) });
 }
 
+describe("时区矩阵自证（H-L2）", () => {
+  const expectedOffsetByTimezone: Record<string, number> = {
+    UTC: 0,
+    "Asia/Shanghai": -480,
+    "America/New_York": 300,
+  };
+
+  itAcrossTimezones("本用例确实跑在声明的宿主时区下", (timezone) => {
+    // 矩阵未生效（例如 helper 被改成空操作）时，这一条会立刻变红，
+    // 从而避免「所有时间用例看起来都过了，其实只在开发机的 +0800 上跑过」。
+    expect(process.env.TZ).toBe(timezone);
+    expect(new Date("2024-01-02T12:00:00Z").getTimezoneOffset()).toBe(expectedOffsetByTimezone[timezone]);
+    // 矩阵里必须既有正偏移也有负偏移/零偏移，否则区分力不足
+    expect(new Set(TIMEZONE_MATRIX).size).toBe(TIMEZONE_MATRIX.length);
+  });
+});
+
 describe("DEFS3-3 带空白的显式时区偏移", () => {
-  it("parseTimeWithZone 把 `HH:mm +0800` 当绝对时间，不再叠加偏移", async () => {
+  itAcrossTimezones("parseTimeWithZone 把 `HH:mm +0800` 当绝对时间，不再叠加偏移", async () => {
     const { parseTimeWithZone } = await import("@ptd/site/utils/datetime.ts");
     const absolute = Date.parse("2024-03-10T10:41:00+08:00");
 
@@ -65,18 +85,21 @@ describe("DEFS3-3 带空白的显式时区偏移", () => {
     expect(parseTimeWithZone("2024-03-10 10:41 +0800", "+0000")).not.toBe(Date.parse("2024-03-10T10:41:00Z"));
   });
 
-  it("parseValidTimeStringInZone：字符串自带偏移时，站点 timezoneOffset 不再影响结果（跨时区断言）", async () => {
-    const { parseValidTimeStringInZone } = await import("@ptd/site/utils/datetime.ts");
-    const absolute = Date.parse("2024-03-10T10:41:00+08:00");
+  itAcrossTimezones(
+    "parseValidTimeStringInZone：字符串自带偏移时，站点 timezoneOffset 不再影响结果（跨时区断言）",
+    async () => {
+      const { parseValidTimeStringInZone } = await import("@ptd/site/utils/datetime.ts");
+      const absolute = Date.parse("2024-03-10T10:41:00+08:00");
 
-    for (const offset of ["+0800", "-0500", "+1400"] as const) {
-      expect(parseValidTimeStringInZone("2024-03-10 10:41 +0800", [], offset)).toBe(absolute);
-    }
-  });
+      for (const offset of ["+0800", "-0500", "+1400"] as const) {
+        expect(parseValidTimeStringInZone("2024-03-10 10:41 +0800", [], offset)).toBe(absolute);
+      }
+    },
+  );
 });
 
 describe("retrotoon 列表时间（站点 +1200）", () => {
-  it("elementProcess 只归一化文本，具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("elementProcess 只归一化文本，具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/retrotoon.ts");
     const timeQuery = (siteMetadata.search!.selectors as any).time;
 
@@ -93,7 +116,7 @@ describe("retrotoon 列表时间（站点 +1200）", () => {
 });
 
 describe("retroflix 列表时间（站点 +0000）", () => {
-  it("elementProcess 原样返回 title，具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("elementProcess 原样返回 title，具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/retroflix.ts");
     const timeQuery = (siteMetadata.search!.selectors as any).time;
 
@@ -110,7 +133,7 @@ describe("retroflix 列表时间（站点 +0000）", () => {
 });
 
 describe("karagarga 列表时间（站点 +0000）", () => {
-  it("`d MMM yy` 先归一化，再交给具名 parseTime", async () => {
+  itAcrossTimezones("`d MMM yy` 先归一化，再交给具名 parseTime", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/karagarga.ts");
     const timeQuery = (siteMetadata.search!.selectors as any).time;
 
@@ -123,7 +146,7 @@ describe("karagarga 列表时间（站点 +0000）", () => {
 });
 
 describe("filelist 列表时间（站点 +0000）", () => {
-  it("`HH:mm:ss DD/MM/YYYY` 归一化后由具名 parseTime 换算", async () => {
+  itAcrossTimezones("`HH:mm:ss DD/MM/YYYY` 归一化后由具名 parseTime 换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/filelist.ts");
     const filters = (siteMetadata.search!.selectors as any).time.filters as any[];
 
@@ -137,7 +160,7 @@ describe("filelist 列表时间（站点 +0000）", () => {
 });
 
 describe("yuscene 用户时间（Unit3D，站点 +0000）", () => {
-  it("elementProcess 原样返回，具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("elementProcess 原样返回，具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/yuscene.ts");
     const joinTime = (siteMetadata.userInfo!.selectors as any).joinTime;
 
@@ -154,7 +177,7 @@ describe("yuscene 用户时间（Unit3D，站点 +0000）", () => {
 });
 
 describe("btetree 列表时间（类方法，站点 -0500）", () => {
-  it("parseTorrentRowForTime 用站点时区解析 MM/dd HH:mm（年份由 id 查表补全）", async () => {
+  itAcrossTimezones("parseTorrentRowForTime 用站点时区解析 MM/dd HH:mm（年份由 id 查表补全）", async () => {
     const { default: BtEtree, siteMetadata } = await import("@ptd/site/definitions/btetree.ts");
 
     class Probe extends BtEtree {
@@ -176,7 +199,7 @@ describe("btetree 列表时间（类方法，站点 -0500）", () => {
 });
 
 describe("exttorrents 列表时间（站点 +0800）", () => {
-  it("相对时间仍走 parseTimeToLiveToDate，且后续具名 parseTime 不破坏数值", async () => {
+  itAcrossTimezones("相对时间仍走 parseTimeToLiveToDate，且后续具名 parseTime 不破坏数值", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/exttorrents.ts");
     const timeQuery = (siteMetadata.search!.selectors as any).time;
 
@@ -190,7 +213,7 @@ describe("exttorrents 列表时间（站点 +0800）", () => {
     expect(probe.run(relative, timeQuery.filters)).toBe(relative);
   });
 
-  it("绝对时间分支只返回 title 原文，解析交给具名 parseTime（args 传站点格式）", async () => {
+  itAcrossTimezones("绝对时间分支只返回 title 原文，解析交给具名 parseTime（args 传站点格式）", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/exttorrents.ts");
     const timeQuery = (siteMetadata.search!.selectors as any).time;
 
@@ -207,7 +230,7 @@ describe("exttorrents 列表时间（站点 +0800）", () => {
 });
 
 describe("audiences 用户时间（NexusPHP，站点 +0800）", () => {
-  it("joinTime / lastAccessAt 归一化后由具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("joinTime / lastAccessAt 归一化后由具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/audiences.ts");
     const selectors = siteMetadata.userInfo!.selectors as any;
 
@@ -232,7 +255,7 @@ describe("audiences 用户时间（NexusPHP，站点 +0800）", () => {
 });
 
 describe("hhanclub 用户时间（NexusPHP，站点 +0800）", () => {
-  it("joinTime / lastAccessAt 归一化后由具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("joinTime / lastAccessAt 归一化后由具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/hhanclub.ts");
     const selectors = siteMetadata.userInfo!.selectors as any;
 
@@ -249,7 +272,7 @@ describe("hhanclub 用户时间（NexusPHP，站点 +0800）", () => {
 });
 
 describe("passthepopcorn 用户时间（Gazelle，站点 +0000）", () => {
-  it("joinTime 的 elementProcess 原样返回，具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("joinTime 的 elementProcess 原样返回，具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/passthepopcorn.ts");
     const joinTime = (siteMetadata.userInfo!.selectors as any).joinTime;
 
@@ -265,20 +288,24 @@ describe("passthepopcorn 用户时间（Gazelle，站点 +0000）", () => {
 });
 
 describe("aidoruonline 列表时间（站点运行期默认 +0000）", () => {
-  it("具名 parseTime 带站点格式串，按 metadata.timezoneOffset 换算", async () => {
+  itAcrossTimezones("具名 parseTime 带站点格式串，按 metadata.timezoneOffset 换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/aidoruonline.ts");
     const timeQuery = (siteMetadata.search!.selectors as any).time;
 
     expect(timeQuery.filters).toEqual([{ name: "parseTime", args: ["MMddyy HH:mm:ss"] }]);
+    // 该站自己没声明 timezoneOffset（H-L5）：不再手写 "+0000" 复刻 index.ts 的默认注入，
+    // 而是用真实装配函数取元数据；默认值被改掉时这条会跟着红。
+    const { getDefinedSiteMetadata } = await import("@ptd/site/index.ts");
+    const assembled = await getDefinedSiteMetadata("aidoruonline");
+    expect(assembled.timezoneOffset).toBe("+0000");
 
-    // 该站未在 metadata 里声明 timezoneOffset，运行期由 index.ts 补 +0000
-    const probe = await makeProbe(siteMetadata, "+0000");
+    const probe = await makeProbe(assembled);
     expect(probe.run("010224 03:04:05", timeQuery.filters)).toBe(Date.parse("2024-01-02T03:04:05Z"));
   });
 });
 
 describe("anthelion 列表时间（站点 +0000，相对时间）", () => {
-  it("span.time 的相对时间只走 parseTTL，不再叠加宿主 getTimezoneOffset", async () => {
+  itAcrossTimezones("span.time 的相对时间只走 parseTTL，不再叠加宿主 getTimezoneOffset", async () => {
     vi.useFakeTimers({ now: FIXED_NOW });
     const { siteMetadata } = await import("@ptd/site/definitions/anthelion.ts");
     const timeQuery = (siteMetadata.list![0].selectors as any).time;
@@ -308,7 +335,7 @@ describe("anthelion 详情页时间（站点 +0000）", () => {
     return { siteMetadata, timeQuery: (siteMetadata.list![1].selectors as any).time };
   };
 
-  it("有 title 的墙上时间由 parseWholeTorrentFromRow 按 metadata.timezoneOffset 换算", async () => {
+  itAcrossTimezones("有 title 的墙上时间由 parseWholeTorrentFromRow 按 metadata.timezoneOffset 换算", async () => {
     const { siteMetadata, timeQuery } = await loadTimeQuery();
     const row = detailRow(`<span class="time" title="2024-01-02 03:04:05"></span>`);
 
@@ -318,7 +345,7 @@ describe("anthelion 详情页时间（站点 +0000）", () => {
     expect(torrent.time).toBe(Date.parse("2024-01-02T03:04:05-05:00"));
   });
 
-  it("无 title 的相对时间保持 elementProcess 产出的绝对毫秒戳，不再被叠加宿主偏移", async () => {
+  itAcrossTimezones("无 title 的相对时间保持 elementProcess 产出的绝对毫秒戳，不再被叠加宿主偏移", async () => {
     vi.useFakeTimers({ now: FIXED_NOW });
     const { siteMetadata, timeQuery } = await loadTimeQuery();
     const row = detailRow(`<span class="time">3 hours ago</span>`);
@@ -331,7 +358,7 @@ describe("anthelion 详情页时间（站点 +0000）", () => {
 });
 
 describe("brokenstones 列表时间（站点 -0100，相对时间）", () => {
-  it("span.time 的相对时间只走 parseTTL，不再叠加宿主偏移与手工 -1h", async () => {
+  itAcrossTimezones("span.time 的相对时间只走 parseTTL，不再叠加宿主偏移与手工 -1h", async () => {
     vi.useFakeTimers({ now: FIXED_NOW });
     const { siteMetadata } = await import("@ptd/site/definitions/brokenstones.ts");
     const timeQuery = (siteMetadata.list![0].selectors as any).time;
@@ -349,7 +376,7 @@ describe("hdspace Today / Yesterday（站点 +0000）", () => {
     return { siteMetadata, timeQuery: (siteMetadata.search!.selectors as any).time };
   };
 
-  it("Today at 09:17:08 先归一化成墙上时间串，再按 metadata.timezoneOffset 换算", async () => {
+  itAcrossTimezones("Today at 09:17:08 先归一化成墙上时间串，再按 metadata.timezoneOffset 换算", async () => {
     vi.useFakeTimers({ now: FIXED_NOW });
     const { siteMetadata, timeQuery } = await loadTimeQuery();
     const chain = timeQuery.switchFilters["td:nth-child(5):contains('day')"];
@@ -359,7 +386,7 @@ describe("hdspace Today / Yesterday（站点 +0000）", () => {
     expect(probe.run("Today at 09:17:08", chain)).toBe(Date.parse("2024-01-02T09:17:08Z"));
   });
 
-  it("Yesterday at 17:11:03 取站点日历的前一天", async () => {
+  itAcrossTimezones("Yesterday at 17:11:03 取站点日历的前一天", async () => {
     vi.useFakeTimers({ now: FIXED_NOW });
     const { siteMetadata, timeQuery } = await loadTimeQuery();
     const chain = timeQuery.switchFilters["td:nth-child(5):contains('day')"];
@@ -370,7 +397,7 @@ describe("hdspace Today / Yesterday（站点 +0000）", () => {
     expect(probe.run("Yesterday at 17:11:03", chain)).toBe(Date.parse("2024-01-01T17:11:03-05:00"));
   });
 
-  it("userInfo 的 joinTime / lastAccessAt 的 day 分支走同一条链", async () => {
+  itAcrossTimezones("userInfo 的 joinTime / lastAccessAt 的 day 分支走同一条链", async () => {
     vi.useFakeTimers({ now: FIXED_NOW });
     const { siteMetadata } = await import("@ptd/site/definitions/hdspace.ts");
     const step = (siteMetadata.userInfo!.process as any[])[1];
@@ -389,7 +416,7 @@ describe("hdspace Today / Yesterday（站点 +0000）", () => {
 });
 
 describe("pussytorrents 用户加入时间（站点 +0000）", () => {
-  it("只去掉序数后缀，时区换算交给具名 parseTime（跨 TZ 断言绝对时间戳）", async () => {
+  itAcrossTimezones("只去掉序数后缀，时区换算交给具名 parseTime（跨 TZ 断言绝对时间戳）", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/pussytorrents.ts");
     const joinTime = (siteMetadata.userInfo!.selectors as any).joinTime;
 

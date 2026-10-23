@@ -189,6 +189,56 @@ for (const [locale, messages] of LOCALES) {
       }
     });
 
+    it("同一消息里没有重复的**位置**占位符（G7）", () => {
+      // G7：`successMsg` 曾写成 "Find {0} results in {0}s"，两个 `{0}` 都取第一个实参，
+      // 于是「用时」被显示成「结果数」。vue-i18n 不会为此报错，只能靠这条静态断言拦。
+      //
+      // task-12：只对**纯位置令牌**（`{0}`、`{1}`…）去重。具名占位符（`{name}`）在 vue-i18n 里
+      // 合法地允许在同一条消息中重复出现（如 `{name} … {name}`），不应被当成错误；
+      // 具名参数的一致性由上面「同一键的插值占位符集合一致（en/zh_CN）」那条用例覆盖。
+      const offenders: string[] = [];
+      for (const [key, value] of Object.entries(flat)) {
+        for (const message of messagePieces(value)) {
+          const positionalTokens = [...message.matchAll(/\{([^{}]+)\}/g)]
+            .map((match) => match[1].trim())
+            .filter((token) => /^\d+$/.test(token));
+          const seen = new Set<string>();
+          const duplicated = new Set<string>();
+          for (const token of positionalTokens) {
+            if (seen.has(token)) duplicated.add(token);
+            seen.add(token);
+          }
+          if (duplicated.size > 0) offenders.push(`${key}: {${[...duplicated]}}`);
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    it("列表插值按位置取值：successMsg 的两个实参都能落到文案里（G7）", () => {
+      const key = "SearchEntity.SearchStatusDialog.successMsg";
+      const text = runtime.global.t(key, [7, 3]);
+      expect(text).toContain("7");
+      // 修复前这里是 "Find 7 results in 7s"（第二个实参被丢弃）
+      expect(text).toContain("3");
+    });
+
+    it("没有 printf 风格 `%s`（chrome.i18n 只支持 $n 占位符）（G8）", () => {
+      // G8 的原判断把两层语义混在一起了：
+      // - `chrome.i18n.getMessage` 的插值占位符是 `$1..$9` / `$$`，`%s` 在 i18n 层确实不是占位符；
+      // - 但 `chrome.contextMenus.create({ contexts: ["selection"] })` 的 title 由 **contextMenus API**
+      //   渲染，`%s` 在这里是官方规定的「选中文本」回显（见 REVIEW-FINDINGS P1-6）。
+      // 因此 `manifest.contextMenuSearch` 是唯一允许出现 `%s` 的键（Lead 会恢复该文案），其它键仍禁止。
+      const PRINTF_SELECTION_TEXT_WHITELIST = new Set(["manifest.contextMenuSearch"]);
+      const offenders: string[] = [];
+      for (const [key, value] of Object.entries(flat)) {
+        if (PRINTF_SELECTION_TEXT_WHITELIST.has(key)) continue;
+        for (const message of messagePieces(value)) {
+          if (/%s/.test(message)) offenders.push(key);
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
+
     it("非复数消息里没有未转义的裸 `|`", () => {
       // EXTENDSI18N-2：裸 `|` 被当复数分隔符，t() 只返回第一段。
       // 仓库当前没有任何复数消息；将来真要用复数形式，请在这里显式加白名单。

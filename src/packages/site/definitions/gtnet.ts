@@ -11,7 +11,8 @@ export const siteMetadata: ISiteMetadata = {
   name: "Gay-Torrents.net",
   tags: ["成人"],
   type: "private",
-  timezoneOffset: "+0800",
+  // E2-22：Jackett 的 gay-torrents.yml 对日期显式追加 " +02:00 # EET"，站点时区应为 EET（UTC+2）
+  timezoneOffset: "+0200",
   urls: ["uggcf://jjj.tnl-gbeeragf.arg/"],
 
   search: {
@@ -201,19 +202,27 @@ export default class Gtnet extends PrivateSite {
     keywords?: string,
     searchEntry: ISearchEntryRequestConfig = {},
   ): Promise<ISearchResult> {
-    // 搜索前先获取 securitytoken
-    if (keywords) {
-      const token = await this.getSecurityToken();
-      if (token) {
-        // 将 token 注入到搜索配置中
-        if (!this.metadata.search!.requestConfig!.data) {
-          this.metadata.search!.requestConfig!.data = {};
-        }
-        (this.metadata.search!.requestConfig!.data as Record<string, string>).securitytoken = token;
+    // E2-21：vBulletin 的 search.php?do=process 无论是否带关键词都会校验 securitytoken，
+    // 原实现只在 keywords 为真时注入，空关键词浏览（仅按分类/状态筛选）会带空 token 被站点拒绝。
+    const token = await this.getSecurityToken();
+    if (token) {
+      // 将 token 注入到搜索配置中
+      if (!this.metadata.search!.requestConfig!.data) {
+        this.metadata.search!.requestConfig!.data = {};
       }
+      (this.metadata.search!.requestConfig!.data as Record<string, string>).securitytoken = token;
     }
 
-    return super.getSearchResult(keywords, searchEntry);
+    const searchResult = await super.getSearchResult(keywords, searchEntry);
+
+    if (!token) {
+      // 取不到 token 时保留空 token 让站点自行判定，但把原因透出到搜索状态里，避免「无结果」误导
+      searchResult.statusMsg = [searchResult.statusMsg, "未能获取 securitytoken，搜索结果可能被站点拒绝"]
+        .filter(Boolean)
+        .join("；");
+    }
+
+    return searchResult;
   }
 
   public override async getTorrentDownloadRequestConfig(torrent: ITorrent): Promise<AxiosRequestConfig> {

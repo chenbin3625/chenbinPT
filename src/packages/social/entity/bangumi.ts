@@ -1,7 +1,7 @@
 import axios from "axios";
 import { uniq } from "es-toolkit";
 
-import { commonParseFactory } from "../utils";
+import { commonParseFactory, normalizeSocialPosterUrl } from "../utils";
 import {
   IFetchSocialSiteInformationConfig,
   IPtgenApiResponse,
@@ -16,7 +16,7 @@ import { name as EXT_NAME, version as EXT_VERSION } from "~/../package.json";
 
 setupReplaceUnsafeHeader(axios);
 
-const bgmUrlPattern = /^(?:https?:\/\/)?(?:bgm\.tv|bangumi\.tv|chii\.in)\/subject\/(\d+)\/?/;
+const bgmUrlPattern = /^(?:https?:\/\/)?(?:[\w-]+\.)?(?:bgm\.tv|bangumi\.tv|chii\.in)\/subject\/(\d+)\/?/;
 
 export function build(id: string): string {
   return `https://bgm.tv/subject/${id}`;
@@ -53,7 +53,7 @@ export const pageParserMatches: TSupportSocialSitePageParserMatches = [
     },
   ],
   [
-    /^(?:https?:\/\/)?(?:bgm\.tv|bangumi\.tv|chii\.in)\/anime\/(browser|list\/.+?\/(wish|collect|do|on_hold|dropped)|tag\/)/,
+    /^(?:https?:\/\/)?(?:[\w-]+\.)?(?:bgm\.tv|bangumi\.tv|chii\.in)\/anime\/(browser|list\/.+?\/(wish|collect|do|on_hold|dropped)|tag\/)/,
     (doc: Document): ISocialSitePageInformation[] => {
       const parseShortUrl = commonParseFactory([/\/subject\/(\d+)\/?/]);
 
@@ -95,7 +95,7 @@ export function transformPtGen(data: IBangumiPtGen): ISocialInformation {
     site: "bangumi",
     id: String(data.sid),
     title: [data.name_cn ?? "", data.name ?? ""].filter(Boolean).join(" / "),
-    poster: data.cover ?? "",
+    poster: normalizeSocialPosterUrl(data.cover) ?? "",
     ratingScore: data?.rating?.score ?? 0,
     ratingCount: data?.rating?.total ?? 0,
     createAt: +Date.now(),
@@ -169,7 +169,7 @@ export async function fetchInformation(
       .filter(Boolean)
       .join(" / ");
 
-    resDict.poster = data.images?.large ?? data.images?.common ?? data.images?.medium ?? "";
+    resDict.poster = normalizeSocialPosterUrl(data.images?.large ?? data.images?.common ?? data.images?.medium) ?? "";
     resDict.ratingScore = data.ranking?.score ?? 0;
     resDict.ratingCount = data.ranking?.total ?? 0;
   } catch (error) {

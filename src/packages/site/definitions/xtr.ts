@@ -25,6 +25,9 @@ export const siteMetadata: ISiteMetadata = {
     {
       name: "排序",
       key: "sort",
+      // L-36：这两组是排序而非筛选，出现在「搜索分类」面板里容易被误认为分类条件；
+      // 保留配置（有用户依赖记忆偏好），用 notes 明确语义。
+      notes: "非筛选条件，仅控制结果排序",
       options: [
         { name: "按 ID", value: "id" },
         { name: "按标题", value: "title" },
@@ -35,6 +38,7 @@ export const siteMetadata: ISiteMetadata = {
     {
       name: "排序方向",
       key: "order",
+      notes: "非筛选条件，仅控制排序方向",
       options: [
         { name: "降序", value: "desc" },
         { name: "升序", value: "asc" },
@@ -74,7 +78,7 @@ export const siteMetadata: ISiteMetadata = {
       time: {
         selector: "td:nth-child(9)",
         filters: [
-          (value: string) => value.replace(/(\d{2}).(\d{2}).(\d{4})/, "$3-$2-$1"),
+          (value: string) => value.replace(/(\d{2})\.(\d{2})\.(\d{4})/, "$3-$2-$1"),
           { name: "parseTime", args: ["yyyy-MM-dd HH:mm:ss"] },
         ],
       },
@@ -131,6 +135,8 @@ export const siteMetadata: ISiteMetadata = {
   levelRequirements: [
     { id: 1, name: "User" },
     { id: 2, name: "Power User" },
-    { id: 3, name: "VIP" },
+    // Info-40：VIP 属非 user 组，按 types/userinfo.ts 的 MinNonUserLevelId=100 约定从 100 起，
+    // 否则 guessUserLevelId 的名称匹配会把它当成第 3 级普通用户。
+    { id: 100, name: "VIP", groupType: "vip" },
   ],
 };

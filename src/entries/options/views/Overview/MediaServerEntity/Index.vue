@@ -10,7 +10,7 @@ import {
   SelectOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons-vue";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { useIntersectionObserver, useThrottleFn } from "@vueuse/core";
@@ -26,7 +26,7 @@ import PageSkeleton from "@/options/components/PageSkeleton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import ItemInformationDialog from "./ItemInformationDialog.vue";
 
-import { doSearch, searchMediaServerIds } from "./utils.ts";
+import { doSearch, resetSearchingStateIfIdle, searchMediaServerIds } from "./utils.ts";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -77,11 +77,19 @@ watch(
   },
 );
 
-const hasMore = computed<boolean>(() =>
-  isEmpty(runtimeStore.mediaServerSearch.searchStatus)
-    ? true
-    : Object.values(runtimeStore.mediaServerSearch.searchStatus).some((x) => x?.canLoadMore ?? true),
-);
+/**
+ * N16：只统计「当前勾选且启用」的服务器状态。
+ *
+ * 原实现统计 `searchStatus` 里的全部条目：取消勾选某台服务器后，它的旧状态仍让
+ * `hasMore` 为 true →「加载更多」可点，但只会搜当前勾选项，点完没有新增。
+ */
+const hasMore = computed<boolean>(() => {
+  const searchableIds = searchMediaServerIds.value.filter((id) => enabledMediaServerIds.value.includes(id));
+  if (searchableIds.length === 0) return false;
+  const status = runtimeStore.mediaServerSearch.searchStatus;
+  if (isEmpty(status)) return true;
+  return searchableIds.some((id) => status[id]?.canLoadMore ?? true);
+});
 
 function showItemInformation(item: IMediaServerItem) {
   showItem.value = item;
@@ -105,7 +113,9 @@ const onScroll = useThrottleFn((event: Event) => {
     hasMore.value
   ) {
     isFetchingMore.value = true;
-    doSearch({ searchKey: search.value, loadMore: true });
+    // N15：「加载更多」必须沿用当前结果对应的搜索词（store 里的 searchKey），
+    // 否则用户改了输入框但没回车时，滚动会带着新词重新搜第一页（清空已看的结果、位置丢失）。
+    doSearch({ searchKey: runtimeStore.mediaServerSearch.searchKey, loadMore: true, userInitiated: true });
     setTimeout(() => {
       isFetchingMore.value = false;
     }, 100);
@@ -122,11 +132,20 @@ function updateSearchMediaServerId(id: string, checked: boolean) {
     : searchMediaServerIds.value.filter((x) => x !== id);
 }
 
+let mounted = false;
 onMounted(async () => {
+  mounted = true;
+  await metadataStore.$onReady();
+  if (!mounted) return;
+  // N1：恢复出来的 isSearching 可能没有对应的在途队列（PQueue 是内存对象），先做一次收尾
+  resetSearchingStateIfIdle();
   if (configStore.mediaServerEntity.autoSearchWhenMount && runtimeStore.mediaServerSearch.searchResult.length === 0) {
     // noinspection ES6MissingAwait
     doSearch({ searchKey: search.value });
   }
+});
+onUnmounted(() => {
+  mounted = false;
 });
 </script>
 
@@ -139,7 +158,7 @@ onMounted(async () => {
           v-model:value="search"
           :placeholder="t('MediaServerEntity.searchPlaceholder')"
           allow-clear
-          @keyup.enter="() => doSearch({ searchKey: search })"
+          @keyup.enter="() => doSearch({ searchKey: search, userInitiated: true })"
         >
           <template #prefix>
             <a-popover placement="bottom" trigger="click">
@@ -273,7 +292,10 @@ onMounted(async () => {
           <a-button
             :disabled="!hasMore"
             :loading="runtimeStore.mediaServerSearch.isSearching"
-            @click="() => doSearch({ searchKey: search, loadMore: true })"
+            @click="
+              () =>
+                doSearch({ searchKey: runtimeStore.mediaServerSearch.searchKey, loadMore: true, userInitiated: true })
+            "
           >
             {{ t("MediaServerEntity.loadMore") }}
           </a-button>

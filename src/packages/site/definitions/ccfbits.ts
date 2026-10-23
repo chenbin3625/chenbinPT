@@ -11,7 +11,8 @@ export const siteMetadata: ISiteMetadata = {
   collaborator: ["Rhilip"],
 
   type: "private",
-  schema: "TBSource",
+  // E2-25：`schemas/` 里已没有 TBSource 实现，index.ts 会按 type 回落 AbstractPrivateSite；
+  // 保留一个不存在的 schema 名只会误导静态检查与后续维护者，这里去掉（历史引擎见文件头 PTPP 链接）。
 
   urls: ["https://ccfbits.org/"],
 

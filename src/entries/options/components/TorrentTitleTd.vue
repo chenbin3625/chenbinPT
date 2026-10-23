@@ -16,10 +16,20 @@ const {
   item,
   showSocial = true,
   maxWidth,
+  tagFilterable = false,
+  activeTagNames = [],
 } = defineProps<{
   item: Partial<ITorrent>;
   showSocial?: boolean;
   maxWidth?: string | number;
+  /** 标签是否可点击筛选（仅搜索结果页由父组件开启；默认 false 保持纯展示） */
+  tagFilterable?: boolean;
+  /** 当前已激活的标签筛选名（用于高亮与 aria-pressed） */
+  activeTagNames?: string[];
+}>();
+
+const emit = defineEmits<{
+  (e: "filter-tag", tagName: string): void;
 }>();
 
 const { t } = useI18n();
@@ -68,6 +78,34 @@ const hasMoreTags = computed(
 
 const hiddenTagCount = computed(() => visibleTags.value.length - maxTagCount.value);
 
+/**
+ * 标签「点击筛选」的绑定项。
+ *
+ * tagFilterable 为 false（默认）时返回空对象：DownloadHistory、content-script 等复用点里的标签
+ * 保持纯展示，不会多出 class / role / tabindex / title，更不会挂上事件监听。
+ * 用 v-bind 的对象写法而不是 `@click` + 内部判断，正是为了在关闭时连监听都不挂。
+ */
+function tagFilterBindings(tagName: string) {
+  if (!tagFilterable) return {};
+
+  const filtered = activeTagNames.includes(tagName);
+  return {
+    class: ["ptd-torrent-tag--filterable", ...(filtered ? ["ptd-torrent-tag--filtered"] : [])],
+    role: "button",
+    tabindex: 0,
+    "aria-pressed": filtered,
+    title: t(filtered ? "SearchEntity.index.tagFilterActiveHint" : "SearchEntity.index.tagFilterHint", [tagName]),
+    onClick: () => emit("filter-tag", tagName),
+    onKeydown: (event: KeyboardEvent) => {
+      // 键盘可操作性：Enter / Space 与鼠标点击等价（阻止 Space 的滚动默认行为）
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        emit("filter-tag", tagName);
+      }
+    },
+  };
+}
+
 function loadSocialInformation(site: TSupportSocialSite) {
   const current = socialInformation[site];
 
@@ -87,12 +125,14 @@ function loadSocialInformation(site: TSupportSocialSite) {
 }
 
 function doAdvanceSearch(site: TSupportSocialSite, sid: string) {
-  const toRoute = { name: "SearchEntity", query: { search: `${site}|${sid}`, flush: 1 } };
+  // D2-Medium-02 孪生：同一个标题连点两次「搜索同名」时，query 完全相同会被 vue-router
+  // 判成重复导航、`SearchEntity` 的 watch 不触发；加 nonce 保证每次点击都是一次新导航。
+  const toRoute = { name: "SearchEntity", query: { search: `${site}|${sid}`, flush: 1, t: Date.now() } };
 
   if (configStore.searchEntifyControl.socialInformationSearchOnNewTab) {
     window.open(router.resolve(toRoute).href, "_blank");
   } else {
-    router.push(toRoute);
+    void router.push(toRoute);
   }
 }
 
@@ -254,6 +294,7 @@ function canAdvanceSearch(site: TSupportSocialSite) {
           <a-tag
             v-for="tag in displayedTags"
             :key="tag.name"
+            v-bind="tagFilterBindings(tag.name)"
             :color="resolveColor(tag.color) ?? 'default'"
             style="margin-right: 4px"
           >

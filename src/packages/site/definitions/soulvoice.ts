@@ -139,7 +139,9 @@ export const siteMetadata: ISiteMetadata = {
         { value: 2, name: "小说文学" },
         { value: 1, name: "历史传记" },
       ],
-      cross: { mode: "brackets" },
+      // E5-11：与其他 NexusPHP 标准组保持一致用 append（→ processing13=1）。
+      // brackets 会发出 `processing[]=13`，NexusPHP 侧按标量读取 $_GET['processing'] 时筛选会静默失效。
+      cross: { mode: "append" },
     },
   ],
 

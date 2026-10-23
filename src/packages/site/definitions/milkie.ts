@@ -54,7 +54,11 @@ export const siteMetadata: ISiteMetadata = {
       id: { selector: "id" },
       title: { selector: "releaseName" },
       url: { selector: "id", filters: [{ name: "prepend", args: ["/browse/"] }] },
-      category: { selector: "category", filters: [(catId: number) => categoryMap[catId]] },
+      // L5 同型：categoryMap 只登记 1~7，站点新增分类时原写法返回 undefined（分类列变空且无告警）
+      category: {
+        selector: "category",
+        filters: [(catId: number) => categoryMap[catId] ?? (catId ? String(catId) : undefined)],
+      },
       time: {
         selector: "createdAt",
         filters: [{ name: "split", args: ["+", 0] }],
@@ -108,7 +112,10 @@ export const siteMetadata: ISiteMetadata = {
           uploaded: { selector: "user.uploaded" },
           downloaded: { selector: "user.downloaded" },
           joinTime: { selector: "user.createdAt", filters: [{ name: "parseTime" }] },
-          levelName: { text: "Early bird" },
+          // L3：原先用常量 `levelName: { text: "Early bird" }` 占位，导致所有账号（含新注册用户）
+          // 都显示 Early bird，且常量不参与 hasFieldMatch 命中统计、也无法被 guessUserLevelId 修正。
+          // /api/v1/auth 不返回等级，本站也没有 levelRequirements，因此这里不再声明 levelName
+          // （类型允许缺省，UI 会隐藏等级行）；待确认站点等级字段后再补真实 selector。
         },
       },
     ],
@@ -129,8 +136,9 @@ export default class Milkie extends PrivateSite {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
-    // 设置默认的 responseType，这样其他配置不需要显式声明
-    axiosConfig.responseType = "json";
+    // L4：只填默认值，不覆盖调用方显式声明的 responseType（详情页/下载校验这类需要 document/blob 的路径
+    // 会静默拿到无法解析的 JSON）。本站搜索/用户信息请求本身都已显式声明 responseType。
+    axiosConfig.responseType ??= "json";
 
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {
@@ -142,7 +150,21 @@ export default class Milkie extends PrivateSite {
   }
 
   protected parseTorrentRowForLink(torrent: Partial<ITorrent>): Partial<ITorrent> {
-    torrent.link = `/api/v1/torrents/${torrent.id}/torrent?key=${encodeURIComponent(this.userConfig.inputSetting?.token ?? "")}`;
+    // M3：不要预生成带 API token 的链接。torrent.link 会被写入搜索结果缓存/历史（IndexedDB）、
+    // 出现在「复制下载链接」并随搜索结果导出/分享 —— 把与 x-milkie-auth 同一把 key 拼进 link
+    // 等于把整站 API 凭据复制到所有派生物。token 改为只在真正发请求的配置里注入（见下方覆写）。
+    torrent.link = `/api/v1/torrents/${torrent.id}/torrent`;
     return torrent;
+  }
+
+  public override async getTorrentDownloadRequestConfig(torrent: ITorrent): Promise<AxiosRequestConfig> {
+    const config = await super.getTorrentDownloadRequestConfig(torrent);
+    // M3：下载请求由 downloader 侧的 getRemoteTorrentFile 直接发出，不经过本站 request()，
+    // 因此这里显式带上 key 查询参数（与旧行为等价，只是不再写进 torrent.link）。
+    config.params = {
+      ...(config.params ?? {}),
+      key: this.userConfig.inputSetting?.token ?? "",
+    };
+    return config;
   }
 }

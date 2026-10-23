@@ -19,6 +19,19 @@ const APP_CHUNK_PATH = "assets/cs-app.js";
 /** chunk 首次加载失败后的重试间隔（毫秒） */
 const APP_CHUNK_RETRY_DELAY = 300;
 
+/**
+ * 交给 offscreen 做社交站点匹配的 URL：只取 `origin + pathname`。
+ * 完整 `location.href` 可能带 `passkey` / 一次性 token 等查询参数，而匹配逻辑本身只用 origin+pathname
+ * （见 `@ptd/social` 的 matchSocialPageUrl），减少凭据在跨上下文消息链路里的暴露面。
+ */
+function getSocialMatchUrl(): string {
+  try {
+    return `${window.location.origin}${window.location.pathname}`;
+  } catch {
+    return window.location.href;
+  }
+}
+
 async function loadApp(props: Parameters<(typeof import("./app/init.ts"))["mountApp"]>[1]) {
   // 运行时从扩展包内加载多页构建产出的 ESM 入口（assets/cs-app.js，固定文件名），
   // @vite-ignore 阻止本入口（IIFE 单文件构建）将 app 静态打进引导
@@ -60,7 +73,11 @@ sendMessage("getExtStoragePath", {
 
     if (contentScript.enabled ?? true) {
       if (contentScript.enabledAtSocialSite ?? true) {
-        const socialSite = await sendMessage("matchSocialPage", window.location.href);
+        // B2-3：社交站点匹配是可选的旁路（消息会先唤醒/创建 offscreen 文档），它的失败
+        // （offscreen 创建失败、被回收、端口断开…）不得阻断后续的 PT 站点识别与挂载。
+        // 失败按「不是社交站点」降级；这里刻意不新增 console 调用 —— 引导包是每次页面加载都要执行
+        // 的轻量入口（console 基线由 eslint-suppressions 固定），且该失败不影响用户功能。
+        const socialSite = await sendMessage("matchSocialPage", getSocialMatchUrl()).catch(() => null);
         if (socialSite) {
           console.debug(`[PTD] Social site detected: ${socialSite}, loading app...`);
           await loadApp({ socialSite, ...(await getContentScriptBootstrapData()) });

@@ -235,16 +235,19 @@ export const siteMetadata: ISiteMetadata = {
         requestConfig: { url: "/plugin.php", params: { id: "dz_seed:mybonus" }, responseType: "document" },
         fields: ["bonusPerHour", "seedingBonusPerHour"],
         selectors: {
-          // mybonus 表 tr.my 行：第9列 td.hl = 每小时积分（基础积分+B），第11列 td.hl = 每小时魔力
+          // M-28：`:first-of-type` / `:last-of-type` 是「所有同类型兄弟节点（全部 td）」中的首/末个，
+          // 不是「所有 td.hl 中的首/末个」。若该行是注释所说的 9~11 列结构，
+          // `td.hl:first-of-type` 只有当第 1 列恰好带 hl 类时才命中（实际恒不命中），
+          // `td.hl:last-of-type` 只有当最后一个 td 带 hl 时才命中，且两个字段还被赋成了相反的一端。
+          // 按文件内已记录的列号改为显式 nth-child（第 9 列 = 每小时积分，第 11 列 = 每小时魔力）。
+          // 同时去掉 `text: 0` 兜底：未命中时宁可留空，也不要把 0 当成真实时魔展示。
           bonusPerHour: {
-            selector: ["table.dz-mb-table tbody tr.my td.hl:last-of-type"],
+            selector: ["table.dz-mb-table tbody tr.my td.hl:nth-child(9)"],
             filters: [{ name: "parseNumber" }],
-            text: 0,
           },
           seedingBonusPerHour: {
-            selector: ["table.dz-mb-table tbody tr.my td.hl:first-of-type"],
+            selector: ["table.dz-mb-table tbody tr.my td.hl:nth-child(11)"],
             filters: [{ name: "parseNumber" }],
-            text: 0,
           },
         },
       },

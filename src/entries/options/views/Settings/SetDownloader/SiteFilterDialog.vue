@@ -2,6 +2,7 @@
 import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons-vue";
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { cloneDeep } from "es-toolkit";
 
 import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -40,10 +41,26 @@ const allSiteIds = computed(() => addedSites.value.map((s) => s.id));
 
 function onEnter() {
   if (clientId) {
-    clientConfig.value = { excludedSites: [], ...metadataStore.downloaders[clientId] };
-    excludedSites.value = [...(clientConfig.value.excludedSites ?? [])];
+    clientConfig.value = cloneDeep({ excludedSites: [], ...metadataStore.downloaders[clientId] });
+    // F2-Low-09 / Medium-06：其它上下文可能已删除站点，先把这类「幽灵 id」清掉，
+    // 否则它们既不出现在列表里，也无法被用户取消（保存时会一直带着）。
+    excludedSites.value = (clientConfig.value.excludedSites ?? []).filter((siteId) => !!metadataStore.sites[siteId]);
   }
 }
+
+/**
+ * F2-Low-09：`allowExceptionSites` 生效时列表会隐藏 `allowContentScript === false` 的站点。
+ * CheckSwitchButton 的「全选 / 全不选 / 反选」会把 v-model 整体替换成「可见项」的集合，
+ * 若这里直接把原始数组传进去，被隐藏站点的排除项会被静默丢弃。用一个只暴露可见项、
+ * 但写回时保留隐藏项的代理数组，保证三种批量操作都不再丢失不可见项。
+ */
+const visibleExcludedSites = computed<string[]>({
+  get: () => excludedSites.value.filter((siteId) => allSiteIds.value.includes(siteId)),
+  set: (siteIds) => {
+    const hidden = excludedSites.value.filter((siteId) => !allSiteIds.value.includes(siteId));
+    excludedSites.value = [...hidden, ...siteIds];
+  },
+});
 
 function save() {
   metadataStore.simplePatch("downloaders", clientId, "excludedSites", excludedSites.value);
@@ -77,7 +94,7 @@ watch(showDialog, (open) => {
       </a-typography-text>
       <!-- A-27：原 color="blue-lighten-1" / variant="tonal" 都不是 antd 语义（前者未被 NavButton 映射、
            后者在 antd 4.2.6 中不存在），改用低强调的 text 按钮 -->
-      <CheckSwitchButton v-model="excludedSites" :all="allSiteIds" type="text" />
+      <CheckSwitchButton v-model="visibleExcludedSites" :all="allSiteIds" type="text" />
     </div>
 
     <!-- 原实现的 PtdSkeletonLoader 语义是「无数据」而非「加载中」，这里按真实状态拆开：

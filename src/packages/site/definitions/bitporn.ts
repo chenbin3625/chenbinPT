@@ -129,7 +129,9 @@ export const siteMetadata: ISiteMetadata = {
         { name: "收藏", value: "bookmarked" },
         { name: "想要", value: "wished" },
       ],
-      cross: { mode: "append", key: "" }, //  站点构造为  &exclusive=true ，但实际上与  &exclusive=1 相同
+      // E1b-C27：原注释提到 exclusive，但本组选项是 internal/personalRelease/trumpable/…，注释是从别的站点复制的残留。
+      // append 模式会把选项名直接当参数名（如 &internal=1），站点对 =1 与 =true 等价。
+      cross: { mode: "append", key: "" },
     },
     {
       name: "活跃度",
@@ -162,18 +164,17 @@ export const siteMetadata: ISiteMetadata = {
       subTitle: {
         selector: ["div.torrent-keywords-container"],
         elementProcess: (element: any) => {
-          if (!element) return 0;
+          // E1b-C7 / C27：elementProcess 只在元素命中时才被调用（element 恒为真值），原 `if (!element) return 0;`
+          // 是死代码；且 subTitle 是字符串字段，万一执行到会返回数字 0（前端做字符串操作会抛错）。改为空串兜底。
+          if (!element) return "";
 
-          // 查找所有span元素
-          const spans = element.querySelectorAll("a.torrent-keywords-badge");
+          // 站点把标签渲染成 a.torrent-keywords-badge，统一收集为副标题
+          const badges = element.querySelectorAll("a.torrent-keywords-badge");
 
-          // 提取所有span元素中的文本内容
-          const allText = Array.from(spans)
-            .map((span: any) => (span.textContent || span.innerText || "").trim())
+          return Array.from(badges)
+            .map((badge: any) => (badge.textContent || badge.innerText || "").trim())
             .filter((text) => text.length > 0)
             .join(", ");
-
-          return allText;
         },
       },
     },

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { EyeInvisibleOutlined, EyeOutlined } from "@ant-design/icons-vue";
 import { computedAsync } from "@vueuse/core";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { getMediaServer, getMediaServerMetaData, IMediaServerMetadata } from "@ptd/mediaServer";
 
@@ -85,8 +85,17 @@ const formValid = computed(() => {
   return (clientMeta.value?.auth_field ?? []).every((authField) => !authFieldError(authField));
 });
 
+// F2-Medium-15 / Low-04：表单有效性持续驱动保存门禁；旧实现只在测试连接后 emit 且 `formValid && true` 恒真。
+watch(
+  formValid,
+  (valid) => {
+    emits("update:configValid", valid);
+  },
+  { immediate: true },
+);
+
 async function checkConnect() {
-  if (formValid) {
+  if (formValid.value) {
     const client = await getMediaServer(clientConfig.value!);
     return await client.ping();
   }
@@ -161,7 +170,7 @@ async function checkConnect() {
                 </template>
               </a-input>
             </a-form-item>
-            <a-form-item v-else :help="authField.message ?? authFieldError(authField)" :label="authField.name" required>
+            <a-form-item v-else :help="authFieldError(authField) ?? authField.message" :label="authField.name" required>
               <a-input
                 v-model:value="clientConfig.auth[authField.name]"
                 :status="authFieldError(authField) ? 'error' : undefined"
@@ -199,13 +208,8 @@ async function checkConnect() {
           </a-col>
         </a-row>
 
-        <ConnectCheckButton
-          :check-fn="checkConnect"
-          :reset-timeout="3e3"
-          @after:check-connect="
-            () => emits('update:configValid', formValid && true) // 不管是否测试成功，都允许用户进行下一步操作（保存下载服务器配置）
-          "
-        />
+        <!-- 「测试连接」只负责连通性提示；保存门禁由上面的 formValid 持续驱动 -->
+        <ConnectCheckButton :check-fn="checkConnect" :reset-timeout="3e3" />
 
         <a-alert v-if="clientMeta?.warning" show-icon type="warning">
           <template #message>

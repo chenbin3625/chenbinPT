@@ -161,3 +161,183 @@ describe("V-14：下载状态轮询必须刷新列表", () => {
     expect(sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length).toBe(pollCalls); // 已停止轮询
   });
 });
+
+describe("N2：并发/重叠加载不能产生重复或孤儿轮询链", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    sendMessageMock.mockReset();
+    buildAdvanceItemPropsFn.mockReset();
+    showSnakebarMock.mockClear();
+    messageOpenMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("加载在途时的重复刷新被重入保护拦下，同一记录每秒只轮询一次", async () => {
+    const pendingLoads: Array<(value: any[]) => void> = [];
+    sendMessageMock.mockImplementation((type: string) => {
+      if (type === "getDownloadHistory") return new Promise((resolve) => pendingLoads.push(resolve as any));
+      if (type === "getDownloadHistoryById")
+        return Promise.resolve({ id: "task-1", downloadStatus: "pending", title: "t" });
+      return Promise.resolve(undefined);
+    });
+
+    const { throttleLoadDownloadHistory } = await loadModule();
+
+    throttleLoadDownloadHistory(); // 首屏加载（在途）
+    await tick(1100); // 越过 throttle 的 1s 间隔，但第一次仍未返回
+    throttleLoadDownloadHistory(); // 用户又点了一次刷新
+    await tick(0);
+
+    expect(pendingLoads, "加载在途时不应再发一次全量请求").toHaveLength(1);
+
+    pendingLoads[0]!([{ id: "task-1", downloadStatus: "pending", title: "t" }]);
+    await tick(0);
+    await tick(1000);
+
+    const pollOnce = sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length;
+    expect(pollOnce, "同一记录每秒只应轮询一次（不是两条链各一次）").toBe(1);
+
+    await tick(1000);
+    expect(sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length).toBe(2);
+
+    await clearAllPolls();
+  });
+
+  it("clearWatchingMap 之后，在途轮询的迟到响应也不会重新排链", async () => {
+    const pendingPolls: Array<(value: any) => void> = [];
+    sendMessageMock.mockImplementation((type: string) => {
+      if (type === "getDownloadHistory") {
+        return Promise.resolve([{ id: "task-1", downloadStatus: "pending", title: "t" }]);
+      }
+      if (type === "getDownloadHistoryById") return new Promise((resolve) => pendingPolls.push(resolve as any));
+      return Promise.resolve(undefined);
+    });
+
+    const { throttleLoadDownloadHistory, clearWatchingMap } = await loadModule();
+
+    throttleLoadDownloadHistory();
+    await tick(0);
+    await tick(1000); // 第一次轮询发出，处于在途
+    expect(pendingPolls).toHaveLength(1);
+
+    clearWatchingMap(); // 离开页面 / 重新加载
+    pendingPolls[0]!({ id: "task-1", downloadStatus: "pending", title: "t" }); // 迟到的响应
+    await tick(0);
+
+    const callsAfterClear = sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length;
+    await tick(5000);
+    expect(
+      sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length,
+      "clearWatchingMap 必须能取消全部轮询链（含在途回调）",
+    ).toBe(callsAfterClear);
+  });
+});
+
+async function clearAllPolls() {
+  // 用例结束主动清链，避免假计时器上的残留定时器影响后续用例
+  const utils = await import("@/options/views/Overview/DownloadHistory/utils.ts");
+  utils.clearWatchingMap();
+}
+
+describe("N3/N4：批量操作求交与整表加载失败提示", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    sendMessageMock.mockReset();
+    buildAdvanceItemPropsFn.mockReset();
+    showSnakebarMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("N3：批量删除/重下只保留当前可见的选中项", async () => {
+    const { pickVisibleDownloadHistoryIds } = await import("@/options/views/Overview/DownloadHistory/utils.ts");
+    const visible = [{ id: "keep-1" }, { id: "keep-2" }] as any;
+    expect(pickVisibleDownloadHistoryIds([1, 3, 2], [{ id: 1 }, { id: 2 }] as any)).toEqual([1, 2]);
+    expect(pickVisibleDownloadHistoryIds([3], [{ id: 1 }, { id: 2 }] as any)).toEqual([]);
+  });
+
+  it("N4：整表加载失败时提示用户、复位 loading 并保留旧数据", async () => {
+    let shouldFail = false;
+    sendMessageMock.mockImplementation(async (type: string) => {
+      if (type === "getDownloadHistory") {
+        if (shouldFail) throw new Error("offscreen 已回收");
+        return [{ id: "task-1", downloadStatus: "completed", title: "t" }];
+      }
+      return undefined;
+    });
+
+    const { downloadHistoryList, throttleLoadDownloadHistory, isLoadingDownloadHistory } = await loadModule();
+
+    throttleLoadDownloadHistory();
+    await tick(0);
+    expect(downloadHistoryList.value.map((x) => x.id)).toEqual(["task-1"]);
+
+    shouldFail = true;
+    throttleLoadDownloadHistory();
+    await tick(1100); // 越过 throttle 间隔
+    await tick(0);
+
+    expect(isLoadingDownloadHistory.value, "失败后必须复位 loading").toBe(false);
+    expect(
+      downloadHistoryList.value.map((x) => x.id),
+      "失败不应清空旧数据",
+    ).toEqual(["task-1"]);
+    expect(showSnakebarMock).toHaveBeenCalledTimes(1);
+    expect(showSnakebarMock.mock.calls[0]![0]).toMatch(/加载.*失败/);
+    expect(showSnakebarMock.mock.calls[0]![1]).toEqual({ color: "error" });
+  });
+});
+
+describe("I1/I2：高级筛选的三态循环与日期滑块有限区间", () => {
+  it("I1：站点/下载器复选框按 none → required → exclude → none 循环", async () => {
+    const { cycleKeywordFilterState, keywordFilterStateOf } =
+      await import("@/options/views/Overview/DownloadHistory/advanceFilter.ts");
+    const dict: { required?: string[]; exclude?: string[] } = { required: [], exclude: [] };
+
+    expect(keywordFilterStateOf(dict, "mteam")).toBe("none");
+    expect(cycleKeywordFilterState(dict, "mteam"), "第一次点击 = 只保留").toBe("required");
+    expect(dict).toMatchObject({ required: ["mteam"], exclude: [] });
+
+    expect(cycleKeywordFilterState(dict, "mteam"), "第二次点击 = 排除").toBe("exclude");
+    expect(dict, "required 与 exclude 必须互斥").toMatchObject({ required: [], exclude: ["mteam"] });
+
+    expect(cycleKeywordFilterState(dict, "mteam"), "第三次点击 = 不参与筛选").toBe("none");
+    expect(dict).toMatchObject({ required: [], exclude: [] });
+  });
+
+  it("I1：多个值互不影响，且可从 exclude 直接回到 none", async () => {
+    const { cycleKeywordFilterState } = await import("@/options/views/Overview/DownloadHistory/advanceFilter.ts");
+    const dict: { required?: string[]; exclude?: string[] } = { required: [], exclude: [] };
+
+    cycleKeywordFilterState(dict, "a");
+    cycleKeywordFilterState(dict, "b");
+    cycleKeywordFilterState(dict, "b"); // b → exclude
+    expect(dict).toMatchObject({ required: ["a"], exclude: ["b"] });
+
+    cycleKeywordFilterState(dict, "b"); // b → none
+    expect(dict).toMatchObject({ required: ["a"], exclude: [] });
+  });
+
+  it("I2：±Infinity 的空区间收敛成有限的「最近 30 天 ~ 现在」", async () => {
+    const { resolveFiniteRangeDays } = await import("@/options/views/Overview/DownloadHistory/advanceFilter.ts");
+    const now = new Date("2026-10-23T12:00:00Z").getTime();
+
+    const emptyRange = resolveFiniteRangeDays([-Infinity, Infinity], now);
+    expect(Number.isFinite(emptyRange[0])).toBe(true);
+    expect(Number.isFinite(emptyRange[1])).toBe(true);
+    expect(emptyRange[1]).toBe(now);
+    expect(emptyRange[0]).toBe(now - 30 * 24 * 60 * 60 * 1000);
+
+    // 已有数据时保持真实区间
+    expect(resolveFiniteRangeDays([1000, 2000], now)).toEqual([1000, 2000]);
+    // 单边无限时只替换无限的那一侧
+    expect(resolveFiniteRangeDays([1000, Infinity], now)).toEqual([1000, now]);
+    // 顺序保护
+    expect(resolveFiniteRangeDays([2000, 1000], now)).toEqual([2000, 2000]);
+  });
+});

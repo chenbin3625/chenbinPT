@@ -22,7 +22,7 @@ vi.mock("@/options/stores/metadata.ts", () => ({
   }),
 }));
 
-const { toNumber, sumUserInfoFieldByDate, loadFullData } =
+const { toNumber, sumUserInfoFieldByDate, loadFullData, buildPerSiteTooltipFormatter, escapeHtml } =
   await import("@/options/views/Overview/MyData/UserDataStatistic/utils.ts");
 
 describe("V-12：toNumber 数值归一化", () => {
@@ -120,5 +120,36 @@ describe("M-23：增量数据与累计数据对数字字符串的口径一致", 
     expect(daily["2026-01-01"]?.uploaded).toBe(0);
     expect(daily["2026-01-02"]?.uploaded).toBe(500);
     expect(daily["2026-01-03"]?.uploaded).toBe(100);
+  });
+});
+
+describe("F1：统计页 tooltip 的站点名必须 HTML 转义（配置型 XSS）", () => {
+  const payload = `"><img src=x onerror="alert(document.cookie)">`;
+
+  it("站点名/favicon 不再原样拼进 tooltip 的文本节点与属性值", () => {
+    const formatter = buildPerSiteTooltipFormatter({
+      formatValue: (value) => String(value),
+      siteName: (site) => (site === "evil" ? payload : site),
+      siteFavicon: () => `https://fav.example/i.png?x="><script>alert(1)</script>`,
+      translate: (key, params) => `${key}${params?.count ?? ""}`,
+      isHighlighted: () => false,
+      hideThreshold: 0,
+    });
+
+    const output = formatter([{ name: "2026-01-01", seriesName: "evil", data: 10, seriesIndex: 0, color: "red" }]);
+
+    // 反证修复前的注入形态：`alt="..."><img src=x onerror="...">`
+    expect(output).not.toContain(`<img src=x`);
+    expect(output).not.toContain(`onerror="alert(document.cookie)"`);
+    expect(output).not.toContain(`"><script>`);
+    // 恶意字符被转义成文本
+    expect(output).toContain("&lt;img src=x onerror=&quot;alert(document.cookie)&quot;&gt;");
+    expect(output).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
+  it("escapeHtml 覆盖五个 HTML 特殊字符且 & 不会被漏掉", () => {
+    expect(escapeHtml(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#39;");
+    expect(escapeHtml("&amp;")).toBe("&amp;amp;");
+    expect(escapeHtml(undefined)).toBe("");
   });
 });

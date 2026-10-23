@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formatDate } from "@/options/utils.ts";
+import { getSearchSolutionDisplayName } from "./utils/planName.ts";
 
 const { t } = useI18n();
 
@@ -17,7 +18,7 @@ const runtimeStore = useRuntimeStore();
 const defaultSnapshotName = computed(
   () =>
     "[" +
-    metadataStore.getSearchSolutionName(runtimeStore.search.searchPlanKey) +
+    getSearchSolutionDisplayName(runtimeStore.search.searchPlanKey, (key) => metadataStore.getSearchSolutionName(key)) +
     "] " +
     runtimeStore.search.searchKey +
     " (" +
@@ -28,6 +29,9 @@ const defaultSnapshotName = computed(
 // 必须是可写状态：模板用 v-model 绑定，只读 computed 会让用户输入被静默丢弃
 const snapshotName = ref<string>(defaultSnapshotName.value);
 
+// F10：空名称会让快照列表出现无法辨认的空白行，保存前必须 trim，空则不允许保存
+const normalizedSnapshotName = computed(() => snapshotName.value.trim());
+
 // 每次打开对话框都用当前搜索结果重置默认名，避免沿用上一次编辑后的旧值
 watch(showDialog, (visible) => {
   if (visible) {
@@ -36,7 +40,10 @@ watch(showDialog, (visible) => {
 });
 
 function saveSearchSnapshotData() {
-  metadataStore.saveSearchSnapshotData(snapshotName.value);
+  const name = normalizedSnapshotName.value;
+  if (!name) return;
+
+  metadataStore.saveSearchSnapshotData(name);
   showDialog.value = false;
 }
 </script>
@@ -44,12 +51,14 @@ function saveSearchSnapshotData() {
 <template>
   <a-modal v-model:open="showDialog" :title="t('SearchEntity.index.action.saveSnapshot')" :width="500">
     <a-form-item :label="t('SearchEntity.SaveSnapshotDialog.snapshotName')"
-      ><a-input v-model:value="snapshotName"></a-input
+      ><a-input v-model:value="snapshotName" :maxlength="200"></a-input
     ></a-form-item>
 
     <template #footer>
       <a-flex align="center" justify="flex-end">
-        <a-button type="primary" @click="saveSearchSnapshotData">{{ t("common.save") }}</a-button>
+        <a-button type="primary" :disabled="!normalizedSnapshotName" @click="saveSearchSnapshotData">{{
+          t("common.save")
+        }}</a-button>
       </a-flex>
     </template>
   </a-modal>

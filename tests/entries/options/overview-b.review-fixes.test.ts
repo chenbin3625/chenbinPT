@@ -62,6 +62,10 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
   const buildFilterDictFn = vitest.fn();
   const buildAdvanceItemPropsFn = vitest.fn();
   const tableFilterFn = vitest.fn(() => true);
+  // SearchEntity/Index.vue 现在还会在渲染期调用「标签一键筛选」的两个导出；
+  // 整模块 mock 必须把它们一起返回，否则挂载搜索结果页时会报 No export defined。
+  const getActiveTagFilterNames = vitest.fn(() => [] as string[]);
+  const toggleTagFilter = vitest.fn(() => true);
 
   filterMock.state = {
     advanceItemPropsRef,
@@ -74,7 +78,7 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
     tableFilterFn,
   };
 
-  return { tableCustomFilter: filterMock.state };
+  return { tableCustomFilter: filterMock.state, getActiveTagFilterNames, toggleTagFilter };
 });
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
@@ -363,5 +367,376 @@ describe("OPTIONSOVERVIEW-9：暂停/继续全部失败时用 error 色提示", 
     expect(showSnakebar.mock.calls[2]![1]).toMatchObject({ color: "success" });
 
     view.unmount();
+  });
+});
+
+// ── F4（D2-07 / D2-09 / D2-10）：批量操作与页头统计 ─────────────────────────
+
+const MYCLIENT_ALL_STATES = [
+  {
+    clientId: "d1",
+    id: "hash-1",
+    infoHash: "hash-1",
+    name: "下载中的种子",
+    progress: 12.6,
+    totalSize: 1024,
+    savePath: "/downloads",
+    label: "",
+    state: "downloading",
+    uploadSpeed: 10,
+    downloadSpeed: 20,
+    ratio: 1.5,
+  },
+  {
+    clientId: "d1",
+    id: "hash-2",
+    infoHash: "hash-2",
+    name: "已暂停的种子",
+    progress: 100,
+    totalSize: 2048,
+    savePath: "/downloads",
+    label: "",
+    state: "paused",
+    uploadSpeed: 0,
+    downloadSpeed: 0,
+    ratio: 1.2,
+  },
+  {
+    clientId: "d2",
+    id: "hash-3",
+    infoHash: "hash-3",
+    name: "另一台下载器的种子",
+    progress: 50,
+    totalSize: 4096,
+    savePath: "/downloads2",
+    label: "",
+    state: "downloading",
+    uploadSpeed: 100,
+    downloadSpeed: 200,
+    ratio: 3,
+  },
+];
+
+async function mountMyClientForBatch(pauseImpl?: (data: any) => boolean) {
+  const pinia = prepareOptionsPinia();
+  const { useMetadataStore } = await import("@/options/stores/metadata.ts");
+  const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+
+  const meta = useMetadataStore(pinia);
+  meta.downloaders = {
+    d1: { id: "d1", type: "qbittorrent", name: "QB", address: "http://qb.local", enabled: true },
+    d2: { id: "d2", type: "qbittorrent", name: "QB2", address: "http://qb2.local", enabled: true },
+  } as any;
+
+  const utils = await import("@/options/views/Overview/MyClient/utils.ts");
+  utils.autoRefreshRunning.value = false;
+  utils.autoRefreshUserStopped.value = false;
+  utils.torrents.value = {};
+  utils.selectedDownloaderIds.value = [];
+
+  sendMessageMock.mockReset();
+  sendMessageMock.mockImplementation(async (type: string, data: any) => {
+    if (type === "getClientTorrents") {
+      return JSON.parse(JSON.stringify(MYCLIENT_ALL_STATES.filter((item) => item.clientId === data)));
+    }
+    if (type === "pauseClientTorrent") return pauseImpl ? pauseImpl(data) : true;
+    return undefined;
+  });
+
+  const runtimeStore = useRuntimeStore(pinia);
+  const showSnakebar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+
+  const view = mountOptionsView(MyClientView, { pinia, router: true });
+  await view.settle(200);
+
+  const t = (await import("@/options/plugins/i18n.ts")).i18nInstance.global.t;
+  const selectAllRows = async () => {
+    // 表头的「全选」复选框一次选中当前 dataSource 的全部行（逐行点击会因表格重渲染拿到失效节点）
+    const selectAll = view.$<HTMLInputElement>(".ant-table-thead input[type=checkbox]");
+    expect(selectAll).not.toBeNull();
+    selectAll!.click();
+    await view.settle(80);
+  };
+
+  return { view, utils, showSnakebar, t, selectAllRows };
+}
+
+describe("D2-07：批量操作只作用于当前可见（筛选后）的选中行", () => {
+  it("先全选再筛选，删除确认框只列出可见的 1 条", async () => {
+    const { view, t, selectAllRows } = await mountMyClientForBatch();
+
+    try {
+      await selectAllRows();
+      const batchDeleteBtn = view.$<HTMLButtonElement>(
+        `.my-client-toolbar__actions button[title="${t("MyClient.deleteSelected")}"]`,
+      );
+      expect(batchDeleteBtn, "应找到批量删除按钮").not.toBeNull();
+      expect(batchDeleteBtn!.disabled, "全选后批量删除可用").toBe(false);
+
+      // 输入筛选词，只留下「已暂停的种子」
+      const searchInput = view.$<HTMLInputElement>(".my-client-toolbar__filters input");
+      expect(searchInput).not.toBeNull();
+      searchInput!.value = "已暂停";
+      searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      await view.settle(400);
+
+      // 筛选后表格重渲染，按钮节点需重新查询
+      view.$<HTMLButtonElement>(`.my-client-toolbar__actions button[title="${t("MyClient.deleteSelected")}"]`)!.click();
+      await view.settle(120);
+
+      // 同时兼容「弹窗 teleport 到 body」与「渲染在挂载容器内」两种情况
+      const modals = Array.from(document.querySelectorAll(".ant-modal"));
+      const modalText =
+        modals.map((modal) => modal.textContent ?? "").find((text) => text.includes("同时删除数据")) ??
+        view.$(".ant-modal")?.textContent ??
+        "";
+      expect(modalText, "确认框只应统计可见的 1 条").toContain("1");
+      expect(modalText, "确认框应列出待删除的对象").toContain("已暂停的种子");
+      expect(modalText, "被筛选隐藏的行不应出现在确认框里").not.toContain("下载中的种子");
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe("D2-09：批量操作的部分失败计数与原因", () => {
+  it("一个成功一个失败时，提示包含失败数与 warning 色", async () => {
+    const { view, showSnakebar, t, selectAllRows } = await mountMyClientForBatch((data) => data.id === "hash-1");
+
+    try {
+      await selectAllRows();
+      const pauseBtn = view.$<HTMLButtonElement>(
+        `.my-client-toolbar__actions button[title="${t("MyClient.pauseSelected")}"]`,
+      );
+      expect(pauseBtn).not.toBeNull();
+      pauseBtn!.click();
+      await view.settle(120);
+
+      expect(showSnakebar).toHaveBeenCalled();
+      const [message, options] = showSnakebar.mock.calls.at(-1)!;
+      expect(message, "应报成功数").toContain("1");
+      expect(message, "应报失败数").toContain("1");
+      expect(message, "部分失败应为 warning 色").toBeTruthy();
+      expect(options).toMatchObject({ color: "warning" });
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe("D2-10：页头统计只统计当前筛选的下载器", () => {
+  it("只勾选 d1 时种子数是 d1 的数量，速度也不再累加 d2", async () => {
+    const { view, utils } = await mountMyClientForBatch();
+
+    try {
+      const statusBtnText = () =>
+        view.$(".my-client-toolbar__actions .status-btn")?.textContent?.replace(/\s+/g, "") ?? "";
+
+      expect(statusBtnText(), "默认统计全部已启用下载器").toContain("3");
+
+      utils.selectedDownloaderIds.value = ["d1"];
+      await view.settle(60);
+
+      const text = statusBtnText();
+      expect(text, "只勾选 d1 时种子数只算 d1").toContain("2");
+      expect(text, "不应再把 d2 的种子计入").not.toContain("3");
+      // d1 的上行速度合计 10 B/s，d2 是 100 B/s
+      expect(text).not.toContain("110");
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+// ── F4（D2-08 / D2-09）：批量限速弹窗 ───────────────────────────────────────
+
+describe("D2-08/D2-09：批量限速弹窗的预填、防重复提交与成功后刷新", () => {
+  const speedTorrent = (id: string, upLimit: number, dlLimit: number) => ({
+    clientId: "d1",
+    id,
+    name: id,
+    infoHash: id,
+    progress: 10,
+    totalSize: 1,
+    savePath: "/x",
+    state: "downloading",
+    raw: { up_limit: upLimit, dl_limit: dlLimit },
+  });
+
+  async function mountSpeedLimitDialog(torrents: any[], setLimitImpl: (data: any) => Promise<boolean> | boolean) {
+    const pinia = prepareOptionsPinia();
+    const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+    vi.spyOn(useRuntimeStore(pinia), "showSnakebar").mockImplementation(() => {});
+
+    sendMessageMock.mockReset();
+    sendMessageMock.mockImplementation(async (type: string, data: any) => {
+      if (type === "setClientTorrentSpeedLimit") return setLimitImpl(data);
+      return undefined;
+    });
+
+    const { defineComponent, h, reactive } = await import("vue");
+    // 先关闭再打开：dialogEnter 由 watch(showDialog) 触发（生产路径也是「父组件把它打开」）
+    const state = reactive({ open: false });
+    const onDone = vi.fn();
+    const { default: SpeedLimitDialog } = await import("@/options/views/Overview/MyClient/SpeedLimitDialog.vue");
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(SpeedLimitDialog as any, {
+            modelValue: state.open,
+            "onUpdate:modelValue": (v: boolean) => (state.open = v),
+            torrents,
+            onDone,
+          }),
+      }),
+      { pinia },
+    );
+    const open = async () => {
+      state.open = true;
+      await view.settle(100);
+    };
+
+    const modalInputs = () =>
+      Array.from(document.querySelectorAll<HTMLInputElement>(".ant-modal input.ant-input-number-input"));
+    const okButton = () => document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary");
+
+    return { view, state, onDone, open, modalInputs, okButton };
+  }
+
+  it("多选时不预填任何方向的限速（留空 = 不修改）", async () => {
+    const { view, open, modalInputs } = await mountSpeedLimitDialog(
+      [speedTorrent("a", 5 * 1024, 7 * 1024), speedTorrent("b", 9 * 1024, 11 * 1024)],
+      async () => true,
+    );
+    try {
+      await open();
+      const values = modalInputs().map((input) => input.value);
+      expect(values, "多选时两个方向都不应被首个种子预填").toEqual(["", ""]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("单选时仍预填当前种子的限速", async () => {
+    const { view, open, modalInputs } = await mountSpeedLimitDialog(
+      [speedTorrent("a", 5 * 1024, 7 * 1024)],
+      async () => true,
+    );
+    try {
+      await open();
+      expect(modalInputs().map((input) => input.value)).toEqual(["5", "7"]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("提交期间显示 confirm-loading，重复点击不会再下发一批请求；成功后 emit done", async () => {
+    const resolvers: Array<(value: boolean) => void> = [];
+    const { view, open, onDone, modalInputs, okButton } = await mountSpeedLimitDialog(
+      [speedTorrent("a", 0, 0), speedTorrent("b", 0, 0)],
+      () => new Promise<boolean>((resolve) => resolvers.push(resolve)),
+    );
+
+    try {
+      await open();
+      // 填一个上传限速（多选时为 null，先输入）
+      const input = modalInputs()[0]!;
+      input.value = "100";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await view.settle(40);
+
+      const ok = okButton()!;
+      ok.click();
+      await view.settle(40);
+      ok.click(); // 在途时的重复点击必须被忽略
+      await view.settle(40);
+
+      expect(
+        sendMessageMock.mock.calls.filter(([type]) => type === "setClientTorrentSpeedLimit"),
+        "提交期间重复点击不应重复下发",
+      ).toHaveLength(2); // 两个种子各一次
+      expect(document.querySelector(".ant-modal-footer .ant-btn-loading"), "应显示 confirm-loading").not.toBeNull();
+
+      resolvers.forEach((resolve) => resolve(true));
+      await view.settle(80);
+
+      expect(onDone, "成功后应通知调用方刷新受影响下载器").toHaveBeenCalledWith(["d1"]);
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+// ── F4（I1 / I2）：下载历史高级筛选弹窗 ─────────────────────────────────────
+
+describe("I1/I2：高级筛选弹窗在数据未就绪时的日期区间与三态复选框", () => {
+  it("range 为 ±Infinity 时滑块 min/max 有限；站点复选框按 required → exclude → none 循环", async () => {
+    const pinia = prepareOptionsPinia();
+    const utils = await import("@/options/views/Overview/DownloadHistory/utils.ts");
+    // 有一条记录（提供站点选项），但没有可解析的 downloadAt → generateRangeField 返回 ±Infinity
+    (utils.downloadHistory as any).value = {
+      "1": {
+        id: "1",
+        siteId: "mteam",
+        downloaderId: "d1",
+        title: "t1",
+        downloadStatus: "completed",
+        downloadAt: undefined,
+        torrent: { title: "t1" },
+      },
+    };
+    utils.tableCustomFilter.buildAdvanceItemPropsFn();
+    expect(utils.tableCustomFilter.advanceItemPropsRef.value.downloadAt.range).toEqual([-Infinity, Infinity]);
+
+    const { defineComponent, h, reactive } = await import("vue");
+    const { default: AdvanceFilterDialog } =
+      await import("@/options/views/Overview/DownloadHistory/AdvanceFilterGenerateDialog.vue");
+    const state = reactive({ open: true });
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(AdvanceFilterDialog as any, {
+            modelValue: state.open,
+            "onUpdate:modelValue": (v: boolean) => (state.open = v),
+          }),
+      }),
+      { pinia },
+    );
+
+    try {
+      await view.settle(120);
+
+      const handle = document.querySelector<HTMLElement>(".ant-slider-handle");
+      expect(handle, "应渲染日期滑块").not.toBeNull();
+      const min = Number(handle!.getAttribute("aria-valuemin"));
+      const max = Number(handle!.getAttribute("aria-valuemax"));
+      expect(Number.isFinite(min), "Infinity 不能直接传给 slider 的 min").toBe(true);
+      expect(Number.isFinite(max), "Infinity 不能直接传给 slider 的 max").toBe(true);
+      expect(min).toBeLessThanOrEqual(max);
+
+      const checkboxState = () => {
+        const el = document.querySelector(".ant-modal .ant-col .ant-checkbox");
+        if (el?.classList.contains("ant-checkbox-checked")) return "required";
+        if (el?.classList.contains("ant-checkbox-indeterminate")) return "exclude";
+        return "none";
+      };
+      const clickSite = async () => {
+        const checkbox = document.querySelector<HTMLElement>(".ant-modal .ant-col .ant-checkbox");
+        expect(checkbox, "应渲染站点复选框").not.toBeNull();
+        checkbox!.click();
+        await view.settle(20);
+      };
+
+      expect(checkboxState()).toBe("none");
+      await clickSite();
+      expect(checkboxState(), "第一次点击 = 只保留（required）").toBe("required");
+      await clickSite();
+      expect(checkboxState(), "第二次点击 = 排除（exclude）").toBe("exclude");
+      await clickSite();
+      expect(checkboxState(), "第三次点击 = 不参与筛选（none，原先不可达）").toBe("none");
+    } finally {
+      view.unmount();
+      (utils.downloadHistory as any).value = {};
+    }
   });
 });

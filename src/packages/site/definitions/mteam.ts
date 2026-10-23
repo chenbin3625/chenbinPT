@@ -651,6 +651,22 @@ export default class MTeam extends PrivateSite {
     }
   }
 
+  /**
+   * E3-1 同源校验的站点侧兼容：M-Team 的 API 在 `api.<domain>`，与 `metadata.urls` 里的 web 域名
+   * 是**兄弟主机**（`siteHostMatches` 只放行子域），不显式把 API 主机加入信任集合时，
+   * `prepareRequestConfig` 会把所有 API 请求判为 untrusted（blocked request to untrusted host: https://api.m-team.cc/）。
+   * 这里只额外信任由 `apiBaseUrl` 推导出的那个 API 主机，不放开其它外部地址。
+   */
+  protected override get trustedHostnames(): string[] {
+    const hosts = super.trustedHostnames;
+    try {
+      const apiHostname = new URL(this.apiBaseUrl).hostname;
+      return hosts.includes(apiHostname) ? hosts : [...hosts, apiHostname];
+    } catch {
+      return hosts;
+    }
+  }
+
   private buildConfiguredDetailUrl(torrentId: string | number): string {
     return new URL(`/detail/${torrentId}`, this.normalizedSiteUrl).toString();
   }
@@ -662,9 +678,10 @@ export default class MTeam extends PrivateSite {
     // 将请求的 baseUrl 设置为 api. 域名
     axiosConfig.baseURL = this.apiBaseUrl;
 
-    // 设置默认的 method 和 responseType ， 这样其他配置不需要显式声明
-    axiosConfig.method = "POST"; // 站点的请求方式为 POST
-    axiosConfig.responseType = "json";
+    // L4 同型：只填默认值，不覆盖调用方显式声明的 method/responseType
+    // （本站目前全部走 POST + JSON，硬赋值暂时无害，但会让未来的 document/blob 路径静默拿到 JSON）
+    axiosConfig.method ??= "POST"; // 站点的请求方式为 POST
+    axiosConfig.responseType ??= "json";
 
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {

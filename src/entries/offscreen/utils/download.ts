@@ -37,6 +37,8 @@ import type {
 } from "@/shared/types.ts";
 
 import { logger } from "./logger.ts";
+import { assertSenderMatchesSite, isTrustedExtensionContext } from "./sender.ts";
+import { buildRedactedDownloadRequestConfig, sanitizeAddTorrentOptions } from "./downloadHistorySanitize.ts";
 import { getSiteInstance } from "./site.ts";
 import { ptdIndexDb } from "../adapter/indexdb.ts";
 
@@ -62,6 +64,13 @@ export async function getDownloaderConfig(downloaderId: string) {
 type DownloaderInstance = Awaited<ReturnType<typeof getDownloader>>;
 
 const downloaderInstanceCache = new Map<string, { configKey: string; instance: DownloaderInstance }>();
+/**
+ * 正在创建中的实例（B1-2）：两个并发消息同时首次访问同一下载器时，若都走到 `getDownloader()`
+ * 会各构造一个实例（Aria2 构造函数即建 WebSocket），库级/offscreen 缓存最终只留下后一个，
+ * 先创建的那个既不在缓存里也永远不会被 `releaseDownloaderInstance` 释放。
+ * 这里按 downloaderId 复用同一个创建 Promise。
+ */
+const downloaderInstanceInFlight = new Map<string, Promise<DownloaderInstance | null>>();
 
 /**
  * offscreen 自建实例缓存的 key（见 OFFSCREEN-3）。
@@ -77,24 +86,40 @@ function getDownloaderConfigKey(config: IDownloaderMetadata): string {
 }
 
 export async function getDownloaderInstance(downloaderId: string): Promise<DownloaderInstance | null> {
-  const downloaderConfig = await getDownloaderConfig(downloaderId);
-  if (!downloaderConfig.id) return null;
-
-  const configKey = getDownloaderConfigKey(downloaderConfig);
-  const cached = downloaderInstanceCache.get(downloaderId);
-  if (cached && cached.configKey === configKey) {
-    return cached.instance;
+  const inFlight = downloaderInstanceInFlight.get(downloaderId);
+  if (inFlight) {
+    return await inFlight;
   }
 
-  const instance = await getDownloader(downloaderConfig);
-  // OFFSCREEN-7：配置变化时旧实例会被本缓存丢弃，必须主动释放它持有的长连接（Aria2 的 WebSocket），
-  // 否则反复改配置会在 offscreen 生命周期内累积孤儿连接。若库级缓存按稳定 key 返回的是同一个实例，
-  // 则不能 dispose（否则会关掉正在用的连接），只需更新 key。
-  if (cached && cached.instance !== instance) {
-    releaseDownloaderInstance(cached.instance);
+  const pending = (async (): Promise<DownloaderInstance | null> => {
+    const downloaderConfig = await getDownloaderConfig(downloaderId);
+    if (!downloaderConfig.id) return null;
+
+    const configKey = getDownloaderConfigKey(downloaderConfig);
+    const cached = downloaderInstanceCache.get(downloaderId);
+    if (cached && cached.configKey === configKey) {
+      return cached.instance;
+    }
+
+    const instance = await getDownloader(downloaderConfig);
+    // OFFSCREEN-7：配置变化时旧实例会被本缓存丢弃，必须主动释放它持有的长连接（Aria2 的 WebSocket），
+    // 否则反复改配置会在 offscreen 生命周期内累积孤儿连接。若库级缓存按稳定 key 返回的是同一个实例，
+    // 则不能 dispose（否则会关掉正在用的连接），只需更新 key。
+    if (cached && cached.instance !== instance) {
+      releaseDownloaderInstance(cached.instance);
+    }
+    downloaderInstanceCache.set(downloaderId, { configKey, instance });
+    return instance;
+  })();
+
+  downloaderInstanceInFlight.set(downloaderId, pending);
+  try {
+    return await pending;
+  } finally {
+    if (downloaderInstanceInFlight.get(downloaderId) === pending) {
+      downloaderInstanceInFlight.delete(downloaderId);
+    }
   }
-  downloaderInstanceCache.set(downloaderId, { configKey, instance });
-  return instance;
 }
 
 onMessage("getDownloaderConfig", async ({ data: downloaderId }) => await getDownloaderConfig(downloaderId));
@@ -152,7 +177,18 @@ export async function getTorrentDownloadLink(torrent: ITorrent) {
   return link;
 }
 
-onMessage("getTorrentDownloadLink", async ({ data: torrent }) => await getTorrentDownloadLink(torrent));
+onMessage("getTorrentDownloadLink", async ({ data: torrent, sender }) => {
+  // A2：content script 只能为「自己所在站点」的种子取下载链接（该链接可能内嵌站点凭据）。
+  // P1-1：`!isExtensionPageSender` 而非 `isContentScriptSender`，外部扩展 sender 也走绑定（fail-closed）。
+  if (!isTrustedExtensionContext(sender)) {
+    if (!torrent.site) {
+      throw new Error("Permission denied: content script must supply the torrent site");
+    }
+    const siteInstance = await getSiteInstance<"public">(torrent.site);
+    assertSenderMatchesSite(siteInstance, sender);
+  }
+  return await getTorrentDownloadLink(torrent);
+});
 
 export async function getTorrentInfoForVerification(torrent: ITorrent) {
   const siteInstance = await getSiteInstance<"public">(torrent.site);
@@ -337,10 +373,24 @@ onMessage("setClientTorrentLabel", async ({ data: { downloaderId, id, label } })
   return labelStatus;
 });
 
+/**
+ * 生成下载历史记录（OS-1：白名单字段，不再 `...downloadOption` 整份展开）。
+ *
+ * `torrent` 本身仍保留：下载历史页用它渲染标题/站点，重新下载也用它重建下载链接；
+ * 它不属于「请求配置」这一泄漏面（站点 passkey 主要经 downloadRequestConfig.headers/url 与
+ * addTorrentOptions.localDownloadOption 进入历史）。备份导出侧的兜底脱敏见 `backup.ts`。
+ *
+ * 复检 RB-10（残余风险，明示）：部分站点的下载链接把凭据放在 URL 里
+ * （NexusPHP `download.php?id=..&passkey=..`、Rartracker `/api/v1/torrents/download/{id}/{passkey}`、
+ * Gazelle `torrents.php?action=download&authkey=..&torrent_pass=..`），因此 `torrent.link` / `link`
+ * 仍会以明文写入本地 IndexedDB 下载历史。
+ * - 远程上传风险已被 OS-2 阻断：`downloadHistory` 在无加密密钥时禁止导出到远端；
+ * - 本地 IndexedDB 的明文属于「re-download 需要重建链接」与「不留 passkey」之间的已知取舍，
+ *   保留现状；日志侧已通过 `sanitizeDownloadUrlForLog`（含路径凭据段）统一脱敏。
+ */
 function buildDownloadHistory(downloadOption: IDownloadTorrentOption): ITorrentDownloadMetadata {
-  const { torrent = {}, downloaderId = "local" } = downloadOption;
+  const { torrent = {}, downloaderId = "local", addTorrentOptions, localDownloadMethod } = downloadOption;
   return {
-    ...downloadOption,
     siteId: torrent.site ?? "unknown",
     torrentId: torrent.id ?? "unknown",
     downloaderId,
@@ -350,6 +400,9 @@ function buildDownloadHistory(downloadOption: IDownloadTorrentOption): ITorrentD
     link: torrent.link,
     downloadAt: +Date.now(),
     downloadStatus: "pending",
+    torrent: torrent as ITorrent,
+    addTorrentOptions: sanitizeAddTorrentOptions(addTorrentOptions),
+    ...(localDownloadMethod ? { localDownloadMethod } : {}),
   } as ITorrentDownloadMetadata;
 }
 
@@ -365,7 +418,20 @@ const SITE_DOWNLOAD_INTERVAL_KEY = "ptd_siteDownloadAt";
 
 /** 内存表：本 offscreen 生命周期内的权威值，避免每次下载都读一次 session storage */
 const lastSiteDownloadAt = new Map<string, number>();
-let siteDownloadAtLoaded = false;
+let siteDownloadAtLoaded: Promise<void> | null = null;
+let siteDownloadPersistence: Promise<void> = Promise.resolve();
+const sitePreparationChains = new Map<string, Promise<unknown>>();
+
+function enqueueSitePreparation<T>(site: string, task: () => Promise<T>): Promise<T> {
+  const previous = sitePreparationChains.get(site) ?? Promise.resolve();
+  const next = previous.then(task, task);
+  const tail = next.catch(() => undefined);
+  sitePreparationChains.set(site, tail);
+  void tail.then(() => {
+    if (sitePreparationChains.get(site) === tail) sitePreparationChains.delete(site);
+  });
+  return next;
+}
 
 /**
  * 安全访问 chrome API：在非扩展环境（单测）下 `chrome` 可能完全不存在，
@@ -382,28 +448,26 @@ function getSessionStorageArea(): chrome.storage.StorageArea | undefined {
 
 async function loadSiteDownloadAt(): Promise<void> {
   if (siteDownloadAtLoaded) {
-    return;
+    return siteDownloadAtLoaded;
   }
-  siteDownloadAtLoaded = true;
-
-  try {
-    if (!getSessionStorageArea()) {
-      return;
-    }
-    const stored = await getSessionStorageArea()?.get(SITE_DOWNLOAD_INTERVAL_KEY);
-    const table = stored?.[SITE_DOWNLOAD_INTERVAL_KEY] as Record<string, unknown> | undefined;
-    for (const [site, at] of Object.entries(table ?? {})) {
-      if (typeof at === "number" && Number.isFinite(at)) {
-        lastSiteDownloadAt.set(site, at);
+  siteDownloadAtLoaded = (async () => {
+    try {
+      const stored = await getSessionStorageArea()?.get(SITE_DOWNLOAD_INTERVAL_KEY);
+      const table = stored?.[SITE_DOWNLOAD_INTERVAL_KEY] as Record<string, unknown> | undefined;
+      for (const [site, at] of Object.entries(table ?? {})) {
+        if (typeof at === "number" && Number.isFinite(at) && !lastSiteDownloadAt.has(site)) {
+          lastSiteDownloadAt.set(site, at);
+        }
       }
+    } catch (e) {
+      logger({
+        msg: "Failed to restore site download interval timestamps",
+        level: "warn",
+        data: getErrorMessage(e),
+      });
     }
-  } catch (e) {
-    logger({
-      msg: "Failed to restore site download interval timestamps",
-      level: "warn",
-      data: getErrorMessage(e),
-    });
-  }
+  })();
+  return siteDownloadAtLoaded;
 }
 
 async function getLastSiteDownloadAt(site: string): Promise<number> {
@@ -415,19 +479,19 @@ async function getLastSiteDownloadAt(site: string): Promise<number> {
 }
 
 async function persistSiteDownloadAt(): Promise<void> {
-  const area = getSessionStorageArea();
-  if (!area) {
-    return;
-  }
-  try {
-    await area.set({ [SITE_DOWNLOAD_INTERVAL_KEY]: Object.fromEntries(lastSiteDownloadAt) });
-  } catch (e) {
-    logger({
-      msg: "Failed to persist site download interval timestamps",
-      level: "warn",
-      data: getErrorMessage(e),
-    });
-  }
+  const next = siteDownloadPersistence.then(async () => {
+    try {
+      await getSessionStorageArea()?.set({ [SITE_DOWNLOAD_INTERVAL_KEY]: Object.fromEntries(lastSiteDownloadAt) });
+    } catch (e) {
+      logger({
+        msg: "Failed to persist site download interval timestamps",
+        level: "warn",
+        data: getErrorMessage(e),
+      });
+    }
+  });
+  siteDownloadPersistence = next;
+  await next;
 }
 
 /** 预留某站点的下载时间戳，返回被覆盖的上一个时间戳（供失败回滚） */
@@ -527,6 +591,40 @@ function isPendingDownloadResult(value: IDownloadTorrentResult | IPreparedDownlo
  * 真正要下载的任务被饿死。这里只做轻量的配置/站点实例读取，
  * 站点请求配置与真正的下载动作仍然留在队列内，避免批量下载时形成并发风暴。
  */
+/**
+ * 生成投递给 background 的 `reDownloadTorrent` payload（见审查报告 B1-4）。
+ *
+ * background 会把这整份 payload 写进 `chrome.storage.local`（`alarms.ts` 的
+ * `ptd_pending_once_jobs`，TTL 24h）等待闹钟重放；而 `downloadOption.torrent.link` 常内嵌
+ * passkey/downhash（NexusPHP 列表页 href）。这里按「能否重新解析」决定是否保留链接：
+ *   - 站点声明了 `detail.selectors.link`：丢弃 `torrent.link`，重放时 `getTorrentDownloadLink`
+ *     会用 `torrent.url` 重新抓详情页取链接；
+ *   - 不能重新解析（列表页链接是唯一来源）：保留链接，否则重下必然失败（残余风险在报告里注明）。
+ * 同时剥离 `addTorrentOptions.localDownloadOption`（可能含同一批凭据的请求配置）。
+ */
+function buildReDownloadPayload(
+  downloadOption: IDownloadTorrentOption,
+  siteInstance: Awaited<ReturnType<typeof getSiteInstance<"public">>>,
+  downloadId: TTorrentDownloadKey,
+  leftInterval: number,
+) {
+  const { torrent = {}, addTorrentOptions, ...rest } = downloadOption;
+  const sanitizedTorrent = { ...(torrent as Partial<ITorrent>) };
+  if (siteInstance.metadata?.detail?.selectors?.link) {
+    delete sanitizedTorrent.link;
+  }
+
+  return {
+    ...rest,
+    torrent: sanitizedTorrent,
+    addTorrentOptions: sanitizeAddTorrentOptions(addTorrentOptions),
+    // 延迟重放只允许站点内的正常下载，不再接受「无站点直链」特权。
+    allowSiteLessLink: false,
+    downloadId,
+    leftInterval,
+  } as AugmentedRequired<IDownloadTorrentOption, "downloadId" | "leftInterval">;
+}
+
 async function prepareDownloadTorrent(
   downloadOption: IDownloadTorrentOption,
 ): Promise<IDownloadTorrentResult | IPreparedDownload> {
@@ -557,40 +655,29 @@ async function prepareDownloadTorrent(
       // 允许本地下载时忽略站点设置中的下载间隔
       !(isDownloadToLocalFile && downloadConfig?.ignoreSiteDownloadIntervalWhenLocalDownload)
     ) {
-      const now = Date.now();
-      const leftInterval = siteInstance.downloadInterval * 1000 - (now - (await getLastSiteDownloadAt(torrent.site)));
-
-      if (leftInterval > 0) {
-        logger({ msg: `Site ${torrent.site} download interval not reached, waiting...` });
-        // 注意：payload 结构由 background 侧消费，保持 { ...downloadOption, downloadId, leftInterval }
-        sendMessage("reDownloadTorrent", { ...downloadOption, downloadId, leftInterval }).catch((e) =>
-          // 投递失败不改变控制流（本次仍返回 pending），但保留可诊断日志
-          logger({
-            msg: `Failed to schedule re-download for downloadId=${downloadId}`,
-            level: "error",
-            data: getErrorMessage(e),
-          }),
-        );
+      const site = torrent.site;
+      const intervalResult = await enqueueSitePreparation(site, async () => {
+        const previous = await getLastSiteDownloadAt(site);
+        const now = Date.now();
+        const leftInterval = siteInstance.downloadInterval * 1000 - (now - previous);
+        if (leftInterval > 0) {
+          // 排程成功后才返回 pending，不能让消息失败留下无人处理的历史记录。
+          await sendMessage(
+            "reDownloadTorrent",
+            buildReDownloadPayload(downloadOption, siteInstance, downloadId, leftInterval),
+          );
+          return { leftInterval };
+        }
+        return { reservation: { site, at: now, previous: await reserveSiteDownloadInterval(site, now) } };
+      });
+      if ("leftInterval" in intervalResult) {
+        logger({ msg: `Site ${site} download interval not reached, waiting...` });
         return {
           downloadId,
           downloadStatus: await setDownloadStatus(downloadId, "pending"),
         } as IDownloadTorrentResult;
       }
-
-      /**
-       * 这里只**预留**时间戳，不把它当成「已下载」（见 L-1）：
-       * 真正的下载在 downloadQueue 里执行，成功才保留这个预留，失败则在 downloadTorrent 的收尾处回滚。
-       *
-       * 为什么不改成「成功后再写」：`prepareDownloadTorrent` 在入队前执行，批量下载时多个任务的 prepare
-       * 会在第一个任务完成前全部跑完（不受 DOWNLOAD_CONCURRENCY 限制），若此时时间戳仍为空，
-       * 它们会一起通过间隔检查 —— 防轰炸保护反而失效。
-       * 预留 + 失败回滚同时满足「失败不消耗间隔」与「并发任务仍被间隔串开」。
-       */
-      siteDownloadReservation = {
-        site: torrent.site,
-        at: now,
-        previous: await reserveSiteDownloadInterval(torrent.site, now),
-      };
+      siteDownloadReservation = intervalResult.reservation;
     }
   }
 
@@ -642,8 +729,10 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
     if (siteInstance && !siteInstance.isTrustedDownloadLink(axios.getUri(downloadRequestConfig))) {
       throw new Error(`Rejected download request outside site host allowlist for ${torrent.site}`);
     }
-    await patchDownloadHistory(downloadId!, { downloadRequestConfig }).catch((e) =>
-      // 存储下载请求配置，方便后续调试；失败不影响下载主流程，但不再静默
+    // OS-1：只落「脱敏后的调试摘要」，不再把含 passkey/token 的 url 与 headers 长期写进 IndexedDB。
+    await patchDownloadHistory(downloadId!, {
+      downloadRequestConfig: buildRedactedDownloadRequestConfig(downloadRequestConfig),
+    }).catch((e) =>
       logger({ msg: "Failed to store download request config", level: "error", data: getErrorMessage(e) }),
     );
 
@@ -702,22 +791,31 @@ async function downloadTorrent(downloadOption: IDownloadTorrentOption, prepared:
   return { downloadId, downloadStatus, errorMessage, warningMessage } as IDownloadTorrentResult;
 }
 
-function isExtensionContextSender(sender?: chrome.runtime.MessageSender): boolean {
-  if (!sender || sender.id !== chrome.runtime?.id || typeof sender.url !== "string") {
-    return false;
-  }
-  const extensionBase = chrome.runtime?.getURL?.("");
-  if (extensionBase) {
-    return sender.url.startsWith(extensionBase);
-  }
-  return /^(chrome|moz)-extension:\/\//.test(sender.url);
-}
-
 onMessage("downloadTorrent", async ({ data, sender }) => {
+  /**
+   * A2/B1-3：content script 的写权限按「发送方页面 ↔ 目标站点」绑定，见 utils/sender.ts。
+   * P1-1：判据改为「非扩展页」——外部扩展 sender（id 不匹配）必须和内容脚本一样受绑定约束，
+   * 不能因为 `isContentScriptSender` 两边都 false 而被当成可信扩展上下文。
+   */
+  const isFromContentScript = !isTrustedExtensionContext(sender);
   const downloadOption: IDownloadTorrentOption = {
     ...data,
-    allowSiteLessLink: data.allowSiteLessLink === true && isExtensionContextSender(sender),
+    allowSiteLessLink: data.allowSiteLessLink === true && !isFromContentScript,
   };
+  if (isFromContentScript) {
+    // B1-3：downloadId 只能来自 background 的延迟重下重放或扩展页；content script 传入会按 id
+    // 改写既有下载历史（patchDownloadHistory 按 id 合并）。这里直接丢弃，由本次调用新建记录。
+    delete downloadOption.downloadId;
+    const targetSite = downloadOption.torrent?.site;
+    if (targetSite) {
+      const siteInstance = await getSiteInstance<"public">(targetSite);
+      assertSenderMatchesSite(siteInstance, sender);
+    } else if (downloadOption.torrent?.link?.startsWith("magnet:") && downloadOption.downloaderId !== "local") {
+      // 无站点 magnet 是 content script 唯一被允许的无站点场景，但只能存本地文件；
+      // 推送任意下载器（含 savePath/label）必须来自扩展页。
+      throw new Error("Permission denied: content script can only download site-less magnet links to local file");
+    }
+  }
   const incomingDownloadId = downloadOption.downloadId;
   // 站点下载间隔判断/调度在入队前完成，等待间隔的任务不会占用下载并发槽
   let prepared: IDownloadTorrentResult | IPreparedDownload;
@@ -807,7 +905,7 @@ async function downloadTorrentToLocalFile(
       logger({ msg: `Download torrent file with browser method: ${downloadUri}` });
       const chromeDownloadId = await sendMessage("downloadFile", downloadOptions);
       await setDownloadStatus(downloadId, "pending");
-      trackLocalDownload(chromeDownloadId, downloadId, siteDownloadReservation);
+      await trackLocalDownload(chromeDownloadId, downloadId, siteDownloadReservation);
       return { downloadStatus: "pending", errorMessage };
     } catch (e) {
       localDownloadMethod = "extension"; // 如果下载失败，直接使用 extension 方法（怎么可能？）
@@ -840,7 +938,7 @@ async function downloadTorrentToLocalFile(
       // 交给释放器：`downloads.download()` resolve 只是「下载已被接受」，此时 revoke 会让下载读到一半失败；
       // 这里等 chrome.downloads 报告该下载进入终态（complete/interrupted）后再释放，并有宽裕超时兜底。
       await setDownloadStatus(downloadId, "pending");
-      trackLocalDownload(chromeDownloadId, downloadId, siteDownloadReservation, blobUrl);
+      await trackLocalDownload(chromeDownloadId, downloadId, siteDownloadReservation, blobUrl);
       blobUrl = undefined;
       downloadStatus = "pending";
     } catch (e) {
@@ -934,6 +1032,11 @@ function getErrorMessage(error: unknown): string {
 
 /** blob: URL 释放的兜底超时：拿不到下载 id / 环境没有 downloads.onChanged 时，也必须释放（见 L-5） */
 const BLOB_URL_RELEASE_TIMEOUT = 10 * 60 * 1000;
+/**
+ * blob: URL 的最长保留时间（B1-1）：超过后即使下载仍显示 in_progress 也强制释放并结束监听，
+ * 避免「浏览器一直报 in_progress 的僵尸下载」把 blob 内存永久占住。
+ */
+const BLOB_URL_RELEASE_MAX_WAIT = 60 * 60 * 1000;
 
 type TDownloadTerminalState = "complete" | "interrupted";
 const remoteDownloadSettlements = new Map<
@@ -977,6 +1080,7 @@ function watchDownloadSettled(
   let settled = false;
   let blobReleased = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const startedAt = Date.now();
 
   const releaseBlob = () => {
     if (!blobUrl || blobReleased) return;
@@ -1042,8 +1146,18 @@ function watchDownloadSettled(
   };
   const armTimeout = () => {
     timer = setTimeout(() => {
-      releaseBlob();
-      if (!onSettled || typeof chromeDownloadId !== "number") {
+      timer = null;
+      // B1-1：超时后**先**判断状态再决定是否释放。早期实现无条件先 revoke，导致仍在进行中的
+      // 慢下载（例如几十 MB 的本地备份 zip）在 10 分钟处被自己吊销 blob URL 而中断。
+      if (Date.now() - startedAt >= BLOB_URL_RELEASE_MAX_WAIT) {
+        // 硬上限：无论状态如何都释放 blob 并结束监听，避免无限期占用内存。
+        logger({ msg: "Browser download did not settle in time, release blob URL anyway", level: "warn" });
+        finish("interrupted");
+        return;
+      }
+      if (typeof chromeDownloadId !== "number" || !getChromeApi()?.downloads?.search) {
+        // 拿不到下载 id / 没有查询能力：只能按兜底逻辑释放。
+        releaseBlob();
         cleanup();
         return;
       }
@@ -1066,22 +1180,28 @@ function watchDownloadSettled(
   }
 }
 
-function trackLocalDownload(
+async function trackLocalDownload(
   chromeDownloadId: number,
   downloadId: TTorrentDownloadKey,
   reservation?: IPreparedDownload["siteDownloadReservation"],
   blobUrl?: string,
-): void {
+): Promise<void> {
   const downloads = getChromeApi()?.downloads;
   if (!downloads?.onChanged?.addListener || !downloads.search) {
     remoteDownloadSettlements.set(downloadId, { reservation, blobUrl });
-    void sendMessage("registerDownloadTracking", {
+  }
+  // 即使 offscreen 能监听下载，也要让 SW 持久登记 id；长下载期间 offscreen
+  // 可被回收，恢复扫描只能依据这个映射核对 Chrome 的真实状态。
+  try {
+    await sendMessage("registerDownloadTracking", {
       chromeDownloadId,
       downloadId,
       reservation,
-    }).catch((error) =>
-      logger({ msg: "Failed to register browser download tracking", level: "error", data: getErrorMessage(error) }),
-    );
+    });
+  } catch (error) {
+    logger({ msg: "Failed to register browser download tracking", level: "error", data: getErrorMessage(error) });
+  }
+  if (!downloads?.onChanged?.addListener || !downloads.search) {
     return;
   }
 

@@ -17,8 +17,10 @@
  * 2) **体积回归**：本项目刚做过一轮静态资产瘦身（dist 12MB → 8.5MB，图标 4.5MB → 1.7MB，
  *    MDI 字体 820KB → 28KB）。没有预算断言的话，这类收益会在几次迭代内悄悄流失。
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+
+import { checkCsAppWarClosure, checkWarWildcardsHaveMatches } from "./lib/war-coverage.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -106,6 +108,21 @@ function largestJsChunk(p) {
   return max;
 }
 
+/** 列出产物目录内所有文件的相对路径（POSIX 分隔符，供 WAR 通配符校验用） */
+function listAllFiles(p) {
+  const out = [];
+  const stack = [p];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const entry of readdirSync(cur, { withFileTypes: true })) {
+      const full = join(cur, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile()) out.push(relative(p, full).split(/[\\/]/).join("/"));
+    }
+  }
+  return out;
+}
+
 if (!existsSync(DIST)) {
   console.error(
     `✗ 找不到构建产物目录：${relative(ROOT, DIST)}（先跑 npm run build:dist${TARGET === "firefox" ? "-firefox" : ""}）`,
@@ -122,6 +139,45 @@ const exempted = TARGET === "firefox" ? missing.filter((f) => f.includes("offscr
 const stillMissing = missing.filter((f) => !exempted.includes(f));
 if (stillMissing.length) {
   failures.push(`缺少关键产物 ${stillMissing.length} 个：\n    - ${stillMissing.join("\n    - ")}`);
+}
+
+// ---- 1b. WAR 覆盖（G3 / G16）----
+// 只断言「cs-app 的 import 闭包全部存在且可被页面访问」，并**不**要求收窄 WAR
+// （收窄需要真实浏览器验证，见 fix report 延期项）；未来若有人把 `assets/*` 收窄成
+// 精确前缀而漏了某个 chunk，这里会直接失败，而不是让站点侧内容脚本白屏。
+let warClosure = { checked: 0, problems: [] };
+let warWildcardProblems = [];
+if (existsSync(join(DIST, "manifest.json"))) {
+  warClosure = await checkCsAppWarClosure({
+    fileExists: (rel) => existsSync(join(DIST, rel)),
+    readFile: (rel) => {
+      const full = join(DIST, rel);
+      return existsSync(full) ? readFileSync(full, "utf8") : null;
+    },
+  });
+  if (warClosure.problems.length) {
+    failures.push(`WAR 覆盖不足（cs-app 会加载失败）：\n    - ${warClosure.problems.join("\n    - ")}`);
+  }
+  const manifestForWar = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
+  warWildcardProblems = checkWarWildcardsHaveMatches(manifestForWar, () => listAllFiles(DIST));
+  if (warWildcardProblems.length) {
+    failures.push(`WAR 通配符没有匹配到产物：\n    - ${warWildcardProblems.join("\n    - ")}`);
+  }
+
+  // WAR 的 `use_dynamic_url` 是 Chrome 特性（task-12 / P2-8）：
+  // - chrome 必须保留（第一组 icons/lib/css 用动态 URL 降低指纹面）；
+  // - firefox 必须剥离（Firefox 不生成 dynamic URL，未知属性只会产生 AMO/manifest 警告）。
+  const warEntries = manifestForWar.web_accessible_resources ?? [];
+  const dynamicUrlEntries = warEntries.filter((entry) => entry?.use_dynamic_url === true);
+  if (TARGET === "firefox" && dynamicUrlEntries.length > 0) {
+    failures.push(
+      `firefox manifest 含 use_dynamic_url（应剥离，Firefox 不支持 Chrome dynamic URL）：` +
+        dynamicUrlEntries.flatMap((entry) => entry.resources ?? []).join(", "),
+    );
+  }
+  if (TARGET === "chrome" && dynamicUrlEntries.length === 0) {
+    failures.push("chrome manifest 缺少 use_dynamic_url（第一组 WAR 应使用动态 URL 降低指纹面）");
+  }
 }
 
 // ---- 2. 体积预算 ----
@@ -156,6 +212,9 @@ console.log(
   `关键产物：${presentForTarget}/${requiredForTarget} 就位` +
     (exempted.length ? `（${TARGET} 目标豁免：${exempted.join(", ")}）` : ""),
 );
+if (warClosure.checked > 0) {
+  console.log(`WAR 覆盖：cs-app 的 ${warClosure.checked} 个 import 闭包文件全部存在且可被页面访问`);
+}
 
 if (failures.length) {
   console.error("\n✗ 构建产物检查未通过：");

@@ -1,6 +1,8 @@
 import { nanoid } from "nanoid";
 import { defineStore } from "pinia";
+import { cloneDeep } from "es-toolkit";
 import { isEmpty, set } from "es-toolkit/compat";
+import { toRaw } from "vue";
 import { i18n } from "@/options/plugins/i18n.ts";
 import {
   getHostFromUrl,
@@ -41,26 +43,274 @@ type TSaveableStore = {
   $save: (newState?: unknown, options?: { skipMerge?: boolean }) => Promise<void>;
 };
 
-async function refreshSavedSearchSolutionItem(solutionItem: ISearchSolution): Promise<ISearchSolution> {
-  if (!solutionItem.selectedCategories) {
-    return { ...solutionItem };
+/* ------------------------------------------------------------------ *
+ * F1-01（原 D1-High-14 残余）：搜索方案里 `searchEntries` 的请求地址安全化。
+ *
+ * 背景：搜索方案可以被导出/导入（`SetSearchSolution/Index.vue` 的导入只做形状校验），
+ * 而 `searchEntries[*].requestConfig` 会作为 `advanceKeywordConfig` 一路传到站点实例、
+ * 被 `toMerged` 进最终 axios 配置。若方案里带 `requestConfig.url / baseURL` 指向外部地址，
+ * 多个站点定义又会在 `request()` 里无条件注入凭据（x-api-key / APITOKEN / passkey …），
+ * 导入他人方案后搜索一次就会把本机凭据发到对方服务器。
+ *
+ * 这里在 **store 层**统一收口（写入与读取两条路径都过一遍，覆盖已有的坏数据）：
+ * - `requestConfig.headers` 一律丢弃（方案不需要自定义请求头，它只是"转向外站后带凭据"的通道）；
+ * - `requestConfig.url / baseURL` 只允许「站点内相对路径」或「站点定义声明过的 host」（镜像站，
+ *   例如 nyaa 的 `baseURL` 分类会取 siteMetadata.urls 里的镜像地址）；
+ * - `selectedCategories` 的取值必须是站点定义 `category.options` 里声明过的值（或数组子集）；
+ *   这挡住 `#url` / `baseURL` 这类"分类值直接变成请求地址"的分类被写成任意外站地址；
+ * - 读取时（`refreshSavedSearchSolutionItem`）自身 entry 一律按 `selectedCategories` **整份重建**，
+ *   导入的 `requestConfig` 不再参与合并（否则 `selectedCategories:{}`/分类被清空时它会原样残留）。
+ * ------------------------------------------------------------------ */
+type TSafeRequestConfigHosts = Set<string>;
+
+/** I-9：`set()` 点路径里绝不允许出现的段（会造成原型链写入） */
+const UNSAFE_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+function isPlainObjectRecord(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function pickStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** 站点定义声明过的所有 host（含 legacyUrls），用于判定绝对地址是否仍属于本站点 */
+function collectSiteUrlHosts(siteMetadata?: ISiteMetadata | null): TSafeRequestConfigHosts {
+  const hosts = new Set<string>();
+  const urls = [...pickStringArray(siteMetadata?.urls), ...pickStringArray(siteMetadata?.legacyUrls)];
+  for (const url of urls) {
+    try {
+      const { host } = new URL(url);
+      if (host) hosts.add(host.toLowerCase());
+    } catch {
+      // 站点定义里的 url 可能是被加密/占位的形式，解析失败就跳过（该站点只允许相对路径）
+    }
+  }
+  return hosts;
+}
+
+/**
+ * `requestConfig.url` / `baseURL` 是否安全：
+ * - 相对路径（"search/x"、"/search"）会拼到站点 baseURL 上 → 安全；
+ * - 协议相对地址（"//host/..."）会跳到外站 → 不安全；
+ * - 绝对地址只有 host 属于站点定义声明过的镜像时才安全。
+ */
+function isSafeSolutionRequestUrl(value: unknown, allowedHosts: TSafeRequestConfigHosts): boolean {
+  if (typeof value !== "string") return false;
+  const url = value.trim();
+  if (url === "" || url.startsWith("//")) return false;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) return true; // 相对路径
+  try {
+    const { host } = new URL(url);
+    return host !== "" && allowedHosts.has(host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** 剥离方案 entry 中可能把请求转向外站的 axios 配置，其余字段原样保留 */
+function sanitizeSolutionEntry(entry: unknown, allowedHosts: TSafeRequestConfigHosts): ISearchEntryRequestConfig {
+  if (!isPlainObjectRecord(entry)) return {};
+  const next: Record<string, any> = { ...entry };
+  const requestConfig = next.requestConfig;
+  if (isPlainObjectRecord(requestConfig)) {
+    const safeRequestConfig: Record<string, any> = {};
+    for (const [key, value] of Object.entries(requestConfig)) {
+      if (key === "headers") continue;
+      if ((key === "url" || key === "baseURL") && !isSafeSolutionRequestUrl(value, allowedHosts)) continue;
+      safeRequestConfig[key] = value;
+    }
+    next.requestConfig = safeRequestConfig;
+  }
+  return next as ISearchEntryRequestConfig;
+}
+
+function sanitizeSolutionSearchEntries(
+  entries: unknown,
+  allowedHosts: TSafeRequestConfigHosts,
+): Record<string, ISearchEntryRequestConfig> {
+  if (!isPlainObjectRecord(entries)) return {};
+  const result: Record<string, ISearchEntryRequestConfig> = {};
+  for (const [name, entry] of Object.entries(entries)) {
+    if (name === "__proto__" || name === "constructor" || name === "prototype") continue;
+    result[name] = sanitizeSolutionEntry(entry, allowedHosts);
+  }
+  return result;
+}
+
+/** entry 里是否真的存在 url / baseURL（没有就不必加载站点定义，省掉一次 cloneDeep） */
+function hasSolutionEntryUrl(entries: unknown): boolean {
+  if (!isPlainObjectRecord(entries)) return false;
+  return Object.values(entries).some((entry) => {
+    const requestConfig = (entry as any)?.requestConfig;
+    return (
+      isPlainObjectRecord(requestConfig) &&
+      (typeof requestConfig.url === "string" || typeof requestConfig.baseURL === "string")
+    );
+  });
+}
+
+/** I/L5：读取路径里「因站点定义更新而不再匹配」的分类被丢弃时记录一次，供 UI 提示 */
+export interface IDroppedSearchSolutionCategoryNotice {
+  solutionId?: string;
+  siteId?: string;
+  /** 被丢弃的分类 key（已按 solution+site+key 去重） */
+  droppedCategories: string[];
+}
+
+const droppedSearchSolutionCategoryNotices: IDroppedSearchSolutionCategoryNotice[] = [];
+let droppedSearchSolutionCategoryNoticeKeys = new Set<string>();
+
+/**
+ * I/L5：取走「已选分类被静默丢弃」的提示记录（消费后清空，避免每次读方案都重复提示）。
+ *
+ * 站点定义更新（本轮改了 341 个定义）后，旧方案里不在新 `category.options` 中的取值会被
+ * 白名单过滤掉；过滤本身是安全需要，但旧实现完全静默 —— 用户只看到过滤条件少了。
+ */
+export function consumeDroppedSearchSolutionCategoryNotices(): IDroppedSearchSolutionCategoryNotice[] {
+  const notices = droppedSearchSolutionCategoryNotices.map((notice) => ({
+    ...notice,
+    droppedCategories: [...notice.droppedCategories],
+  }));
+  droppedSearchSolutionCategoryNotices.length = 0;
+  droppedSearchSolutionCategoryNoticeKeys = new Set();
+  return notices;
+}
+
+function recordDroppedSearchSolutionCategories(
+  context: { solutionId?: string; siteId?: string } | undefined,
+  droppedCategories: string[],
+): void {
+  if (!context || droppedCategories.length === 0) return;
+  const dedupeKey = `${context.solutionId ?? ""}|${context.siteId ?? ""}`;
+  const existing = droppedSearchSolutionCategoryNotices.find(
+    (notice) => `${notice.solutionId ?? ""}|${notice.siteId ?? ""}` === dedupeKey,
+  );
+  const notice = existing ?? { solutionId: context.solutionId, siteId: context.siteId, droppedCategories: [] };
+  for (const key of droppedCategories) {
+    const uniqueKey = `${dedupeKey}|${key}`;
+    if (droppedSearchSolutionCategoryNoticeKeys.has(uniqueKey)) continue;
+    droppedSearchSolutionCategoryNoticeKeys.add(uniqueKey);
+    notice.droppedCategories.push(key);
+  }
+  if (!existing) droppedSearchSolutionCategoryNotices.push(notice);
+}
+
+/**
+ * 校验 `selectedCategories`：取值必须来自站点定义的可选项。
+ * 没有 options 的分类（完全由 `generateRequestConfig` 处理）无法白名单校验，
+ * 但至少要求是原始值（string / number / 数组），拒绝对象等结构。
+ *
+ * I/L5：被丢弃的分类会通过 `context` 记录一条提示（见 recordDroppedSearchSolutionCategories）。
+ */
+function sanitizeSolutionSelectedCategories(
+  categories: ISearchCategories[],
+  selectedCategories: Record<string, any>,
+  context?: { solutionId?: string; siteId?: string },
+): Record<string, any> {
+  const result: Record<string, any> = {};
+  const droppedCategories: string[] = [];
+
+  for (const category of categories) {
+    if (!Object.hasOwn(selectedCategories, category.key)) continue;
+    const value = selectedCategories[category.key];
+    const options = category.options ?? [];
+
+    if (options.length === 0) {
+      if (typeof value === "string" || typeof value === "number") {
+        result[category.key] = value;
+      } else if (Array.isArray(value)) {
+        const kept = value.filter((item) => typeof item === "string" || typeof item === "number");
+        if (kept.length > 0) result[category.key] = kept;
+        if (kept.length !== value.length) droppedCategories.push(category.key);
+      }
+      continue;
+    }
+
+    const allowed = new Set(options.map((option) => option.value));
+    if (Array.isArray(value)) {
+      const kept = value.filter((item) => allowed.has(item as any));
+      if (kept.length > 0) result[category.key] = kept;
+      if (kept.length !== value.length) droppedCategories.push(category.key);
+    } else if (allowed.has(value)) {
+      result[category.key] = value;
+    } else {
+      droppedCategories.push(category.key);
+    }
   }
 
-  const siteMetadata = await getDefinedSiteMetadata(solutionItem.siteId);
-  const { requestConfig: regeneratedEntry } = buildSearchSolutionFromCategories(
-    siteMetadata.category ?? [],
-    solutionItem.selectedCategories,
-  );
-  const currentEntry = solutionItem.searchEntries?.[solutionItem.id] ?? {};
+  recordDroppedSearchSolutionCategories(context, droppedCategories);
+  return result;
+}
+
+/**
+ * F1-01：把一条搜索方案条目安全化（**不重建**，只剥离危险字段）。
+ * 写入路径（`addSearchSolution`，导入/自定义方案都走这里）用它，避免坏数据被落盘、再被导出分享。
+ */
+async function sanitizeSearchSolutionItem(solutionItem: ISearchSolution): Promise<ISearchSolution> {
+  let siteMetadata: ISiteMetadata | undefined;
+  try {
+    siteMetadata = await getDefinedSiteMetadata(solutionItem.siteId);
+  } catch {
+    // 站点定义不在构建产物里：仍然做「相对路径/无 headers」的基础安全化
+    siteMetadata = undefined;
+  }
+
+  const allowedHosts = collectSiteUrlHosts(siteMetadata);
+  const next: ISearchSolution = {
+    ...solutionItem,
+    searchEntries: sanitizeSolutionSearchEntries(solutionItem.searchEntries, allowedHosts),
+  };
+
+  if (siteMetadata && solutionItem.selectedCategories) {
+    next.selectedCategories = sanitizeSolutionSelectedCategories(
+      siteMetadata.category ?? [],
+      solutionItem.selectedCategories,
+      { solutionId: solutionItem.id, siteId: solutionItem.siteId },
+    ) as ISearchSolution["selectedCategories"];
+  }
+
+  return next;
+}
+
+async function refreshSavedSearchSolutionItem(solutionItem: ISearchSolution): Promise<ISearchSolution> {
+  const rawEntries = solutionItem.searchEntries ?? {};
+  // 只有需要重建分类或 entry 里真的带 url/baseURL 时才去加载站点定义（绝大多数方案只有 params，零额外开销）
+  const needsSiteMetadata = !!solutionItem.selectedCategories || hasSolutionEntryUrl(rawEntries);
+
+  let siteMetadata: ISiteMetadata | undefined;
+  if (needsSiteMetadata) {
+    try {
+      siteMetadata = await getDefinedSiteMetadata(solutionItem.siteId);
+    } catch {
+      // 站点定义已不在构建产物里（B-13 同类场景）：无法重建，退化为「只剥离危险请求字段」
+      siteMetadata = undefined;
+    }
+  }
+
+  const allowedHosts = collectSiteUrlHosts(siteMetadata);
+  const sanitizedEntries = sanitizeSolutionSearchEntries(rawEntries, allowedHosts);
+
+  if (!solutionItem.selectedCategories || !siteMetadata) {
+    return { ...solutionItem, searchEntries: sanitizedEntries };
+  }
+
+  const categories = siteMetadata.category ?? [];
+  const safeSelectedCategories = sanitizeSolutionSelectedCategories(categories, solutionItem.selectedCategories, {
+    solutionId: solutionItem.id,
+    siteId: solutionItem.siteId,
+  });
+  const { requestConfig: regeneratedEntry } = buildSearchSolutionFromCategories(categories, safeSelectedCategories);
+  // 自身 entry 以 selectedCategories 为准整份重建：导入的 requestConfig 直接丢弃
+  const restCurrentEntry = { ...(sanitizedEntries[solutionItem.id] ?? {}) };
+  delete restCurrentEntry.requestConfig;
 
   return {
     ...solutionItem,
+    selectedCategories: safeSelectedCategories as ISearchSolution["selectedCategories"],
     searchEntries: {
-      ...solutionItem.searchEntries,
-      [solutionItem.id]: {
-        ...currentEntry,
-        ...regeneratedEntry,
-      },
+      ...sanitizedEntries,
+      [solutionItem.id]: sanitizeSolutionEntry({ ...restCurrentEntry, ...regeneratedEntry }, allowedHosts),
     },
   };
 }
@@ -227,7 +477,10 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     getSortedAddedSites(state): Array<ISiteUserConfig & { id: string }> {
-      return this.getAddedSites.sort((a, b) => {
+      // F1（原 D1-Low-10）：先复制再排序。直接 `this.getAddedSites.sort()` 会原地改写
+      // 另一个 getter 的 computed 缓存数组，任何调用过本 getter 的地方都会连带改变
+      // `getAddedSites` 的返回顺序（与 getSortedEnabledDownloadersBySite 的写法对齐）。
+      return [...this.getAddedSites].sort((a, b) => {
         return (b.sortIndex ?? 0) - (a.sortIndex ?? 0);
       });
     },
@@ -441,7 +694,8 @@ export const useMetadataStore = defineStore("metadata", {
     getSearchSolutionName(state) {
       return (solutionId: TSolutionKey): string => {
         if (solutionId === "all") {
-          return "全站"; // FIXME i18n
+          // F1（原 D1-Low-11）：不再硬编码 "全站"；复用顶栏搜索方案下拉里同一个 i18n key
+          return i18n.t("layout.header.searchPlan.all");
         }
 
         return state.solutions[solutionId]?.name ?? solutionId;
@@ -478,7 +732,8 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     getSortedEnabledDownloaders(state): Array<IDownloaderMetadata> {
-      return this.getEnabledDownloaders.sort((a, b) => {
+      // F1（原 D1-Low-10）：复制后排序，避免原地改写 getEnabledDownloaders 的缓存数组
+      return [...this.getEnabledDownloaders].sort((a, b) => {
         return (b.sortIndex ?? 0) - (a.sortIndex ?? 0);
       });
     },
@@ -543,6 +798,18 @@ export const useMetadataStore = defineStore("metadata", {
         return;
       }
 
+      // I-9：`set()` 会按点路径逐段写入。当前调用点的 key 都是字面量，但路径里一旦混入
+      // `__proto__` / `constructor` / `prototype` 就会变成原型链写入（外部数据可能走到这里），
+      // 因此统一拒绝（与 extends/pinia/webExtPersistence.ts 的 isUnsafePathSegment 同口径）。
+      // 这里不写 console（本文件受 no-console 门禁约束）：拒绝本身就是防御，调用方也不会感知到差异。
+      if (
+        String(key)
+          .split(".")
+          .some((segment) => UNSAFE_PATH_SEGMENTS.has(segment))
+      ) {
+        return;
+      }
+
       set(target, key, value);
       scheduleMetadataSave(this);
     },
@@ -550,8 +817,11 @@ export const useMetadataStore = defineStore("metadata", {
     async addSite(siteId: TSiteID, siteConfig: ISiteUserConfig, options?: { reBuildMap?: boolean }) {
       const { reBuildMap = true } = options ?? {};
 
-      delete siteConfig.valid;
-      this.sites[siteId] = siteConfig;
+      // D1-Medium-05：入库前深拷贝（先解代理），既不再修改调用方对象（旧实现 `delete siteConfig.valid`），
+      // 也避免 store 与对话框共享同一个对象 —— 共享时对话框里未确认的输入会被任意一次 $save 落盘。
+      const nextSiteConfig: ISiteUserConfig = cloneDeep(toRaw(siteConfig));
+      delete nextSiteConfig.valid;
+      this.sites[siteId] = nextSiteConfig;
       // V-7：无条件登记站点变更版本 —— 即使本次不重建（批量导入的中间态），
       // 之后的 buildSiteMapCache() 也能据此补上重建。
       getSiteMapRebuildState(this).version++;
@@ -582,10 +852,59 @@ export const useMetadataStore = defineStore("metadata", {
       // 修复前只做 `delete this.sites[siteId]`，于是方案里保留着指向该站点的条目
       // （运行方案时会走到 getSiteDefaultSearchSolution 的裸解引用 / 抛错），
       // lastUserInfo 也会留下永不更新的孤儿记录。
+      //
+      // I（REVIEW-FINDINGS stores-6）：`solution.solutions` 来自导入/备份恢复，形状可能被破坏
+      // （null / 非数组 / 元素非对象）。旧实现裸调 `.filter` 会抛 TypeError，中断后面所有级联清理
+      // （lastUserInfo / 排除站点 / 时间线 / flushPlan 全部残留）。这里逐条防御，坏数据直接重置为 []。
       for (const solution of Object.values(this.solutions)) {
-        solution.solutions = solution.solutions.filter((solutionItem) => solutionItem.siteId !== siteId);
+        if (!solution || typeof solution !== "object") continue;
+        const items = Array.isArray(solution.solutions) ? solution.solutions : [];
+        solution.solutions = items.filter(
+          (solutionItem) => !!solutionItem && typeof solutionItem === "object" && solutionItem.siteId !== siteId,
+        );
       }
       delete this.lastUserInfo[siteId];
+
+      // F1（原 D1-Medium-06）：被清空的方案若正是默认方案，回退到 "default" ——
+      // 否则用户下次搜索会选中一个空方案，静默返回 0 结果。
+      for (const [solutionId, solution] of Object.entries(this.solutions)) {
+        if (
+          Array.isArray(solution?.solutions) &&
+          solution.solutions.length === 0 &&
+          this.defaultSolutionId === solutionId
+        ) {
+          this.defaultSolutionId = "default";
+        }
+      }
+
+      // F1（原 D1-Medium-06）：下载器排除列表 / 统计与时间线的已选站点 / 用户信息刷新计划里
+      // 残留的 siteId 同样要清掉：否则重新添加该站点后，它仍被下载器排除（推送列表与右键菜单
+      // 都看不到它），时间线里留着一个不存在的站点，flushPlan 里留着永不复位的 true。
+      for (const downloader of Object.values(this.downloaders)) {
+        if (Array.isArray(downloader.excludedSites) && downloader.excludedSites.includes(siteId)) {
+          downloader.excludedSites = downloader.excludedSites.filter((id) => id !== siteId);
+        }
+      }
+
+      const configStore = useConfigStore();
+      let configChanged = false;
+      for (const control of [configStore.userDataTimelineControl, configStore.userStatisticControl] as Array<{
+        selectedSites?: TSiteID[];
+      }>) {
+        const selectedSites = control?.selectedSites;
+        if (Array.isArray(selectedSites) && selectedSites.includes(siteId)) {
+          control.selectedSites = selectedSites.filter((id) => id !== siteId);
+          configChanged = true;
+        }
+      }
+      if (configChanged) {
+        void configStore.$save().catch(() => undefined);
+      }
+
+      const runtimeStore = useRuntimeStore();
+      if (Object.hasOwn(runtimeStore.userInfo.flushPlan, siteId)) {
+        delete runtimeStore.userInfo.flushPlan[siteId];
+      }
 
       // H-8：保存安排在 finally 里 —— 旧实现在 buildSiteMapCache 抛错时直接跳过保存，
       // 内存里站点已删、磁盘上还在，刷新后删除像没发生过。
@@ -696,7 +1015,18 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     async addSearchSolution(solution: ISearchSolutionMetadata) {
-      this.solutions[solution.id] = solution;
+      // D1-Medium-05 + F1-01：先与调用方对象解耦（深拷贝），再对每条站点的 `searchEntries`
+      // 做请求地址安全化 —— 导入的方案与被改过的备份都可能把 `requestConfig.url/baseURL/headers`
+      // 写成外部地址，落盘后还会被继续导出分享给他人。读取路径（getSearchSolution）另有一道同样的
+      // 安全化，用来覆盖「已经被写进 storage 的旧数据」。
+      const nextSolution: ISearchSolutionMetadata = cloneDeep(toRaw(solution));
+      const sanitizedItems: ISearchSolution[] = [];
+      for (const solutionItem of nextSolution.solutions ?? []) {
+        sanitizedItems.push(await sanitizeSearchSolutionItem(solutionItem));
+      }
+      nextSolution.solutions = sanitizedItems;
+
+      this.solutions[nextSolution.id] = nextSolution;
       scheduleMetadataSave(this);
     },
 
@@ -779,8 +1109,10 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     async addDownloader(downloaderConfig: IDownloaderMetadata) {
-      delete downloaderConfig.valid;
-      this.downloaders[downloaderConfig.id] = downloaderConfig;
+      // D1-Medium-05：拷贝后入库，不修改调用方对象、也不再与对话框共享同一份引用
+      const nextDownloaderConfig: IDownloaderMetadata = cloneDeep(toRaw(downloaderConfig));
+      delete nextDownloaderConfig.valid;
+      this.downloaders[nextDownloaderConfig.id] = nextDownloaderConfig;
       await this.$save();
     },
 
@@ -800,7 +1132,9 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     async addMediaServer(mediaServerConfig: IMediaServerMetadata) {
-      this.mediaServers[mediaServerConfig.id] = mediaServerConfig;
+      // D1-Medium-05：拷贝后入库（同上）
+      const nextMediaServerConfig: IMediaServerMetadata = cloneDeep(toRaw(mediaServerConfig));
+      this.mediaServers[nextMediaServerConfig.id] = nextMediaServerConfig;
       scheduleMetadataSave(this);
     },
 
@@ -810,7 +1144,9 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     async addBackupServer(backupServerConfig: IBackupServerMetadata) {
-      this.backupServers[backupServerConfig.id] = backupServerConfig;
+      // D1-Medium-05：拷贝后入库（同上）
+      const nextBackupServerConfig: IBackupServerMetadata = cloneDeep(toRaw(backupServerConfig));
+      this.backupServers[nextBackupServerConfig.id] = nextBackupServerConfig;
       scheduleMetadataSave(this);
     },
 

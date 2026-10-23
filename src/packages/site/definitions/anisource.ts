@@ -59,10 +59,17 @@ export const siteMetadata: ISiteMetadata = {
         filters: [
           (q: string) => {
             // 2010-06-07 at 13:29 Central US (UTC -9:00)
-            const rawDate = q.split(" | ")[0].replace("Date: ", "").split(" ");
-            return `${rawDate[0]} ${rawDate[2]} -0900`;
+            // E1-B8：原实现按空格切分并硬编码 " -0900"（与 metadata.timezoneOffset 重复声明）：
+            // 站点文案一变（例如去掉 " at "）就会拼出 "undefined" 且解析失败。
+            // 这里用正则提取日期与时间，只返回墙上时间串；时区统一由 metadata.timezoneOffset (-0900)
+            // 在紧随其后的具名 parseTime 里换算，两处不再各写一份偏移。
+            const datePart = String(q ?? "")
+              .split(" | ")[0]
+              .replace("Date: ", "");
+            const matched = datePart.match(/(\d{4}-\d{2}-\d{2})\s+at\s+(\d{2}:\d{2})/);
+            return matched ? `${matched[1]} ${matched[2]}` : "";
           },
-          { name: "parseTime", args: ["yyyy-MM-dd HH:mm XX"] },
+          { name: "parseTime", args: ["yyyy-MM-dd HH:mm"] },
         ],
       },
       comments: {

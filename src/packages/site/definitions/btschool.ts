@@ -4,6 +4,8 @@
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/btschool.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/btschool.json
  */
+import type { AxiosRequestConfig } from "axios";
+
 import { ETorrentStatus, type ISiteMetadata } from "../types";
 import { parseSizeString, rot13 } from "../utils";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP.ts";
@@ -112,10 +114,14 @@ export const siteMetadata: ISiteMetadata = {
     process: [
       ...SchemaMetadata.userInfo!.process!.map((item) => ({
         ...item,
-        requestConfig: {
-          ...item.requestConfig,
-          params: { ...(item.requestConfig?.params || {}), _: Date.now() }, // 请求中增加一个 _ 参数，有助于通过 CF
-        },
+        // E1b-C8 / C20：原实现把 `_: Date.now()` 写进 siteMetadata 字面量，只在模块加载时求值一次，
+        // 同一 SW 生命周期内所有用户信息请求共用同一个 `_`，起不到绕过 CF 缓存的作用。
+        // requestConfigTransformer 在每次请求前执行（AbstractPrivateSite.getUserInfoResult），这里每次生成新时间戳。
+        // 注意：NexusPHP 的 userInfo.process 步骤目前没有其他 transformer；将来若新增，需要在这里串联。
+        requestConfigTransformer: (config: AxiosRequestConfig) => ({
+          ...config,
+          params: { ...(config?.params ?? {}), _: Date.now() },
+        }),
       })),
     ],
   },

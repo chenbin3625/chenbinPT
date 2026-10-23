@@ -73,7 +73,8 @@ export const siteMetadata: ISiteMetadata = {
       category: {
         selector: ":self",
         data: "categoryId",
-        filters: [(query: string) => categoryMap[Number(query)]],
+        // L5：categoryMap 未命中时不要留下 undefined（分类列变空且无告警），回落到原始 id。
+        filters: [(query: number | string) => categoryMap[Number(query)] ?? (query === "" ? undefined : query)],
       },
       tags: [
         ...SchemaMetadata.search!.selectors!.tags!,
@@ -83,6 +84,11 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
+  // L6：本表是「上传量阶梯」与「做种量阶梯」交替的两条路径（与 darkpeers 的
+  // PowerUser/Seeder、SuperUser/Collector 同型）：id 6/8/9/11 等特殊等级以 seedingSize(+averageSeedingTime)
+  // 为主、uploaded 只是入门门槛，因此 uploaded 在 id 5→6、10→11 处回落并非笔误；
+  // getNextLevelUnMet 只会列出未满足的键（这些等级列出的是 seedingSize，而不是「再传 1TiB」）。
+  // 未核对站点规则页前不要把它改成单调递增的上传阶梯。
   levelRequirements: [
     {
       id: 0,

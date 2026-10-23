@@ -380,15 +380,18 @@ export default class QingWa extends NexusPHP {
     let seedStatus = { seeding: 0, seedingSize: 0 };
     if (userSeedingRequestString && userSeedingRequestString?.includes("<table")) {
       const userSeedingDocument = createDocument(userSeedingRequestString);
-      seedStatus.seeding = this.getFieldData(userSeedingDocument, {
+      // E5-8：零命中时 getFieldData 返回 ""，`?? 0` 不生效，会把空串当作数值写进 IUserInfo。
+      const seeding = this.getFieldData(userSeedingDocument, {
         selector: "#total_count",
         filters: [{ name: "parseNumber" }],
       });
+      seedStatus.seeding = typeof seeding === "number" ? seeding : 0;
 
-      seedStatus.seedingSize = this.getFieldData(userSeedingDocument, {
+      const seedingSize = this.getFieldData(userSeedingDocument, {
         selector: ["#total_size"],
         filters: [{ name: "parseSize" }],
       });
+      seedStatus.seedingSize = typeof seedingSize === "number" ? seedingSize : 0;
     }
 
     flushUserInfo = mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) => {

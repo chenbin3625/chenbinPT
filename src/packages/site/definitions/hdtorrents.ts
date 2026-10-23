@@ -59,7 +59,8 @@ export const siteMetadata: ISiteMetadata = {
   timezoneOffset: "+0000",
 
   type: "private",
-  schema: "XBTIT",
+  // E3-8：schemas/ 下没有 XBTIT 实现（此前静默回落 AbstractPrivateSite，且未来新增同名引擎会让行为突变）
+  schema: "AbstractPrivateSite",
 
   urls: ["uggcf://uq-gbeeragf.bet/", "uggcf://uq-gbeeragf.arg/", "uggcf://uq-gbeeragf.zr/", "uggcf://uqgf.eh/"],
 
@@ -104,9 +105,7 @@ export const siteMetadata: ISiteMetadata = {
         delete requestConfig!.params?.keywords; // 移除 AbstractBittorrentSite 自动添加的 keywords 参数
 
         // manually url encode parenthesis to prevent "hacking" detection, remove . as not used in titles
-        keywords = keywords.replace(/\./g, " ");
-        keywords = keywords.replace(/\(/g, "%28");
-        keywords = keywords.replace(/\)/g, "%29");
+        keywords = encodeURIComponent(keywords.replace(/\./g, " ")).replace(/\(/g, "%28").replace(/\)/g, "%29");
         requestConfig!.url = urlJoin(baseUrl, `?search=${keywords}`);
       }
       return requestConfig!;

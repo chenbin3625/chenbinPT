@@ -3,6 +3,7 @@ import { mergeWith, toMerged, omit } from "es-toolkit";
 import { set } from "es-toolkit/compat";
 
 import PrivateSite from "./AbstractPrivateSite";
+import { isDocumentNode, parseInertHtmlFragment } from "./AbstractBittorrentSite";
 import {
   EResultParseStatus,
   ETorrentStatus,
@@ -18,7 +19,6 @@ import {
 import {
   createDocument,
   definedFilters,
-  extractContent,
   logMessage,
   parseSizeString,
   parseTimeToLiveToDate,
@@ -132,6 +132,18 @@ const parseProgressElement = (element: HTMLElement) => {
 };
 
 /**
+ * E07：把元素内文本里的 `<br>` 当空格拼接，等价于旧实现
+ * `extractContent(element.innerHTML.replace("<br>", " "))`，但不把页面 HTML 写进活动文档。
+ */
+const getElementTextWithBreaks = (element: HTMLElement): string => {
+  let text = "";
+  element.childNodes.forEach((node) => {
+    text += node.nodeName === "BR" ? " " : (node.textContent ?? "");
+  });
+  return text.replace(/[\r\n]+/g, " ").trim();
+};
+
+/**
  * 处理 NexusPHP 中 DiffInSection 的 HnR，例如 [xx区: 0/0/10 yy区: 0/0/10 ...]
  * refs: https://github.com/xiaomlove/nexusphp/blob/php8/app/Repositories/HitAndRunRepository.php#L445
  * @param element HTMLElement，由选择器匹配到，选择器通常是 "#info_block a[href*='myhr.php']:last"
@@ -155,19 +167,22 @@ export const parseSectionedHitAndRunElement = (element: HTMLElement) => {
 /**
  * 原实现：序列化整行 innerHTML 后按 "<br>" 切分，取最后一段并二次解析。
  * 仅在无法用直接子节点等价切分（存在嵌套 <br>）时作为回落使用。
+ *
+ * E07：切分仍按序列化文本（读 innerHTML 本身无副作用），但片段解析改用**惰性文档**
+ * （`parseInertHtmlFragment` → DOMParser），不再写进当前活动文档的临时节点，
+ * 避免不可信的页面 HTML 在扩展上下文里触发资源加载 / 事件。
  */
 const legacySubTitleRemoveExtraElement = (element: HTMLElement, removeSelectors: string[], self: boolean): string => {
   const testSubTitle = element.parentElement!.innerHTML.split("<br>");
   if (testSubTitle && testSubTitle.length > 1) {
     const subTitleHtml = testSubTitle[testSubTitle.length - 1];
 
-    // 移除 removeSelectors 的内容
-    const div = document.createElement("div");
-    div.innerHTML = subTitleHtml;
+    // 移除 removeSelectors 的内容（惰性文档，不加载图片/不执行脚本）
+    const fragmentDocument = parseInertHtmlFragment(subTitleHtml);
     for (const removeSelectorsKey of removeSelectors) {
-      div.querySelectorAll(removeSelectorsKey).forEach((el) => (self ? el : el.parentElement!).remove());
+      fragmentDocument.querySelectorAll(removeSelectorsKey).forEach((el) => (self ? el : el.parentElement!)?.remove());
     }
-    return extractContent(div.innerHTML).trim();
+    return (fragmentDocument.body?.textContent ?? "").trim();
   }
   return "";
 };
@@ -502,15 +517,24 @@ export const SchemaMetadata: Pick<
             if (AccurateTimeAnother) {
               time = AccurateTimeAnother.getAttribute("title")!;
             } else {
-              time = extractContent(element.innerHTML.replace("<br>", " "));
+              // E07：不经过 innerHTML + 活文档解析；直接把 <br> 当空格、拼接子节点文本
+              time = getElementTextWithBreaks(element);
             }
 
             // SITECORE-1：绝对时间字符串必须留给 parseWholeTorrentFromRow 按站点时区（timezoneOffset）解析。
             // 此前这里调用 parseValidTimeString 会按运行主机的时区解释站点的墙上时间，
             // 宿主时区 ≠ 站点时区时发布时间整体位移（实测 TZ=UTC 主机访问 +0800 站点偏 8 小时）；
             // 只有「N 分钟前 / N 天前」这类相对时间可以直接换算成绝对时间戳。
-            if (typeof time === "string" && time.match(/\d+[分时天月年]/g)) {
-              time = parseTimeToLiveToDate(time);
+            //
+            // E20：旧判据 `/\d+[分时天月年]/` 要求单位字**紧跟数字**，漏掉「5小时 / 1周 / 3 hours ago」
+            // 这些常见相对时间 → 原串进入 parseTimeWithZone 解析失败变成 0（1970）。
+            // 改为交给 TTL 解析器判定：能完整解析成秒数才算相对时间；绝对日期串里残留的数字会让它返回原串。
+            // 含 4 位年份的串（如 `2024-03-01 10:00:00`）一律不按 TTL 处理，避免把「12月25日」误当日期间隔。
+            if (typeof time === "string" && !/\d{4}\s*[-/年]/.test(time)) {
+              const ttl = parseTimeToLiveToDate(time);
+              if (typeof ttl === "number" && ttl > 0) {
+                time = ttl;
+              }
             }
           } catch (e) {
             // P1-5：时间字段解析失败时回落为原始值（time 仍可能是字符串），保持既有行为不抛出。
@@ -874,7 +898,7 @@ export default class NexusPHP extends PrivateSite {
     let { keywords, searchEntry, requestConfig } = searchConfig;
 
     // 返回是 Document 的情况才自动生成 row 选择器以及其他属性的选择器
-    if (doc instanceof Document) {
+    if (isDocumentNode(doc)) {
       // 自动生成的选择器写入局部副本，避免写回共享的 metadata.search.selectors (P2-15)
       searchEntry = { ...searchEntry, selectors: { ...(searchEntry?.selectors ?? {}) } };
 
@@ -1009,13 +1033,30 @@ export default class NexusPHP extends PrivateSite {
     return data || null;
   }
 
+  /**
+   * 判据：这个可选 ajax 的响应是否**明确**表示「没有记录」。
+   * 与之相对的是「拿不到可用响应」（空 body / 软错误页 / 结构未知）：后者不能被当成 0（D1-3）。
+   */
+  private static readonly noRecordPattern = /No record\.?|没有记录|沒有記錄|暂无数据|暫無數據/i;
+
   protected async parseUserInfoForSeedingStatus(flushUserInfo: Partial<IUserInfo>): Promise<Partial<IUserInfo>> {
     const userId = flushUserInfo.id as number;
     const userSeedingRequestString = await this.requestUserSeedingPage(userId);
 
-    let seedStatus = { seeding: 0, seedingSize: 0 };
-    if (userSeedingRequestString && userSeedingRequestString?.includes("<table")) {
+    // D1-3：不允许把「空响应 / 不可识别响应」当成「0 个做种」。空 body 常见于会话失效、
+    // 接口异常或模板改版；旧实现会写入 {seeding:0, seedingSize:0} 并标记 success，
+    // 把用户真实的做种数据静默清零。这里改为抛错，由 getUserInfoResult 的可选步骤守卫（SITECORE-3）
+    // 捕获后保留字段未定义 + 记 warn，而不是写 0。
+    if (!userSeedingRequestString) {
+      throw new Error("[PTD] getusertorrentlistajax returned an empty response");
+    }
+
+    let seedStatus: { seeding: number; seedingSize: number } | undefined;
+
+    if (userSeedingRequestString.includes("<table")) {
       const userSeedingDocument = createDocument(userSeedingRequestString);
+      seedStatus = { seeding: 0, seedingSize: 0 };
+
       /**
        * #1060 HUDBT 等站点可能存在 seeding table 中也有 "xx | xx" 的文本，但并非我们需要的做种和做种大小信息
        * 所以需要找到和 table 平级的 div 中包含 " | " 的文本，才认为是我们需要的做种和做种大小信息
@@ -1048,10 +1089,17 @@ export default class NexusPHP extends PrivateSite {
             const sizeElement = selectElements(`td:eq(${sizeIndex})`, trAnother)[0] as HTMLElement | undefined;
             if (!sizeElement) return;
 
-            seedStatus.seedingSize += parseSizeString(sizeElement.innerText.trim());
+            seedStatus!.seedingSize += parseSizeString(sizeElement.innerText.trim());
           });
         }
       }
+    } else if (NexusPHP.noRecordPattern.test(userSeedingRequestString)) {
+      // 明确的「没有记录」：真实的 0 做种是有效数据
+      seedStatus = { seeding: 0, seedingSize: 0 };
+    }
+
+    if (!seedStatus) {
+      throw new Error("[PTD] getusertorrentlistajax returned an unrecognized response");
     }
 
     flushUserInfo = mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) => {
@@ -1064,26 +1112,38 @@ export default class NexusPHP extends PrivateSite {
   protected async parseUserInfoForUploads(flushUserInfo: Partial<IUserInfo>): Promise<Partial<IUserInfo>> {
     const userId = flushUserInfo.id as number;
     const userUploadsRequestString = await this.requestUserSeedingPage(userId, "uploaded");
-    flushUserInfo.uploads = 0;
+
+    // D1-3：同做种数，空响应不能落成 uploads = 0
+    if (!userUploadsRequestString) {
+      throw new Error("[PTD] getusertorrentlistajax returned an empty response");
+    }
+
+    let uploads: number | undefined;
 
     if (
-      // 先按关键字匹配
-      userUploadsRequestString &&
-      /<b>\d+<\/b>(条记录| records|條記錄)|No record.|没有记录|沒有記錄/.test(userUploadsRequestString)
+      // 先按关键字匹配（`<b>N</b>条记录` 或明确的「没有记录」）
+      /<b>\d+<\/b>(条记录| records|條記錄)|No record\.?|没有记录|沒有記錄|暂无数据|暫無數據/i.test(
+        userUploadsRequestString,
+      )
     ) {
-      flushUserInfo.uploads = Number(userUploadsRequestString.match(/<b>(\d+)<\/b>(条记录| records|條記錄)/)?.[1] ?? 0);
-    } else if (userUploadsRequestString && userUploadsRequestString?.includes("<table")) {
+      uploads = Number(userUploadsRequestString.match(/<b>(\d+)<\/b>(条记录| records|條記錄)/)?.[1] ?? 0);
+    } else if (userUploadsRequestString.includes("<table")) {
       // 未匹配到关键字，则从表格中解析
       const userUploadsDocument = createDocument(userUploadsRequestString);
       const divSeeding = selectElements("div:has( ~ table) > div:contains(' | ')", userUploadsDocument);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
-        flushUserInfo.uploads = definedFilters.parseNumber(seedingText[0]);
+        uploads = definedFilters.parseNumber(seedingText[0]);
       } else {
-        const trAnothers = selectElements("table:last tr:not(:eq(0))", userUploadsDocument);
-        flushUserInfo.uploads = trAnothers.length;
+        uploads = selectElements("table:last tr:not(:eq(0))", userUploadsDocument).length;
       }
     }
+
+    if (typeof uploads !== "number" || !Number.isFinite(uploads)) {
+      throw new Error("[PTD] getusertorrentlistajax returned an unrecognized response");
+    }
+
+    flushUserInfo.uploads = uploads;
 
     return flushUserInfo;
   }

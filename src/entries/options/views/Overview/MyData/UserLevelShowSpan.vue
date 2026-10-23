@@ -46,11 +46,14 @@ const configStore = useConfigStore();
 // Toggle function for double-click
 function toggleIntervalDisplay() {
   configStore.myDataTableControl.showIntervalAsDate = !configStore.myDataTableControl.showIntervalAsDate;
+  // F6：config store 没有自动保存，双击切换必须显式落盘，否则刷新后回到默认
+  void configStore.$save();
 }
 
 // Toggle function for double-click to switch number simplification
 function toggleNumberSimplification() {
   configStore.myDataTableControl.simplifyBonusNumbers = !configStore.myDataTableControl.simplifyBonusNumbers;
+  void configStore.$save();
 }
 
 // Get interval display text and title

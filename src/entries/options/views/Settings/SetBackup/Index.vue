@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import {
   CloudUploadOutlined,
   DeleteOutlined,
@@ -22,7 +23,7 @@ import { useConfigStore } from "@/options/stores/config.ts";
 import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
 import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
-import { BackupFields, type IBackupServerMetadata, type TBackupServerKey } from "@/shared/types.ts";
+import { BackupFields, type IBackupServerMetadata, type TBackupFields, type TBackupServerKey } from "@/shared/types.ts";
 import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
 
@@ -34,14 +35,24 @@ import EditDialog from "./EditDialog.vue";
 import LocalExportConfirmDialog from "./LocalExportConfirmDialog.vue";
 import HistoryDialog from "./HistoryDialog.vue";
 import RestoreDialog from "./RestoreDialog.vue";
+import { getBackupFailureReason, needsBackupEncryptionKeyHint } from "./utils.ts";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+const router = useRouter();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 const configStore = useConfigStore();
 
 // 备份服务器列表来自 metadata store，异步水合完成前不能把空列表当成「暂无数据」
 const isStoreHydrating = useStoreHydrating(metadataStore);
+
+/** F2-N4：稳定的 `restoreMetadata` 引用，避免父组件每次重渲染都生成新对象、把恢复对话框重置回第一步 */
+const LOCAL_RESTORE_METADATA = { type: "file" } as const;
+
+/** 新增文案尚未进入语言包时回退英文（keys 见 fix report 的「需 G/F1 跟进」） */
+function tWithFallback(key: string, fallback: string, args?: Record<string, unknown>): string {
+  return te(key) ? t(key, args as any) : fallback;
+}
 
 const showAddDialog = ref<boolean>(false);
 const showLocalExportConfirmDialog = ref<boolean>(false);
@@ -138,15 +149,53 @@ function formatBackupInterval(serverConfig: IBackupServerMetadata): string {
 
 const localBackup = Symbol("localBackup");
 const doBackupStatus = ref<Record<TBackupServerKey | symbol, boolean>>({});
+
+/**
+ * H-2（复检）：备份失败提示必须能指向可操作的原因。
+ *
+ * 无加密密钥且勾选了 cookies/metadata/downloadHistory 时，库侧对**远端**备份 fail-closed
+ * （本地导出允许明文），旧实现只提示笼统的「备份失败」；这里透出库侧的 message，
+ * 并在该场景追加一次指引（去基础设置生成密钥 / 取消勾选敏感字段 / 改用导出到本地）。
+ */
+function showBackupFailure(error: unknown, fields: readonly string[] = []): void {
+  const reason = getBackupFailureReason(error);
+  const base = reason ? t("SetBackup.snackbar.failureWithReason", { reason }) : t("SetBackup.snackbar.failure");
+  const needKeyHint = needsBackupEncryptionKeyHint(fields as TBackupFields[], configStore.backup.encryptionKey);
+  runtimeStore.showSnakebar(needKeyHint ? `${base} ${t("SetBackup.snackbar.encryptionKeyRequiredHint")}` : base, {
+    color: "error",
+  });
+}
+
 async function doBackup(backupServerId: TBackupServerKey | symbol) {
   doBackupStatus.value[backupServerId] = true;
+  /** catch 里也要知道本次备份字段，用于判断是否需要「无密钥」指引 */
+  let attemptedBackupFields: TBackupFields[] = [];
 
   // M-25：复位放在 finally、异常给出失败提示。WebDAV.addFile 等不带 try，exportBackupData 又不在消息重试白名单里，
   // 401 之类会以 rejection 抛到这里；原先复位写在 await 之后，按钮会永久 loading（antd loading 还会拦截点击）。
   try {
     if (typeof backupServerId == "string") {
       const serverConfig = metadataStore.backupServers[backupServerId];
+      // F2-N9：服务器可能已被另一个上下文删除。旧实现裸解引用抛 TypeError，只报笼统的「备份失败」；
+      // 这里单独提示「已不存在」并清掉选中态，让列表回到真实状态。
+      if (!serverConfig) {
+        pruneTableSelected();
+        runtimeStore.showSnakebar(
+          tWithFallback("SetBackup.snackbar.serverNotFound", "This backup server no longer exists."),
+          { color: "error" },
+        );
+        return;
+      }
       const backupFields = serverConfig.backupFields ?? [...BackupFields];
+      attemptedBackupFields = backupFields;
+      // F2-N3：一项备份内容都没勾选时不上传只含 manifest 的空 zip（否则会提示成功并参与保留策略清理）
+      if (backupFields.length === 0) {
+        runtimeStore.showSnakebar(
+          tWithFallback("SetBackup.snackbar.noBackupFields", "No backup content selected; nothing was uploaded."),
+          { color: "error" },
+        );
+        return;
+      }
       const backupStatus = await sendMessage("exportBackupData", { backupFields, backupServerId });
       if (backupStatus) {
         // 备份成功后的保留策略清理由 exportBackupData 内部完成，此处仅对启用了保留策略的服务器加以提示
@@ -158,13 +207,13 @@ async function doBackup(backupServerId: TBackupServerKey | symbol) {
           },
         );
       } else {
-        runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+        showBackupFailure(new Error(t("SetBackup.snackbar.failure")), backupFields);
       }
     } else if (backupServerId == localBackup) {
       showLocalExportConfirmDialog.value = true;
     }
-  } catch {
-    runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+  } catch (e) {
+    showBackupFailure(e, attemptedBackupFields);
   } finally {
     doBackupStatus.value[backupServerId] = false;
   }
@@ -180,6 +229,14 @@ const toShowHistoryBackupServerId = ref<TBackupServerKey | null>(null);
 function showHistory(id: TBackupServerKey) {
   toShowHistoryBackupServerId.value = id;
   showHistoryDialog.value = true;
+}
+
+/**
+ * F2-N6：删除后清理选中项。ant-design-vue 的受控 rowSelection 不会因 dataSource 变化自动剔除已不存在的 key，
+ * 否则「移除」按钮保持可用、删除弹窗继续显示已删的项。
+ */
+function pruneTableSelected() {
+  tableSelected.value = tableSelected.value.filter((id) => !!metadataStore.backupServers[id]);
 }
 
 const toDeleteIds = ref<TBackupServerKey[]>([]);
@@ -229,6 +286,16 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
         </a-input>
       </a-flex>
     </template>
+
+    <!-- F2-Medium-13：未设置加密密钥时所有备份（本地 / 远程 / 自动）都是明文，必须显式提示 -->
+    <a-alert v-if="!configStore.backup.encryptionKey" show-icon style="margin-bottom: 12px" type="warning">
+      <template #message>{{ t("ptppSettings.saveKeyNotice") }}</template>
+      <template #action>
+        <a-button size="small" type="link" @click="router.push({ name: 'SetBaseBackup' })">
+          {{ t("SetBase.tab.backup") }}
+        </a-button>
+      </template>
+    </a-alert>
 
     <a-table
       :columns="columns"
@@ -331,8 +398,13 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
 
   <AddDialog v-model="showAddDialog" />
   <EditDialog v-model="showEditDialog" :client-id="toEditBackupServerId!" />
-  <DeleteDialog v-model="showDeleteDialog" :to-delete-ids="toDeleteIds" :confirm-delete="confirmDeleteBackupServer" />
+  <DeleteDialog
+    v-model="showDeleteDialog"
+    :to-delete-ids="toDeleteIds"
+    :confirm-delete="confirmDeleteBackupServer"
+    @all-delete="pruneTableSelected"
+  />
   <HistoryDialog v-model="showHistoryDialog" :backup-server-id="toShowHistoryBackupServerId!" />
   <LocalExportConfirmDialog v-model="showLocalExportConfirmDialog" />
-  <RestoreDialog v-model="showRestoreDialog" :restore-metadata="{ type: 'file' }" />
+  <RestoreDialog v-model="showRestoreDialog" :restore-metadata="LOCAL_RESTORE_METADATA" />
 </template>

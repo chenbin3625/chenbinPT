@@ -11,9 +11,15 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { computedStyle, loadOptionsStyles, mountDom, prepareOptionsPinia } from "../../helpers/optionsView.ts";
+import {
+  computedStyle,
+  loadOptionsStyles,
+  mountDom,
+  mountOptionsView,
+  prepareOptionsPinia,
+} from "../../helpers/optionsView.ts";
 
 const booleanSettingKeys = [
   "showSiteName",
@@ -87,4 +93,57 @@ it("MyData 页面用同一行组件遍历渲染布尔开关（源码级，见上
   expect(settingRow, "应能定位到布尔开关列表项").toBeDefined();
   expect(settingRow).toContain('class="my-data-setting-item"');
   expect(settingRow!.indexOf("my-data-setting-label")).toBeLessThan(settingRow!.indexOf("<a-switch"));
+});
+
+describe("F6：双击切换的显示偏好必须立即落盘", () => {
+  it("BonusFormatSpan 双击切换 simplifyBonusNumbers 后调用 configStore.$save()", async () => {
+    const pinia = prepareOptionsPinia();
+    const { useConfigStore } = await import("@/options/stores/config.ts");
+    const { default: BonusFormatSpan } = await import("@/options/views/Overview/MyData/BonusFormatSpan.vue");
+
+    const configStore = useConfigStore();
+    const save = vi.fn();
+    (configStore as any).$save = save;
+    const before = configStore.myDataTableControl.simplifyBonusNumbers;
+
+    const view = mountOptionsView(BonusFormatSpan, { props: { num: 123456 }, pinia });
+    await view.settle();
+
+    view.$("span")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await view.settle();
+
+    expect(configStore.myDataTableControl.simplifyBonusNumbers, "双击应翻转配置").toBe(!before);
+    expect(save, "config store 没有自动保存，双击后必须显式落盘").toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("UserLevelShowSpan 双击时间区间后调用 configStore.$save()", async () => {
+    const pinia = prepareOptionsPinia();
+    const { useConfigStore } = await import("@/options/stores/config.ts");
+    const { default: UserLevelShowSpan } = await import("@/options/views/Overview/MyData/UserLevelShowSpan.vue");
+
+    const configStore = useConfigStore();
+    const save = vi.fn();
+    (configStore as any).$save = save;
+    const before = configStore.myDataTableControl.showIntervalAsDate;
+
+    const view = mountOptionsView(UserLevelShowSpan, {
+      props: {
+        userInfo: { site: "mteam", joinTime: 1_700_000_000 } as any,
+        levelRequirement: { interval: "P4W" } as any,
+      },
+      pinia,
+    });
+    await view.settle();
+
+    const intervalSpan = view.$$("span").find((element) => element.textContent?.trim() === "4W");
+    expect(intervalSpan, "应渲染出「4W」的区间文本（默认显示为时长）").toBeDefined();
+
+    intervalSpan!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await view.settle();
+
+    expect(configStore.myDataTableControl.showIntervalAsDate, "双击应翻转配置").toBe(!before);
+    expect(save, "config store 没有自动保存，双击后必须显式落盘").toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
 });

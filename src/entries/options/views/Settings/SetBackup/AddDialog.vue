@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 
 import { BackupFields, IBackupServerMetadata } from "@/shared/types.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import {
   entityList,
   getBackupServerDefaultConfig,
@@ -20,6 +21,7 @@ const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const currentStep = ref<0 | 1>(0);
 const selectedBackupServerType = ref<IBackupServerMetadata["type"] | null>(null);
@@ -44,8 +46,14 @@ async function updateStoredDownloaderConfigByDefault(type: IBackupServerMetadata
 }
 
 async function saveStoredBackupServerConfig() {
-  await metadataStore.addBackupServer(storedBackupServerConfig.value as IBackupServerMetadata);
-  showDialog.value = false;
+  // F2-Medium-12：校验未通过不保存；保存失败要提示，不能让 rejection 静默丢失。
+  if (!isBackupServerConfigValid.value) return;
+  try {
+    await metadataStore.addBackupServer(storedBackupServerConfig.value as IBackupServerMetadata);
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 
 function resetDialog() {

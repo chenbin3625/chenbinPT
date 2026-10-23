@@ -193,9 +193,9 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   // 站点页面的用户信息仍需登录态 HTML；此处仅保证 API 检索可用，userInfo 沿用 Unit3D 默认
+  // E13 同型：不要用宽匹配 urlPatterns 覆盖引擎默认登录判据（会把含 login/verify 的搜索词误判为未登录）。
   noLoginAssert: {
     ...SchemaMetadata.noLoginAssert,
-    urlPatterns: [/doLogin|login|verify|checkpoint|returnto|twofactor/gi],
   },
 };
 

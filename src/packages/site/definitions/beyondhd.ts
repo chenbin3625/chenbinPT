@@ -11,11 +11,16 @@ import {
   type IUserInfo,
   type ITorrent,
   type ITorrentTag,
-  NeedLoginError,
   NoUserInputError,
 } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
-import { buildCategoryOptionsFromList, convertIsoDurationToSeconds } from "../utils";
+import {
+  buildCategoryOptionsFromList,
+  classifySiteError,
+  convertIsoDurationToSeconds,
+  logMessage,
+  siteErrorLogData,
+} from "../utils";
 
 export const siteMetadata: ISiteMetadata = {
   version: 2,
@@ -142,6 +147,9 @@ export const siteMetadata: ISiteMetadata = {
     {
       name: "种子状态",
       key: "seedStatus",
+      // E1b-C10：本站搜索是 POST /api/torrents，筛选参数都在 body 的 data 里（同文件其余 7 组都写了 keyPath: "data"）。
+      // 缺 keyPath 时会落到 params，发出 ?seeding=1 这类 query 而 API 不读，筛选静默无效。
+      keyPath: "data",
       options: [
         { name: "seeding", value: "seeding" },
         { name: "leeching", value: "leeching" },
@@ -192,7 +200,16 @@ export const siteMetadata: ISiteMetadata = {
       // 该站点类似于Unit3D，不提供或者说没有subTitle
       url: { selector: "url" },
       // 不设置 RSSKEY时，推断下载连接
-      link: { selector: ["download_url", "url"], filters: [{ name: "replace", args: ["torrents", "download"] }] },
+      link: {
+        selector: ["download_url", "url"],
+        filters: [
+          // E1b-C9：BHD 在未配置 rsskey 时返回 `download_url: null`。getFieldData 的多选择器只在取到
+          // `undefined` 时才换下一个选择器，null 会让循环直接 break，随后 `String(null)` → "null"，
+          // fixLink 把它拼成 `<site>/api/null` 且因为是真值不会再走详情页兜底（下载链路整条 404）。
+          // 这里把 null/空值归一成空串，让基类 getTorrentDownloadLink 回落到详情页的 .download_link。
+          (q: string | null | undefined) => (q ? String(q).replace("torrents", "download") : ""),
+        ],
+      },
       time: { selector: "created_at", filters: [{ name: "parseTime" }] },
       size: { selector: "size" },
       author: { text: "N/A", selector: "uploaded_by" },
@@ -332,7 +349,12 @@ export const siteMetadata: ISiteMetadata = {
       messageCount: {
         text: 0,
         selector: [".beta-alert[title='Private Messages'] .notify"],
-        elementProcess: () => 11, // 该站点不提供未读计数，所以有信置11，无信为0
+        // E1b-C18：站点只提供「有无未读」，原实现命中元素时无条件返回 11（伪造数字）。
+        // 改为：能解析出真实数量就用数量，否则用 1 表达「有未读」（无未读时选择器不命中 → text: 0）。
+        elementProcess: (element: HTMLElement) => {
+          const parsed = Number.parseInt((element.textContent ?? "").trim(), 10);
+          return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+        },
       },
       // '/bp'
       bonusPerHour: {
@@ -572,11 +594,16 @@ export default class BeyondHD extends PrivateSite {
 
       flushUserInfo.status = EResultParseStatus.success;
     } catch (e) {
-      flushUserInfo.status = EResultParseStatus.parseError;
-
-      if (e instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      }
+      // E1b-C12：与原基类一致——网络/5xx 归为可重试的 unknownError，needLogin 单独映射，
+      // 并透传 statusMsg + 写日志；原实现只有 parseError/needLogin 两档，网络错误会被误报成「解析失败」。
+      const { status, statusMsg, retryable } = classifySiteError(e);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        { site: this.metadata.id, status, retryable, error: siteErrorLogData(e) },
+        retryable ? "warn" : "error",
+      );
     }
 
     return flushUserInfo;
@@ -585,7 +612,14 @@ export default class BeyondHD extends PrivateSite {
   protected async getUserBaseInfoFromSite(): Promise<Partial<IUserInfo>> {
     const { data: dataDocument } = await this.request<Document>({ url: "/", responseType: "document" }, true);
 
-    return this.getFieldsData(dataDocument, this.metadata.userInfo?.selectors!, ["id", "name"]) as Partial<IUserInfo>;
+    const selectors = this.metadata.userInfo?.selectors!;
+    // E1b-C12 / H-6：基类 getUserInfoResult 的「零命中」保护在本类是整段重写的，必须在这里复刻。
+    const matches = this.checkUserInfoSelectorMatches(dataDocument, selectors, ["id", "name"], []);
+    if (matches.declared > 0 && matches.matched === 0) {
+      throw new Error(`用户信息页未命中 id/name（${matches.declared} 个 selector 全部落空），页面可能已改版`);
+    }
+
+    return this.getFieldsData(dataDocument, selectors, ["id", "name"]) as Partial<IUserInfo>;
   }
 
   protected async getUserExtendInfoFromDetails(userName: string, userId: string): Promise<Partial<IUserInfo>> {
@@ -594,11 +628,18 @@ export default class BeyondHD extends PrivateSite {
       responseType: "document",
     });
 
-    return this.getFieldsData(
-      dataDocument,
-      this.metadata.userInfo?.selectors!,
-      Object.keys(omit(this.metadata.userInfo?.selectors!, ["id", "name"])),
-    ) as Partial<IUserInfo>;
+    const selectors = this.metadata.userInfo?.selectors!;
+    const selectorFields = Object.keys(omit(selectors, ["id", "name"]));
+    // E1b-C12 / H-6：关键字段（uploaded/downloaded）未命中由 checkUserInfoSelectorMatches 直接抛错；
+    // 其余字段全落空时也抛错，避免把空值当成 success 写进历史。
+    const matches = this.checkUserInfoSelectorMatches(dataDocument, selectors, selectorFields);
+    if (matches.declared > 0 && matches.matched === 0) {
+      throw new Error(
+        `用户信息页未命中任何字段（${matches.declared} 个 selector 全部落空），页面可能已改版或不是用户信息页`,
+      );
+    }
+
+    return this.getFieldsData(dataDocument, selectors, selectorFields) as Partial<IUserInfo>;
   }
 
   protected async getBonusPerHourFromBonus(): Promise<Partial<IUserInfo>> {
@@ -623,7 +664,16 @@ export default class BeyondHD extends PrivateSite {
   protected override loggedCheck(raw: AxiosResponse<IBhdSearchRawResp<any>>): boolean {
     const isApiResp = raw.config.url?.startsWith("/api") ?? false;
     if (isApiResp) {
-      return raw.data?.success === true && raw.data?.status_code === 1;
+      // E1b-C9：loggedCheck 的语义是「是否已登录」。原实现把任意业务失败（限流、参数不合法、维护）
+      // 都当成未登录，request() 随即抛 NeedLoginError（不可重试），用户去重新登录也无法解决。
+      // 只有明确的鉴权特征才返回 false，其余交给业务层 / 后续的 4xx/5xx ServerError。
+      const data = (raw.data ?? {}) as { message?: unknown; error?: unknown; status_message?: unknown };
+      const message = `${data.message ?? data.error ?? data.status_message ?? ""}`;
+      const authFailed =
+        raw.status === 401 ||
+        raw.status === 403 ||
+        /api[-_ ]?key|unauthori[sz]ed|invalid\s+(api\s+)?key|not\s+logged\s+in|please\s+log\s*in/i.test(message);
+      return !authFailed;
     }
     return super.loggedCheck(raw);
   }
@@ -637,9 +687,12 @@ export default class BeyondHD extends PrivateSite {
 
     const statusTags: Record<string, { name: string; color?: string }> = {
       exclusive: { name: "Excl.", color: "deep-orange-darken-1" },
-      promo25: { name: "75%", color: "lime-darken-3" },
+      // E1b-C11：BHD 的 promo25 表示「减免 25%」（实付 75%），promo75 表示「减免 75%」（实付 25%），
+      // 与 Jackett BeyondHDAPI.cs 的 DownloadVolumeFactor 映射一致（.75/.50/.25）。
+      // Unit3D 引擎的标签约定同样是「百分比 = 减免比例」，原实现把两个标签互换，用户会按错误折扣挑种。
+      promo25: { name: "25%", color: "lime-darken-3" },
       promo50: { name: "50%", color: "orange" },
-      promo75: { name: "25%", color: "purple" },
+      promo75: { name: "75%", color: "purple" },
       freeleech: { name: "Freeleech", color: "blue" },
       limited: { name: "Freeleech(UL)", color: "blue-lighten-3" },
       rewind: { name: "Rewind" },

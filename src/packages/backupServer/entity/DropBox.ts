@@ -111,10 +111,14 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
 
   public async ping(): Promise<boolean> {
     try {
-      const { data } = await this.request<{ account_id?: string }>({
-        url: "https://api.dropboxapi.com/2/users/get_current_account",
+      // C2-B-11：旧实现用 `users/get_current_account`，它需要文件头说明里没有列出的 `account_info.read`，
+      // 严格按说明（只给 files.* 权限）创建的 token 会 403 → 测试连接恒失败，但备份/列表实际可用。
+      // 改用备份功能本身就依赖的 `files/list_folder`（App Folder 根目录）。
+      const { data } = await this.request<{ entries?: unknown[] }>({
+        url: "https://api.dropboxapi.com/2/files/list_folder",
+        data: { path: "" },
       });
-      return !!data.account_id;
+      return Array.isArray(data.entries);
     } catch (e) {
       // SERVERSSOCIAL-3（P1-5）：失败由返回值表达，但必须记录原因（token 失效、网络不可达等）
       this.logBackupFailure("ping", e);

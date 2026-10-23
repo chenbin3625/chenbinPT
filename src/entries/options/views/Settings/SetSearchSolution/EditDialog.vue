@@ -2,8 +2,9 @@
 import { nanoid } from "nanoid";
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { cloneDeep, isEqual } from "es-toolkit";
-import { find, isEmpty } from "es-toolkit/compat";
+import { cloneDeep } from "es-toolkit";
+import { find } from "es-toolkit/compat";
+
 import { refDebounced } from "@vueuse/core";
 import { ClusterOutlined, SearchOutlined } from "@ant-design/icons-vue";
 
@@ -13,6 +14,7 @@ import { formValidateRules } from "@/options/utils.ts";
 import type { ISearchSolution, ISearchSolutionMetadata, TSolutionKey } from "@/shared/types.ts";
 
 import SolutionLabel from "./SolutionLabel.vue";
+import { isDuplicateSearchSolution } from "./utils.ts";
 import SiteCategoryPanel from "./SiteCategoryPanel.vue";
 import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
@@ -73,15 +75,7 @@ const filteredSite = computed(() => {
 
 function addSolution(addSolution: ISearchSolution) {
   // 基于 siteId 和 selectedCategories / name 判断是否已存在，如果存在则不添加
-  if (
-    find(solution.value.solutions, (item) => {
-      return (
-        item.siteId === addSolution.siteId &&
-        ((!isEmpty(item.selectedCategories) && isEqual(item.selectedCategories, addSolution.selectedCategories)) ||
-          (typeof item.name !== "undefined" && item.name === addSolution.name))
-      );
-    })
-  ) {
+  if (find(solution.value.solutions, (item) => isDuplicateSearchSolution(item, addSolution))) {
     runtimeStore.showSnakebar(t("SetSearchSolution.edit.cantAddByDuplicateNote"), { color: "error" });
     return;
   }

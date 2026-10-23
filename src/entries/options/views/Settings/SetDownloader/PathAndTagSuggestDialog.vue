@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { CloseCircleOutlined, ImportOutlined } from "@ant-design/icons-vue";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { cloneDeep } from "es-toolkit";
 import { getDownloader, getDownloaderMetaData, type TorrentClientMetaData } from "@ptd/downloader";
 
 import { resolveColor } from "@/shared/colors.ts";
@@ -61,16 +62,37 @@ const noteDataSource = computed(() =>
   })),
 );
 
+/**
+ * F2-N2（前次 High-02）：每次打开对话框都重新做深拷贝。
+ *
+ * 旧实现只在 `clientId` 变化时取快照，而列表页的编辑 / 路径标签 / 站点过滤三个对话框共用同一个
+ * `toEditDownloaderId`，反复操作同一个下载器时 `clientId` 不变 → 快照不刷新，保存时用整份旧快照
+ * 覆盖掉期间在别处改过的地址 / 密码 / enabled；浅展开还会让 `feature` 等嵌套对象与 store 共用引用。
+ */
+async function enterDialog() {
+  if (!clientId) return;
+  clientConfig.value = cloneDeep({
+    suggestFolders: [],
+    suggestTags: [],
+    ...metadataStore.downloaders[clientId],
+  }) as IDownloaderMetadata;
+  clientMetadata.value = await getDownloaderMetaData(clientConfig.value.type);
+}
+
 watch(
-  () => clientId,
-  async (newValue) => {
-    console.log("Edit clientId:", newValue);
-    if (newValue) {
-      clientConfig.value = { suggestFolders: [], suggestTags: [], ...metadataStore.downloaders[newValue] }; // 防止直接修改父组件的数据
-      clientMetadata.value = await getDownloaderMetaData(clientConfig.value.type);
-    }
+  showDialog,
+  (open) => {
+    if (open) void nextTick(enterDialog);
   },
   { immediate: true },
+);
+
+// 对话框已经打开时切换目标下载器（理论上少见，但保持行为一致）
+watch(
+  () => clientId,
+  (newValue) => {
+    if (newValue && showDialog.value) void nextTick(enterDialog);
+  },
 );
 
 const suggestFolderInput = computed({
@@ -127,9 +149,16 @@ async function loadClientLabels() {
   isLoadingClientLabels.value = false;
 }
 
+/**
+ * F2-N2：保存时只 patch `suggestFolders` / `suggestTags` 两个字段。
+ * 旧实现用 `addDownloader` 整份覆盖，会把这期间在别处改过的地址 / 密码 / enabled / feature 回滚。
+ */
 async function saveClientConfig() {
+  if (!clientConfig.value) return;
   try {
-    await metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
+    const { suggestFolders = [], suggestTags = [] } = clientConfig.value;
+    await metadataStore.simplePatch("downloaders", clientId, "suggestFolders", suggestFolders);
+    await metadataStore.simplePatch("downloaders", clientId, "suggestTags", suggestTags);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
@@ -152,8 +181,8 @@ async function saveClientConfig() {
           <a-flex align="center" :gap="8">
             {{ t("SetDownloader.PathAndTag.downloadPath.title") }}
             <span style="flex: 1 1 auto; min-width: 8px" />
-            <a-tag :color="clientConfig!.suggestFolders!.length > 0 ? resolveColor('info') : undefined">
-              +{{ clientConfig!.suggestFolders!.length }}
+            <a-tag :color="(clientConfig?.suggestFolders?.length ?? 0) > 0 ? resolveColor('info') : undefined">
+              +{{ clientConfig?.suggestFolders?.length ?? 0 }}
             </a-tag>
           </a-flex>
         </template>
@@ -201,8 +230,8 @@ async function saveClientConfig() {
           <a-flex align="center" :gap="8">
             {{ t("SetDownloader.PathAndTag.tags.title") }}
             <span style="flex: 1 1 auto; min-width: 8px" />
-            <a-tag :color="clientConfig!.suggestTags!.length > 0 ? resolveColor('info') : undefined">
-              +{{ clientConfig!.suggestTags!.length }}
+            <a-tag :color="(clientConfig?.suggestTags?.length ?? 0) > 0 ? resolveColor('info') : undefined">
+              +{{ clientConfig?.suggestTags?.length ?? 0 }}
             </a-tag>
           </a-flex>
         </template>

@@ -12,7 +12,8 @@ export const siteMetadata: ISiteMetadata = {
   collaborator: ["fzlins"],
 
   type: "private",
-  schema: "Discuz",
+  // E2b-03：`schemas/` 里没有 Discuz 引擎，index.ts 会按 type 静默回落 AbstractPrivateSite。
+  // 死站只保留 urls/描述，不再声明不存在的 schema 名（复活后需按真实引擎重写）。
 
   urls: ["https://cnlang.org/"],
 

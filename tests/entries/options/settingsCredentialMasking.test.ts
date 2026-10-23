@@ -46,7 +46,7 @@ describe("B-31(b)：备份服务器的凭据字段由 requiredField 显式声明
   it("所有凭据字段都被标注 secret，非凭据字段不受影响", () => {
     expect(secretKeysOf(webdav)).toEqual(["loginPwd"]);
     expect(secretKeysOf(s3)).toEqual(["secretAccessKey"]);
-    expect(secretKeysOf(cookieCloud)).toEqual(["password"]);
+    expect(secretKeysOf(cookieCloud)).toEqual(["password", "headers"]);
     expect(secretKeysOf(gist)).toEqual(["access_token"]);
     expect(secretKeysOf(dropBox)).toEqual(["access_token"]);
     expect(secretKeysOf(googleDrive)).toEqual(["client_secret", "refresh_token"]);
@@ -190,6 +190,41 @@ describe("B-31(a)(c)：凭据输入框真实渲染为掩码，可切换明文（
       clickRevealToggle(pwd);
       await nextTick();
       expect(inputByLabel(view.host, "密码").type).toBe("text");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("CookieCloud Headers 默认掩码，显露后保留多行编辑", async () => {
+    const { default: Editor } = await import("@/options/views/Settings/SetBackup/Editor.vue");
+    const config = ref<any>({
+      id: "cookie",
+      type: "CookieCloud",
+      name: "my cookies",
+      enabled: true,
+      backupFields: [],
+      backupInterval: 0,
+      config: {
+        address: "https://cookie.example",
+        uuid: "u",
+        password: "SECRET",
+        headers: "Authorization: Bearer a:b\nX-Key: two",
+      },
+    });
+    const view = mountOptionsView(
+      defineComponent({
+        setup: () => () =>
+          h(Editor, { modelValue: config.value, "onUpdate:modelValue": (v: any) => (config.value = v) }),
+      }),
+    );
+    try {
+      await settle(10);
+      const masked = inputByLabel(view.host, "Headers");
+      expect(masked.type).toBe("password");
+      expect(view.host.querySelector("textarea")).toBeNull();
+      clickRevealToggle(masked);
+      await nextTick();
+      expect(view.host.querySelector("textarea")?.value).toBe("Authorization: Bearer a:b\nX-Key: two");
     } finally {
       view.unmount();
     }

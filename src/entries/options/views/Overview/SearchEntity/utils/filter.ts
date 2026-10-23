@@ -1,10 +1,10 @@
-import { computed, watch } from "vue";
+import { computed, toRaw, watch, type Ref } from "vue";
 import { ITorrentTag } from "@ptd/site";
 
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
-import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
+import { useTableCustomFilter, type ITextValue } from "@/options/directives/useAdvanceFilter.ts";
 
 const runtimeStore = useRuntimeStore();
 const configStore = useConfigStore();
@@ -28,6 +28,57 @@ export const tableCustomFilter = useTableCustomFilter({
     size: "size",
   },
 });
+
+/**
+ * `tableFilterRef` 是 `refDebounced(tableWaitFilterRef, 500)` 的返回值，VueUse 在其外层包了
+ * `shallowReadonly` —— 直接给 `tableFilterRef.value` 赋值会被当作只读写入静默丢弃。
+ * 点击标签需要立刻生效、不能等 500ms 防抖，因此用 toRaw 取回内部那个可写 ref 直接写入。
+ */
+const writableTableFilterRef = toRaw(tableCustomFilter.tableFilterRef) as Ref<string>;
+
+/**
+ * 当前处于「必选」状态的标签名（供视图高亮已激活的标签）。
+ * 返回拷贝：调用方是 computed，不能让外部拿到字典里那个可变数组的引用。
+ */
+export function getActiveTagFilterNames(): string[] {
+  const tagsState = tableCustomFilter.advanceFilterDictRef.value.tags as ITextValue | undefined;
+  return [...(tagsState?.required ?? [])];
+}
+
+/**
+ * 切换某个标签的「必选」筛选状态（点击标签一键筛选），返回切换后是否处于必选。
+ *
+ * 刻意与 SearchFilterBar 共用同一个 `advanceFilterDictRef`：标签筛选条里的「标签」勾选框与
+ * 标题列里的标签点击是同一份状态，从任一处修改，另一处与筛选串都必须同步，否则界面会自相矛盾。
+ *
+ * 注意 `tableFilterRef` 是 `tableWaitFilterRef` 的 500ms 防抖副本：点击标签是离散操作，
+ * 用户期望立刻看到结果，不能等防抖；所以重建筛选串后直接把防抖 ref 同步成新值。这样写是安全的，
+ * 随后防抖回调写回的也是同一个串，不会把状态改回去。
+ */
+export function toggleTagFilter(tagName: string): boolean {
+  const { advanceFilterDictRef, tableWaitFilterRef, updateTableFilterValueFn } = tableCustomFilter;
+
+  // 显式标注类型：advanceFilterDictRef 的值是 Record<string, any>，不标注会让
+  // `tagsState.exclude.filter((name) => ...)` 的 name 退回隐式 any（vue-tsc TS7006）。
+  const tagsState: ITextValue = (advanceFilterDictRef.value.tags ??= { required: [], exclude: [] });
+  tagsState.required ??= [];
+  tagsState.exclude ??= [];
+
+  const index = tagsState.required.indexOf(tagName);
+  const active = index === -1;
+  if (active) {
+    tagsState.required.push(tagName);
+    // 同一个标签不能既必选又排除：加入必选时顺手从排除项里摘掉
+    tagsState.exclude = tagsState.exclude.filter((name) => name !== tagName);
+  } else {
+    tagsState.required.splice(index, 1);
+  }
+
+  updateTableFilterValueFn();
+  writableTableFilterRef.value = tableWaitFilterRef.value;
+
+  return active;
+}
 
 /**
  * V-5：等 metadata store 从 storage 恢复完成后再恢复「上次筛选」。

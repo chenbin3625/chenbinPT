@@ -12,6 +12,7 @@ import {
 } from "@ptd/mediaServer";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type {
   IMediaServerMetadata as IMediaServerUserConfig,
   TDownloaderKey,
@@ -24,6 +25,7 @@ const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const currentStep = ref<0 | 1>(0);
 const selectedMediaServerType = ref<TMediaServerKey | null>(null);
@@ -58,8 +60,14 @@ async function updateStoredMediaServerConfigByDefault(e: TDownloaderKey) {
 }
 
 async function saveStoredMediaServerConfig() {
-  await metadataStore.addMediaServer(storedMediaServerConfig.value as IMediaServerUserConfig);
-  showDialog.value = false;
+  // F2-Medium-15：校验未通过不保存；写盘/实体验证失败要有提示，而不是把 promise 丢成 unhandled rejection。
+  if (!isMediaServerConfigValid.value) return;
+  try {
+    await metadataStore.addMediaServer(storedMediaServerConfig.value as IMediaServerUserConfig);
+    showDialog.value = false;
+  } catch {
+    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  }
 }
 </script>
 

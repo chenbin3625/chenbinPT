@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/ExoticaZ.cs
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/exoticaz.json
  */
-import { ISiteMetadata, ISearchInput, IAdvancedSearchRequestConfig, ITorrent, ITorrentTag } from "../types";
+import { ISiteMetadata, ISearchInput, ITorrent, ITorrentTag } from "../types";
 import AvistazNetwork, { SchemaMetadata, avzNetDiscountMap, IAvzNetRawTorrent } from "../schemas/AvistazNetwork.ts";
 
 const categoryMap: Record<number, string> = {
@@ -45,19 +45,11 @@ export const siteMetadata: ISiteMetadata = {
   urls: ["uggcf://rkbgvpnm.gb/"],
   legacyUrls: ["uggcf://gbeeragf.lbherkbgvp.pbz/"],
 
-  collaborator: [""],
-
   category: [
-    {
-      name: "搜索入口",
-      key: "entry",
-      notes: "请选中成人以开启搜索",
-      options: [{ name: "成人", value: "adult" }],
-      cross: false,
-      generateRequestConfig: (selectedCategories) => {
-        return { params: {} } as IAdvancedSearchRequestConfig;
-      },
-    },
+    // E2-20/E2b-20：原先这里有一个「搜索入口 / entry」分组，generateRequestConfig 返回的是
+    // `{ params: {} }`（IAdvancedSearchRequestConfig 顶层没有 params，被 `as` 断言掩盖），
+    // 选或不选都不改变任何请求；而它配套的 searchEntry.area_adult 又是 enabled: false。
+    // 即这组配置既不改变请求也不默认启用，只留下「请选中成人以开启搜索」的误导文案，故删除。
     {
       name: "分类",
       key: "category",
@@ -105,9 +97,8 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
-  searchEntry: {
-    area_adult: { name: "成人", enabled: false },
-  },
+  // E2-20/E2b-20：原先这里还有 `searchEntry: { area_adult: { name: "成人", enabled: false } }`，
+  // 与上面被删除的「搜索入口」分组配套；由于没有 requestConfig 且默认不启用，一并删除。
 
   list: [
     // 种子列表页

@@ -10,8 +10,11 @@ import { DEFAULT_BACKUP_RETENTION_SAMPLE_RULES, hasBackupRetentionToApply } from
 
 import { BackupFields, type IBackupServerMetadata } from "@/shared/types.ts";
 import { formValidateRules } from "@/options/utils.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
 
 import ConnectCheckButton from "@/options/components/ConnectCheckButton.vue";
+
+import { needsBackupEncryptionKeyHint } from "./utils.ts";
 
 const { t } = useI18n();
 
@@ -212,8 +215,87 @@ function firstError(rules: ((v: unknown) => boolean | string)[], value: unknown)
 }
 
 const nameError = computed(() => firstError(nameRules, clientConfig.value?.name));
+
+/**
+ * F2-Medium-12：备份服务器字段校验。
+ *
+ * `requiredField` 是「该类型服务器需要的字段」，旧实现只校验了 name：
+ * - 地址 / endpoint 这类 URL 字段既不校验必填也不校验格式；
+ * - 云存储的 token / key / bucket 允许空值保存，之后每一次备份才以笼统的「备份失败」暴露。
+ *
+ * 这里按字段类型统一校验：
+ * - boolean 不需要校验；
+ * - URL 形态的键（address/endpoint/url/host）要求「非空 + 合法 URL」；
+ * - 其余字符串字段要求非空，但 WebDAV 匿名访问（loginName/loginPwd）、S3 的 pathPrefix、
+ *   CookieCloud 的 headers 在协议上允许留空，显式列为可选。
+ */
+const OPTIONAL_CONFIG_FIELD_KEYS = new Set(["pathPrefix", "headers", "loginName", "loginPwd"]);
+const URL_LIKE_CONFIG_FIELD_PATTERN = /address|endpoint|url|host/i;
+
+function isConfigFieldRequired(metaField: { key?: unknown; type?: string }): boolean {
+  if (metaField.type === "boolean") return false;
+  return !OPTIONAL_CONFIG_FIELD_KEYS.has(String(metaField.key));
+}
+
+function configFieldRules(metaField: { key?: unknown; type?: string }): ((v: unknown) => boolean | string)[] {
+  if (metaField.type === "boolean") return [];
+
+  const rules: ((v: unknown) => boolean | string)[] = [];
+  if (isConfigFieldRequired(metaField)) {
+    rules.push(formValidateRules.require());
+  }
+  if (URL_LIKE_CONFIG_FIELD_PATTERN.test(String(metaField.key))) {
+    rules.push(formValidateRules.url());
+  }
+  return rules;
+}
+
+function configFieldError(metaField: { key?: unknown; type?: string }): string | undefined {
+  return firstError(configFieldRules(metaField), clientConfig.value?.config?.[metaField.key! as string]);
+}
+
+// F2-N3：一个备份项都不勾选时不允许保存 —— 否则每次自动/手动备份都会上传只有 manifest 的空 zip 并提示成功，
+// 配置了按数量保留（retention.count）时这些空备份还会把真正含数据的旧备份清掉。
+const backupFieldsError = computed(() =>
+  (clientConfig.value?.backupFields?.length ?? 0) > 0 ? undefined : t("common.form.required"),
+);
+
+const configStore = useConfigStore();
+/**
+ * H-2：未设置备份加密密钥时，远端备份不能包含 cookies / metadata / downloadHistory
+ * （库侧 fail-closed）。在编辑弹窗里先提示一次，避免用户保存后每次手动/自动备份都失败。
+ */
+const showsEncryptionKeyRequired = computed(() =>
+  needsBackupEncryptionKeyHint(clientConfig.value?.backupFields ?? [], configStore.backup.encryptionKey),
+);
+
 // 与迁移前 PtdForm 广播的「表单是否合法」语义一致：任一字段的 rules 未通过即为不合法
-const formValid = computed(() => !nameError.value);
+const formValid = computed(
+  () =>
+    !nameError.value &&
+    !backupFieldsError.value &&
+    (clientMeta.value?.requiredField ?? []).every((metaField) => !configFieldError(metaField)),
+);
+
+// F2-Medium-12：校验结果必须持续驱动「确定」按钮（旧实现只在测试连接后 emit，且 `formValid && true` 恒真）。
+watch(
+  formValid,
+  (valid) => {
+    emits("update:configValid", valid);
+  },
+  { immediate: true },
+);
+
+// 旧版本 / 恢复备份得到的配置可能没有 backupFields：给一份全选默认值，避免编辑器呈现「全不选」而无法保存。
+watch(
+  clientConfig,
+  (config) => {
+    if (config && !config.backupFields) {
+      config.backupFields = [...BackupFields];
+    }
+  },
+  { immediate: true, deep: false },
+);
 
 async function checkConnect() {
   const clientType = clientConfig.value?.type;
@@ -258,12 +340,37 @@ async function checkConnect() {
 
         <a-row :gutter="0">
           <a-col v-for="metaField in clientMeta.requiredField" :key="metaField.key" :span="24">
-            <a-form-item :extra="metaField.description ?? undefined" :label="metaField.name">
-              <a-textarea
-                v-if="metaField.type === 'strings'"
-                v-model:value="clientConfig.config[metaField.key! as string]"
-                :rows="3"
-              />
+            <a-form-item
+              :extra="metaField.description ?? undefined"
+              :help="configFieldError(metaField)"
+              :label="metaField.name"
+              :required="isConfigFieldRequired(metaField)"
+            >
+              <template v-if="metaField.type === 'strings'">
+                <a-input
+                  v-if="isConfigFieldMasked(metaField)"
+                  :value="clientConfig.config[metaField.key! as string]"
+                  type="password"
+                  readonly
+                >
+                  <template #suffix>
+                    <EyeInvisibleOutlined
+                      style="cursor: pointer"
+                      @click="toggleConfigFieldReveal(metaField.key as string)"
+                    />
+                  </template>
+                </a-input>
+                <div v-else style="display: flex; align-items: flex-start; gap: 4px">
+                  <a-textarea v-model:value="clientConfig.config[metaField.key! as string]" :rows="3" />
+                  <a-button
+                    type="text"
+                    :title="t('common.dialog.close')"
+                    @click="toggleConfigFieldReveal(metaField.key as string)"
+                  >
+                    <EyeOutlined />
+                  </a-button>
+                </div>
+              </template>
               <a-input
                 v-else-if="metaField.type === 'string'"
                 v-model:value="clientConfig.config[metaField.key! as string]"
@@ -299,14 +406,23 @@ async function checkConnect() {
         <!-- 以下三项为相互独立的备份设置，分别用子标题区分：备份内容 / 自动备份间隔 / 备份保留策略 -->
         <!-- 备份内容 -->
         <div>
-          <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.backupFields") }}</a-typography-text>
-          <a-checkbox-group v-model:value="clientConfig.backupFields" style="width: 100%">
-            <a-row :gutter="[0, 8]">
-              <a-col v-for="backupField in BackupFields" :key="backupField" :md="8" :xs="24">
-                <a-checkbox :value="backupField">{{ t(`SetBackup.fields.${backupField}`) }}</a-checkbox>
-              </a-col>
-            </a-row>
-          </a-checkbox-group>
+          <a-form-item :help="backupFieldsError" :label="t('SetBackup.Editor.backupFields')" required>
+            <a-checkbox-group v-model:value="clientConfig.backupFields" style="width: 100%">
+              <a-row :gutter="[0, 8]">
+                <a-col v-for="backupField in BackupFields" :key="backupField" :md="8" :xs="24">
+                  <a-checkbox :value="backupField">{{ t(`SetBackup.fields.${backupField}`) }}</a-checkbox>
+                </a-col>
+              </a-row>
+            </a-checkbox-group>
+          </a-form-item>
+          <!-- H-2：无密钥 + 敏感字段时的可见提示（含可操作指引），避免保存后远端备份必然失败 -->
+          <a-alert
+            v-if="showsEncryptionKeyRequired"
+            show-icon
+            style="margin-bottom: 8px"
+            type="warning"
+            :message="t('SetBackup.Editor.encryptionKeyRequired')"
+          />
         </div>
 
         <a-divider style="margin: 12px 0" />
@@ -426,13 +542,8 @@ async function checkConnect() {
           </div>
         </div>
 
-        <ConnectCheckButton
-          :check-fn="checkConnect"
-          :reset-timeout="3e3"
-          @after:check-connect="
-            () => emits('update:configValid', formValid && true) // 不管是否测试成功，都允许用户进行下一步操作（保存下载服务器配置）
-          "
-        />
+        <!-- 「测试连接」只负责连通性提示；保存门禁由上面的 formValid 持续驱动 -->
+        <ConnectCheckButton :check-fn="checkConnect" :reset-timeout="3e3" />
       </div>
     </a-form>
   </a-card>

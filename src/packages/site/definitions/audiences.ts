@@ -14,7 +14,7 @@ import NexusPHP, {
   CategorySpstate,
   SchemaMetadata,
 } from "../schemas/NexusPHP.ts";
-import { createDocument, parseSizeString, rot13, tryToNumber } from "../utils";
+import { createDocument, parseSizeString, tryToNumber } from "../utils";
 import { set } from "es-toolkit/compat";
 
 const AudiencesBaseLinkQuery: IElementQuery = {
@@ -109,7 +109,9 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.search?.advanceKeywordParams!,
       douban: {
         requestConfigTransformer: ({ requestConfig: config }) => {
-          set(config!, "params.search_area", 5); // params "&search_area=4"
+          // E1b-C6：注释原样抄自 NexusPHP 的 imdb 分支（那里是 search_area=4），与这里设置的 5 矛盾。
+          // search_area=5 即本站的「豆瓣」搜索区（沿用上游 PTPP/Jackett 的取值，见本文件头部来源）。
+          set(config!, "params.search_area", 5);
           return config!;
         },
       },
@@ -185,7 +187,9 @@ export const siteMetadata: ISiteMetadata = {
         { name: "官方", selector: "span.tags.tgf", color: "#06c" },
         { name: "原创", selector: "span.tags.tyc", color: "#085" },
         { name: "国语", selector: "span.tags.tgy", color: "#f96" },
-        { name: "粤语", selector: "span.tags.tyc", color: "#f66" },
+        // E1b-C1：原「粤语」与「原创」共用同一个选择器 span.tags.tyc。parseTorrentRowForTags 对每个 tag
+        // 独立判定命中，不做互斥，同一行会被同时打上「原创」和「粤语」，其中必有一个永远错。
+        // 站点上「粤语」的真实 class 无法离线确认（同类站有 tyue/tyy/yue 等多种写法），拿不到就不保留恒错标签。
         { name: "中字", selector: "span.tags.tzz", color: "#9c0" },
         { name: "官字组", selector: "span.tags.tgz", color: "#530" },
         { name: "DIY", selector: "span.tags.tdiy", color: "#993" },
@@ -465,7 +469,10 @@ export default class Audiences extends NexusPHP {
       url: "/getusertorrentlistajax.php",
       params: { userid: userId, type },
       headers: {
-        Referer: rot13("uggcf://nhqvraprf.zr/hfreqrgnvyf.cuc"), // 不提供 Referer，无法获取到数据
+        // E1b-C7：不提供 Referer 时该 ajax 会被站点拒绝（这是本覆写存在的唯一目的），
+        // 但原先把域名写死成 https://audiences.me，用户改成镜像/站点换域名后 Referer 与目标 host 不一致，
+        // 请求又会被拒、做种数与做种体积静默变成 0。这里跟随 this.url。
+        Referer: new URL("userdetails.php", this.url).toString(),
       },
     });
     return data || null;

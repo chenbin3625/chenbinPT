@@ -5,6 +5,8 @@ import { execSync } from "node:child_process";
 
 import axios from "axios";
 
+import { escapeLegacyMarkdown, escapeLegacyMarkdownPre } from "./telegramMarkdown.ts";
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const FILES_DIR = "build";
@@ -32,7 +34,7 @@ function getCommitInfo() {
 
     return { commitHash, author, message, moreMessage, timestamp };
   } catch (err) {
-    console.error("获取 commit 信息失败:", err);
+    console.error("获取 commit 信息失败:", redactBotToken(String(err)));
     return {
       commitHash: "unknown",
       author: "unknown",
@@ -42,9 +44,39 @@ function getCommitInfo() {
   }
 }
 
-function escapeLegacyMarkdown(text: string): string {
-  return text.replace(/([*_])/g, "\\$1"); // 转义星号和下划线
+/**
+ * 把 Bot token 从任意文本里抹掉（缺陷清单 G18）。
+ *
+ * token 必须拼进 Telegram API 的 URL（协议要求），因此网络层错误（ECONNRESET / ENOTFOUND、
+ * 代理错误里带完整 URL）会把 token 原样带进 `AxiosError.message`；发布者把终端日志贴到 issue
+ * 就等于泄漏了机器人控制权。这里同时按「已知 token 字面量」和「bot<digits>:<token> 形态」两路替换，
+ * 即便将来换成别的错误对象也不会漏。
+ */
+const TELEGRAM_BOT_TOKEN_IN_TEXT = /bot\d+:[A-Za-z0-9_-]{30,}/g;
+
+function redactBotToken(text: string): string {
+  let redacted = text.replace(TELEGRAM_BOT_TOKEN_IN_TEXT, "bot<redacted>");
+  if (BOT_TOKEN) {
+    redacted = redacted.split(BOT_TOKEN).join("<redacted-token>");
+  }
+  return redacted;
 }
+
+/** 生成可安全打印的 Telegram 错误描述（响应体优先，且必须脱敏） */
+function describeTelegramError(error: any): string {
+  const data = error?.response?.data;
+  const detail =
+    data === undefined ? (error?.message ?? String(error)) : typeof data === "string" ? data : JSON.stringify(data);
+  return redactBotToken(detail);
+}
+
+/**
+ * Telegram legacy Markdown 的实体转义（G18 / task-12）见 `vite/telegramMarkdown.ts`。
+ *
+ * 关键区别（P2）：``` 围栏内是 **pre**，Telegram 不解析 `*`/`_`/`[`/`]` —— 旧实现把围栏外那套
+ * `\ _ * ` [ ]` 全量转义用在 commit body 上，用户会看到多出来的反斜杠；围栏内只应转义
+ * 反斜杠与反引号（防止提前闭合围栏），围栏外（author 等用户内容）才用全量转义。
+ */
 
 async function main() {
   if (!CHAT_ID) {
@@ -68,10 +100,10 @@ async function main() {
   const actionRunUrl = `${repoUrl}/actions/runs/${triggerInfo.runId}`; // 构建 GitHub Action 运行链接
 
   let message = `
-#${triggerInfo.eventName} #${commitInfo.author} #${commitInfo.commitHash}
+#${escapeLegacyMarkdown(triggerInfo.eventName)} #${escapeLegacyMarkdown(commitInfo.author)} #${commitInfo.commitHash}
 
 \`\`\`
-${escapeLegacyMarkdown(commitInfo.message)}
+${escapeLegacyMarkdownPre(commitInfo.message)}
 |$|moreMessage|$|
 \`\`\`
 
@@ -86,7 +118,7 @@ ${escapeLegacyMarkdown(commitInfo.message)}
     "|$|moreMessage|$|",
     commitInfo.moreMessage
       ? `
-${escapeLegacyMarkdown(commitInfo.moreMessage)}`
+${escapeLegacyMarkdownPre(commitInfo.moreMessage)}`
       : "",
   );
 
@@ -155,8 +187,9 @@ ${escapeLegacyMarkdown(commitInfo.moreMessage)}`
 
 // INFRA-4：原先直接 `main();` 没有 catch，上传失败只留下未处理拒绝（AxiosError），
 // 看不出失败的是哪个接口/哪一步。这里补上可读错误与失败退出码。
+// G18：错误信息必须先脱敏 —— AxiosError 的 message/URL 里可能带 Bot token。
 // noinspection JSIgnoredPromiseFromCall
 main().catch((e) => {
-  console.error("上传发布产物到 Telegram 失败：", e?.response?.data ?? e);
+  console.error("上传发布产物到 Telegram 失败：", describeTelegramError(e));
   process.exit(1);
 });

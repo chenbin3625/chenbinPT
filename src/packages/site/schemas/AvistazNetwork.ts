@@ -1,7 +1,6 @@
-import { type AxiosError, type AxiosRequestConfig, type AxiosResponse } from "axios";
+import { type AxiosRequestConfig, type AxiosResponse } from "axios";
 import urlJoin from "url-join";
 import { selectElements } from "../utils/selector";
-import { axios, isCloudflareBlocked } from "../utils/adapter";
 
 import PrivateSite from "./AbstractPrivateSite";
 
@@ -15,10 +14,18 @@ import {
   type ITorrentTag,
   type ISearchInput,
   type IElementQuery,
-  CFBlockedError,
   NoTorrentsError,
+  NoUserInputError,
 } from "../types";
-import { parseSizeString, mapWithConcurrency, classifySiteError, logMessage, siteErrorLogData } from "../utils";
+import {
+  parseSizeString,
+  mapWithConcurrency,
+  classifySiteError,
+  logMessage,
+  siteErrorLogData,
+  isNetworkLikeError,
+  ServerError,
+} from "../utils";
 
 const enableAvistazUserInfoFetching = import.meta.env.VITE_ENABLE_AVISTAZ_USER_INFO_FETCHING === "true";
 
@@ -560,7 +567,10 @@ export default class AvistazNetwork extends PrivateSite {
       return await super.getUserInfoResult(lastUserInfo);
     }
 
-    const userName = (lastUserInfo.name as string | undefined) || this.userConfig.inputSetting?.username;
+    // E18：lastUserInfo.name 可能是历史遗留的数字（旧 getFieldData 会强转纯数字用户名），必须转字符串
+    const userName =
+      (lastUserInfo.name !== undefined && lastUserInfo.name !== null ? String(lastUserInfo.name) : "") ||
+      this.userConfig.inputSetting?.username;
     if (!userName) {
       flushUserInfo.status = EResultParseStatus.parseError;
       return flushUserInfo;
@@ -631,13 +641,16 @@ export default class AvistazNetwork extends PrivateSite {
   ): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
-      url: urlJoin("/profile", userName),
+      // E18：urlJoin 5.x 只接受字符串
+      url: urlJoin("/profile", String(userName)),
       responseType: "document",
     });
 
     const fields = ["name", "levelName", "uploaded", "downloaded", "ratio", "bonus"] as const;
     this.profileFieldHits += this.countFieldHits(pageDocument, fields);
-    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields]) as Partial<IUserInfo>;
+    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields], {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   /**
@@ -658,7 +671,7 @@ export default class AvistazNetwork extends PrivateSite {
   protected async getExtendInfoFromProfile(userName: string): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
-      url: urlJoin("/profile", userName),
+      url: urlJoin("/profile", String(userName)),
       responseType: "document",
     });
 
@@ -672,14 +685,16 @@ export default class AvistazNetwork extends PrivateSite {
       "hnrUnsatisfied",
     ] as const;
     this.profileFieldHits += this.countFieldHits(pageDocument, fields);
-    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields]) as Partial<IUserInfo>;
+    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields], {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected async getUserSeedingTorrents(userName: string): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
     try {
-      const activePageUrl = urlJoin("/profile", userName, "active");
+      const activePageUrl = urlJoin("/profile", String(userName), "active");
       const { data: firstPage } = await this.request<Document>({
         url: activePageUrl,
         responseType: "document",
@@ -731,7 +746,7 @@ export default class AvistazNetwork extends PrivateSite {
 
     try {
       const { data: bonusPage } = await this.request<Document>({
-        url: urlJoin("/profile", userName, "bonus"),
+        url: urlJoin("/profile", String(userName), "bonus"),
         responseType: "document",
       });
       const bonusPerHour = this.getFieldData(bonusPage, this.metadata.userInfo?.selectors?.bonusPerHour!);
@@ -756,69 +771,52 @@ export default class AvistazNetwork extends PrivateSite {
     const isAuthApi = axiosConfig.url === "/api/v1/jackett/auth";
     const isTorrentSearchApi = axiosConfig.url?.startsWith("/api/v1/jackett/torrents");
 
-    if (isAuthApi) {
-      axiosConfig.method = "POST";
-      axiosConfig.data = {
-        ...axiosConfig.data,
-        username: this.userConfig.inputSetting?.username ?? "",
-        password: this.userConfig.inputSetting?.password ?? "",
-        pid: this.userConfig.inputSetting?.pid ?? "",
-      };
-      axiosConfig.headers = {
-        ...(axiosConfig.headers ?? {}),
-        "Content-Type": "application/x-www-form-urlencoded",
-      };
-    }
-    if (isTorrentSearchApi) {
-      axiosConfig.method = "GET";
-      const token = await this.getAuthToken();
-      axiosConfig.headers = {
-        ...(axiosConfig.headers ?? {}),
-        Authorization: `Bearer ${token}`,
-      };
-    }
-
     if (!isAuthApi && !isTorrentSearchApi) {
       return super.request<T>(axiosConfig, checkLogin);
     }
 
-    axiosConfig.baseURL ??= this.url;
-    axiosConfig.timeout ??= this.userConfig.timeout ?? 30e3;
-    await this.sleepAction(this.metadata.requestDelay ?? 0);
+    // D1-1：这两个 JSON API 分支不能自己维护「无重试 + 原始 AxiosError」的旁路。
+    // 复用基类的 prepareRequestConfig（拷贝 + 同源校验）与 performRequestWithRetry
+    // （网络错误包装成 NetworkError、429/5xx 退避重试、CF 判定），保证错误分类与其它 schema 一致。
+    const config = this.prepareRequestConfig(axiosConfig);
 
-    const requestApi = async (): Promise<AxiosResponse<T>> => {
-      try {
-        return await axios.request<T>(axiosConfig);
-      } catch (error) {
-        const response = (error as AxiosError<T>).response;
-        if (!response) {
-          throw error;
-        }
-
-        return response;
-      }
-    };
-
-    let req = await requestApi();
-
-    if (isCloudflareBlocked(req)) {
-      throw new CFBlockedError();
+    if (isAuthApi) {
+      config.method = "POST";
+      config.data = {
+        ...config.data,
+        username: this.userConfig.inputSetting?.username ?? "",
+        password: this.userConfig.inputSetting?.password ?? "",
+        pid: this.userConfig.inputSetting?.pid ?? "",
+      };
+      config.headers = {
+        ...(config.headers ?? {}),
+        "Content-Type": "application/x-www-form-urlencoded",
+      };
+    } else {
+      config.method = "GET";
     }
 
+    await this.sleepAction(this.metadata.requestDelay ?? 0);
+
+    const withAuthHeader = async (): Promise<AxiosResponse<T>> => {
+      if (!isTorrentSearchApi) {
+        return await this.performRequestWithRetry<T>(config);
+      }
+      config.headers = {
+        ...(config.headers ?? {}),
+        Authorization: `Bearer ${await this.getAuthToken()}`,
+      };
+      return await this.performRequestWithRetry<T>(config);
+    };
+
+    let req = await withAuthHeader();
+
     // Jackett API auth is token based; do not reuse webpage login assertions here.
+    // 401/403 表示 token 失效：清缓存、重新授权后再试一次。
     if (isTorrentSearchApi && [401, 403].includes(req.status)) {
       await this.storeRuntimeSettings("authToken", "");
       await this.storeRuntimeSettings("authExpiry", 0);
-      axiosConfig.headers = {
-        ...(axiosConfig.headers ?? {}),
-        Authorization: `Bearer ${await this.getAuthToken()}`,
-      };
-
-      req = await requestApi();
-
-      if (isCloudflareBlocked(req)) {
-        throw new CFBlockedError();
-      }
+      req = await withAuthHeader();
     }
 
     if (req.status >= 400) {
@@ -826,7 +824,8 @@ export default class AvistazNetwork extends PrivateSite {
         throw new NoTorrentsError();
       }
 
-      throw Error(`Network Error: ${req.status} ${req.statusText || ""}`.trim());
+      // 用 ServerError（可重试）而不是裸 Error，避免被 classifySiteError 归成 parseError
+      throw new ServerError(`Network Error: ${req.status} ${req.statusText || ""}`.trim());
     }
 
     return req;
@@ -847,12 +846,16 @@ export default class AvistazNetwork extends PrivateSite {
       Number.isFinite(storedAuthExpiry) &&
       storedAuthExpiry > currentTime
     ) {
-      console.log("Found valid token in runtimeSettings. Returning existing token.");
       return storedAuthToken.trim();
     }
 
     // 2. 如果过期或不存在，发起新的授权请求
-    console.log("Token expired or not found. Requesting new token...");
+    const { username, password, pid } = this.userConfig.inputSetting ?? {};
+    if (!username || !password || !pid) {
+      // 缺少必填凭据要明确报 noUserInput（而不是发一个空账号请求后得到含糊的失败）
+      throw new NoUserInputError("AvistaZ username/password/pid");
+    }
+
     try {
       const { data: apiAuth } = await this.request<AvzNetAuthResp>({
         url: "/api/v1/jackett/auth",
@@ -861,26 +864,26 @@ export default class AvistazNetwork extends PrivateSite {
 
       // 使用类型守卫判断响应类型
       if (isAuthSuccessResp(apiAuth)) {
-        // 检查 token 属性是否存在且为字符串
-
         // 3. 计算新的过期时间并存储
         const newAuthExpiry = currentTime + apiAuth.expiry; // expiry 已经是 number 类型，直接相加
         const authToken = apiAuth.token.trim();
         await this.storeRuntimeSettings("authToken", authToken);
         await this.storeRuntimeSettings("authExpiry", newAuthExpiry);
 
-        console.log("Successfully obtained and stored new token.");
         return authToken;
       } else if (isAuthFailResp(apiAuth)) {
         // 检查 message 属性是否存在且为字符串
         const message = apiAuth.message.trim() || "Authorization failed";
-        console.error(`Failed to get new token: ${message}`);
         throw new Error(`AvistaZ authorization failed: ${message}`);
       } else {
-        console.error("Failed to get new token: Unexpected response format or missing required properties.");
         throw new Error("AvistaZ authorization failed: Unexpected response format or missing required properties.");
       }
     } catch (error) {
+      // D1-1：授权请求本身遇到网络/5xx（已由基类包装为 NetworkError/ServerError）时必须保留原始分类，
+      // 否则会被重新包装成普通 Error → 上层归成不可重试的 parseError。
+      if (isNetworkLikeError(error) || error instanceof NoUserInputError) {
+        throw error;
+      }
       throw new Error(`Error during authorization request: ${(error as Error).message}`);
     }
   }

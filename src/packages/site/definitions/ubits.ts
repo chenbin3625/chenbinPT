@@ -219,7 +219,7 @@ export const siteMetadata: ISiteMetadata = {
       ...SchemaMetadata.search?.advanceKeywordParams!,
       douban: {
         requestConfigTransformer: ({ requestConfig: config }) => {
-          set(config!, "params.search_area", 5); // params "&search_area=4"
+          set(config!, "params.search_area", 5); // params "&search_area=5"（4=IMDB, 5=豆瓣）
           return config!;
         },
       },
@@ -348,14 +348,16 @@ export const siteMetadata: ISiteMetadata = {
       downloaded: 4 * TB,
     },
     {
-      id: 10,
+      // Info-40：非 user 组按 types/userinfo.ts 的 MinNonUserLevelId=100 约定从 100 起
+      id: 100,
       groupType: "vip",
       name: "贵宾(VIP)",
       privilege: `和Nexus Master拥有相同权限并被认为是精英成员。免除自动降级。`,
     },
     {
-      id: 11,
-      groupType: "vip",
+      // 退休管理组属 manager 组，而不是 vip
+      id: 200,
+      groupType: "manager",
       name: "养老族(Retiree)",
       privilege: `退休后的管理组成员。`,
     },

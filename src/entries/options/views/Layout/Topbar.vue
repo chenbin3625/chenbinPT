@@ -29,7 +29,7 @@ const searchPlanKey = ref<string>("default");
 const searchPlans = computed(() =>
   metadataStore.getSearchSolutions
     .filter((x) => !!x.enabled) // 过滤掉未启用的搜索方案
-    .sort((a, b) => b.sort - a.sort) // 按照 sort 降序排序
+    .sort((a, b) => (b.sort ?? 0) - (a.sort ?? 0)) // 按照 sort 降序排序（缺失 sort 视为 0，避免 NaN 打乱顺序）
     .map((x) => ({
       id: x.id,
       name: x.name,
@@ -65,12 +65,16 @@ async function refreshSingleSearchSiteIds() {
 watch(() => metadataStore.getAddedSites, refreshSingleSearchSiteIds, { immediate: true, deep: true });
 
 function startSearchEntity() {
-  router.push({
+  void router.push({
     name: "SearchEntity",
     query: {
       search: searchKey.value,
       plan: searchPlanKey.value,
       flush: 1,
+      // D2-Medium-02：加一个单调递增的 nonce。同一关键词/方案再次搜索时，若 query 完全相同，
+      // vue-router 会把它当成重复导航直接丢弃 → `SearchEntity` 的 `watch(route.query)` 不触发，
+      // 用户看到的是「点搜索/回车没有任何反应」。nonce 让每次导航都是不同的 location。
+      t: Date.now(),
     },
   });
 }

@@ -61,11 +61,14 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       progress: {
-        selector: ["td[bgcolor]"],
+        // L-12：原先匹配任意 `td[bgcolor]`，若该行第一个带背景色的单元格不是进度条，
+        // `split("%")[0]` 会把整段文本（日期 / 分辨率）交给 parseFloat，产出 2024、1080 之类
+        // 远超 100 的进度值。收窄到 status 已确认的三种颜色，并要求文本里真的带 `%`。
+        selector: ["td[bgcolor='#bce672']", "td[bgcolor='#44cef6']", "td[bgcolor='#d0d0d0']"],
         filters: [
           (query: string) => {
-            const progressText = query.split("%")[0];
-            return progressText ? parseFloat(progressText) : 0;
+            const matched = String(query ?? "").match(/([\d.]+)\s*%/);
+            return matched ? parseFloat(matched[1]) : 0;
           },
         ],
       },

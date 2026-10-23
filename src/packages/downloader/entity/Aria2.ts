@@ -18,7 +18,7 @@ import {
   CTorrentFile,
   TorrentFilePriority,
 } from "../types";
-import { getRemoteTorrentFile } from "../utils";
+import { getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import urlJoin from "url-join";
 
@@ -263,9 +263,16 @@ export default class Aria2 extends AbstractBittorrentClient {
   constructor(options: Partial<DownloaderBaseConfig>) {
     super({ ...clientConfig, ...options });
 
-    // 修正服务器地址
+    // 修正服务器地址（复检 RB：地址可能来自导入/手填的非法 URL，`new URL` 会抛 TypeError 让实例构造失败；
+    // 这里对齐 uTorrent 的 N-2 处理：解析失败时按「无路径」处理，后续请求再报可读错误）
     let address = this.config.address;
-    if (address.indexOf("jsonrpc") === -1) {
+    let pathname = "";
+    try {
+      pathname = new URL(address).pathname.toLowerCase();
+    } catch {
+      pathname = "";
+    }
+    if (!pathname.includes("jsonrpc")) {
       address = urlJoin(address, "/jsonrpc");
     }
     this.config.address = address;
@@ -558,33 +565,36 @@ export default class Aria2 extends AbstractBittorrentClient {
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {
     const addResult = { success: false } as CAddTorrentResult;
 
-    const addOption: any = { pause: options.addAtPaused ?? false };
-
-    if (options.savePath) {
-      addOption.dir = options.savePath;
-    }
-
-    let method: "aria2.addUri" | "aria2.addTorrent";
-    let params: any;
-    if (url.startsWith("magnet:") || !options.localDownload) {
-      // 链接 add_torrent_url
-      method = "aria2.addUri";
-      params = [[url], addOption];
-    } else {
-      // 文件 add_torrent_file
-      method = "aria2.addTorrent";
-
-      const torrent = await getRemoteTorrentFile({
-        url,
-        ...(options.localDownloadOption ?? {}),
-      });
-
-      params = [torrent.metadata.base64(), [], addOption];
-    }
-
     try {
+      const addOption: any = { pause: options.addAtPaused ?? false };
+
+      if (options.savePath) {
+        addOption.dir = options.savePath;
+      }
+
+      let method: "aria2.addUri" | "aria2.addTorrent";
+      let params: any;
+      if (url.startsWith("magnet:") || !options.localDownload) {
+        // 链接 add_torrent_url
+        method = "aria2.addUri";
+        params = [[url], addOption];
+      } else {
+        // 文件 add_torrent_file
+        method = "aria2.addTorrent";
+
+        const torrent = await getRemoteTorrentFile({
+          url,
+          ...(options.localDownloadOption ?? {}),
+        });
+
+        params = [torrent.metadata.base64(), [], addOption];
+      }
+
       // 注意：methodSend 返回的是整个 jsonRPCResponse，真正的 GID 在 result 中
       const { result: gid } = await this.methodSend<string>(method, params);
+
+      // AR-2：把 gid 回填到 addResult.id，调用方（下载历史/后续设置）才能跟踪新任务
+      addResult.id = gid;
 
       // 设置上传速度限制 - 必须在添加后使用 aria2.changeOption
       if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0) {
@@ -607,13 +617,52 @@ export default class Aria2 extends AbstractBittorrentClient {
       }
 
       addResult.success = true;
+      this.invalidateSuggestListCache();
     } catch (e) {
-      // P1-5：把添加失败原因回传给调用方（会写入下载历史），与 Flood/Transmission/Deluge 行为保持一致
+      // P1-5：把添加失败原因回传给调用方（会写入下载历史），与 Flood/Transmission/Deluge 行为保持一致。
+      // SEC-1：URL 脱敏后再写日志（PT 站下载链接通常带 passkey）。
       addResult.message = e instanceof Error ? e.message : String(e);
-      logMessage("[Aria2] 添加种子失败", { url, error: addResult.message }, "error");
+      logMessage("[Aria2] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
     }
 
     return addResult;
+  }
+
+  /**
+   * AR-1：aria2 的 tellWaiting/tellStopped 单次最多返回 1000 项，以前固定 [0,1000]
+   * 会让任务量大的用户列表不完整。这里在第一页满载时继续按 1000 翻页（设上限防止异常服务端死循环）。
+   */
+  private async fetchAllPages(
+    method: "aria2.tellWaiting" | "aria2.tellStopped",
+    firstPage: rawTask[],
+  ): Promise<rawTask[]> {
+    const PAGE_SIZE = 1000;
+    const MAX_PAGES = 20; // 最多 20000 项
+    const all = [...firstPage];
+    let truncated = false;
+    for (let page = 1; page < MAX_PAGES && all.length === page * PAGE_SIZE; page++) {
+      const { result } = await this.methodSend<unknown>(method, [page * PAGE_SIZE, PAGE_SIZE]);
+      const rows = Array.isArray(result) ? (result as rawTask[]) : [];
+      all.push(...rows);
+      if (rows.length < PAGE_SIZE) {
+        break;
+      }
+      truncated = page === MAX_PAGES - 1;
+    }
+    if (truncated) {
+      // 复检 P2-I：达到翻页上限时不再静默截断 —— 至少留一条日志，便于定位「列表缺任务」。
+      logMessage(
+        "[Aria2] 任务列表达到翻页上限，部分任务未显示",
+        {
+          method,
+          fetched: all.length,
+          pageSize: PAGE_SIZE,
+          maxPages: MAX_PAGES,
+        },
+        "warn",
+      );
+    }
+    return all;
   }
 
   async getAllTorrents(): Promise<CTorrent<rawTask>[]> {
@@ -633,14 +682,16 @@ export default class Aria2 extends AbstractBittorrentClient {
       },
     ] as multiCallParams);
 
-    (tasks ?? []).forEach((task) => {
-      unwrapMultiCallTasks(task).forEach((rawTask) => {
-        // 注意，我们只筛选bittorrent种子，对于其他类型的task，我们不做筛选
-        if (rawTask?.bittorrent) {
-          torrents.push(this.parseRawTorrent(rawTask));
-        }
-      });
-    });
+    const [activeTasks, waitingFirstPage, stoppedFirstPage] = (tasks ?? []).map((task) => unwrapMultiCallTasks(task));
+    const waitingTasks = await this.fetchAllPages("aria2.tellWaiting", waitingFirstPage ?? []);
+    const stoppedTasks = await this.fetchAllPages("aria2.tellStopped", stoppedFirstPage ?? []);
+
+    for (const rawTask of [...(activeTasks ?? []), ...waitingTasks, ...stoppedTasks]) {
+      // 只保留 BitTorrent 任务（其它 HTTP/FTP 任务没有 infoHash，MyClient 也无法管理）
+      if (rawTask?.bittorrent) {
+        torrents.push(this.parseRawTorrent(rawTask));
+      }
+    }
 
     return torrents;
   }
@@ -651,8 +702,12 @@ export default class Aria2 extends AbstractBittorrentClient {
   }
 
   async pauseTorrent(id: string): Promise<boolean> {
-    await this.methodSend<string>("aria2.pause", [id]);
-    return true;
+    try {
+      await this.methodSend<string>("aria2.pause", [id]);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async removeTorrent(id: string, removeData?: boolean): Promise<boolean> {
@@ -661,27 +716,35 @@ export default class Aria2 extends AbstractBittorrentClient {
       // 且 removeTorrent 的契约是 Promise<boolean>。改为返回 false，让「不支持删除数据」可被上层读取。
       return false;
     }
-    // H-4：aria2.remove 只接受 active / waiting / paused 的任务；对已停止（complete / error / removed）的任务
-    // 调用会返回 JSON-RPC error（"GID ... is not found"），而这类任务只在「下载结果」里，
-    // 需要直接 aria2.removeDownloadResult。先按状态分流，避免「删除已完成任务必失败」。
-    const { result: task } = await this.methodSend<Pick<rawTask, "status">>("aria2.tellStatus", [id, ["status"]]);
-    const stopped = task?.status === "complete" || task?.status === "error" || task?.status === "removed";
+    try {
+      // H-4：aria2.remove 只接受 active / waiting / paused 的任务；对已停止（complete / error / removed）的任务
+      // 调用会返回 JSON-RPC error（"GID ... is not found"），而这类任务只在「下载结果」里，
+      // 需要直接 aria2.removeDownloadResult。先按状态分流，避免「删除已完成任务必失败」。
+      const { result: task } = await this.methodSend<Pick<rawTask, "status">>("aria2.tellStatus", [id, ["status"]]);
+      const stopped = task?.status === "complete" || task?.status === "error" || task?.status === "removed";
 
-    if (stopped) {
-      await this.methodSend<"OK">("aria2.removeDownloadResult", [id]);
+      if (stopped) {
+        await this.methodSend<"OK">("aria2.removeDownloadResult", [id]);
+      } else {
+        await this.methodSend<string>("aria2.remove", [id]);
+        // aria2.remove 对 active 任务是异步停止，结果稍后才进入「下载结果」；对 waiting / paused 任务则直接移出队列。
+        // 紧接着的 removeDownloadResult 因而可能报 not found —— 删除本身已经成功，这里只做尽力清理。
+        await this.methodSend<"OK">("aria2.removeDownloadResult", [id]).catch(() => undefined);
+      }
+      this.invalidateSuggestListCache();
       return true;
+    } catch (e) {
+      return false;
     }
-
-    await this.methodSend<string>("aria2.remove", [id]);
-    // aria2.remove 对 active 任务是异步停止，结果稍后才进入「下载结果」；对 waiting / paused 任务则直接移出队列。
-    // 紧接着的 removeDownloadResult 因而可能报 not found —— 删除本身已经成功，这里只做尽力清理。
-    await this.methodSend<"OK">("aria2.removeDownloadResult", [id]).catch(() => undefined);
-    return true;
   }
 
   async resumeTorrent(id: any): Promise<boolean> {
-    await this.methodSend<string>("aria2.unpause", [id]);
-    return true;
+    try {
+      await this.methodSend<string>("aria2.unpause", [id]);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   async getTorrentTrackers(_torrent: CTorrent): Promise<string[]> {
@@ -690,28 +753,36 @@ export default class Aria2 extends AbstractBittorrentClient {
 
   // 调整任务在队列中的位置（aria2.changePosition）
   override async moveTorrentInQueue(id: any, direction: TorrentQueueDirection): Promise<boolean> {
-    const positionMap: Record<TorrentQueueDirection, [number, "POS_SET" | "POS_CUR" | "POS_END"]> = {
-      top: [0, "POS_SET"],
-      up: [-1, "POS_CUR"],
-      down: [1, "POS_CUR"],
-      bottom: [0, "POS_END"],
-    };
-    const [pos, how] = positionMap[direction];
-    await this.methodSend<string>("aria2.changePosition", [id, pos, how]);
-    return true;
+    try {
+      const positionMap: Record<TorrentQueueDirection, [number, "POS_SET" | "POS_CUR" | "POS_END"]> = {
+        top: [0, "POS_SET"],
+        up: [-1, "POS_CUR"],
+        down: [1, "POS_CUR"],
+        bottom: [0, "POS_END"],
+      };
+      const [pos, how] = positionMap[direction];
+      await this.methodSend<string>("aria2.changePosition", [id, pos, how]);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   // 设置单个任务的速度限制（单位 KiB/s，0 表示不限速；aria2 使用 K 后缀）
   override async setTorrentSpeedLimit(id: any, limits: TorrentSpeedLimit): Promise<boolean> {
-    const options: Record<string, string> = {};
-    if (typeof limits.download !== "undefined") {
-      options["max-download-limit"] = limits.download > 0 ? `${limits.download}K` : "0";
+    try {
+      const options: Record<string, string> = {};
+      if (typeof limits.download !== "undefined") {
+        options["max-download-limit"] = limits.download > 0 ? `${limits.download}K` : "0";
+      }
+      if (typeof limits.upload !== "undefined") {
+        options["max-upload-limit"] = limits.upload > 0 ? `${limits.upload}K` : "0";
+      }
+      await this.methodSend("aria2.changeOption", [id, options]);
+      return true;
+    } catch (e) {
+      return false;
     }
-    if (typeof limits.upload !== "undefined") {
-      options["max-upload-limit"] = limits.upload > 0 ? `${limits.upload}K` : "0";
-    }
-    await this.methodSend("aria2.changeOption", [id, options]);
-    return true;
   }
 
   private parseRawTorrent(rawTask: rawTask): CTorrent<rawTask> {
@@ -727,8 +798,12 @@ export default class Aria2 extends AbstractBittorrentClient {
         break;
 
       case "error":
-      case "removed":
         state = CTorrentState.error;
+        break;
+
+      // AR-1：removed 是「用户主动删除、仍留在下载结果中的任务」，不是错误
+      case "removed":
+        state = CTorrentState.unknown;
         break;
 
       case "complete":

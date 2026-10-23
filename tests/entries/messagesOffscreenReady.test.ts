@@ -137,6 +137,21 @@ describe("敏感消息的发送方限制", () => {
     ).resolves.toEqual({ downloadId: 1, downloadStatus: "completed" });
   });
 
+  it("内容脚本可先确保 offscreen 就绪，否则其社交页面预筛无法发送", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn(async () => undefined);
+    onMessage("ensureOffscreenDocument", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    await expect(
+      wrapped({
+        data: undefined,
+        sender: { id: "extension-id", url: "https://movie.douban.com/top250", tab: { id: 1 } },
+      }),
+    ).resolves.toBeUndefined();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it("内容脚本不能安装影响普通网页请求的 DNR 规则", async () => {
     const { onMessage } = await import("@/messages.ts");
     const handler = vi.fn();
@@ -177,6 +192,16 @@ describe("敏感消息的发送方限制", () => {
       wrappedWrite({ data: { key: "metadata", path: ["backupServers", "evil"], value: {} }, sender }),
     ).toThrow(/permission/i);
     expect(write).not.toHaveBeenCalled();
+
+    // 正向用例：允许内容脚本保存悬浮球位置（P1-2）
+    write.mockResolvedValueOnce(true);
+    await expect(
+      wrappedWrite({
+        data: { key: "config", path: "contentScript.position", value: { x: 10, y: 20 } },
+        sender,
+      }),
+    ).resolves.toBe(true);
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it("内容脚本不能切换原生桥接开关", async () => {
@@ -353,23 +378,26 @@ describe("跨上下文消息：只读消息才允许自动重试（B-9）", () =
 
 const messagesSource = readFileSync(resolve(process.cwd(), "src/entries/messages.ts"), "utf8");
 
-/** 解析 `const <name> = new Set<...>([ ... ])` 里的字符串字面量集合 */
-function parseSetLiteral(name: string): string[] {
-  const declStart = messagesSource.indexOf(`const ${name} = new Set`);
-  expect(declStart, `messages.ts 里应存在 ${name}`).toBeGreaterThan(-1);
-
-  const bodyStart = messagesSource.indexOf("([", declStart);
-  const bodyEnd = messagesSource.indexOf("]);", bodyStart);
-  expect(bodyStart).toBeGreaterThan(-1);
-  expect(bodyEnd).toBeGreaterThan(bodyStart);
-  const body = messagesSource.slice(bodyStart + 2, bodyEnd);
-
-  const values = [...body.matchAll(/"([^"]+)"/g)].map((match) => match[1]!);
-  // 自证：解析结果必须与块内字符串字面量数量一致（解析器不能吞条目/把注释当条目）
-  const rawQuoteCount = (body.match(/"/g) ?? []).length;
-  expect(values.length * 2, `${name} 的解析结果与源码字符串数量不一致`).toBe(rawQuoteCount);
-  expect(values.length, `${name} 不应为空`).toBeGreaterThan(0);
-  return values;
+/**
+ * 三个消息名单直接取模块运行时值（2026-10-24：不再解析 `messages.ts` 源码文本）。
+ *
+ * 源码文本断言的问题（REVIEW-FINDINGS 测试有效性项 / TEST-6 派生）：
+ * - 名单里加一行注释、换一种集合写法（`new Set([...])` → 别的形式）都会让解析假红；
+ * - 反过来，如果「名单内容」与「运行时实际判定」漂移，源码断言也发现不了。
+ * 现在名单在 `messages.ts` 里 `export`，这里直接断言真实对象；`parseProtocolMessageNames()`
+ * 仍读源码是因为 ProtocolMap 是纯类型、运行时不存在，只能从文本取消息名（用于拼写校验）。
+ */
+async function loadAllowlistSets(): Promise<{
+  offscreenTypes: string[];
+  extensionOnlyTypes: string[];
+  contentScriptAllowedTypes: string[];
+}> {
+  const mod = await import("@/messages.ts");
+  return {
+    offscreenTypes: [...mod.offscreenMessageTypes] as string[],
+    extensionOnlyTypes: [...mod.extensionPageOnlyMessages] as string[],
+    contentScriptAllowedTypes: [...mod.contentScriptAllowedMessages] as string[],
+  };
 }
 
 /** 解析 `interface ProtocolMap { ... }` 的全部消息名（运行时拿不到：它是纯类型） */
@@ -415,10 +443,9 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
     });
   });
 
-  it("两个名单都只引用真实消息，且解析结果与源码字符串数量一致（自证）", () => {
+  it("两个名单都只引用真实消息，且运行时名单与 ProtocolMap 一致", async () => {
     const protocolNames = parseProtocolMessageNames();
-    const offscreenTypes = parseSetLiteral("offscreenMessageTypes");
-    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+    const { offscreenTypes, extensionOnlyTypes } = await loadAllowlistSets();
 
     expect(extensionOnlyTypes.length).toBeGreaterThan(0);
     for (const type of [...offscreenTypes, ...extensionOnlyTypes]) {
@@ -429,9 +456,9 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
     expect(new Set(extensionOnlyTypes).size).toBe(extensionOnlyTypes.length);
   });
 
-  it("会读写扩展存储 / Cookie / 备份 / DNR / 原生桥接的消息都必须登记（豁免表逐条给理由）", () => {
+  it("会读写扩展存储 / Cookie / 备份 / DNR / 原生桥接的消息都必须登记（豁免表逐条给理由）", async () => {
     const protocolNames = parseProtocolMessageNames();
-    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+    const { extensionOnlyTypes } = await loadAllowlistSets();
 
     const offenders = protocolNames.filter(
       (type) =>
@@ -461,7 +488,7 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
 
   it("名单里的每一条都真的会拒绝内容脚本发送方（静态名单与运行时判定一致）", async () => {
     const { onMessage } = await import("@/messages.ts");
-    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+    const { extensionOnlyTypes } = await loadAllowlistSets();
 
     for (const type of extensionOnlyTypes) {
       originalOnMessage.mockClear();
@@ -485,7 +512,7 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
 
   it("内容脚本必需的搜索 / 下载类消息没有被误登记", async () => {
     const { onMessage } = await import("@/messages.ts");
-    const extensionOnlyTypes = parseSetLiteral("extensionPageOnlyMessages");
+    const { extensionOnlyTypes } = await loadAllowlistSets();
 
     for (const type of [
       "getSiteUserConfig",
@@ -522,12 +549,22 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
     }
   });
 
-  it("内容脚本读取站点配置时不得拿到 inputSetting 凭据", async () => {
+  it("内容脚本读取站点配置时不得拿到 inputSetting / runtimeSettings 及其他未白名单字段（A1）", async () => {
     const { onMessage } = await import("@/messages.ts");
     const handler = vi.fn(async (): Promise<any> => ({
+      id: "mteam",
       url: "https://pt.example.com/",
-      inputSetting: { token: "secret", passkey: "secret-passkey" },
       allowSearch: true,
+      sortIndex: 10,
+      merge: { name: "M-Team" },
+      // 两份凭据都必须被投影掉：inputSetting 是用户填的，runtimeSettings 是站点实例缓存的
+      inputSetting: { token: "secret", passkey: "secret-passkey" },
+      runtimeSettings: {
+        authKey: { authkey: "authkey-secret", passkey: "passkey-secret" },
+        authToken: "auth-token-secret",
+      },
+      // 未列入白名单的字段默认不下发（fail-closed，防止未来新增字段又把凭据带出去）
+      someFutureSecret: "secret",
     }));
     onMessage("getSiteUserConfig", handler);
     const wrapped = originalOnMessage.mock.calls.at(-1)![1];
@@ -538,9 +575,199 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
         sender: contentScriptSender,
       }),
     ).resolves.toEqual({
+      id: "mteam",
       url: "https://pt.example.com/",
       allowSearch: true,
+      sortIndex: 10,
+      merge: { name: "M-Team" },
     });
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("N2：扩展自身上下文（sender.url 缺失且无 tab，如 MV3 service worker）视为可信扩展页：不投影、可调用受信消息", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const fullConfig = {
+      url: "https://pt.example.com/",
+      allowSearch: true,
+      inputSetting: { token: "secret" },
+      runtimeSettings: { authKey: { passkey: "secret" } },
+    };
+    const handler = vi.fn(async (): Promise<any> => fullConfig);
+    onMessage("getSiteUserConfig", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    // 背景 service worker 等扩展自身上下文：url 缺失但也没有 tab（内容脚本一定带 tab），
+    // 必须按扩展页放行 —— 否则后台 → offscreen 的受信消息在 Chrome < M140 会被静默拒绝。
+    await expect(
+      wrapped({
+        data: { siteId: "mteam" },
+        sender: { id: "extension-id" },
+      }),
+    ).resolves.toEqual(fullConfig);
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // 扩展自身上下文可以调用「在扩展页白名单、但不在内容脚本白名单」的消息（如原生桥）
+    originalOnMessage.mockClear();
+    const allowedHandler = vi.fn(async () => "qb-version");
+    onMessage("getDownloaderVersion", allowedHandler);
+    const wrappedAllowed = originalOnMessage.mock.calls.at(-1)![1];
+    await expect(wrappedAllowed({ data: "qb", sender: { id: "extension-id" } })).resolves.toBe("qb-version");
+    expect(allowedHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("N2：sender.url 缺失但带 tab 的发送方仍按不可信处理（内容脚本/iframe 场景 fail-closed）", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn(async (): Promise<any> => ({
+      url: "https://pt.example.com/",
+      allowSearch: true,
+      inputSetting: { token: "secret" },
+      runtimeSettings: { authKey: { passkey: "secret" } },
+    }));
+    onMessage("getSiteUserConfig", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    // 带 tab = 一定来自页面（内容脚本），url 缺失不能成为「可信扩展页」的理由
+    await expect(
+      wrapped({
+        data: { siteId: "mteam" },
+        sender: { id: "extension-id", tab: { id: 1 } },
+      }),
+    ).resolves.toEqual({ url: "https://pt.example.com/", allowSearch: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // 同类发送方也不能调用「非 extensionPageOnly、但不在内容脚本白名单」的消息
+    originalOnMessage.mockClear();
+    const deniedHandler = vi.fn(async () => "should-not-run");
+    onMessage("getDownloaderVersion", deniedHandler);
+    const wrappedDenied = originalOnMessage.mock.calls.at(-1)![1];
+    expect(() => wrappedDenied({ data: "qb", sender: { id: "extension-id", tab: { id: 1 } } })).toThrow(/permission/i);
+    expect(deniedHandler).not.toHaveBeenCalled();
+  });
+
+  it("N2：其它扩展的发送方（sender.id 不匹配）一律不可信，即使 sender.url 指向站点页", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn(async (): Promise<any> => ({
+      url: "https://pt.example.com/",
+      inputSetting: { token: "secret" },
+    }));
+    onMessage("getSiteUserConfig", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    const foreignSender = { id: "other-extension", url: "https://pt.example.com/details.php", tab: { id: 1 } };
+    await expect(wrapped({ data: { siteId: "mteam" }, sender: foreignSender })).resolves.toEqual({
+      url: "https://pt.example.com/",
+    });
+
+    originalOnMessage.mockClear();
+    const deniedHandler = vi.fn(async () => "should-not-run");
+    onMessage("getDownloaderVersion", deniedHandler);
+    const wrappedDenied = originalOnMessage.mock.calls.at(-1)![1];
+    expect(() => wrappedDenied({ data: "qb", sender: foreignSender })).toThrow(/permission/i);
+    expect(deniedHandler).not.toHaveBeenCalled();
+  });
+
+  it("A2 纵深防御：内容脚本伪造 allowSiteLessLink=true 时，消息层强制置 false（主修在 offscreen/B1）", async () => {
+    const { onMessage } = await import("@/messages.ts");
+    const handler = vi.fn(async () => ({ downloadId: 1, downloadStatus: "completed" as const }));
+    onMessage("downloadTorrent", handler);
+    const wrapped = originalOnMessage.mock.calls.at(-1)![1];
+
+    await wrapped({
+      data: { torrent: { link: "https://evil.example/x.torrent" }, allowSiteLessLink: true, downloaderId: "local" },
+      sender: contentScriptSender,
+    });
+    expect((handler.mock.calls[0] as any[])[0].data).toMatchObject({ allowSiteLessLink: false });
+
+    // 扩展页发送方（右键菜单/options）仍可携带该开关，行为不变
+    originalOnMessage.mockClear();
+    const extHandler = vi.fn(async () => ({ downloadId: 2, downloadStatus: "completed" as const }));
+    onMessage("downloadTorrent", extHandler);
+    const wrappedExt = originalOnMessage.mock.calls.at(-1)![1];
+    await wrappedExt({
+      data: { torrent: { link: "https://pt.example.com/x.torrent" }, allowSiteLessLink: true, downloaderId: "local" },
+      sender: { id: "extension-id", url: "chrome-extension://extension-id/offscreen.html" },
+    });
+    expect((extHandler.mock.calls[0] as any[])[0].data).toMatchObject({ allowSiteLessLink: true });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*   TEST-6：contentScriptAllowedMessages 的「默认拒绝」守卫（原为零覆盖）        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 内容脚本白名单里允许出现的「管理类」消息及逐条理由。
+ *
+ * 其余命中 `CONTENT_SCRIPT_ADMIN_PATTERNS` 的消息都不允许进内容脚本白名单；
+ * 新加一条危险消息时，若既没被模式命中、也没在豁免表里，只有「已知危险名单」用例能发现——
+ * 因此这里用「模式 + 豁免理由」而不是手抄完整清单。
+ */
+const CONTENT_SCRIPT_ALLOWLIST_EXEMPTIONS: Record<string, string> = {
+  getExtStoragePath: "走 isContentScriptStoragePathAllowed 的路径白名单，内容脚本不能整份读取",
+  patchExtStoragePath: "只允许写 config.contentScript.position（拖拽图标位置）",
+};
+
+const CONTENT_SCRIPT_ADMIN_PATTERNS = [
+  /ExtStorage/,
+  /Cookie/i,
+  /Backup/,
+  /DNR/,
+  /^nativeBridge/,
+  /Logger/,
+  /^(?:add|remove|clear)ContextMenu/,
+];
+
+describe("内容脚本白名单完备性（TEST-6）", () => {
+  it("白名单只引用真实消息，且无重复项", async () => {
+    const protocolNames = parseProtocolMessageNames();
+    const { contentScriptAllowedTypes: allowed } = await loadAllowlistSets();
+
+    expect(allowed.length).toBeGreaterThan(0);
+    for (const type of allowed) {
+      expect(protocolNames, `${type} 不是 ProtocolMap 里的消息（拼写错误或已删除）`).toContain(type);
+    }
+    expect(new Set(allowed).size).toBe(allowed.length);
+  });
+
+  it("管理类/副作用消息不得进入内容脚本白名单（豁免表逐条给理由）", async () => {
+    const { contentScriptAllowedTypes: allowed } = await loadAllowlistSets();
+
+    const offenders = allowed.filter(
+      (type) =>
+        CONTENT_SCRIPT_ADMIN_PATTERNS.some((pattern) => pattern.test(type)) &&
+        !(type in CONTENT_SCRIPT_ALLOWLIST_EXEMPTIONS),
+    );
+    expect(
+      offenders,
+      "新增的管理类消息被放进了内容脚本白名单；若确实无害，请加进 CONTENT_SCRIPT_ALLOWLIST_EXEMPTIONS 并写明理由",
+    ).toEqual([]);
+
+    // 豁免表不能腐烂
+    for (const [type, reason] of Object.entries(CONTENT_SCRIPT_ALLOWLIST_EXEMPTIONS)) {
+      expect(allowed, `${type} 已不在内容脚本白名单里，豁免过期`).toContain(type);
+      expect(reason.length, `${type} 的豁免必须写明理由`).toBeGreaterThan(0);
+    }
+  });
+
+  it("凭据读取与破坏性消息明确不在内容脚本白名单里", async () => {
+    const { contentScriptAllowedTypes: allowed } = await loadAllowlistSets();
+
+    for (const type of [
+      "getDownloaderConfig",
+      "getDownloadHistory",
+      "getLogger",
+      "clearLogger",
+      "setExtStorage",
+      "getExtStorage",
+      "nativeBridgeSetEnabled",
+      "exportBackupData",
+      "restoreBackupData",
+      "deleteDownloadHistoryById",
+      "clearDownloadHistory",
+      "removeSiteUserInfo",
+      "clearKeepUploadTasks",
+    ]) {
+      expect(allowed, `${type} 不应开放给内容脚本`).not.toContain(type);
+    }
   });
 });

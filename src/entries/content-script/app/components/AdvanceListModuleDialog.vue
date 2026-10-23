@@ -51,13 +51,48 @@ const tableHeaders = computed(
     ] as DataTableHeader[],
 );
 
-const selectedTorrentIds = ref<ITorrent["id"][]>([]);
-const selectedTorrents = computed(() => torrentItems.filter((x) => selectedTorrentIds.value.includes(x.id)));
-const hasSelectedTorrent = computed(() => selectedTorrentIds.value.length > 0);
-const selectedTorrentsCount = computed(() => selectedTorrentIds.value.length);
+/**
+ * B2-5：高级列表的行 key 必须是**唯一**的，而 `torrent.id` 由引擎按 `url || link` 兜底
+ * （`AbstractBittorrentSite.parseWholeTorrentFromRow`），url/link 都没解析到的行 id 会是
+ * `undefined`/`""`。旧实现直接 `:row-key="record.id"` 并按 id 反查选中项：多行共享同一个 key 时
+ * 勾选一行会连带勾中所有同 key 行（`selectedTorrentsCount` 也与实际选中数不符）。
+ * 这里给每行补一个「行序号 + id」的唯一 key，选中集合只认这个 key。
+ */
+type TAdvanceListRow = ITorrent & { __rowKey: string };
+
+function buildRowKey(torrent: ITorrent, index: number): string {
+  return `${index}|${String(torrent.id ?? "")}`;
+}
+
+const tableRows = computed<TAdvanceListRow[]>(() =>
+  torrentItems.map((torrent, index) => ({ ...torrent, __rowKey: buildRowKey(torrent, index) })),
+);
+
+const selectedRowKeys = ref<string[]>([]);
+const selectedRowKeySet = computed(() => new Set(selectedRowKeys.value));
+const selectedTorrents = computed<ITorrent[]>(() =>
+  tableRows.value.filter((row) => selectedRowKeySet.value.has(row.__rowKey)).map(stripRowKey),
+);
+const hasSelectedTorrent = computed(() => selectedRowKeys.value.length > 0);
+const selectedTorrentsCount = computed(() => selectedRowKeys.value.length);
 const selectedTorrentsSize = computed(() =>
   selectedTorrents.value.reduce((acc, torrent) => acc + (torrent.size ?? 0), 0),
 );
+
+/** 把内部行 key 从种子对象上摘掉，避免额外的 `__rowKey` 字段流入下载消息/下载历史 */
+function stripRowKey(row: TAdvanceListRow): ITorrent {
+  const torrent: ITorrent & { __rowKey?: string } = { ...row };
+  delete torrent.__rowKey;
+  return torrent;
+}
+
+function selectedKeysOf(rows: TAdvanceListRow[]): string[] {
+  return rows.map((row) => row.__rowKey);
+}
+
+function rowKeyOf(record: TAdvanceListRow): string {
+  return record.__rowKey;
+}
 
 function toCssSize(size?: number | string) {
   return typeof size === "number" ? `${size}px` : size;
@@ -78,7 +113,7 @@ const tableColumns = computed(() =>
       dataIndex: key,
       key,
       align: header.align === "end" ? ("right" as const) : header.align === "start" ? ("left" as const) : header.align,
-      sorter: (a: ITorrent, b: ITorrent) => {
+      sorter: (a: TAdvanceListRow, b: TAdvanceListRow) => {
         const left = a[key as keyof ITorrent];
         const right = b[key as keyof ITorrent];
         if (typeof left === "number" && typeof right === "number") return left - right;
@@ -93,9 +128,9 @@ const tableColumns = computed(() =>
 );
 
 const rowSelection = computed(() => ({
-  selectedRowKeys: selectedTorrentIds.value,
+  selectedRowKeys: selectedRowKeys.value,
   onChange: (keys: (string | number)[]) => {
-    selectedTorrentIds.value = keys;
+    selectedRowKeys.value = keys.map((key) => String(key));
   },
 }));
 
@@ -152,20 +187,19 @@ function handleRemoteDownloadMulti(isDefaultSend = false) {
 }
 
 function handleSelectSeeders() {
-  selectedTorrentIds.value = torrentItems.filter((item) => item.seeders).map((x) => x.id);
+  selectedRowKeys.value = selectedKeysOf(tableRows.value.filter((row) => row.seeders));
 }
 
 function handleSelectNotSeeding() {
-  selectedTorrentIds.value = torrentItems
-    .filter(
-      (item) =>
-        item.status !== undefined && ![ETorrentStatus.seeding, ETorrentStatus.downloading].includes(item.status!),
-    )
-    .map((x) => x.id);
+  selectedRowKeys.value = selectedKeysOf(
+    tableRows.value.filter(
+      (row) => row.status !== undefined && ![ETorrentStatus.seeding, ETorrentStatus.downloading].includes(row.status!),
+    ),
+  );
 }
 
 function enterDialog() {
-  selectedTorrentIds.value = torrentItems.map((x) => x.id);
+  selectedRowKeys.value = selectedKeysOf(tableRows.value);
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
@@ -193,9 +227,9 @@ watch(showDialog, (open) => {
     />
     <a-table
       :columns="tableColumns"
-      :data-source="torrentItems"
+      :data-source="tableRows"
       :pagination="{ defaultPageSize: 25, showSizeChanger: true }"
-      :row-key="(record: ITorrent) => record.id"
+      :row-key="rowKeyOf"
       :row-selection="rowSelection"
       :scroll="{ x: 'max-content', y: tableScrollHeight }"
       class="ptd-data-table table-stripe table-header-no-wrap"

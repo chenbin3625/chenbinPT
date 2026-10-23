@@ -36,6 +36,9 @@ function toggleNumberSimplification() {
   if (normalizedValue.value.type !== "number") return;
 
   configStore.myDataTableControl.simplifyBonusNumbers = !configStore.myDataTableControl.simplifyBonusNumbers;
+  // F6：config 的持久化插件未开启 autoSaveType（只有显式 $save 才落盘）。
+  // 双击切换原本只改内存，刷新后丢失；同弹层里的开关都会显式保存，这里保持一致。
+  void configStore.$save();
 }
 </script>
 

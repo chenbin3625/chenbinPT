@@ -10,7 +10,7 @@ import {
   NeedLoginError,
 } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite";
-import { buildCategoryOptionsFromList } from "../utils";
+import { buildCategoryOptionsFromList, classifySiteError, logMessage, siteErrorLogData } from "../utils";
 
 /**
  * Fappaizuri —— 成人向私有 PT 站（HENTAI / JAV / Manga / H-games）
@@ -242,6 +242,12 @@ export default class Fappaizuri extends PrivateSite {
         throw new NeedLoginError("请求未获取到数据，需要重新登录");
       }
 
+      const selectors = this.metadata.userInfo!.selectors!;
+      const fields = ["name", "uploaded", "downloaded", "ratio", "levelName", "joinTime"] as const;
+      if (!fields.some((field) => this.hasFieldMatch(userDetailDocument, selectors[field]!))) {
+        throw new Error("用户信息页未命中任何字段");
+      }
+
       flushUserInfo = {
         ...flushUserInfo,
         ...(this.getFieldsData(userDetailDocument, this.metadata.userInfo?.selectors!, [
@@ -261,7 +267,18 @@ export default class Fappaizuri extends PrivateSite {
 
       flushUserInfo.status = EResultParseStatus.success;
     } catch (e) {
-      flushUserInfo.status = e instanceof NeedLoginError ? EResultParseStatus.needLogin : EResultParseStatus.parseError;
+      // E2-13/E2b-19：原实现把所有非登录异常压成 parseError 且不写 statusMsg/日志，
+      // 网络超时与「页面改版」在 UI 上完全同构、重试策略失效。这里改用统一的错误分类，
+      // 与 AbstractPrivateSite / 其它定义的 catch 分支保持一致（NeedLoginError 仍映射为 needLogin）。
+      const { status, statusMsg, retryable } = classifySiteError(e);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
+
+      logMessage(
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        { site: this.metadata.id, status, retryable, error: siteErrorLogData(e) },
+        retryable ? "warn" : "error",
+      );
     }
 
     return flushUserInfo;

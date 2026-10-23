@@ -8,6 +8,11 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@ptd/downloader/utils.ts", () => ({
   getRemoteTorrentFile: vi.fn(),
+  sanitizeDownloadUrlForLog: vi.fn((url: string) => String(url)),
+}));
+
+vi.mock("@ptd/site/utils/adapter.ts", () => ({
+  logMessage: vi.fn(),
 }));
 
 import SynologyDownloadStation from "@ptd/downloader/entity/synologyDownloadStation.ts";
@@ -212,5 +217,164 @@ describe("Synology Download Station 删除参数", () => {
 
     await expect(client.removeTorrent("task-1", true)).resolves.toBe(true);
     expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: "delete", id: "task-1" }));
+  });
+});
+
+/** C1 修复轮回归：SY-1/SY-3/SY-4/SY-5/SY-6/N-3/N-5/PKG-1 */
+describe("Synology Download Station：C1 修复轮", () => {
+  const btTask = (overrides: Record<string, any> = {}) => makeRawTask(overrides);
+
+  function newClient() {
+    return new SynologyDownloadStation({ address: "http://dsm.local:5000/", username: "u", password: "p" });
+  }
+
+  it("SY-1：添加成功但 pause 失败时仍返回 success=true + warning message", async () => {
+    const client: any = newClient();
+    const calls: any[] = [];
+    client.requestEntryCGI = vi.fn(async (field: any) => {
+      calls.push(field);
+      const method = (field as any)?.method ?? "create";
+      if (method === "create") {
+        return { success: true, data: { list_id: [], task_id: ["dbid-1"] } };
+      }
+      if (method === "pause") {
+        return { success: false, error: { code: 405 } };
+      }
+      return { success: true, data: {} };
+    });
+
+    const result = await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: true,
+      localDownload: false,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.id).toBe("dbid-1");
+    expect(String(result.message)).toContain("暂停");
+  });
+
+  it("N-5：addTorrent 遇到 API 错误时返回 success=false，而不是 reject", async () => {
+    const client: any = newClient();
+    client.requestEntryCGI = vi.fn().mockRejectedValue(new Error("API error (105)"));
+
+    await expect(
+      client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+        addAtPaused: false,
+        localDownload: false,
+      }),
+    ).resolves.toMatchObject({ success: false, message: expect.stringContaining("105") });
+  });
+
+  it("SY-5：destination 用 JSON.stringify 生成，路径含引号也不会拼坏", async () => {
+    const client: any = newClient();
+    client.requestEntryCGI = vi.fn().mockResolvedValue({ success: true, data: { task_id: ["dbid-1"] } });
+    const savePath = 'D:\\download\\a"b';
+
+    await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: false,
+      localDownload: false,
+      savePath,
+    });
+
+    const field = client.requestEntryCGI.mock.calls[0][0];
+    expect(JSON.parse(field.destination)).toBe(savePath);
+  });
+
+  it("N-3：getTorrentsBy({complete}) 会按 isCompleted 过滤", async () => {
+    const client: any = newClient();
+    client.requestEntryCGI = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        offset: 0,
+        total: 2,
+        task: [
+          btTask({
+            id: "done",
+            additional: {
+              detail: { completed_time: 1700000000, created_time: 1 },
+              transfer: { size_downloaded: 100, size_uploaded: 100, speed_download: 0, speed_upload: 0 },
+            },
+          }),
+          btTask({ id: "running" }),
+        ],
+      },
+    });
+
+    const all = await client.getAllTorrents();
+    expect(all).toHaveLength(2);
+
+    const completed = await client.getTorrentsBy({ complete: true });
+    expect(completed.map((task: any) => task.id)).toEqual(["done"]);
+  });
+
+  it("SY-6：字符串 finished 与数值 TASK_FINISHED 都映射为 paused（语义统一）", async () => {
+    const client: any = newClient();
+    client.requestEntryCGI = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        offset: 0,
+        total: 3,
+        task: [
+          btTask({ id: "s1", status: "finished" }),
+          btTask({ id: "s2", status: "seeding" }),
+          btTask({ id: "s3", status: 5 }),
+        ],
+      },
+    });
+
+    const tasks = await client.getAllTorrents();
+    expect(tasks.map((task: any) => `${task.id}:${task.state}`)).toEqual(["s1:paused", "s2:seeding", "s3:paused"]);
+  });
+
+  it("SY-4：apiInfo 为空时 ping 返回 false 而不是抛 TypeError", async () => {
+    const client: any = newClient();
+    client.request = vi.fn(async (cgi: string) => {
+      if (cgi === "query.cgi") {
+        return { success: false, error: { code: 102 } };
+      }
+      return { success: false, error: { code: 400 } };
+    });
+
+    await expect(client.ping()).resolves.toBe(false);
+  });
+
+  it("SY-3：获取版本遇到 105（权限不足）时降级为空串，且不触发重登", async () => {
+    const client: any = newClient();
+    let authCalls = 0;
+    client.request = vi.fn(async (cgi: string) => {
+      if (cgi === "query.cgi") {
+        return { success: true, data: { "SYNO.API.Auth": { maxVersion: 6, minVersion: 1, path: "auth.cgi" } } };
+      }
+      if (cgi === "auth.cgi") {
+        authCalls++;
+        return { success: true, data: { sid: `sid-${authCalls}` } };
+      }
+      return { success: false, error: { code: 105 } };
+    });
+
+    await expect(client.getClientVersion()).resolves.toBe("");
+    expect(authCalls).toBe(1);
+  });
+
+  it("PKG-1：并发首请求共享同一次登录", async () => {
+    const client: any = newClient();
+    let authCalls = 0;
+    client.request = vi.fn(async (cgi: string) => {
+      if (cgi === "query.cgi") {
+        return { success: true, data: { "SYNO.API.Auth": { maxVersion: 6, minVersion: 1, path: "auth.cgi" } } };
+      }
+      if (cgi === "auth.cgi") {
+        authCalls++;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { success: true, data: { sid: `sid-${authCalls}` } };
+      }
+      return {
+        success: true,
+        data: { offset: 0, total: 0, task: [] },
+      };
+    });
+
+    await Promise.all([client.getClientStatus(), client.getClientStatus(), client.getClientStatus()]);
+    expect(authCalls).toBe(1);
   });
 });

@@ -280,15 +280,25 @@ for (const f of vueFiles) {
 check("no-stop-on-non-event-emitter", "`.stop` 未用在 click 载荷非 Event 的组件上", stopHits);
 
 // ── 输出 ───────────────────────────────────────────────────────────────────
+// G15：`--json` 分支过去只打印 JSON、不设置退出码，接进 CI 或用它做机器可读门禁时，
+// 即使 `results[].passed === false` 也返回 0（假绿）。失败计数必须在分支之前算好，
+// 两个分支共用同一个退出码；JSON 里也带上 failed，调用方无需自己重新聚合。
+const failed = results.filter((r) => !r.passed).length;
+
 if (json) {
-  console.log(JSON.stringify({ results, antRuleCount, undefinedClasses: undefinedClasses.length }, null, 2));
+  console.log(
+    JSON.stringify(
+      { failed, total: results.length, results, antRuleCount, undefinedClasses: undefinedClasses.length },
+      null,
+      2,
+    ),
+  );
+  process.exit(failed === 0 ? 0 : 1);
 } else {
-  let failed = 0;
   for (const r of results) {
     const mark = r.passed ? "✅" : "❌";
     console.log(`${mark} [${r.id}] ${r.title}${r.passed ? "" : ` —— ${r.count} 处`}`);
     if (!r.passed) {
-      failed++;
       for (const h of r.hits) console.log(`     ${h.file}${h.line ? ":" + h.line : ""}  ${h.text}`);
       if (r.count > r.hits.length) console.log(`     … 其余 ${r.count - r.hits.length} 处省略`);
     }

@@ -18,7 +18,7 @@ export const siteMetadata: ISiteMetadata = {
   name: "财神",
   aka: ["CSPT"],
   description: "财神到，八方来财！",
-  tags: ["中文", "综合", "影视", "综合"],
+  tags: ["中文", "综合", "影视"],
 
   collaborator: ["vanchkong", "Rhilip"],
   type: "private",
@@ -188,6 +188,24 @@ export const siteMetadata: ISiteMetadata = {
     selectors: {
       ...SchemaMetadata.search!.selectors,
       rows: { selector: "div.torrent-table-sub-info" },
+      // E2b-01：rows 已换成站点自定义卡片布局，但 link/url/id 仍继承 NexusPHP 的
+      // `a[href*="download.php?id="]:has(> img[alt="download"])`（原生表格的下载图标假设）。
+      // 同仓库 hhanclub 用同一套 `.torrent-table-sub-info` / `.torrent-info-text-*` 布局，
+      // 其 link/url/id 用的就是下面这种不带 img 约束的写法；若真实卡片里确实有 img，这些选择器同样命中。
+      link: { selector: ['a[href*="download.php?id="]'], attr: "href" },
+      url: {
+        selector: ['a[href*="download.php?id="]'],
+        attr: "href",
+        filters: [
+          { name: "querystring", args: ["id"] },
+          { name: "prepend", args: ["/details.php?id="] },
+        ],
+      },
+      id: {
+        selector: ['a[href*="download.php?id="]'],
+        attr: "href",
+        filters: [{ name: "querystring", args: ["id"] }],
+      },
       subTitle: { selector: ".torrent-info-text-small_name" },
       time: { selector: ".torrent-info-text-added", ...SchemaMetadata.search!.selectors!.time! },
       size: { selector: ".torrent-info-text-size", filters: [{ name: "parseSize" }] },

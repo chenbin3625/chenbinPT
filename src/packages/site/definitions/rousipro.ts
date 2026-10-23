@@ -2,6 +2,7 @@
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/rousi.json
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/rousipro.json
  */
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag } from "../types";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
@@ -278,7 +279,7 @@ export default class RousiPro extends PrivateSite {
   ): Partial<ITorrent> {
     torrent = super.parseTorrentRowForTags(torrent, row, searchConfig);
 
-    if (row instanceof Element) {
+    if (isElementNode(row)) {
       // 列表页（DOM）：解析优惠徽章（置顶等 outline 变体徽章不在此列）
       const promotionBadges = Array.from(
         row.querySelectorAll<HTMLElement>('span[data-slot="badge"][data-variant="destructive"]'),
@@ -330,6 +331,16 @@ export default class RousiPro extends PrivateSite {
     });
 
     let downloadUrl = response.data?.download_url ?? "";
+
+    // E5-5：download_url 为空（付费种子未购买 / 缺少 torrent:download scope）时必须显式失败。
+    // 否则返回空串会绕过基类「链接缺失必须失败」的守卫，下游会把站点首页当作种子去请求，
+    // 最终报一个与真实原因无关的解析错误。
+    if (!downloadUrl) {
+      throw new Error(
+        `[PTD] site '${this.metadata.id}' download_url unavailable ` +
+          `(torrentId=${torrent.id ?? ""}, purchased=${response.data?.is_purchased ?? false})`,
+      );
+    }
 
     if (this.userConfig.downloadLinkAppendix) {
       // 如果用户配置了下载链接后缀，则在链接后追加

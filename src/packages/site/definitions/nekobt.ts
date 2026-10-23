@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/nekobt.yml
  */
 import type { ISearchConfig, ISiteMetadata, ITorrent, ITorrentTag } from "../types";
-import BittorrentSite from "../schemas/AbstractBittorrentSite";
+import BittorrentSite, { isElementNode } from "../schemas/AbstractBittorrentSite";
 
 const subLevelTags: Record<number, ITorrentTag> = {
   0: { name: "L0 - Official", color: "purple" },
@@ -202,7 +202,7 @@ export default class NekoBT extends BittorrentSite {
     searchConfig: ISearchConfig,
   ): Partial<ITorrent> {
     const partTorrent = super.parseTorrentRowForTags(torrent, row, searchConfig);
-    if (row instanceof Element) {
+    if (isElementNode(row)) {
       return partTorrent;
     }
 

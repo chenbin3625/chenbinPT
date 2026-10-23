@@ -38,6 +38,7 @@ vi.mock("axios", () => ({
 
 vi.mock("@ptd/downloader/utils.ts", () => ({
   getRemoteTorrentFile: vi.fn(),
+  sanitizeDownloadUrlForLog: vi.fn((url: string) => String(url)),
   // 与真实实现一致：只识别 magnet，http(s) 直链返回 null（DOWNLOADER-8 的前提）
   extractMagnetHash: vi.fn((url: string) => (/^magnet:/.test(url) ? "magnet-hash" : null)),
 }));

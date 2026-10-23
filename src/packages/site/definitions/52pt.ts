@@ -6,8 +6,59 @@
  */
 import type { ISiteMetadata, IUserInfo } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
-import { userInfoWithInvitesInUserDetailsPage } from "./kunlun";
 import NexusPHP from "../schemas/NexusPHP";
+
+/**
+ * E1-A4：原实现 `import { userInfoWithInvitesInUserDetailsPage } from "./kunlun"` 把 52pt 的整个 userInfo
+ * 绑在一个已 isDead 的站点文件上：kunlun 被清理时 52pt 会在 import 阶段直接失败；且该对象是模块级共享
+ * 可变对象，任何定义就地修改都会跨站生效。这里内联一份等价定义（同样基于 NexusPHP SchemaMetadata），
+ * 使 52pt 不再依赖死站点文件。
+ */
+const userInfoWithInvites = {
+  ...SchemaMetadata.userInfo!,
+  selectors: {
+    ...SchemaMetadata.userInfo!.selectors!,
+    invites: {
+      selector: [
+        "td.rowhead:contains('邀请') + td",
+        "td.rowhead:contains('Invites') + td",
+        "td.rowhead:contains('Available') + td",
+        "td:contains('邀请')",
+        "td:contains('邀請')",
+        "td:contains('Invites')",
+        "td:contains('Available')",
+      ],
+      filters: [
+        (query: string) => {
+          if (!query?.trim()) return 0;
+          try {
+            // 匹配 "Available: 5" 格式
+            const availableMatch = query.match(/Available:\s*(\d+)/i);
+            if (availableMatch) return parseInt(availableMatch[1], 10) || 0;
+
+            // 匹配纯数字
+            const num = parseInt(query.match(/\d+/)?.[0] || "0", 10);
+            return Number.isNaN(num) ? 0 : num;
+          } catch {
+            return 0;
+          }
+        },
+      ],
+    },
+  },
+  process: [
+    ...SchemaMetadata.userInfo!.process!.map((item) => {
+      // 在用户详情页面添加 invites 字段
+      if (item.requestConfig.url === "/userdetails.php") {
+        return {
+          ...item,
+          fields: [...(item.fields || []), "invites"],
+        };
+      }
+      return item;
+    }),
+  ],
+};
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
@@ -187,69 +238,66 @@ export const siteMetadata: ISiteMetadata = {
       privilege: "得到十个邀请名额。",
     },
     // VIP/管理组等级
+    // E1-A3：id 100-106 原先是「X等级，享受X权限」这类占位文案，不含真实权限信息，
+    // 用户会把它们当站点规则读；真实权限以站点规则页为准，拿不到就省略 privilege（类型允许缺省）。
     {
       id: 100,
       name: "名誉校长",
       nameAka: ["名誉校长", "名誉校长(VIP)", "VIP", "贵宾"],
       groupType: "vip",
-      privilege: "VIP等级，享受特殊权限。",
     },
     {
       id: 101,
       name: "离退休",
       nameAka: ["离退休", "离退休(Retiree)", "Retiree"],
       groupType: "manager",
-      privilege: "离退休人员等级。",
     },
     {
       id: 102,
       name: "教员",
       nameAka: ["教员", "教员(Uploader)", "Uploader"],
       groupType: "manager",
-      privilege: "教员等级，负责内容上传。",
     },
     {
       id: 103,
       name: "教授",
       nameAka: ["教授", "教授(Moderator)", "Moderator"],
       groupType: "manager",
-      privilege: "教授等级，负责内容审核。",
     },
     {
       id: 104,
       name: "校长",
       nameAka: ["校长", "校长(Administrator)", "Administrator"],
       groupType: "manager",
-      privilege: "校长等级，最高管理权限。",
     },
     {
       id: 105,
       name: "校区维护",
       nameAka: ["校区维护", "校区维护(Sysop)", "Sysop"],
       groupType: "manager",
-      privilege: "校区维护等级，负责系统维护。",
     },
     {
       id: 106,
       name: "校区创始人",
       nameAka: ["校区创始人", "校区创始人(Staff Leader)", "Staff Leader"],
       groupType: "manager",
-      privilege: "校区创始人等级，最高权限。",
     },
   ],
 
-  userInfo: userInfoWithInvitesInUserDetailsPage,
+  userInfo: userInfoWithInvites,
 };
 
 export default class Site52PT extends NexusPHP {
   // 重写等级匹配逻辑，使用严格匹配避免"校长"被"名誉校长"包含
+  // E1-C11：读 this.metadata（构造函数里已与 userConfig.merge 合并）而不是模块常量 siteMetadata，
+  // 否则用户自定义 levelRequirements 时「面板显示自定义等级表、判级仍用原始常量」。
   protected override guessUserLevelId(userInfo: Partial<IUserInfo>): number {
     if (!userInfo.levelName) return 0;
 
     const cleanedUserLevelName = userInfo.levelName.replace(/[\s _]+/g, "").toLowerCase();
 
     // 优先使用精确匹配，避免包含关系导致的错误匹配
-    const exactLevel = siteMetadata.levelRequirements?.find((level) => {
+    const exactLevel = this.metadata.levelRequirements?.find((level) => {
       const levelNames = [level.name, ...(level.nameAka ?? [])];
       return levelNames.some((name) => {
         const cleanedLevelName = name.replace(/[\s _]+/g, "").toLowerCase();
@@ -263,7 +311,7 @@ export default class Site52PT extends NexusPHP {
     }
 
     // 如果精确匹配失败，尝试包含匹配（但排除可能冲突的等级）
-    const includeLevel = siteMetadata.levelRequirements?.find((level) => {
+    const includeLevel = this.metadata.levelRequirements?.find((level) => {
       const levelNames = [level.name, ...(level.nameAka ?? [])];
       return levelNames.some((name) => {
         const cleanedLevelName = name.replace(/[\s _]+/g, "").toLowerCase();

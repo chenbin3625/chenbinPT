@@ -66,7 +66,7 @@ export const siteMetadata: ISiteMetadata = {
       subTitle: { selector: "div#tm_div_desc" },
       url: { selector: "#tm_div_name > a", attr: "href" },
       link: { selector: "a:has(img.download)", attr: "href" },
-      time: { selector: "td#tm_td_uploader", filters: [{ name: "parseTTL" }] },
+      time: { selector: "td#tm_td_uploader", filters: [{ name: "parseFuzzyTime" }] },
       size: { selector: "td#tm_td_size", filters: [{ name: "append", args: ["B"] }, { name: "parseSize" }] },
       author: { selector: "#tm_td_uploader span" },
       category: { selector: "td#table_cat_td2.corner_bottom" },
@@ -210,10 +210,22 @@ export const siteMetadata: ISiteMetadata = {
       {
         requestConfig: { url: "/p_torrent/torrent_user.php", params: { pop: 7 } },
         selectors: {
+          // M-29：原先取 `span.pager_current` 的文本 —— 那是分页器里的**当前页码**（1、2…），
+          // 不是发布总数：用户翻到第 2 页再刷新，发布数就变成 2，而它是等级门槛的计算输入。
+          // 改为整页求值：优先解析分页器「共 N 条 / Total N」的总条数（真实总数），
+          // 取不到时退回统计列表数据行数（与同文件 seedingSize 步骤同一套 `table#table_tm` 模板）。
+          // 注：总条数文案缺少真实响应样本，行数兜底在超过单页时仍会偏小，已在 fix report 记录待验证。
           uploads: {
-            text: 0,
-            selector: "#table_pager span.pager_current",
-            filters: [{ name: "parseNumber" }],
+            selector: [":self"],
+            elementProcess: (element: HTMLElement) => {
+              const doc = (element as unknown as Document).ownerDocument ?? (element as unknown as Document);
+              const pagerText = (doc.querySelector("#table_pager")?.textContent ?? "").replace(/\s+/g, " ");
+              const total = pagerText.match(/(?:共|總計|总计|Total)\s*[:：]?\s*(\d+)/i);
+              if (total) {
+                return Number(total[1]);
+              }
+              return selectElements("table#table_tm > tbody > tr[class^='tm_tr']", doc).length;
+            },
           },
         },
       },

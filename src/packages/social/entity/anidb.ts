@@ -2,7 +2,7 @@ import axios from "axios";
 import { selectElements } from "../../site/utils/selector";
 import { uniq } from "es-toolkit";
 
-import { commonParseFactory } from "../utils";
+import { commonParseFactory, normalizeSocialPosterUrl } from "../utils";
 import {
   IFetchSocialSiteInformationConfig,
   ISocialInformation,
@@ -10,7 +10,7 @@ import {
   TSupportSocialSitePageParserMatches,
 } from "../types";
 
-const anidbUrlPattern = /(?:https?:\/\/)?(?:www\.)?anidb\.net\/(?:a|anime\/)(\d+)/;
+const anidbUrlPattern = /(?:https?:\/\/)?(?:[\w-]+\.)?anidb\.net\/(?:a|anime\/)(\d+)/;
 
 export function build(id: string): string {
   return `https://anidb.net/anime/${id}`;
@@ -71,7 +71,7 @@ export async function fetchInformation(
       ).join(" / ");
       const poster = selectElements("picture", apiReq.data)[0]?.textContent;
       if (poster) {
-        resDict.poster = "https://cdn.anidb.net/images/main/" + poster;
+        resDict.poster = normalizeSocialPosterUrl("https://cdn.anidb.net/images/main/" + poster) ?? "";
       }
       const ratingAnother = selectElements("ratings permanent, temporary", apiReq.data)?.[0];
       if (ratingAnother) {
@@ -83,7 +83,9 @@ export async function fetchInformation(
 
       resDict.title = pageParser$1(htmlReq.data).titles.join(" / ");
       resDict.poster =
-        selectElements("meta[property='og:image'][content]", htmlReq.data)?.[0]?.getAttribute("content") ?? "";
+        normalizeSocialPosterUrl(
+          selectElements("meta[property='og:image'][content]", htmlReq.data)?.[0]?.getAttribute("content"),
+        ) ?? "";
       resDict.ratingScore = parseFloat(
         selectElements('span[itemprop="ratingValue"]', htmlReq.data)?.[0]?.textContent ?? "0",
       );

@@ -8,6 +8,8 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type { TUserInfoStorageSchema } from "@/shared/types.ts";
 import { sendMessage } from "@/messages.ts";
 
+import { useSetBaseConfigDraftReset } from "./configDraft.ts";
+
 /**
  * 插件重置 / 清空数据。
  *
@@ -20,6 +22,9 @@ const { t } = useI18n();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
+// OUI-3：「重置系统设置」后必须重建 SetBase 的草稿 + 基线，否则页签仍显示旧值、
+// 之后点保存还会把重置前未保存的草稿写回（部分撤销重置）。单独挂载本组件时为空操作。
+const resetConfigDraft = useSetBaseConfigDraftReset();
 
 interface IResetItem {
   key: string;
@@ -44,6 +49,8 @@ const resetItems = computed<IResetItem[]>(() => [
     subTitle: t("SetBase.reset.resetSystemSettingsDesc"),
     action: async () => {
       configStore.$reset();
+      resetConfigDraft?.();
+      // 先重建草稿（内存态已重置），再落盘；写盘失败时内存与草稿仍保持一致
       await configStore.$save();
     },
   },

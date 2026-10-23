@@ -1,9 +1,10 @@
 import { selectElements } from "../utils/selector";
+import { logMessage, siteErrorLogData } from "../utils";
 import { toMerged } from "es-toolkit";
 import type { AxiosRequestConfig } from "axios";
 
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
-import { EResultParseStatus, ETorrentStatus, type ISiteMetadata, type IUserInfo } from "../types";
+import { EResultParseStatus, ETorrentStatus, NoTorrentsError, type ISiteMetadata, type IUserInfo } from "../types";
 
 export const siteMetadata: ISiteMetadata = {
   id: "skyeysnow",
@@ -298,69 +299,155 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class Skyeysnow extends PrivateSite {
+  /** 单次用户信息刷新最多翻的页数，防止页码解析异常时变成请求风暴 */
+  private static readonly maxPageCount = 50;
+
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
     let flushUserInfo = await super.getUserInfoResult(lastUserInfo);
     if (flushUserInfo.status == EResultParseStatus.success) {
-      // Skyeysnow 的 seeding, seedingSize, uploads 需要额外处理
-      let seedAndUploadsStatus = { seeding: 0, seedingSize: 0, uploads: 0 } as Required<
-        Pick<IUserInfo, "seeding" | "seedingSize" | "uploads">
-      >;
+      // Skyeysnow 的 seeding, seedingSize, uploads 需要额外处理。
+      // 这两个追加请求都是「可选信息」：失败/超时只记 warn，不能抛异常（否则会丢弃
+      // super 已解析好的 uploaded/downloaded/ratio/levelName 等字段）。
+      const seedAndUploadsStatus: Partial<Pick<IUserInfo, "seeding" | "seedingSize" | "uploads">> = {};
+      const requestDelay = this.metadata.userInfo?.requestDelay ?? 1000;
 
       // 遍历 /forum.php?mod=torrents&cat_5up=on&page=<page> 页面，获取 seeding 和 seedingSize
-      for (
-        const pageInfo = { count: 0, current: 0 }; // 生成页面信息
-        pageInfo.current <= pageInfo.count;
-        pageInfo.current++
-      ) {
-        const requestConfig = {
-          url: "/forum.php",
-          params: { mod: "torrents", cat_5up: "on", page: pageInfo.current },
-          responseType: "document",
-        } as AxiosRequestConfig;
+      try {
+        let currentPage = 1; // Discuz 页码从 1 开始
+        let pageCount = 1;
+        let requestedPages = 0;
 
-        const { data: pageDocument } = await this.request<Document>(requestConfig);
+        while (currentPage <= pageCount && currentPage <= Skyeysnow.maxPageCount) {
+          await this.sleepAction(requestDelay);
+          const requestConfig = {
+            url: "/forum.php",
+            params: { mod: "torrents", cat_5up: "on", page: currentPage },
+            responseType: "document",
+          } as AxiosRequestConfig;
 
-        // 更新最大页数
-        if (pageInfo.count === 0) {
-          pageInfo.count = this.getFieldData(pageDocument, {
-            selector: ["a[onclick*='page=']:contains('-'):last"],
-            attr: "onclick", // javascript:ajax_refreash('/torrents_list_ajax.php?mod=torrents&diy=&page=250',)
-            filters: [(query: string) => query.match(/page=(\d+)/)?.[1] ?? 0],
-          });
+          const { data: pageDocument } = await this.request<Document>(requestConfig);
+          requestedPages++;
+
+          // 更新最大页数
+          if (currentPage === 1) {
+            const detectedCount = this.getFieldData(pageDocument, {
+              selector: ["a[onclick*='page=']:contains('-'):last"],
+              attr: "onclick", // javascript:ajax_refreash('/torrents_list_ajax.php?mod=torrents&diy=&page=250',)
+              filters: [(query: string) => parseInt(query.match(/page=(\d+)/)?.[1] ?? "1", 10)],
+            });
+            pageCount = typeof detectedCount === "number" && detectedCount > 0 ? detectedCount : 1;
+            if (pageCount > Skyeysnow.maxPageCount) {
+              logMessage(
+                `[Site] ${this.name} seeding pages truncated`,
+                { site: this.metadata.id, pageCount, maxPageCount: Skyeysnow.maxPageCount },
+                "warn",
+              );
+            }
+          }
+
+          // 因为这个页面其实是搜索页面，所以我们可以直接使用 search 的解析器来解析
+          try {
+            const thisPageTorrents = await this.transformSearchPage(pageDocument, {
+              searchEntry: this.metadata.search,
+              requestConfig,
+              keywords: "",
+            });
+            seedAndUploadsStatus.seeding = (seedAndUploadsStatus.seeding ?? 0) + thisPageTorrents.length;
+            seedAndUploadsStatus.seedingSize =
+              (seedAndUploadsStatus.seedingSize ?? 0) +
+              thisPageTorrents.reduce((acc, torrent) => {
+                return acc + (torrent.size ?? 0);
+              }, 0);
+          } catch (e) {
+            break; // 这里常见的报错为 NoTorrentsError， 这种情况可以直接跳出循环
+          }
+
+          currentPage++;
         }
 
-        // 因为这个页面其实是搜索页面，所以我们可以直接使用 search 的解析器来解析
-        try {
-          const thisPageTorrents = await this.transformSearchPage(pageDocument, {
-            searchEntry: this.metadata.search,
-            requestConfig,
-            keywords: "",
-          });
-          seedAndUploadsStatus.seeding += thisPageTorrents.length;
-          seedAndUploadsStatus.seedingSize += thisPageTorrents.reduce((acc, torrent) => {
-            return acc + (torrent.size ?? 0);
-          }, 0);
-        } catch (e) {
-          break; // 这里常见的报错为 NoTorrentsError， 这种情况可以直接跳出循环
+        // 请求成功过才写 seeding/seedingSize：全部请求失败时保留旧值，而不是写入假的 0
+        if (requestedPages > 0) {
+          seedAndUploadsStatus.seeding ??= 0;
+          seedAndUploadsStatus.seedingSize ??= 0;
         }
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForSeedingStatus failed`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
       }
 
       // 通过 /forum.php?mod=torrents&search=#<uid> 获取 uploads
-      const { data: uploadsDocument } = await this.request<Document>({
-        url: "/forum.php",
-        params: { mod: "torrents", search: `#${flushUserInfo.id!}` },
-        responseType: "document",
-      });
-      seedAndUploadsStatus.uploads = this.getFieldData(uploadsDocument, {
-        text: 0,
-        selector: ["a[onclick*='page=']:contains('-'):last"],
-        filters: [(query: string) => parseInt(query.split("-")?.[1] ?? "0")],
-      });
+      try {
+        await this.sleepAction(requestDelay);
+        const uploadsRequestConfig = {
+          url: "/forum.php",
+          params: { mod: "torrents", search: `#${flushUserInfo.id!}` },
+          responseType: "document",
+        } as AxiosRequestConfig;
+        const { data: uploadsDocument } = await this.request<Document>(uploadsRequestConfig);
+        const uploads = await this.parseUploadsCount(uploadsDocument, uploadsRequestConfig);
+        if (typeof uploads === "number") {
+          seedAndUploadsStatus.uploads = uploads;
+        } else {
+          logMessage(`[Site] ${this.name} cannot determine uploads count`, { site: this.metadata.id }, "warn");
+        }
+      } catch (e) {
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForUploads failed`,
+          { site: this.metadata.id, error: siteErrorLogData(e) },
+          "warn",
+        );
+      }
 
       // 合并数据
       flushUserInfo = toMerged(flushUserInfo, seedAndUploadsStatus);
     }
 
     return flushUserInfo;
+  }
+
+  /**
+   * 计算发布种子数（uploads）。
+   *
+   * 站点分页控件的区间文本（如 `241-250`）末端就是总条数，这是原有实现的意图；
+   * 但只有一页时页面上没有分页控件，原实现会回落到 `0`（用户发布 1~20 个种子时恒显示 0）。
+   * 此时退化为「该页解析到的种子条数」（单页即全部）。
+   *
+   * REVIEW-FINDINGS site-defs：解析到「表结构存在但没有数据行」时返回 0（真实 0 发布）；
+   * 只有软错误页/登录页/改版（连 `table.torrents` 都不存在）或行解析失败才返回 undefined，
+   * 由调用方保留 uploads 未设置并在上层记 warn，避免把「没拿到页面」伪装成 0。
+   */
+  protected async parseUploadsCount(
+    uploadsDocument: Document,
+    requestConfig: AxiosRequestConfig,
+  ): Promise<number | undefined> {
+    const rangeText = this.getFieldData(uploadsDocument, {
+      selector: ["a[onclick*='page=']:contains('-'):last"],
+    });
+    const rangeMatch = String(rangeText ?? "").match(/(\d+)\s*-\s*(\d+)/);
+    if (rangeMatch) {
+      const count = parseInt(rangeMatch[2], 10);
+      if (!isNaN(count)) {
+        return count;
+      }
+    }
+
+    try {
+      const torrents = await this.transformSearchPage(uploadsDocument, {
+        searchEntry: this.metadata.search,
+        requestConfig,
+        keywords: "",
+      });
+      return torrents.length;
+    } catch (e) {
+      // `NoTorrentsError` = 行选择器零命中；只有确认页面本体仍是种子列表（避免登录页/软错误页被当成空榜）
+      // 时才把「零行」解释为 0 发布。
+      if (e instanceof NoTorrentsError && selectElements("table.torrents", uploadsDocument).length > 0) {
+        return 0;
+      }
+      return undefined;
+    }
   }
 }

@@ -35,14 +35,20 @@ const {
   updateTableFilterValueFn,
 } = tableCustomFilter;
 
-// 种子状态选项 - 使用 i18n 支持
-const statusOptions: Array<{ value: ETorrentStatus; label: string; icon: Component; color: string }> = [
+// 种子状态选项 - 使用 i18n 支持。
+// F11：必须是 computed，setup 期常量只会求值一次，切语言后选项名停留在旧语言。
+const statusOptions = computed<Array<{ value: ETorrentStatus; label: string; icon: Component; color: string }>>(() => [
   { value: ETorrentStatus.unknown, label: t("torrent.status.unknown"), icon: QuestionCircleOutlined, color: "grey" },
-  { value: ETorrentStatus.downloading, label: t("torrent.status.downloading"), icon: ArrowDownOutlined, color: "info" },
+  {
+    value: ETorrentStatus.downloading,
+    label: t("torrent.status.downloading"),
+    icon: ArrowDownOutlined,
+    color: "info",
+  },
   { value: ETorrentStatus.seeding, label: t("torrent.status.seeding"), icon: ArrowUpOutlined, color: "success" },
   { value: ETorrentStatus.inactive, label: t("torrent.status.inactive"), icon: DisconnectOutlined, color: "grey" },
   { value: ETorrentStatus.completed, label: t("torrent.status.completed"), icon: CheckOutlined, color: "grey" },
-];
+]);
 
 const torrentTags = computed(() => sortTorrentTags(advanceItemPropsRef.value.tags));
 

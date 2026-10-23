@@ -184,6 +184,12 @@ async function fireAlarm(name: string) {
 
 /** 派发一条消息给 SW（等价于 offscreen / options 侧 sendMessage） */
 async function dispatchMessage(type: string, data: unknown): Promise<void> {
+  // N2 修复后消息层 fail-closed：只有能证明是扩展页（sender.id + 扩展 URL）的发送方才可信。
+  // 这里模拟 offscreen 文档的通常 sender 形状，否则 reDownloadTorrent 会被消息层拒绝。
+  const sender = {
+    id: "test-extension-id",
+    url: "chrome-extension://test/offscreen.html",
+  };
   await new Promise<void>((resolve) => {
     let waiting = messageListeners.length;
     if (waiting === 0) {
@@ -197,7 +203,7 @@ async function dispatchMessage(type: string, data: unknown): Promise<void> {
       }
     };
     for (const listener of [...messageListeners]) {
-      const result = listener({ id: nextMessageId++, type, data, timestamp: Date.now() }, {}, settleOne);
+      const result = listener({ id: nextMessageId++, type, data, timestamp: Date.now() }, sender, settleOne);
       if (!result) {
         settleOne();
       }
@@ -233,6 +239,34 @@ function onlyReDownloadAlarmName(): string {
 
 function downloadHistoryStatus() {
   return messagesOfType("setDownloadHistoryStatus").map((message) => message.data);
+}
+
+/** 种入一条「SW 在首次执行期间被回收、租期已过」的 running 记录（attempt=1 表示首次执行） */
+function seedExpiredRunningJob(name: string, downloadId: number, attempt: number) {
+  const at = Date.now() - 6 * 60_000;
+  backing.set(PENDING_JOB_KEY, {
+    [name]: {
+      kind: "running",
+      job: { kind: "reDownloadTorrent", downloadId, downloadOption: { ...downloadOption, downloadId }, fireAt: at },
+      owner: "lost-worker",
+      at,
+      fireAt: at,
+      attempt,
+    },
+  });
+}
+
+/** 让 getDownloadHistory 返回指定历史（用于重放策略用例） */
+function mockDownloadHistory(records: Array<Record<string, unknown>> | Error) {
+  sendMessageHandler = (message, respond) => {
+    if (message.type !== "getDownloadHistory") return false;
+    if (records instanceof Error) {
+      respond({ err: records });
+    } else {
+      respond({ res: records });
+    }
+    return true;
+  };
 }
 
 const downloadOption = {
@@ -482,6 +516,146 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     expect(messagesOfType("downloadTorrent")).toHaveLength(1);
   });
 
+  it("执行过程中的重复 alarm 不能再次投递，完成后才写 consumed", async () => {
+    await bootServiceWorker();
+    await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60_000 });
+    const name = onlyReDownloadAlarmName();
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    sendMessageHandler = (message, respond) => {
+      if (message.type !== "downloadTorrent") return false;
+      void gate.then(() => respond({ res: { downloadStatus: "completed" } }));
+      return true;
+    };
+
+    await fireAlarm(name);
+    expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)[name]).toMatchObject({ kind: "running" });
+    await fireAlarm(name);
+    expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+    finish();
+    await vi.waitFor(() =>
+      expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)[name]).toMatchObject({ kind: "consumed" }),
+    );
+  });
+
+  it("真实首次执行已投递后 SW 回收：重放按历史 completed 跳过，不再投递（只完成一次）", async () => {
+    await bootServiceWorker();
+    await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60_000 });
+    const name = onlyReDownloadAlarmName();
+
+    // 首次执行**真实发生**：downloadTorrent 已发出，任务进入 running；响应永不返回 = 执行中 SW 被回收
+    sendMessageHandler = (message) => message.type === "downloadTorrent"; // 捕获但不响应
+    await fireAlarm(name);
+    expect(messagesOfType("downloadTorrent"), "首次执行必须真实发生过一次").toHaveLength(1);
+    expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)[name]).toMatchObject({
+      kind: "running",
+      attempt: 1,
+    });
+
+    // 模拟下一次租期重放：租期已过 + 历史显示 completed（首次执行副作用已完成，只是墓碑没写成）
+    const stored = (backing.get(PENDING_JOB_KEY) as Record<string, any>)[name];
+    stored.at = Date.now() - 6 * 60_000;
+    stored.fireAt = stored.at;
+    createdAlarms.delete(name);
+    mockDownloadHistory([{ id: 42, downloadStatus: "completed" }]);
+
+    await bootServiceWorker();
+    await fireAlarm(name);
+
+    expect(messagesOfType("downloadTorrent"), "重放不得第二次投递").toHaveLength(1);
+    expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)[name]).toMatchObject({ kind: "consumed" });
+    expect(downloadHistoryStatus()).toEqual([]); // 已完成的记录不得被判 failed
+  });
+
+  it("重放：历史 pending/downloading 视为已投递，不重放（也不误判 failed）", async () => {
+    for (const status of ["pending", "downloading"]) {
+      backing.clear();
+      createdAlarms.clear();
+      sentMessages = [];
+      seedExpiredRunningJob("reDownloadTorrent-42~replay-status", 42, 1);
+      mockDownloadHistory([{ id: 42, downloadStatus: status }]);
+      await bootServiceWorker();
+      await fireAlarm("reDownloadTorrent-42~replay-status");
+
+      expect(messagesOfType("downloadTorrent"), `status=${status} 不得重放`).toHaveLength(0);
+      expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)["reDownloadTorrent-42~replay-status"]).toMatchObject(
+        { kind: "consumed" },
+      );
+      expect(downloadHistoryStatus()).toEqual([]);
+    }
+  });
+
+  it("重放：负数 downloadId（关闭下载历史时的 ephemeral id）不重放", async () => {
+    seedExpiredRunningJob("reDownloadTorrent--3~replay-negative", -3, 1);
+    await bootServiceWorker();
+    await fireAlarm("reDownloadTorrent--3~replay-negative");
+
+    expect(messagesOfType("downloadTorrent")).toHaveLength(0);
+    expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)["reDownloadTorrent--3~replay-negative"]).toMatchObject(
+      {
+        kind: "consumed",
+      },
+    );
+  });
+
+  it("重放：历史里没有该记录（首次执行未落记录）时才重放", async () => {
+    seedExpiredRunningJob("reDownloadTorrent-42~replay-no-record", 42, 1);
+    mockDownloadHistory([]);
+    await bootServiceWorker();
+    await fireAlarm("reDownloadTorrent-42~replay-no-record");
+
+    expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+  });
+
+  it("重放：预检读取下载历史失败时继续执行（不把未执行任务判 failed）", async () => {
+    seedExpiredRunningJob("reDownloadTorrent-42~replay-precheck-error", 42, 1);
+    mockDownloadHistory(new Error("Could not establish connection. Receiving end does not exist."));
+    await bootServiceWorker();
+    await fireAlarm("reDownloadTorrent-42~replay-precheck-error");
+
+    expect(messagesOfType("downloadTorrent"), "判不了就继续执行").toHaveLength(1);
+    expect(downloadHistoryStatus()).toEqual([]);
+  });
+
+  it("重放上限 MAX_REPLAY_ATTEMPTS=3：第 3 次重放仍执行，第 4 次判 failed 且不投递", async () => {
+    // 已重放 3 次（attempt-1=3）仍允许最后一次重放
+    seedExpiredRunningJob("reDownloadTorrent-42~replay-3", 42, 3);
+    mockDownloadHistory([]);
+    await bootServiceWorker();
+    await fireAlarm("reDownloadTorrent-42~replay-3");
+    expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+
+    backing.clear();
+    createdAlarms.clear();
+    sentMessages = [];
+    // attempt-1=4 超过上限 → 判 failed，不再投递
+    seedExpiredRunningJob("reDownloadTorrent-42~replay-4", 42, 4);
+    await bootServiceWorker();
+    await fireAlarm("reDownloadTorrent-42~replay-4");
+    expect(messagesOfType("downloadTorrent")).toHaveLength(0);
+    expect(downloadHistoryStatus()).toEqual([{ downloadId: 42, status: "failed" }]);
+  });
+
+  it("未过期 running 记录冷启动只补租期闹钟，不会提前重放", async () => {
+    const name = "reDownloadTorrent-42~active";
+    const at = Date.now();
+    backing.set(PENDING_JOB_KEY, {
+      [name]: {
+        kind: "running",
+        job: { kind: "reDownloadTorrent", downloadId: 42, downloadOption, fireAt: at },
+        owner: "live-worker",
+        at,
+        fireAt: at,
+        attempt: 1,
+      },
+    });
+    await bootServiceWorker();
+    await settle();
+    expect(createdAlarms.get(name)!.scheduledTime).toBeGreaterThanOrEqual(at + 5 * 60_000);
+    await fireAlarm(name);
+    expect(messagesOfType("downloadTorrent")).toHaveLength(0);
+  });
+
   it("H-11：冷启动扫描重建了刚触发的 alarm，重复触发不得把已成功的重新下载改判 failed", async () => {
     await bootServiceWorker();
     await dispatchMessage("reDownloadTorrent", { ...downloadOption, leftInterval: 60 * 1000 });
@@ -518,5 +692,84 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
 
     expect(downloadHistoryStatus()).toEqual([]);
     expect(pendingJobs()).toEqual({});
+  });
+});
+
+describe("alarms：N7 锁占用时重试不得被静默消费", () => {
+  beforeEach(() => {
+    backing.clear();
+    sessionBacking.clear();
+    changeListeners.length = 0;
+    messageListeners.length = 0;
+    alarmListeners.length = 0;
+    createdAlarms.clear();
+    sentMessages = [];
+    sendMessageHandler = null;
+    siteUserInfoStatus = EResultParseStatus.parseError;
+    nextMessageId = 1;
+  });
+
+  it("重试 alarm 到点时上一轮仍持锁 → 重新排程（带次数上限），而不是写 consumed 墓碑", async () => {
+    await bootServiceWorker();
+
+    const retryAlarmName = "flushUserInfo-Retry-1-1700000000000";
+    backing.set(PENDING_JOB_KEY, {
+      [retryAlarmName]: { kind: "flushUserInfoRetry", retryIndex: 1, fireAt: Date.now() + 60_000 },
+    });
+    await chromeMock.storage.local.set({
+      config: { userInfo: { autoReflush: { enabled: true, retry: { max: 5, interval: 5 } } } },
+      metadata: { sites: {}, lastUserInfoAutoFlushAt: 0 },
+    });
+    // 另一轮正在刷新：锁在 TTL 内、owner 不是本次任务
+    sessionBacking.set("userInfoAutoFlushLock", { at: Date.now(), owner: "another-round" });
+
+    await bootServiceWorker();
+    await fireAlarm(retryAlarmName);
+
+    // 本次没有被当成「已完成」：旧 alarm 写墓碑（pendingJobs 会过滤 consumed），
+    // 同时排出一条新的重试任务（lockRescheduleCount 递增）
+    const retries = Object.entries(pendingJobs()).filter(
+      ([, job]: [string, any]) => job?.kind === "flushUserInfoRetry",
+    );
+    expect(retries).toHaveLength(1);
+    const [nextAlarmName, nextJob] = retries[0] as [string, any];
+    expect(nextAlarmName).not.toBe(retryAlarmName);
+    expect(nextJob).toMatchObject({ retryIndex: 1, lockRescheduleCount: 1 });
+
+    // 不是「立刻」重试：按配置的 retry.interval（5 分钟）之后
+    const scheduledTime = createdAlarms.get(nextAlarmName)!.scheduledTime;
+    expect(scheduledTime).toBeGreaterThan(Date.now() + 4 * 60_000);
+
+    // 本轮没有真正刷新用户信息，也没有误报失败
+    expect(messagesOfType("getSiteUserInfoResult")).toHaveLength(0);
+    expect(messagesOfType("setDownloadHistoryStatus")).toHaveLength(0);
+    expect(messagesOfType("logger").some((message) => String(message.data?.msg).includes("rescheduled"))).toBe(true);
+  });
+
+  it("重试遇到锁时最多重排 3 次，之后放弃并记录错误（不会无限重排）", async () => {
+    await bootServiceWorker();
+
+    const retryAlarmName = "flushUserInfo-Retry-1-already-rescheduled";
+    backing.set(PENDING_JOB_KEY, {
+      [retryAlarmName]: {
+        kind: "flushUserInfoRetry",
+        retryIndex: 1,
+        fireAt: Date.now() + 60_000,
+        lockRescheduleCount: 3,
+      },
+    });
+    await chromeMock.storage.local.set({
+      config: { userInfo: { autoReflush: { enabled: true, retry: { max: 5, interval: 5 } } } },
+      metadata: { sites: {}, lastUserInfoAutoFlushAt: 0 },
+    });
+    sessionBacking.set("userInfoAutoFlushLock", { at: Date.now(), owner: "another-round" });
+
+    await bootServiceWorker();
+    await fireAlarm(retryAlarmName);
+
+    // 不再产生新的重试任务
+    expect(Object.values(pendingJobs()).filter((job: any) => job?.kind === "flushUserInfoRetry")).toHaveLength(0);
+    // 放弃必须可见（logBackgroundError 会同时写 console.warn 与 logger 通道）
+    expect(messagesOfType("logger").some((message) => String(message.data?.msg).includes("gave up"))).toBe(true);
   });
 });

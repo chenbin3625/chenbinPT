@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, h } from "vue";
+import { ref, computed, h, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { cloneDeep, omit } from "es-toolkit";
 import { saveAs } from "file-saver";
@@ -18,7 +18,7 @@ import {
   SyncOutlined,
 } from "@ant-design/icons-vue";
 
-import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { consumeDroppedSearchSolutionCategoryNotices, useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formatDate } from "@/options/utils.ts";
@@ -28,16 +28,29 @@ import type { ISearchSolutionMetadata, TSolutionKey } from "@/shared/types.ts";
 
 import EditDialog from "./EditDialog.vue";
 import SolutionLabel from "./SolutionLabel.vue";
+import { isSafeSearchEntryKey, sanitizeSearchEntryRequestConfig } from "./utils.ts";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 
 // 搜索方案来自 metadata store，异步水合完成前不能把空列表当成「暂无数据」
 const isStoreHydrating = useStoreHydrating(metadataStore);
+
+// I/L5：站点定义更新后，旧方案里不在新 category.options 中的已选分类会被白名单静默丢弃。
+// 进入方案管理页时把「哪些方案的哪些分类被丢弃」提示一次（消费后清空，不重复打扰）。
+onMounted(() => {
+  const notices = consumeDroppedSearchSolutionCategoryNotices();
+  if (notices.length === 0) return;
+  const detail = notices
+    .slice(0, 3)
+    .map((notice) => `${notice.solutionId ?? "?"}: ${notice.droppedCategories.join(", ")}`)
+    .join("; ");
+  runtimeStore.showSnakebar(t("SetSearchSolution.categoryDropped", { detail }), { color: "warning" });
+});
 
 const showEditDialog = ref(false);
 const showDeleteDialog = ref(false);
@@ -169,6 +182,11 @@ function editSearchSolution(toEditSolutionId: TSolutionKey) {
   showEditDialog.value = true;
 }
 
+/** 新增文案尚未进入语言包时回退英文（keys 见 fix report 的「需 G/F1 跟进」） */
+function tWithFallback(key: string, fallback: string, args?: Record<string, unknown>): string {
+  return te(key) ? t(key, args as any) : fallback;
+}
+
 type IExportedSearchSolution = Omit<ISearchSolutionMetadata, "id" | "enabled" | "createdAt" | "isDefault" | "sort">;
 
 /** 判断一个值是否是「纯对象」（排除 null 与数组） */
@@ -205,6 +223,25 @@ function validateImportedSolution(item: unknown): string | undefined {
     if (typeof solutionItem.selectedCategories !== "undefined" && !isPlainRecord(solutionItem.selectedCategories)) {
       return t("SetSearchSolution.import.reason.invalidSelectedCategories", { index });
     }
+
+    // F2-High-14 / N5：searchEntries 的每个条目都必须是纯对象，requestConfig 也必须可安全剥离。
+    // 形状不对时整条方案拒绝导入，避免 `toMerged` 把奇怪的值合并进 axios 配置。
+    for (const [entryKey, entryValue] of Object.entries(solutionItem.searchEntries)) {
+      if (!isSafeSearchEntryKey(entryKey) || !isPlainRecord(entryValue)) {
+        return tWithFallback(
+          "SetSearchSolution.import.reason.invalidSearchEntry",
+          "solutions[{index}].searchEntries contains an invalid entry",
+          { index },
+        );
+      }
+      if (typeof entryValue.requestConfig !== "undefined" && !isPlainRecord(entryValue.requestConfig)) {
+        return tWithFallback(
+          "SetSearchSolution.import.reason.invalidRequestConfig",
+          "solutions[{index}].searchEntries[*].requestConfig is invalid",
+          { index },
+        );
+      }
+    }
   }
 
   return undefined;
@@ -213,7 +250,7 @@ function validateImportedSolution(item: unknown): string | undefined {
 /** 提示里最多列出的失败条目数，避免超长 snackbar */
 const IMPORT_FAILURE_REPORT_LIMIT = 3;
 
-function handleImportFileText(text: string) {
+async function handleImportFileText(text: string) {
   const parsed = JSON.parse(text) as unknown;
   if (!Array.isArray(parsed)) {
     runtimeStore.showSnakebar(t("SetSearchSolution.import.invalidFile"), { color: "error" });
@@ -223,6 +260,7 @@ function handleImportFileText(text: string) {
   let importedCount = 0;
   const failures: string[] = []; // 形状非法、被跳过的条目
   const missingSiteIds = new Set<string>(); // 引用了本机未添加站点的条目（仍会导入，但那些站点不会参与搜索）
+  const sanitizedRequestConfigKeys = new Set<string>(); // F2-High-14：被剥离的请求配置字段
 
   for (const item of parsed) {
     const itemName =
@@ -242,11 +280,26 @@ function handleImportFileText(text: string) {
     importSolution.isDefault = false;
     importSolution.sort = 1;
 
+    // F2-High-14 / N5：剥离 requestConfig 中的 url / baseURL / headers 等可改写请求目标的键，
+    // 只保留 params / data（见 utils.ts 的 sanitizeSearchEntryRequestConfig）。
     for (const solutionItem of importSolution.solutions) {
       if (!metadataStore.sites[solutionItem.siteId]) missingSiteIds.add(solutionItem.siteId);
+
+      for (const entry of Object.values(solutionItem.searchEntries ?? {})) {
+        if (!isPlainRecord(entry)) continue;
+        const { requestConfig, removedKeys } = sanitizeSearchEntryRequestConfig(entry.requestConfig);
+        if (removedKeys.length === 0) continue;
+
+        removedKeys.forEach((key) => sanitizedRequestConfigKeys.add(key));
+        if (requestConfig && Object.keys(requestConfig).length > 0) {
+          entry.requestConfig = requestConfig;
+        } else {
+          delete entry.requestConfig;
+        }
+      }
     }
 
-    metadataStore.addSearchSolution(importSolution);
+    await metadataStore.addSearchSolution(importSolution);
     importedCount++;
   }
 
@@ -265,6 +318,18 @@ function handleImportFileText(text: string) {
     });
   }
 
+  if (sanitizedRequestConfigKeys.size > 0) {
+    // 明确告知：导入文件里有试图改写请求目标/请求头的字段，已被剥离
+    runtimeStore.showSnakebar(
+      tWithFallback(
+        "SetSearchSolution.import.sanitizedRequestConfig",
+        "Removed unsafe request config fields from imported solutions: {fields}",
+        { fields: [...sanitizedRequestConfigKeys].join(", ") },
+      ),
+      { color: "warning" },
+    );
+  }
+
   if (missingSiteIds.size > 0) {
     runtimeStore.showSnakebar(t("SetSearchSolution.import.missingSites", { count: missingSiteIds.size }), {
       color: "warning",
@@ -276,11 +341,9 @@ function handleImportFileText(text: string) {
 function beforeImportUpload(file: any) {
   const r = new FileReader();
   r.onload = (e: any) => {
-    try {
-      handleImportFileText(e.target.result);
-    } catch (error) {
+    handleImportFileText(e.target.result).catch(() => {
       runtimeStore.showSnakebar(t("SetSearchSolution.import.invalidJson"), { color: "error" });
-    }
+    });
   };
   r.onerror = () => {
     runtimeStore.showSnakebar(t("SetSearchSolution.import.readFailed"), { color: "error" });
@@ -303,7 +366,7 @@ function exportSearchSolutions(solutionIds: TSolutionKey[]) {
 
   if (exportedSolutions.length > 0) {
     const exportedSolutionBlob = new Blob([JSON.stringify(exportedSolutions)], { type: "application/json" });
-    saveAs(exportedSolutionBlob, `search-solutions-export-${formatDate(new Date(), "yyyyMMdd'T'HHmm")}.json`); // FIXME filename
+    saveAs(exportedSolutionBlob, `search-solutions-export-${formatDate(new Date(), "yyyyMMdd'T'HHmm")}.json`);
   } else {
     runtimeStore.showSnakebar(t("SetSearchSolution.import.noSolutions"), { color: "error" });
   }
@@ -328,24 +391,30 @@ async function confirmDeleteSearchSolution(solutionId: TSolutionKey) {
   return await metadataStore.removeSearchSolution(solutionId);
 }
 
+/**
+ * F2-Low-16：启用 / 设为默认都走 metadataStore.simplePatch（存在性守卫 + 500ms 去抖合并），
+ * 不再裸解引用 `solutions[id]` 后整份 `$save()`：另一个上下文删除该方案时不会抛 TypeError，
+ * 也不会为一次开关付出整状态序列化 + 整 key 写入。
+ */
 function simplePatchSearchSolution(solutionId: TSolutionKey, value: boolean) {
-  metadataStore.solutions[solutionId].enabled = value;
-  metadataStore.$save();
+  void metadataStore.simplePatch("solutions", solutionId, "enabled", value);
 }
 
 function setDefaultSearchSolution(toDefault: boolean, solutionId: TSolutionKey) {
-  console.log(toDefault, solutionId);
+  if (!metadataStore.solutions[solutionId]) {
+    void metadataStore.simplePatch("solutions", solutionId, "isDefault", false);
+    return;
+  }
+
   if (toDefault) {
     metadataStore.defaultSolutionId = solutionId;
     for (const solutionKey of Object.keys(metadataStore.solutions)) {
-      metadataStore.solutions[solutionKey].isDefault = solutionKey === solutionId;
+      void metadataStore.simplePatch("solutions", solutionKey, "isDefault", solutionKey === solutionId);
     }
   } else {
     metadataStore.defaultSolutionId = "default";
-    metadataStore.solutions[solutionId].isDefault = false;
+    void metadataStore.simplePatch("solutions", solutionId, "isDefault", false);
   }
-
-  metadataStore.$save();
 }
 
 /** 用 antd 的 Modal + a-input 替代原生浏览器输入框；返回 null 表示用户取消 */
@@ -386,7 +455,8 @@ async function copySearchSolution(solutionId: TSolutionKey) {
     }
   }
 
-  const newSearchSolutionName = await promptSolutionName(`Copy of ${copied.name ?? copied.id}`);
+  // F2-Low-17：不再硬编码英文 "Copy of"，复用已有 i18n 文案（zh: 创建副本 / en: Copy）
+  const newSearchSolutionName = await promptSolutionName(`${t("SetSearchSolution.copy")} ${copied.name ?? copied.id}`);
   if (newSearchSolutionName) {
     copied.name = newSearchSolutionName;
     await metadataStore.addSearchSolution(copied);
@@ -489,7 +559,7 @@ async function copySearchSolution(solutionId: TSolutionKey) {
 
         <template v-else-if="column.key === 'enabled'">
           <a-switch
-            v-model:checked="record.enabled"
+            :checked="record.enabled"
             class="table-switch-btn"
             @change="(v: any) => simplePatchSearchSolution(record.id, v as boolean)"
           />
@@ -497,7 +567,7 @@ async function copySearchSolution(solutionId: TSolutionKey) {
 
         <template v-else-if="column.key === 'isDefault'">
           <a-switch
-            v-model:checked="record.isDefault"
+            :checked="record.isDefault"
             class="table-switch-btn"
             @change="(v: any) => setDefaultSearchSolution(v as boolean, record.id)"
           />

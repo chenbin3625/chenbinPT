@@ -258,7 +258,11 @@ export const siteMetadata: ISiteMetadata = {
 
   list: [
     {
-      urlPattern: ["/t"],
+      // B6：原模式是裸 `/t`，而判定是 `new RegExp(pattern, "i").test(location.href)`，于是
+      // `/top`、`/top-of-the-day`、`/tv` 等页面也被标成「种子列表页」（内容脚本挂出可解析面板，
+      // 点了才报「未解析到种子」）。这里锚定到 `路径 = /t`（可带 ?query / #hash），
+      // `/t/<id>` 详情页依旧由 excludeUrlPattern 与 detail.urlPattern 排除。
+      urlPattern: ["^https?://[^/]+/t(?:$|[?#])"],
       excludeUrlPattern: ["/t/\\d+", "/torrent\\.php\\?id=\\d+"],
       selectors: {
         title: {

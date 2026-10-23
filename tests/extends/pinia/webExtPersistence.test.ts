@@ -127,6 +127,27 @@ describe("webExtPersistence：最小字段 patch（P0-3）", () => {
     expect(store.lastUserInfoAutoFlushAt).toBe(987);
   });
 
+  it("外部同一路径通知先于保存到达时，未保存的本地编辑仍优先", async () => {
+    const store = createTestStore();
+    await store.$onReady();
+
+    store.sites.siteA.name = "local-unsaved";
+    await storageLocal.set({
+      [STORE_KEY]: {
+        sites: {
+          siteA: { name: "external", sortIndex: 1 },
+          siteB: { name: "B", sortIndex: 2 },
+        },
+        lastUserInfoAutoFlushAt: 321,
+      },
+    });
+
+    expect(store.sites.siteA.name).toBe("local-unsaved");
+    expect(store.lastUserInfoAutoFlushAt).toBe(321);
+    await store.$save();
+    expect((backing.get(STORE_KEY) as any).sites.siteA.name).toBe("local-unsaved");
+  });
+
   it("自身回声比较不依赖对象键的插入顺序", async () => {
     const store = createTestStore();
     await store.$onReady();
@@ -186,7 +207,7 @@ describe("webExtPersistence：最小字段 patch（P0-3）", () => {
     }
   });
 
-  it("回声窗口过期后同样的变更必须被应用（窗口不能一直吞掉外部更新）", async () => {
+  it("回声窗口过期后，等于基线的通知仍不能抹掉未保存编辑", async () => {
     // TESTS-6：原用例全程没有调用 $save()，selfWriteUntil 恒为 0（窗口从未建立），
     // 把 SELF_WRITE_ECHO_WINDOW 改成 Infinity 或让 isWithinSelfWriteEchoWindow() 恒为 true
     // 都照样通过。这里先真正建立窗口，再用受控假时钟越过它。
@@ -205,8 +226,8 @@ describe("webExtPersistence：最小字段 patch（P0-3）", () => {
 
       await storageLocal.set({ [STORE_KEY]: selfWritten });
 
-      // 窗口已过期：不能再当作回声吞掉，外部写入必须落到本地
-      expect(store.sites.siteA.name).toBe("self-v1");
+      // 虽已不在回声窗口内，但通知没有带来相对基线的外部改动。
+      expect(store.sites.siteA.name).toBe("local-edit");
       expect((backing.get(STORE_KEY) as any).sites.siteA.name).toBe("self-v1");
     } finally {
       vi.useRealTimers();
@@ -226,23 +247,18 @@ describe("webExtPersistence：写入合并（P1-5）", () => {
     await store.$onReady();
     store.sites.siteA.name = "pagehide-edit";
 
-    const originalGet = storageLocal.get;
+    // G14：旧用例把 storage.get 换成「永不 resolve」并断言一个**从未被置 true** 的 getResolved，
+    // 断言恒真（真正的保护只是超时）。这里直接断言 get 未被调用。
+    const getSpy = vi.spyOn(storageLocal, "get");
     const setSpy = vi.spyOn(storageLocal, "set");
-    let getResolved = false;
-    storageLocal.get = vi.fn(
-      () =>
-        new Promise((resolve) => {
-          void resolve;
-        }),
-    ) as typeof storageLocal.get;
 
     try {
       await (store.$save as any)(undefined, { skipMerge: true });
 
-      expect(getResolved).toBe(false);
+      expect(getSpy).not.toHaveBeenCalled();
       expect(setSpy).toHaveBeenCalled();
     } finally {
-      storageLocal.get = originalGet;
+      getSpy.mockRestore();
       setSpy.mockRestore();
     }
   });

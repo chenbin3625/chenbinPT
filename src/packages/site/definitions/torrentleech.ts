@@ -250,70 +250,23 @@ export const siteMetadata: ISiteMetadata = {
             ],
           },
         },
-      },
-      // 获取用户上传的种子数量
-      {
-        requestConfig: {
-          url: "/user/account/uploadedtorrents",
-          method: "POST",
-          responseType: "json",
-          data: {
-            sEcho: "1",
-            iColumns: "6",
-            sColumns: "categoryID,name,size,completed,seeders,leechers",
-            iDisplayStart: "0",
-            iDisplayLength: "50",
-            mDataProp_0: "0",
-            sSearch_0: "",
-            bRegex_0: "false",
-            bSearchable_0: "true",
-            bSortable_0: "false",
-            mDataProp_1: "1",
-            sSearch_1: "",
-            bRegex_1: "false",
-            bSearchable_1: "true",
-            bSortable_1: "false",
-            mDataProp_2: "2",
-            sSearch_2: "",
-            bRegex_2: "false",
-            bSearchable_2: "true",
-            bSortable_2: "true",
-            mDataProp_3: "3",
-            sSearch_3: "",
-            bRegex_3: "false",
-            bSearchable_3: "true",
-            bSortable_3: "true",
-            mDataProp_4: "4",
-            sSearch_4: "",
-            bRegex_4: "false",
-            bSearchable_4: "true",
-            bSortable_4: "true",
-            mDataProp_5: "5",
-            sSearch_5: "",
-            bRegex_5: "false",
-            bSearchable_5: "true",
-            bSortable_5: "true",
-            sSearch: "",
-            bRegex: "false",
-            iSortCol_0: "0",
-            sSortDir_0: "asc",
-            iSortingCols: "1",
-            userID: "$id$", // 使用动态获取的用户ID
-          },
-          headers: {
-            Accept: "application/json, text/javascript, */*; q=0.01",
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "X-Requested-With": "XMLHttpRequest",
-          },
-        },
-        assertion: { id: "valid" }, // 确保有用户ID
-        selectors: {
-          uploads: {
-            selector: ":self",
-            filters: [(response: IUploadsResponse) => response.iTotalRecords || 0],
-          },
+        // 用户名可能含空格、#、?、/ 或非 ASCII 字符；作为路径段必须整体编码，
+        // 否则 URL 会被截断 / 改义，profile 页 404 会让 joinTime、levelName 全空。
+        // 断言（assertion）先把 `$name$` 替换成原始用户名，再在这里统一编码。
+        requestConfigTransformer: (requestConfig) => {
+          if (typeof requestConfig.url === "string") {
+            requestConfig.url = requestConfig.url.replace(
+              /^(.*\/profile\/)(.*)$/,
+              (_match: string, prefix: string, userName: string) => `${prefix}${encodeURIComponent(userName)}`,
+            );
+          }
+          return requestConfig;
         },
       },
+      // 注：用户上传数由下方 class 的 parseUserInfoForUploads 统一抓取。
+      // 这里原先还有一个 `userID: "$id$"` + `assertion: { id: "valid" }` 的 DataTables POST 步骤：
+      // 断言写错路径（"valid" 而不是 "data.userID"）导致 `$id$` 永不被替换，每次刷新都多发一次
+      // 必然失败的 POST，且与类方法里的同一份参数重复维护。M-16/M-17 一并删除该步骤。
     ],
   },
 
@@ -371,16 +324,37 @@ export default class TorrentLeech extends PrivateSite {
       flushUserInfo.status === EResultParseStatus.success &&
       (typeof flushUserInfo.seeding === "undefined" || typeof flushUserInfo.seedingSize === "undefined")
     ) {
-      flushUserInfo = await this.parseUserInfoForSeedingStatus(flushUserInfo);
+      // SITECORE-3：做种统计只是可选增强，`/profile/xxx/seeding` 超时 / CF / 5xx 时不能让
+      // 已经解析成功的 uploaded/downloaded/ratio/levelName/joinTime 整次作废（与 NexusPHP 同构）。
+      try {
+        flushUserInfo = await this.parseUserInfoForSeedingStatus(flushUserInfo);
+      } catch (error) {
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForSeedingStatus failed`,
+          { site: this.metadata.id, error: siteErrorLogData(error) },
+          "warn",
+        );
+      }
     }
 
     // 获取用户上传的详细信息（如果需要更多信息）
+    // M-17：旧守卫 `typeof uploads === "undefined" || typeof uploads === "number"` 恒真，
+    // 而 process 里已取过一次 uploads，于是每次刷新都会重复 POST；这里只补取「尚未取到」的情况。
     if (
       flushUserInfo.status === EResultParseStatus.success &&
       flushUserInfo.id &&
-      (typeof flushUserInfo.uploads === "undefined" || typeof flushUserInfo.uploads === "number")
+      typeof flushUserInfo.uploads === "undefined"
     ) {
-      flushUserInfo = await this.parseUserInfoForUploads(flushUserInfo);
+      try {
+        flushUserInfo = await this.parseUserInfoForUploads(flushUserInfo);
+      } catch (error) {
+        // parseUserInfoForUploads 内部已兜底，这里再包一层防止未来改动把异常抛到调用方
+        logMessage(
+          `[Site] ${this.name} parseUserInfoForUploads failed`,
+          { site: this.metadata.id, error: siteErrorLogData(error) },
+          "warn",
+        );
+      }
     }
 
     return flushUserInfo;
@@ -408,9 +382,14 @@ export default class TorrentLeech extends PrivateSite {
   protected async parseUserInfoForSeedingStatus(flushUserInfo: Partial<IUserInfo>): Promise<IUserInfo> {
     let seedStatus = { seeding: 0, seedingSize: 0 };
 
-    const userName = flushUserInfo.name as string;
+    const userName = flushUserInfo.name as string | undefined;
+    if (!userName) {
+      return flushUserInfo as IUserInfo;
+    }
+
     const { data } = await this.request<string>({
-      url: `/profile/${userName}/seeding`,
+      // L-19：用户名作为路径段编码，避免 `#` / `?` / 空格截断请求路径
+      url: `/profile/${encodeURIComponent(userName)}/seeding`,
     });
 
     if (data && data.includes("profile-seedingTable")) {

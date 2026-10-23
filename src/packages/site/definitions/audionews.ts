@@ -277,7 +277,9 @@ export const siteMetadata: ISiteMetadata = {
       },
       seeders: { selector: "td[title='Seeders']" },
       leechers: { selector: "td[title='Leechers']" },
-      completed: { selector: "td[title^='Replies:']" },
+      // E1b-C2：原选择器取的是 td[title^='Replies:']（回帖数），与下方 comments 同源，
+      // 完成数（snatches）被填成回帖数且两列显示同一个值。站点行内没有可确认的 snatch 列，
+      // 删除该声明（保持 undefined，UI 显示为空）而不是继续输出错误数字。
       comments: { text: 0, selector: "span.tracker_topic_replies a" },
       author: { selector: "td a[href*='/tracker.php?pid=']" },
     },
@@ -329,9 +331,9 @@ export const siteMetadata: ISiteMetadata = {
               },
             ],
           },
-          // seedingSize: { text: "N/A" },
-          bonus: { text: "N/A" },
-          bonusPerHour: { text: "N/A" },
+          // E1b-C5：原先这里声明 bonus / bonusPerHour / seedingSize 为 { text: "N/A" }。这几个都是 number 字段，
+          // 字符串 "N/A" 会进入用户信息对象并持久化（积分汇总、做种收益计算得到 NaN）。
+          // 站点不提供这些概念，直接不声明（缺失即不展示），由 UI 处理空值。
         },
       },
     ],

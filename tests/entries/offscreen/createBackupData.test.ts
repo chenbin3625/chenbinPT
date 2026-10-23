@@ -170,17 +170,40 @@ describe("createBackupData：只打包被点名且在白名单内的字段（TES
     expect(backupData.metadata).toBeUndefined();
   });
 
-  it("downloadHistory 只在被点名时读 IndexedDB", async () => {
+  it("downloadHistory 只在被点名时读 IndexedDB，并在导出前脱敏请求配置（OS-1）", async () => {
     const { createBackupData } = await loadBackupModule();
     storage.set("config", { lang: "zh_CN" });
-    mocks.getAll.mockResolvedValue([{ id: 1, title: "t" }]);
+    mocks.getAll.mockResolvedValue([
+      {
+        id: 1,
+        title: "t",
+        downloadRequestConfig: {
+          method: "GET",
+          url: "https://pt.example/download.php?id=1&passkey=SECRET",
+          headers: { Authorization: "Bearer SECRET" },
+        },
+        addTorrentOptions: { savePath: "/x", localDownloadOption: { url: "https://pt.example/dl?token=SECRET" } },
+      },
+    ]);
 
     const without = await createBackupData(["config"]);
     expect(without.downloadHistory).toBeUndefined();
     expect(mocks.getAll).not.toHaveBeenCalled();
 
     const withHistory = await createBackupData(["downloadHistory"] as any);
-    expect(withHistory.downloadHistory).toEqual([{ id: 1, title: "t" }]);
+    // 记录里的 addTorrentOptions 归一为对象；请求配置只保留脱敏摘要。
+    expect(withHistory.downloadHistory).toEqual([
+      {
+        id: 1,
+        title: "t",
+        downloadRequestConfig: {
+          method: "GET",
+          url: "https://pt.example/download.php?id=***&passkey=***",
+        },
+        addTorrentOptions: { savePath: "/x" },
+      },
+    ]);
+    expect(JSON.stringify(withHistory.downloadHistory)).not.toContain("SECRET");
     expect(mocks.getAll).toHaveBeenCalledWith("download_history");
   });
 });
@@ -215,5 +238,69 @@ describe("exportBackupData：自动备份链路的字段装配不被放宽（TES
       path: ["backupServers", "srv", "lastBackupAt"],
       value: expect.any(Number),
     });
+  });
+
+  it("OS-2：远端备份未设置加密密钥时拒绝上传 cookies/metadata/downloadHistory（fail-closed）", async () => {
+    const { exportBackupData } = await loadBackupModule();
+    storage.set("metadata", { backupServers: { srv: { id: "srv", type: "WebDAV", enabled: true } } });
+    storage.set("config", { lang: "zh_CN" }); // 没有 backup.encryptionKey
+
+    const addFile = vi.fn(async () => true);
+    mocks.getBackupServer.mockResolvedValue({ setEncryptionKey: vi.fn(), addFile });
+
+    await expect(exportBackupData("srv", ["cookies", "metadata", "config"])).rejects.toThrow(/未设置备份加密密钥/);
+    await expect(exportBackupData("srv", ["downloadHistory"])).rejects.toThrow(/downloadHistory/);
+    expect(addFile).not.toHaveBeenCalled();
+    // 拒绝发生在读取 IndexedDB / 抓 cookie 之前
+    expect(mocks.getAll).not.toHaveBeenCalled();
+    expect(mocks.sendMessage.mock.calls.some(([name]: any[]) => name === "getAllCookies")).toBe(false);
+  });
+
+  it("RB-1：本地导出（用户自有磁盘）无密钥时允许明文，仅记 warn；不因敏感字段被拒绝", async () => {
+    const { exportBackupData } = await loadBackupModule();
+    storage.set("config", { lang: "zh_CN" }); // 没有 backup.encryptionKey
+    mocks.getAll.mockResolvedValue([]);
+    const utils = await import("@ptd/backupServer/utils.ts");
+    vi.mocked(utils.backupDataToJSZipBlob).mockResolvedValue(new Blob(["zip"]));
+
+    await expect(exportBackupData("local", ["downloadHistory", "config"])).resolves.toBe(true);
+
+    // 敏感字段明文导出必须留痕（warn），但不阻断本地导出
+    expect(
+      mocks.logger.mock.calls.some(([item]: any[]) => item?.level === "warn" && /sensitive fields/i.test(item.msg)),
+    ).toBe(true);
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
+      "downloadFile",
+      expect.objectContaining({ filename: expect.any(String) }),
+    );
+  });
+
+  it("OS-2：无密钥但只导出无凭据字段时仍然允许", async () => {
+    const { exportBackupData } = await loadBackupModule();
+    storage.set("metadata", { backupServers: { srv: { id: "srv", type: "WebDAV", enabled: true } } });
+    storage.set("config", { lang: "zh_CN" });
+    storage.set("userInfo", { mteam: {} });
+
+    const addFile = vi.fn(async () => true);
+    mocks.getBackupServer.mockResolvedValue({ setEncryptionKey: vi.fn(), addFile });
+
+    await expect(exportBackupData("srv", ["config", "userInfo"])).resolves.toBe(true);
+    expect(addFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("OS-2：设置密钥后敏感字段恢复可导出", async () => {
+    const { exportBackupData } = await loadBackupModule();
+    storage.set("metadata", { backupServers: { srv: { id: "srv", type: "WebDAV", enabled: true } } });
+    storage.set("config", { lang: "zh_CN", backup: { encryptionKey: "k" } });
+    storage.set("metadata", {
+      backupServers: { srv: { id: "srv", type: "WebDAV", enabled: true } },
+      sites: { a: {} },
+    });
+
+    const addFile = vi.fn(async () => true);
+    mocks.getBackupServer.mockResolvedValue({ setEncryptionKey: vi.fn(), addFile });
+
+    await expect(exportBackupData("srv", ["metadata"])).resolves.toBe(true);
+    expect(addFile).toHaveBeenCalledTimes(1);
   });
 });

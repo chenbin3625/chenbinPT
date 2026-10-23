@@ -12,7 +12,7 @@ import {
   TagsOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons-vue";
-import { computed, type Component } from "vue";
+import { type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { IMediaServerItem } from "@ptd/mediaServer";
 import { formatSize } from "@/options/utils.ts";
@@ -25,15 +25,6 @@ const showDialog = defineModel<boolean>();
 const { item } = defineProps<{
   item: IMediaServerItem;
 }>();
-
-function streamsTextFactory(type: "Video" | "Audio" | "Subtitle") {
-  return computed(() =>
-    (item.streams ?? [])
-      .filter((s) => s.type === type)
-      .map((x) => x.title)
-      .join(" / "),
-  );
-}
 
 const showSteams: Array<{ name: "Audio" | "Subtitle"; icon: Component }> = [
   { name: "Audio", icon: HddOutlined },

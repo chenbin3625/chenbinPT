@@ -16,7 +16,7 @@ import {
   UpOutlined,
   WarningOutlined,
 } from "@ant-design/icons-vue";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { watchDebounced } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -56,6 +56,7 @@ import {
   cancelFlushSiteLastUserInfo,
   flushSiteLastUserInfo,
   isTableDataLoading,
+  reconcileFlushPlan,
 } from "./utils/lastUserData.ts";
 
 const { t } = useI18n();
@@ -68,8 +69,6 @@ const metadataStore = useMetadataStore();
 // 两者都完成前表格显示 loading，避免先闪一下「暂无数据」再蹦出数据
 const isStoreHydrating = useStoreHydrating(metadataStore);
 const isTableLoading = computed<boolean>(() => isStoreHydrating.value || isTableDataLoading.value);
-
-const currentDate = new Date();
 
 type TExtendDataTableHeader = DataTableHeader & { props?: any };
 
@@ -169,10 +168,26 @@ const filteredTableData = computed(() =>
   tableData.value.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
 );
 const tablePagination = computed(() =>
-  toPagination(configStore.tableBehavior.MyData.itemsPerPage, (v) =>
-    configStore.updateTableBehavior("MyData", "itemsPerPage", v),
+  // F16：历史配置里的 itemsPerPage = -1 会让表格完全不渲染分页器（连「每页条数」都改不回来），
+  // 与 SearchEntity 保持一致：不允许「不分页」这个历史取值。
+  toPagination(
+    configStore.tableBehavior.MyData.itemsPerPage,
+    (v) => configStore.updateTableBehavior("MyData", "itemsPerPage", v),
+    { allowUnpaginated: false },
   ),
 );
+
+/**
+ * F7：输入框的筛选串必须同步回高级筛选字典（`advanceFilterDictRef`）。
+ *
+ * 表格过滤实际用的是输入串（`tableParsedFilterRef`），而快捷筛选/分组勾选用的是字典；
+ * 修复前手输条件只写进输入框、从未写进字典，于是点任一快捷筛选时 `stringifyFilterDictFn()`
+ * 会用旧字典重建整串并覆盖输入框，用户手输的 `name:alice` 静默消失。
+ */
+function onTableFilterInput(value: string) {
+  tableWaitFilterRef.value = value;
+  buildFilterDictFn(value);
+}
 function onSelectionChange(keys: (string | number)[]) {
   tableSelected.value = keys as TSiteID[];
 }
@@ -182,8 +197,24 @@ function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown)
 
 const tableSelected = ref<TSiteID[]>([]); // 选中的站点行
 
-// 挂载时加载表格数据
-onMounted(() => initTableData());
+// 表格数据重建（站点被删除/过滤配置变化）后，选择集里不能残留已不存在的站点 id，
+// 否则「批量刷新 / 打开站点 / 时间线」会继续对已删除的站点发消息。
+watch(
+  () => tableData.value.map((item) => item.site),
+  (siteIds) => {
+    if (tableSelected.value.length === 0) return;
+    const existing = new Set(siteIds);
+    const nextSelected = tableSelected.value.filter((site) => existing.has(site));
+    if (nextSelected.length !== tableSelected.value.length) tableSelected.value = nextSelected;
+  },
+);
+
+// 挂载时先对账「刷新中」的残留标记（F17：恢复出来的 flushPlan 没有在途请求，会把页面卡在“取消刷新”），
+// 再加载表格数据
+onMounted(() => {
+  reconcileFlushPlan();
+  void initTableData();
+});
 
 // 监听用户信息变化（ offscreen 直接定时刷新的情况 ）
 watchDebounced(
@@ -347,10 +378,10 @@ const showExportDialog = ref(false);
         <div style="flex: 1 1 auto"></div>
 
         <a-input
-          v-model:value="tableWaitFilterRef"
+          :value="tableWaitFilterRef"
           allow-clear
           :placeholder="t('common.search')"
-          @change="(e: any) => !e.target.value && buildFilterDictFn('')"
+          @update:value="onTableFilterInput"
         >
           <template #prefix>
             <a-popover placement="bottom" trigger="click">
@@ -446,6 +477,8 @@ const showExportDialog = ref(false);
         selectedRowKeys: tableSelected,
         onChange: onSelectionChange,
         getCheckboxProps: (record: any) => ({ disabled: record.selectable === false }),
+        // 表格筛选/分页改变 dataSource 时保留已选站点，避免下一次勾选时静默丢掉先前的选择
+        preserveSelectedRowKeys: true,
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"

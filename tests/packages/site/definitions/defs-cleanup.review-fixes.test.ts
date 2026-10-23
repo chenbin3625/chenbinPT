@@ -130,21 +130,65 @@ describe("H&R 设计冲突：全站 H&R 名单内的站点恢复恒真 H&R", () 
   });
 });
 
+/** 按 metadata.schema 解析出站点实际使用的引擎类（与 site/index.ts 的实例化顺序一致） */
+async function loadEngineClass(metadata: any): Promise<any> {
+  const schema = metadata.schema ?? (metadata.type === "private" ? "AbstractPrivateSite" : "AbstractBittorrentSite");
+  const mod: any = await import(`@ptd/site/schemas/${schema}.ts`);
+  return mod.default;
+}
+
 describe("冗余 override 清理：8 站不再自带 guessUserLevelId", () => {
-  it.each(overrideRemovedSites)("%s 的导出类不再覆写 guessUserLevelId", async (_name, load) => {
+  /**
+   * H-L4：原用例用 `hasOwnProperty(SiteClass.prototype, "guessUserLevelId")` 判 override，
+   * 对 `class X { guessUserLevelId = () => ... }`（实例字段）恒为 false，回归不会被发现；
+   * 而且没有 default class 时整段断言直接空跑。这里改成：
+   *   1) 显式断言「有没有 default class」这个前提本身；
+   *   2) 用**真实实例**检查方法来源 —— 实例自有属性里不得出现 guessUserLevelId（类字段会被抓出来），
+   *      且 `site.guessUserLevelId === 引擎类原型上的实现`（覆写会换引用）；
+   *   3) 断言模块除了 siteMetadata / default 之外没有多余导出（防止把私有 helper 再加回来）。
+   */
+  it.each(overrideRemovedSites)("%s 的实例方法就是引擎类的实现（含类字段形式的 override）", async (_name, load) => {
     const mod = await load();
     const SiteClass = mod.default;
+    const siteMetadata = mod.siteMetadata;
+    const EngineClass = await loadEngineClass(siteMetadata);
+
+    // 前提：这 8 站要么没有 default class（走引擎），要么其 default class 直接继承引擎
     if (SiteClass) {
-      // 只检查自有原型属性：继承自引擎的实现不算 override
-      expect(Object.prototype.hasOwnProperty.call(SiteClass.prototype, "guessUserLevelId")).toBe(false);
+      expect(Object.getPrototypeOf(SiteClass.prototype)).toBe(EngineClass.prototype);
+    } else {
+      expect(SiteClass, "无 default class 时断言不能空跑：这里必须真的是 undefined").toBeUndefined();
     }
-    // 无 default class 时由 schema 引擎类承载，同样没有站内 override / 共享 helper 导出
-    expect(mod.guessUserLevelIdByJudgeableRequirements).toBeUndefined();
+
+    const site: any = new (SiteClass ?? EngineClass)(siteMetadata);
+
+    // 实例字段（class field 箭头函数）会出现在自有属性里；原型 override 会换掉方法引用
+    expect(Object.getOwnPropertyNames(site)).not.toContain("guessUserLevelId");
+    expect(site.guessUserLevelId).toBe(EngineClass.prototype.guessUserLevelId);
+
+    // 模块导出面：只允许 siteMetadata（以及可选的 default 站点类）
+    expect(Object.keys(mod).sort()).toEqual(SiteClass ? ["default", "siteMetadata"] : ["siteMetadata"]);
+  });
+
+  it.each(overrideRemovedSites)("%s 不再导出任何判级 helper", async (_name, load) => {
+    const mod = await load();
+    expect((mod as any).guessUserLevelIdByJudgeableRequirements).toBeUndefined();
+    // H-L4：原先只查这一个 helper 名，改个名字就漏；改为「任何非 siteMetadata/default 的函数导出都不允许」
+    const extraFunctionExports = Object.entries(mod)
+      .filter(([key, value]) => key !== "default" && key !== "siteMetadata" && typeof value === "function")
+      .map(([key]) => key);
+    expect(extraFunctionExports).toEqual([]);
   });
 
   it("darkpeers 不再导出共享 helper，也不再导出站点类", async () => {
     const mod = await import("@ptd/site/definitions/darkpeers.ts");
     expect((mod as any).guessUserLevelIdByJudgeableRequirements).toBeUndefined();
     expect((mod as any).default).toBeUndefined();
+    // H-L4：实例来自引擎类，方法引用必须与 Unit3D 原型一致
+    const { default: Unit3D } = await import("@ptd/site/schemas/Unit3D.ts");
+    const site: any = new Unit3D((mod as any).siteMetadata);
+    expect(Object.getOwnPropertyNames(site)).not.toContain("guessUserLevelId");
+    expect((site as any).guessUserLevelId).toBe((Unit3D.prototype as any).guessUserLevelId);
+    expect(Object.keys(mod).sort()).toEqual(["siteMetadata"]);
   });
 });

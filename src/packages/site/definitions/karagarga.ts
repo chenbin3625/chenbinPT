@@ -3,6 +3,7 @@
  * @PTPPDefinitions https://github.com/chenbin3625/PT-Plugin-Plus/blob/dev/resource/sites/karagarga.in/config.json
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/karagarga.json
  */
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
 import { parseSizeString } from "../utils";
@@ -289,6 +290,13 @@ export const siteMetadata: ISiteMetadata = {
 
   levelRequirements: [
     {
+      // E3-13：KG 的 class 单元格对普通用户是 `User`，表里没有该等级时 guessUserLevelId 会落到
+      // getLevelIdBeforeFirstUnmet——首个带门槛等级（Power User）不满足时返回 -1「未知等级」，
+      // 概览的等级徽标与「距下一级」都不显示。补一个无门槛的入口级占位（与 iptorrents/hdvideo 的写法一致）。
+      id: 0,
+      name: "User",
+    },
+    {
       id: 1,
       name: "Power User",
       interval: "P13W",
@@ -316,7 +324,7 @@ export default class KaraGarga extends PrivateSite {
   ): Partial<ITorrent> {
     torrent = super.parseTorrentRowForTags(torrent, row, searchConfig);
 
-    if (row instanceof Element) {
+    if (isElementNode(row)) {
       const tags = (torrent.tags ?? []) as ITorrentTag[];
       if (row.classList.contains("freeleechrow") && !tags.some((tag) => tag.name === "Free")) {
         tags.push({ name: "Free", color: "blue" });

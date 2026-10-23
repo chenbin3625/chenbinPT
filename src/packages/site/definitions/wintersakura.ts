@@ -36,7 +36,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "TV Series/剧集(分集）", value: 402 },
         { name: "TV Series/剧集(合集）", value: 414 },
         { name: "Animation series/动漫剧集(分集)", value: 413 },
-        { name: "Animation series/动漫剧集(合集)\t", value: 423 },
+        { name: "Animation series/动漫剧集(合集)", value: 423 },
       ],
       cross: { mode: "append" },
     },

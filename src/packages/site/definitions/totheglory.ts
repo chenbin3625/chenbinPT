@@ -165,11 +165,19 @@ export const siteMetadata: ISiteMetadata = {
       id: { selector: ":self", attr: "id" },
       title: {
         selector: ["div.name_left > a > b > font", "div.name_left > a > b"],
-        elementProcess: (e: HTMLElement) => e.innerHTML.split("<br>")[0],
+        // L-26：原先直接返回 `innerHTML.split("<br>")[0]`，标题里的 <b>/<font> 会原样进入 torrent.title；
+        // 且 `<br/>` / `<BR>` 序列化形态不同时 split 失配。统一按不区分大小写的 <br> 切分并剥离标签。
+        elementProcess: (e: HTMLElement) => {
+          const [titlePart = ""] = e.innerHTML.split(/<br\s*\/?>/i);
+          return extractContent(titlePart);
+        },
       },
       subTitle: {
         selector: ["div.name_left > a > b > font", "div.name_left > a > b"],
-        elementProcess: (e: HTMLElement) => extractContent(e.innerHTML.split("<br>")[1] || ""),
+        elementProcess: (e: HTMLElement) => {
+          const parts = e.innerHTML.split(/<br\s*\/?>/i);
+          return parts.length > 1 ? extractContent(parts.slice(1).join(" ")) : "";
+        },
       },
       url: { selector: "div.name_left > a", attr: "href" },
       link: { selector: "a.dl_a", attr: "href" },

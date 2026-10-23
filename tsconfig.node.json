@@ -12,5 +12,9 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": "."
   },
+  // 注意：`vite/**` 下的测试（tests/i18n/generateWebextLocales.test.ts 等）**不能**加入本 project：
+  // 它们同样被主项目（tests/**/*.ts）包含，若这里再包含一次，测试里的 `@ts-expect-error TS6305`
+  // 在本 project 里没有对应错误 → TS2578「Unused '@ts-expect-error' directive」直接失败。
+  // 因此跨 project import 统一由主项目的精确 `@ts-expect-error TS6305` 处理（task-12 方案 B 回退）。
   "include": ["package.json", "vite.config.ts", "vite/**/*.ts"]
 }

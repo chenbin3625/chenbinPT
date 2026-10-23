@@ -98,6 +98,25 @@ describe("options 页面紧凑布局密度", () => {
     firstChild.unmount();
   });
 
+  it("搜索结果页筛选栏与表格之间不额外留空白", () => {
+    const view = mountDom(`
+      <div>
+        <div class="search-filter-bar">
+          <div class="search-filter-chips"></div>
+          <input class="search-filter-search" />
+        </div>
+        <div class="ant-table-wrapper">
+          <table><thead class="ant-table-thead"><tr><th>t</th></tr></thead></table>
+        </div>
+      </div>
+    `);
+
+    expect(computedStyle(view.root.querySelector(".search-filter-bar")!, "margin-bottom")).toBe("0px");
+    expect(computedStyle(view.root.querySelector(".ant-table-wrapper")!, "margin-top")).toBe("0px");
+
+    view.unmount();
+  });
+
   it("单元格文本限宽 + 单行省略，且调用点可用 CSS 变量覆盖兜底宽度", () => {
     const { root, unmount } = mountDom(`
       <span class="ptd-cell-ellipsis">默认兜底宽度</span>

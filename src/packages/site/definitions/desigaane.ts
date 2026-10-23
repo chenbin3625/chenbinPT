@@ -12,9 +12,10 @@ export const siteMetadata: ISiteMetadata = {
   name: "DesiGaane",
   aka: ["DG"],
   description: "DesiGaane is a private tracker focused on Indian music",
-  tags: ["音楽", "印度音乐"],
+  // E2-18/E2b-05：仓库内音乐站统一用简体「音乐」；`音楽` 是日文写法，会让同义标签分裂成两个分组。
+  tags: ["音乐", "印度音乐"],
   timezoneOffset: "+0000",
-  collaborator: [], // 若你知道协作者 ID，请填入
+  // E2-18/E2b-05：没有真实协作者 ID 时不留空数组占位（站点详情页会渲染空协作者）
 
   type: "private",
   schema: "GazelleJSONAPI",

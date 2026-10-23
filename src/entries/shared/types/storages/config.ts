@@ -163,6 +163,8 @@ export interface IConfigPiniaStorageSchema {
     maxTagCountBeforeGroup: number;
     // 默认隐藏的标签名称列表
     hiddenTagNames: string[];
+    // 是否允许点击搜索结果里的种子标签，一键按该标签筛选（仅搜索结果页生效，关闭后标签恢复纯展示）
+    tagClickToFilter: boolean;
   };
 
   userInfo: {

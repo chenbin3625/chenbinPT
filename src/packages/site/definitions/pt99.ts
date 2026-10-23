@@ -5,7 +5,7 @@ export const siteMetadata: ISiteMetadata = {
   id: "pt99",
   name: "PT99",
   description: "An Average PT",
-  tags: ["综合", "记录片", "影视", "综合"],
+  tags: ["综合", "记录片", "影视"],
 
   type: "private",
   schema: "NexusPHP",

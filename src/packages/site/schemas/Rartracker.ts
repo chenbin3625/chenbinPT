@@ -123,7 +123,10 @@ export default class Rartracker extends PrivateSite {
       return cachedPassKey.passkey.trim();
     }
 
-    const { data: statResp } = await this.request<{ user: { passkey: string } }>(statusRequestConfig);
+    // E12：`statusRequestConfig` 是模块级共享常量，传给 request() 时必须拷贝一层。
+    // 基类 request() 现在也不会原地修改入参，这里再显式拷贝一次作为纵深防御
+    // （否则 A/B 两个 Rartracker 站点会共用第一个站点的 baseURL，把 A 站 passkey 写进 B 站）。
+    const { data: statResp } = await this.request<{ user: { passkey: string } }>({ ...statusRequestConfig });
     const passKey = (statResp.user.passkey ?? "").trim();
 
     // 空 passkey 不写入持久化缓存：否则后续 12 小时内的下载链接都会复用空凭据；

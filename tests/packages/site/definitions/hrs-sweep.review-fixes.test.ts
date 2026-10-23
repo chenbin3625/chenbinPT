@@ -94,7 +94,9 @@ describe("DEFS2-2 收尾：H&R 标签按「是否全站 H&R」判定有/无", ()
     expect(tags.some((tag) => tag.name === "H&R")).toBe(globalHrSites.has(name));
   });
 
-  it("#336 全站 H&R 名单（DOM 3 + JSON 3）不重不漏，且 alpharatio 不在名单内", () => {
+  // H-I4：这条断言只是「名单内部一致性」（同一组名字再写一遍），**不能**证明与上游 #336 一致
+  // （上游名单无法离线取得）。保留它是为了抓「某个名字在数组里打错/漏加」，命名也据此调整。
+  it("名单内部一致性：DOM 3 + JSON 3 不重不漏，且 alpharatio 不在名单内", () => {
     expect([...globalHrSites].sort()).toEqual(
       ["asiancinema", "beyondhd", "blutopia", "broadcasthenet", "huno", "torrentleech"].sort(),
     );
@@ -134,7 +136,18 @@ describe("DEFS1-2 不回退：broadcasthenet 仍能解析 Gazelle 共享的 Free
     }
   });
 
-  it("imdb/series 页解析出的种子不再给每行硬写 H&R", async () => {
+  /**
+   * H-M2（延续项，**故意不改判据**）：同一站点、同一批下载义务在两个入口被断言成相反结果 ——
+   * 普通搜索结果行恒有 H&R（`:78`/`:114`，按「全站 H&R」判据是刻意的），series/IMDB 路径却要求没有 H&R
+   * （本条；源码理由是「该路径不走 parseTorrentRowForTags，无法判定真实 H&R」，但对全站 H&R 站点这个前提不成立）。
+   * 同时 E1b-C22 报的「series 行缺 Free / time」在本条里也没有断言。
+   *
+   * 这属于**产品裁决**（全站 H&R 站点是否对 series/IMDB 结果同样标注 H&R、以及是否补 Free/time），
+   * 本次修复按 FIX-BRIEF「需要产品裁决的条目」处理：不动任一侧的实现或期望，只在 fix report
+   * `docs/review-2026-10-23/fix-reports/h-tests.md` 记录两种方案与影响。
+   * 裁决后请同时更新本条、`site-specializations` 的 BTN IMDB 用例与源码 `broadcasthenet.ts`。
+   */
+  it("imdb/series 页解析出的种子不再给每行硬写 H&R（M2 待裁决，见注释）", async () => {
     const mod = await import("@ptd/site/definitions/broadcasthenet.ts");
     const doc = new DOMParser().parseFromString(
       `<html><body><table class="torrent_table">
