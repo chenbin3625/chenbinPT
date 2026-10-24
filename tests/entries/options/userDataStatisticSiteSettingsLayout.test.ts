@@ -22,7 +22,7 @@ import {
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn().mockResolvedValue(""), onMessage: vi.fn() }));
 
 const saveAsMock = vi.hoisted(() => vi.fn());
-vi.mock("file-saver", () => ({ saveAs: saveAsMock }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: saveAsMock }));
 
 /**
  * 统计页的数据源是 `loadFullData()`：真实实现要读 chrome.storage 里的用户信息历史。

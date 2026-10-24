@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 只有 Chrome 需要 offscreen 文档：Firefox 的 background 是常驻页面，直接注册这些处理函数（见 background/ff_main.ts） -->
+    <meta name="manifest.include" content="['chrome']" />
+  </head>
+  <script type="module" src="../../entries/offscreen/offscreen.ts"></script>
+  <body></body>
+</html>

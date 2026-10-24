@@ -1,8 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { Plugin } from "vite";
-
 export interface IGenerateWebextLocalesResult {
   generated: string[];
   removed: string[];
@@ -48,7 +46,7 @@ function removeTemporaryArtifacts(publicLocalesDir: string): string[] {
  *    内存（解析失败在**写盘之前**抛错），再逐文件「写临时文件 + rename」原子替换，最后才清理
  *    已经没有源文件的语言目录 —— 任何时刻磁盘上的 `messages.json` 都是完整的一份。
  * 2. **用 `process.cwd()` 定位**：从子目录或 `vite --config` 运行时会把 `src/locales` 读错、
- *    把 `public/_locales` 清错位置。现在由 `configResolved` 提供 `config.root`（与 `vite.config.ts`
+ *    把 `public/_locales` 清错位置。现在由调用方传入 `root`（wxt.config.ts 的 build:before 钩子传仓库根，与旧 `vite.config.ts`
  *    自己用 `base_path(import.meta.dirname)` 的口径一致）；`root` 参数也让这段逻辑可以被单测直接调用。
  * 3. **总是重写工作区**：仍然在 dev/build 都生成（`_locales` 是 gitignore 的构建输入，dev 也需要它，
  *    否则全新克隆 `npm run dev` 直接加载失败），但不再做「整目录预删」，且写入是幂等/原子的。
@@ -116,20 +114,4 @@ export function generateWebextLocales(root: string): IGenerateWebextLocalesResul
   }
 
   return { generated, removed, cleaned };
-}
-
-export function vitePluginGenerateWebextLocales(): Plugin {
-  let configRoot = process.cwd();
-  return {
-    name: "vite-plugin-generate-webext-locales",
-    configResolved(config) {
-      // 用 Vite 解析后的 root，而不是 process.cwd()：`vite --config` / 从子目录调用时两者不同（G17）
-      configRoot = config.root;
-    },
-    buildStart() {
-      for (const file of generateWebextLocales(configRoot).generated) {
-        console.log(`Generated ${file}`);
-      }
-    },
-  };
 }

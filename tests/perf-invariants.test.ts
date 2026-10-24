@@ -164,9 +164,28 @@ const invariants: Invariant[] = [
   // 的行为用例覆盖 —— 与本文件头「行为已被用例覆盖时不要再加形态断言」的纪律冲突，故移除。
   {
     id: "correctness",
-    description: "Vite 浏览器构建保留 path polyfill（parse-torrent 会调用 path.join）",
-    file: "vite.config.ts",
+    description: "浏览器构建保留 path polyfill（parse-torrent 会调用 path.join）",
+    file: "wxt.config.ts",
     mustMatch: /include:\s*\[[^\]]*"buffer"[^\]]*"path"[^\]]*\]/,
+  },
+  {
+    id: "P1-3",
+    description: "内容脚本 UI 不写进 manifest（registration: runtime），只在识别到站点后由后台注入",
+    file: "src/entrypoints/cs-app.content.ts",
+    mustMatch: /registration:\s*"runtime"/,
+  },
+  {
+    id: "P1-3",
+    description: "content script 引导不静态引入 UI（Vue/antd/站点包只在 cs-app 里）",
+    file: "src/entries/content-script/index.ts",
+    // 只允许 `typeof import("./app/...")` 这种纯类型引用；任何值 import 都会把 UI 打进每个页面都执行的引导
+    mustNotMatch: /^import\s+(?!type\b)[^;]*?from\s*["']\.\/app\/|^import\s*["']\.\/app\//m,
+  },
+  {
+    id: "P1-3",
+    description: "background 按站点注入 UI 时只用 sender 定位目标 frame",
+    file: "src/entries/background/utils/contentScriptApp.ts",
+    mustMatch: /documentIds:\s*\[sender\.documentId\][\s\S]*frameIds:\s*\[sender\.frameId \?\? 0\]/,
   },
   {
     id: "correctness",

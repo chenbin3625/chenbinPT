@@ -55,7 +55,7 @@
   },
   "src/entries/content-script/index.ts": {
     "no-console": {
-      "count": 8
+      "count": 7
     }
   },
   "src/entries/offscreen/utils/logger.ts": {

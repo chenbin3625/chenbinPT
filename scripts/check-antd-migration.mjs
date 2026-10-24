@@ -221,7 +221,7 @@ check("no-vuetify-utilities", "style.css 无手写 Vuetify 工具类层", utilHi
 
 // ── 12. MDI webfont 注入 ───────────────────────────────────────────────────
 const mdiHits = [];
-for (const f of [join(SRC, "entries/options/index.html"), join(SRC, "entries/content-script/app/init.ts")]) {
+for (const f of [join(SRC, "entrypoints/options/index.html"), join(SRC, "entries/content-script/app/init.ts")]) {
   try {
     const t = readFileSync(f, "utf8");
     if (/lib\/mdi|mdi\/webfont|mdi\/icons\.css/.test(t))

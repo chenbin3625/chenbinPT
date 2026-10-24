@@ -11,7 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 const sendMessageMock = vi.hoisted(() => vi.fn());
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
-vi.mock("file-saver", () => ({ saveAs: vi.fn() }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: vi.fn() }));
 
 /** `getDownloaderMetaData` 依赖 Vite 的 `import.meta.glob`，单测环境下拿不到实体模块 */
 vi.mock("@ptd/downloader", async (importOriginal) => {

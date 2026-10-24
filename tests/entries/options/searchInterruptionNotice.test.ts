@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // 搜索页会经这些模块拉站点 / 下载器组件；单测只需要页面能挂载，不需要它们的行为。
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
-vi.mock("file-saver", () => ({ saveAs: vi.fn() }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: vi.fn() }));
 vi.mock("@ptd/downloader", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {

@@ -64,7 +64,7 @@ const sendMessageMock = vi.hoisted(() => vi.fn());
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
 
 const saveAsMock = vi.hoisted(() => vi.fn());
-vi.mock("file-saver", () => ({ saveAs: saveAsMock }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: saveAsMock }));
 
 /** 单测里不加载真实站点点定义（避免 import.meta.glob 与 341 个定义的开销），只覆盖 EditDialog 用到的字段 */
 vi.mock("@ptd/site", async (importOriginal) => {

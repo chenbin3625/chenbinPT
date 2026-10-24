@@ -4,8 +4,9 @@
  *  - SERVERSSOCIAL-5：_manifest.json 是不可信输入，解析时剥离 __proto__ 并做结构校验（与 zip 路径对齐）；
  *  - SERVERSSOCIAL-6：manifest 不再被当成一个数据条目写进 gist。
  */
-import CryptoJS from "crypto-js";
 import { describe, expect, it, vi } from "vitest";
+
+import { md5Hex, v1Encrypt } from "./helpers/nodeCryptoOracle.ts";
 
 const logMessageMock = vi.hoisted(() => vi.fn());
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: logMessageMock }));
@@ -51,7 +52,7 @@ describe("SERVERSSOCIAL-2：Gist 默认加密不再由 gist_id 派生", () => {
     expect(manifest.files.config.name).toBe("config.json");
     // 明文内容（不含密文前缀），hash 与内容一致
     expect(files["config.json"].content).toBe(JSON.stringify({ a: 1 }));
-    expect(manifest.files.config.hash).toBe(CryptoJS.MD5(files["config.json"].content).toString());
+    expect(manifest.files.config.hash).toBe(md5Hex(files["config.json"].content));
     // 明文上传必须在运行日志里留痕，而不是让用户以为受密钥保护
     expect(logMessageMock).toHaveBeenCalledWith(expect.stringContaining("明文"), undefined, "warn");
   });
@@ -105,7 +106,7 @@ describe("SERVERSSOCIAL-2：Gist 恢复端尊重 manifest.encryption", () => {
         version: "v",
         time: 0,
         encryption: false,
-        files: { config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() } },
+        files: { config: { name: "config.json", hash: md5Hex(configContent) } },
       },
       { "config.json": configContent },
     );
@@ -122,7 +123,7 @@ describe("SERVERSSOCIAL-2：Gist 恢复端尊重 manifest.encryption", () => {
         version: "v",
         time: 0,
         encryption: false,
-        files: { config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() } },
+        files: { config: { name: "config.json", hash: md5Hex(configContent) } },
       },
       { "config.json": configContent },
     );
@@ -138,7 +139,7 @@ describe("SERVERSSOCIAL-2：Gist 恢复端尊重 manifest.encryption", () => {
       {
         version: "v",
         time: 0,
-        files: { config: { name: "config.txt", hash: CryptoJS.MD5(configContent).toString() } },
+        files: { config: { name: "config.txt", hash: md5Hex(configContent) } },
       },
       { "config.txt": configContent },
     );
@@ -149,23 +150,12 @@ describe("SERVERSSOCIAL-2：Gist 恢复端尊重 manifest.encryption", () => {
   });
 });
 
+/**
+ * 复刻修复前 Gist 用 `${key}|${gist_id}` 口令写出的 v1 条目（PBKDF2-SHA256 → HMAC 派生 → AES-CBC + HMAC）。
+ * 由独立的 node:crypto 实现生成，与被测的解密实现互不依赖。
+ */
 function encryptWithGistKey(data: any, key: string, field: string): string {
-  const salt = CryptoJS.lib.WordArray.random(16);
-  const iv = CryptoJS.lib.WordArray.random(16);
-  const material = CryptoJS.PBKDF2(key, salt, {
-    keySize: 256 / 32,
-    iterations: 100_000,
-    hasher: CryptoJS.algo.SHA256,
-  });
-  const cipherKey = CryptoJS.HmacSHA256("backup-encryption", material);
-  const macKey = CryptoJS.HmacSHA256("backup-authentication", material);
-  const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(data), cipherKey, { iv }).ciphertext.toString(
-    CryptoJS.enc.Base64,
-  );
-  const saltBase64 = salt.toString(CryptoJS.enc.Base64);
-  const ivBase64 = iv.toString(CryptoJS.enc.Base64);
-  const mac = CryptoJS.HmacSHA256(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, macKey).toString();
-  return `PTD-AES-HMAC-v1:${JSON.stringify({ salt: saltBase64, iv: ivBase64, ciphertext, mac })}`;
+  return v1Encrypt(data, key, field);
 }
 
 describe("SERVERSSOCIAL-6：manifest 不作为数据条目上传", () => {
@@ -207,7 +197,7 @@ describe("SERVERSSOCIAL-5：_manifest.json 按不可信输入处理", () => {
   it("剥离 manifest 中的 __proto__，不会污染 Object.prototype", async () => {
     const configContent = JSON.stringify({ a: 1 });
     const client = buildGetFileClient(
-      { config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() } },
+      { config: { name: "config.json", hash: md5Hex(configContent) } },
       { "config.json": configContent },
     );
 
@@ -223,10 +213,10 @@ describe("SERVERSSOCIAL-5：_manifest.json 按不可信输入处理", () => {
     const badHistoryContent = JSON.stringify({ not: "an array" });
     const client = buildGetFileClient(
       {
-        config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() },
+        config: { name: "config.json", hash: md5Hex(configContent) },
         downloadHistory: {
           name: "downloadHistory.json",
-          hash: CryptoJS.MD5(badHistoryContent).toString(),
+          hash: md5Hex(badHistoryContent),
         },
         broken: null,
       },
@@ -245,7 +235,7 @@ describe("SERVERSSOCIAL-5：_manifest.json 按不可信输入处理", () => {
 
   it("hash 不匹配时仍整份失败（不静默接受被篡改的数据）", async () => {
     const client = buildGetFileClient(
-      { config: { name: "config.json", hash: CryptoJS.MD5("expected").toString() } },
+      { config: { name: "config.json", hash: md5Hex("expected") } },
       { "config.json": JSON.stringify({ a: 1 }) },
     );
 

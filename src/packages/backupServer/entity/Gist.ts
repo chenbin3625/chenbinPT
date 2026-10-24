@@ -17,9 +17,9 @@
  */
 
 import axios, { AxiosRequestConfig } from "axios";
-import CryptoJS from "crypto-js";
 import { omit } from "es-toolkit";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
+import { md5Hex } from "../crypto.ts";
 import {
   getBackupRequestTimeout,
   BackupDowngradeError,
@@ -176,7 +176,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     for (const [key, value] of Object.entries(omit(file, ["manifest"]))) {
       const writeFileName = `${key}.${manifest.encryption ? "txt" : "json"}`;
       const fileContent = hasEncryptionKey ? encryptData(value, this.encryptionKey, key) : JSON.stringify(value);
-      manifest.files[key] = { name: writeFileName, hash: CryptoJS.MD5(fileContent).toString() };
+      manifest.files[key] = { name: writeFileName, hash: md5Hex(fileContent) };
       writeFile[writeFileName] = { content: fileContent };
     }
 
@@ -265,7 +265,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       }
 
       {
-        const fileContentHash = CryptoJS.MD5(fileRawContent).toString();
+        const fileContentHash = md5Hex(fileRawContent);
         if (fileContentHash !== manifestContentHash) {
           throw new Error(`File hash mismatch for ${fileName}.`);
         }

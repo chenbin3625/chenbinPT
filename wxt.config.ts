@@ -1,0 +1,156 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import vue from "@vitejs/plugin-vue";
+import git from "git-rev-sync";
+import type { Plugin } from "vite";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
+import { defineConfig } from "wxt";
+
+import pkg from "./package.json" with { type: "json" };
+import { generateWebextLocales } from "./vite/plugin/generateWebextLocales.ts";
+import { buildUserManifest, type TBuildTarget } from "./vite/manifest.ts";
+import { forbidContentScriptCssAssets } from "./vite/plugin/forbidContentScriptCssAssets.ts";
+
+const root = import.meta.dirname;
+
+function base_path(_path = "") {
+  return path.resolve(root, _path);
+}
+
+/**
+ * 读取 git 元数据时允许降级（缺陷清单 G19）：源码包（没有 `.git`）或 `git` 不在 PATH 时，
+ * 构建元数据（commit/branch/date）只用于排查线上问题，不应成为构建的前置条件。
+ */
+function safeGit<T>(fallback: T, read: () => T): T {
+  try {
+    return read();
+  } catch {
+    return fallback;
+  }
+}
+
+// @ts-ignore git-rev-sync 的类型声明里 count() 没有参数说明
+const git_count = safeGit(0, () => git.count("HEAD"));
+const git_short = safeGit("unknown", () => git.short(root));
+const git_long = safeGit("unknown", () => git.long(root));
+const git_date = safeGit(0, () => +git.date());
+const git_branch = safeGit("unknown", () => git.branch(root));
+
+/**
+ * manifest 的版本号 = `package.json` 的三位版本（如 `0.0.8`），**不拼接 git 提交计数**：
+ * `git rev-list --all --count` 在不同机器/`fetch --prune` 前后结果不同，会产出比已发布版本更小的号
+ * （Chrome 拒绝降级安装、商店拒绝更低版本）。每次发布前手动抬 `package.json` 的版本号。
+ * 构建信息仍保留在 chrome 的 `version_name`、`__EXT_VERSION__` 与 `__GIT_VERSION__` 中。
+ */
+const base_version = pkg.version;
+const commit_version = `${base_version}+${git_short}`;
+
+/**
+ * 项目自己的路径别名：`~` → src、`@` → src/entries、`@ptd` → src/packages。
+ *
+ * WXT 会强制注册 `@` / `~` → srcDir（见 wxt/dist/core/resolve-config.mjs），与本项目 `@` 的含义冲突。
+ * Vite 合并 alias 时「后合并的排在前面、先匹配」，因此这里用 `enforce: "post"` 的插件在 WXT 之后再注入一次，
+ * 保证构建、单测（vitest.config.ts）与类型检查（tsconfig.json paths）三处解析到同一个文件。
+ */
+const projectAliases = {
+  "~": base_path("./src"),
+  "@": base_path("./src/entries"),
+  "@ptd": base_path("./src/packages"),
+};
+
+function projectAliasPlugin(target: TBuildTarget): Plugin {
+  return {
+    name: "ptd:project-aliases",
+    enforce: "post",
+    config() {
+      return {
+        resolve: {
+          alias: [
+            ...Object.entries(projectAliases).map(([find, replacement]) => ({ find, replacement })),
+            // background 入口按目标选择实现：Firefox 的 background 是常驻页面，直接把 offscreen 的处理函数一起注册
+            {
+              find: /^#ptd\/background-main$/,
+              replacement: base_path(
+                target === "firefox" ? "src/entries/background/ff_main.ts" : "src/entries/background/main.ts",
+              ),
+            },
+          ],
+        },
+      };
+    },
+  };
+}
+
+export default defineConfig({
+  srcDir: "src",
+  entrypointsDir: "entrypoints",
+  publicDir: "public",
+  // 产物仍输出到 dist-chrome / dist-firefox，沿用 README、pack-crx、e2e 与 .gitignore 的既有路径；
+  // `wxt` dev 模式输出到 dist-chrome-dev（modeSuffix），不会覆盖发布构建
+  outDir: ".",
+  outDirTemplate: "dist-{{browser}}{{modeSuffix}}",
+  manifestVersion: 3,
+  targetBrowsers: ["chrome", "firefox"],
+  // 不使用自动导入：保持显式 import，避免 .wxt 生成的全局类型与 tsconfig 冲突
+  imports: false,
+  webExt: {
+    // 与旧构建的 disableAutoLaunch 一致：dev 时不自动拉起浏览器
+    disabled: true,
+  },
+  manifest: ({ browser }) =>
+    buildUserManifest({
+      target: browser as TBuildTarget,
+      version: base_version,
+      versionName: commit_version,
+    }),
+  hooks: {
+    // _locales 由 src/locales/*.json#manifest 生成到 public/_locales，必须在复制 public 之前完成
+    "build:before": () => {
+      for (const file of generateWebextLocales(root).generated) {
+        console.log(`Generated ${path.relative(root, file)}`);
+      }
+    },
+    // 内容脚本 UI 的样式必须内联进 JS（见 forbidContentScriptCssAssets 的说明）
+    "vite:build:extendConfig": (entrypoints, viteConfig) => {
+      if (entrypoints.some((entry) => entry.type === "content-script")) {
+        viteConfig.plugins ??= [];
+        viteConfig.plugins.push(forbidContentScriptCssAssets());
+      }
+    },
+  },
+  vite: (env) => {
+    const target = env.browser as TBuildTarget;
+    return {
+      build: {
+        target: "es2023",
+        chunkSizeWarningLimit: 800,
+        reportCompressedSize: false,
+      },
+      plugins: [
+        nodePolyfills({
+          // parse-torrent 运行时会调用 path.join；Vite 无 polyfill 时会把 path externalize 为空对象。
+          include: ["buffer", "path"],
+          globals: {
+            Buffer: true,
+          },
+        }),
+        vue(),
+        projectAliasPlugin(target),
+      ],
+      define: {
+        __BROWSER__: JSON.stringify(target),
+        __EXT_VERSION__: JSON.stringify(`v${commit_version}`),
+        __GIT_VERSION__: JSON.stringify({
+          short: git_short,
+          long: git_long,
+          date: git_date,
+          count: git_count,
+          branch: git_branch,
+        }),
+        __BUILD_TIME__: JSON.stringify(+Date.now()),
+        __RESOURCE_SITE_ICONS__: JSON.stringify(fs.readdirSync(base_path("./public/icons/site"))),
+      },
+    };
+  },
+});

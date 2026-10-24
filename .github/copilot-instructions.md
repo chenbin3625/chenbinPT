@@ -6,10 +6,12 @@ chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT
 ## Architecture & Key Components
 
 ### Web Extension Structure
-- **Background Service Worker**: `src/entries/background/main.ts` - handles core extension logic
-- **Content Scripts**: `src/entries/content-script/` - injected into PT sites  
-- **Options Page**: `src/entries/options/` - Vue 3 SPA for configuration
-- **Offscreen Documents**: `src/entries/offscreen/` - for secure operations
+Built with [WXT](https://wxt.dev). `src/entrypoints/` holds thin WXT entrypoints; the real code stays in `src/entries/`:
+- **Background**: `src/entrypoints/background.ts` → `src/entries/background/main.ts` (Chrome service worker) or `ff_main.ts` (Firefox background script, also registers the offscreen handlers)
+- **Content script bootstrap**: `src/entrypoints/content.ts` → `src/entries/content-script/index.ts` — runs on every page, must stay tiny; detects PT/social sites
+- **Content script UI**: `src/entrypoints/cs-app.content.ts` (`registration: "runtime"`) → `src/entries/content-script/app/` — injected by the background via `scripting.executeScript` (`injectContentScriptApp` message) only on matched sites; styles are inlined with `?inline`
+- **Options Page**: `src/entrypoints/options/index.html` → `src/entries/options/` - Vue 3 SPA for configuration
+- **Offscreen Document** (Chrome only): `src/entrypoints/offscreen/index.html` → `src/entries/offscreen/` - DOMParser / Blob work
 
 ### Module System (`src/packages/`)
 - **Site**: `@ptd/site` - PT site definitions, scrapers, and metadata
@@ -51,11 +53,12 @@ chenbinPT is a browser extension (Manifest v3) for enhancing Private Tracker (PT
 
 ### Key Commands
 ```bash
-npm run dev                    # Development server with HMR
-npm run build:dist            # Build Chrome extension
-npm run build:dist-firefox    # Build Firefox addon
+npm run dev                    # wxt dev (Chrome) → dist-chrome-dev; load it unpacked manually
+npm run dev:firefox            # wxt dev for Firefox → dist-firefox-dev
+npm run build:dist            # wxt build → dist-chrome
+npm run build:dist-firefox    # wxt build -b firefox → dist-firefox
 npm run check                 # TypeScript type checking (src/, via vue-tsc)
-npm run check:node            # TypeScript type checking for vite.config.ts / vite/**/*.ts (tsconfig.node.json)
+npm run check:node            # TypeScript type checking for wxt.config.ts / vite/**/*.ts (tsconfig.node.json)
 npm run check:bundle          # dist-chrome bundle completeness + size budget (needs a build first)
 npm run check:dist            # check:bundle for both dist-chrome and dist-firefox
 npm run verify                # Release gate: check + check:node + lint + check:antd + vitest + test:legacy
@@ -79,14 +82,16 @@ The manifest `version` is exactly the `package.json` version — never derive it
 published (Chrome refuses downgrades, the stores refuse lower versions).
 
 ### Browser Targets
-- Chrome: Uses service worker background script
-- Firefox: Uses legacy background scripts (`ff_main.ts`)
-- Conditional manifest via `{{chrome}}` / `{{firefox}}` tokens
+- Chrome: Uses service worker background script + offscreen document
+- Firefox: Uses background scripts (`ff_main.ts`), MV3, no offscreen document
+- Per-target manifest fields live in `vite/manifest.ts` (`buildUserManifest({ target })`)
 
-### Vite Configuration
-- `vite-plugin-web-extension` generates manifest.json dynamically
-- Multi-target builds with `TARGET=firefox` environment variable
-- Node.js polyfills for crypto, buffer operations
+### Build Configuration (`wxt.config.ts`)
+- WXT generates manifest entry fields from `src/entrypoints/`; everything else comes from `vite/manifest.ts`
+- Browser target via `wxt build -b firefox`; output goes to `dist-<browser>`
+- Project aliases (`~`, `@`, `@ptd`) are re-applied after WXT's own `@`/`~` aliases (`projectAliasPlugin`)
+- `web_accessible_resources` (`vite/warResources.json`) only exposes `icons/*` and `lib/*` with dynamic URLs; `check:bundle` / `pack:crx` fail if any `.js`/`.html` becomes web-accessible
+- Node.js polyfills for buffer/path (parse-torrent)
 
 ## Testing & Quality
 
@@ -120,7 +125,7 @@ published (Chrome refuses downgrades, the stores refuse lower versions).
 ## Key Dependencies
 - **Vue Ecosystem**: Vue 3, ant-design-vue 4, Vue Router, Pinia, Vue I18n
 - **Extension Framework**: `@webext-core/*` for cross-browser compatibility
-- **Build Tools**: Vite, TypeScript
-- **Utilities**: axios, date-fns, es-toolkit, jszip, crypto-js
+- **Build Tools**: WXT (Vite), TypeScript
+- **Utilities**: axios, date-fns, es-toolkit, jszip, @noble/hashes + @noble/ciphers (backup / CookieCloud crypto)
 
 This is a sophisticated multi-platform extension requiring careful attention to web extension APIs, cross-site scripting, and torrent ecosystem integrations.

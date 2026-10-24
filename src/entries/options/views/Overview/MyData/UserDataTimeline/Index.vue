@@ -8,7 +8,7 @@ import {
   SaveOutlined,
   VerticalAlignBottomOutlined,
 } from "@ant-design/icons-vue";
-import { saveAs } from "file-saver";
+import { saveAs } from "@/options/utils/saveAs.ts";
 import { computed, onBeforeUpdate, onMounted, ref, shallowRef, useTemplateRef } from "vue";
 import Konva from "konva";
 // P2-2：vue-konva 组件改为在此局部注册（原来在 options/main.ts 里 app.use(VueKonva, { prefix: "Vk" })，

@@ -9,18 +9,21 @@
  * 导致这类历史备份恢复时一律抛 BackupDowngradeError（输对密钥也没用）。本用例走**完整恢复路径**，
  * 防止 `decryptData` 单测通过、恢复路径却不可用的假阳性。
  */
-import CryptoJS from "crypto-js";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import { decryptData, encryptData, jsZipBlobToBackupData } from "@ptd/backupServer/utils.ts";
 
+import { legacyBackupEncrypt, md5Hex } from "./helpers/nodeCryptoOracle.ts";
+
 const ENCRYPTION_KEY = "legacy-user-key";
 
-/** 复刻旧版本 utils.ts 的加密实现（OpenSSL 格式 + MD5 前 16 位作为口令） */
+/**
+ * 复刻旧版本 utils.ts 的加密实现（OpenSSL 格式 + MD5 前 16 位作为口令）。
+ * 用独立的 node:crypto 实现生成，与被测的解密实现互不依赖（字节级等价性见 cryptoCompat.test.ts）。
+ */
 function legacyEncrypt(data: unknown, encryptionKey: string): string {
-  const legacyKey = CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
-  return CryptoJS.AES.encrypt(JSON.stringify(data), legacyKey).toString();
+  return legacyBackupEncrypt(data, encryptionKey);
 }
 
 /** 构造旧版本导出的 zip：manifest.encryption=true、无 encryptionFormat/kdf、条目为 legacy 密文 */
@@ -32,7 +35,7 @@ async function buildLegacyBackupZip(payloads: Record<string, unknown>, encryptio
     const fileName = `${fileKey}.json`;
     const content = legacyEncrypt(payload, encryptionKey);
     zip.file(fileName, content);
-    files[fileKey] = { name: fileName, hash: CryptoJS.MD5(content).toString() };
+    files[fileKey] = { name: fileName, hash: md5Hex(content) };
   }
 
   zip.file(
@@ -72,7 +75,7 @@ describe("C2-B-1：legacy 加密 zip 备份恢复", () => {
       "manifest.json",
       JSON.stringify({
         encryption: true,
-        files: { config: { name: "config.json", hash: CryptoJS.MD5(content).toString() } },
+        files: { config: { name: "config.json", hash: md5Hex(content) } },
       }),
     );
     const blob = await zip.generateAsync({ type: "blob" });

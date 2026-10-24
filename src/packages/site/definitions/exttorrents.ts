@@ -1,7 +1,8 @@
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
 import { ISearchInput, ITorrent, type ISiteMetadata } from "../types";
 import { selectElements } from "../utils/selector";
-import CryptoJS from "crypto-js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { set } from "es-toolkit/compat";
 import { parseTimeToLiveToDate } from "../utils";
 
@@ -318,6 +319,7 @@ export default class ExtTorrents extends BittorrentSite {
   /** A-16：这不是 HMAC（无密钥摘要），只是把 token 拼进待哈希串；按实际语义命名以免误导。 */
   private computeTokenDigest(torrentId: number, timestamp: number, token: string) {
     const data = `${torrentId}|${timestamp}|${token}`;
-    return CryptoJS.SHA256(data).toString();
+    // SHA-256(UTF-8(data)) 的小写 hex，与站点前端脚本计算的 token 一致
+    return bytesToHex(sha256(utf8ToBytes(data)));
   }
 }

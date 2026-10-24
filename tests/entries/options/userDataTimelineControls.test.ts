@@ -40,7 +40,7 @@ vi.mock("vue-konva", async () => {
     Text: stub("VkText"),
   };
 });
-vi.mock("file-saver", () => ({ saveAs: vi.fn() }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: vi.fn() }));
 
 /** 找到「某段文案」后面的那个区块容器（模板里标题与字段行是相邻兄弟节点） */
 function sectionAfterText(root: HTMLElement, text: string): HTMLElement | null {

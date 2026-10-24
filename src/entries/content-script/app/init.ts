@@ -1,5 +1,7 @@
 import appCss from "./app.css?inline";
 import antdResetCss from "ant-design-vue/dist/reset.css?inline";
+// 与管理页共用的组件样式（`.ptd-*` 工具类、`.ant-btn` 图标顺序等，被 NavButton / TorrentTitleTd 等共享组件使用）
+import optionsCss from "@/options/style.css?inline";
 import { ConfigProvider } from "ant-design-vue";
 import { StyleProvider } from "ant-design-vue/es/_util/cssinjs";
 
@@ -38,13 +40,13 @@ export function mountApp(document: Document, data: any = {}) {
   // 图标已全部迁移到 @ant-design/icons-vue（组件内联 svg），
   // 不再往 shadow root 注入额外的图标 webfont（字体文件已从 public/ 移除）。
 
-  // 将构造过程中产生的样式 chenbinpt.css 添加到 shadow DOM 中
-  // （cssCodeSplit=false 后全量样式合并为该单一文件——动态 import 不会自动加载
-  //   css 分片，页面上下文需按固定地址显式引入）
-  const buildStyleElement = document.createElement("link");
+  // 共享组件样式同样以字符串注入（旧构建把整份管理页 CSS 打成 chenbinpt.css，再以
+  // web_accessible_resources 暴露给页面用 <link> 加载；现在内容脚本只带自己依赖图里的样式，
+  // 不再需要任何可被网页探测的 CSS 资源。构建期由 vite/plugin/forbidContentScriptCssAssets.ts 守卫：
+  // 内容脚本依赖图里一旦出现会被抽成独立文件的 CSS，构建直接失败）
+  const buildStyleElement = document.createElement("style");
   buildStyleElement.id = "ptd-content-script-style-build";
-  buildStyleElement.rel = "stylesheet";
-  buildStyleElement.href = chrome.runtime.getURL("chenbinpt.css");
+  buildStyleElement.textContent = optionsCss;
   shadowRoot.appendChild(buildStyleElement);
 
   // 在 shadow DOM 中创建一个 html 作为所有元素的容器
@@ -80,7 +82,7 @@ export function mountApp(document: Document, data: any = {}) {
       const getPopupContainer = () => popupHostElement;
 
       // 把 antd Design Token 派生的 `--ptd-*` 写到 shadow host（contentRoot）上，
-      // 供 shadow tree 内的 chenbinpt.css 使用；判定与 appliedThemeConfig 保持一致
+      // 供 shadow tree 内注入的 options/style.css 使用；判定与 appliedThemeConfig 保持一致
       // （未跟随主题时显式写 `buildThemeVars(false)` 的浅色一套）。详见 ./themeVars.ts。
       syncThemeVarsToHost(
         contentRoot,

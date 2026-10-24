@@ -30,7 +30,7 @@ npm ci
 npm run build:dist
 ```
 
-Firefox 版本使用 `npm run build:dist-firefox` 构建。构建后按上述步骤加载 `dist-chrome/` 或 `dist-firefox/`。
+Firefox 版本使用 `npm run build:dist-firefox` 构建。构建后按上述步骤加载 `dist-chrome/` 或 `dist-firefox/`。开发时使用 `npm run dev`（[WXT](https://wxt.dev) 开发模式），产物在 `dist-chrome-dev/`，需要手动加载。
 
 ### 配置
 
@@ -60,6 +60,11 @@ Firefox 版本使用 `npm run build:dist-firefox` 构建。构建后按上述步
   - 风险仅在「扩展的内容脚本自身被攻破/被恶意注入」时才可能兑现。
 
   在 Firefox 上使用时的建议：只从官方 Release 安装、保持浏览器与扩展更新、不要在来源不明的页面长期停留时保持扩展启用；如介意该降级，请使用 Chrome / Edge 140+。
+
+### 内容脚本与页面可见资源
+
+- 每个页面只运行一个约 15 KB 的引导脚本，用来判断当前页面是不是已添加的站点；确认后才由后台通过 `scripting.executeScript` 把站点助手界面注入到该页面（因此扩展需要 `scripting` 权限；扩展已有 `*://*/*` 主机权限，这不会增加安装时的权限提示）。
+- 网页能访问的扩展资源（`web_accessible_resources`）只有图标与字体（`icons/*`、`lib/*`），在 Chrome 上使用动态 URL；扩展的脚本与页面都不对网页开放。
 
 ### 其他建议
 

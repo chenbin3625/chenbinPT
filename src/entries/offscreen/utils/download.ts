@@ -1,6 +1,5 @@
 import axios, { type AxiosRequestConfig } from "axios";
 import PQueue from "p-queue";
-import { stringify } from "urlencode";
 import { toMerged } from "es-toolkit";
 import { isEmpty } from "es-toolkit/compat";
 
@@ -24,6 +23,7 @@ import { getRemoteTorrentFile } from "@ptd/downloader/utils.ts";
 import type { ITorrent } from "@ptd/site";
 
 import { onMessage, sendMessage } from "@/messages.ts";
+import { stringifyQuery } from "@/shared/queryString.ts";
 import type {
   IConfigPiniaStorageSchema,
   ITorrentDownloadMetadata,
@@ -895,7 +895,7 @@ async function downloadTorrentToLocalFile(
       };
 
       if (downloadMethod.toUpperCase() === "POST" && !isEmpty(downloadData ?? {})) {
-        downloadOptions.body = stringify(downloadData);
+        downloadOptions.body = stringifyQuery(downloadData);
       }
 
       if (!isEmpty(downloadHeaders)) {

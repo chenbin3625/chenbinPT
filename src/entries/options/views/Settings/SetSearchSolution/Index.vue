@@ -2,7 +2,7 @@
 import { ref, computed, h, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { cloneDeep, omit } from "es-toolkit";
-import { saveAs } from "file-saver";
+import { saveAs } from "@/options/utils/saveAs.ts";
 import { nanoid } from "nanoid";
 import { Input, Modal } from "ant-design-vue";
 import {

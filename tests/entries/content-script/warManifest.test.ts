@@ -9,31 +9,31 @@ import webAccessibleResources from "../../../vite/warResources.json";
 // 方案 B（把测试并入 tsconfig.node.json 的 include）实测会让该 directive 在 check:node 里变成 TS2578 unused，故保留行级豁免（task-12）。
 import { chromeWebAccessibleResources, getWebAccessibleResources } from "../../../vite/warResources.ts";
 
-/** 构建输入（vite.config.ts 静态 import 它） */
+/** 构建输入（vite/manifest.ts 静态 import 它） */
 const WAR_SOURCE_PATH = path.resolve(import.meta.dirname, "../../../vite/warResources.json");
 
 describe("content script WAR policy", () => {
   it("warResources.json 是构建输入，必须存在于工作区（防 untracked 漏提交）", () => {
-    // 缺该文件时 `vite build` / `vite dev` 会在读取配置阶段直接失败（ESM 静态 import 解析不到）。
+    // 缺该文件时 `wxt build` 会在读取配置阶段直接失败（ESM 静态 import 解析不到）。
     expect(existsSync(WAR_SOURCE_PATH)).toBe(true);
   });
 
-  it("keeps only icons and styles on dynamic URLs", () => {
-    expect(webAccessibleResources).toContainEqual({
-      resources: ["icons/*", "lib/*", "chenbinpt.css"],
-      matches: ["*://*/*"],
-      use_dynamic_url: true,
-    });
+  it("只暴露页面上直接引用的静态资源，且使用动态 URL", () => {
+    expect(webAccessibleResources).toEqual([
+      {
+        resources: ["icons/*", "lib/*"],
+        matches: ["*://*/*"],
+        use_dynamic_url: true,
+      },
+    ]);
   });
 
-  it("keeps the entire ESM chunk graph loadable through the canonical ID", () => {
-    expect(webAccessibleResources).toContainEqual({
-      resources: ["assets/*", "vendor/*"],
-      matches: ["*://*/*"],
-    });
-    expect(webAccessibleResources.find((war) => war.resources.includes("assets/*"))).not.toHaveProperty(
-      "use_dynamic_url",
-    );
+  it("不再以固定扩展 ID 暴露任何 JS chunk / 样式文件（内容脚本 UI 改由 scripting.executeScript 注入）", () => {
+    const resources = webAccessibleResources.flatMap((war) => war.resources);
+    for (const legacy of ["assets/*", "vendor/*", "chenbinpt.css", "chunks/*", "content-scripts/*"]) {
+      expect(resources).not.toContain(legacy);
+    }
+    expect(webAccessibleResources.every((war) => war.use_dynamic_url === true)).toBe(true);
   });
 
   it("chrome（及非 firefox）目标原样保留 JSON 内容，含 use_dynamic_url", () => {
@@ -48,7 +48,6 @@ describe("content script WAR policy", () => {
     expect(firefox.every((entry: any) => !("use_dynamic_url" in entry))).toBe(true);
     expect(firefox[0].resources).toEqual(webAccessibleResources[0].resources);
     expect(firefox[0].matches).toEqual(webAccessibleResources[0].matches);
-    expect(firefox[1]).toEqual(webAccessibleResources[1]);
     // 源 JSON 不被修改（剥离是拷贝语义，避免 chrome 构建被污染）
     expect(webAccessibleResources[0]).toHaveProperty("use_dynamic_url", true);
   });

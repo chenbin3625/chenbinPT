@@ -1,5 +1,5 @@
-import { stringify } from "urlencode";
 import { onMessage, sendMessage } from "@/messages.ts";
+import { stringifyQuery } from "@/shared/queryString.ts";
 import { extStorage } from "@/storage.ts";
 import type { IExtensionStorageSchema, TExtensionStorageKey } from "@/storage.ts";
 import {
@@ -31,12 +31,13 @@ export function logBackgroundError(message: string, error?: unknown): void {
 
 export function openOptionsPage(url?: string | { path: string; query?: Record<string, any> }) {
   if (url && typeof url !== "string") {
-    url = url.path + (url.query ? "?" + stringify(url.query) : "");
+    url = url.path + (url.query ? "?" + stringifyQuery(url.query) : "");
   }
   url ??= "/";
 
+  // WXT 产物路径：src/entrypoints/options/index.html → options.html
   chrome.tabs
-    .create({ url: "/src/entries/options/index.html#" + url })
+    .create({ url: "/options.html#" + url })
     .catch((e) => logBackgroundError("Failed to open options page", e));
 }
 

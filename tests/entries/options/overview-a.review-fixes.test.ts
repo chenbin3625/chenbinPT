@@ -59,7 +59,7 @@ vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => configStoreStub,
   defaultTimelineBackgroundColor: "#101010",
 }));
-vi.mock("file-saver", () => ({ saveAs: saveAsMock }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: saveAsMock }));
 
 // 时间轴页用 useElementSize 监听容器宽度；单测里不需要真实 ResizeObserver。
 // 其它组合式 API（useDisplay 会用 useWindowSize）必须保留真实实现。

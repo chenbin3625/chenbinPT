@@ -11,6 +11,8 @@ docs/*
 ## Build files
 dist
 dist-*
+# WXT 生成的类型与缓存（wxt prepare / build 时重建）
+.wxt/
 *.local
 public/_locales
 .vitest/

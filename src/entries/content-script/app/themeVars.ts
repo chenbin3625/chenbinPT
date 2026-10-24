@@ -5,7 +5,7 @@ import { buildThemeVars } from "@/options/plugins/antd.ts";
 /**
  * 把 antd Design Token 派生的 `--ptd-*` 同步到 shadow host（`contentRoot`）上。
  *
- * 自定义属性会向下继承进 shadow tree，供注入的 chenbinpt.css（= 构建后的 options/style.css）使用。
+ * 自定义属性会向下继承进 shadow tree，供注入的 options/style.css（内联进内容脚本，见 app/init.ts）使用。
  * options 页面把同一套变量写在 `document.documentElement` 上（见 options/App.vue），
  * overlay 的宿主是 contentRoot。
  *

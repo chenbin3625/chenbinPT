@@ -1,5 +1,4 @@
 import JSZip from "jszip";
-import CryptoJS from "crypto-js";
 import PQueue from "p-queue";
 import { formatDate, isValid, parse } from "date-fns";
 import { EListOrderBy, EListOrderMode } from "./type";
@@ -13,6 +12,19 @@ import type {
 } from "./type";
 import { omit } from "es-toolkit";
 
+import {
+  aesCbcDecrypt,
+  aesCbcEncrypt,
+  base64ToBytes,
+  bytesToBase64,
+  bytesToUtf8,
+  hmacSha256,
+  hmacSha256Hex,
+  md5Hex,
+  opensslEvpDecrypt,
+  pbkdf2Sha256,
+  randomBytes,
+} from "./crypto.ts";
 import { createZipBlob } from "./zipStream.ts";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -201,15 +213,12 @@ export function pruneBackupFiles(
   return [deletedFiles, keptFiles];
 }
 
-function deriveAuthenticatedKeys(encryptionKey: string, salt: CryptoJS.lib.WordArray) {
-  const material = CryptoJS.PBKDF2(encryptionKey, salt, {
-    keySize: 256 / 32,
-    iterations: BACKUP_KDF_ITERATIONS,
-    hasher: CryptoJS.algo.SHA256,
-  });
+/** PBKDF2-SHA256(口令, 16 字节 salt, 100k) → 32 字节材料 → HMAC 派生 AES-256 密钥与 MAC 密钥 */
+function deriveAuthenticatedKeys(encryptionKey: string, salt: Uint8Array) {
+  const material = pbkdf2Sha256(encryptionKey, salt, BACKUP_KDF_ITERATIONS, 32);
   return {
-    cipherKey: CryptoJS.HmacSHA256("backup-encryption", material),
-    macKey: CryptoJS.HmacSHA256("backup-authentication", material),
+    cipherKey: hmacSha256("backup-encryption", material),
+    macKey: hmacSha256("backup-authentication", material),
   };
 }
 
@@ -237,12 +246,10 @@ export function macMatches(actual: string, expected: string): boolean {
 
 function encryptDataWithDerivedKeys(data: any, keys: TAuthenticatedKeys, saltBase64: string, field = ""): string {
   const stringifyData = JSON.stringify(data);
-  const iv = CryptoJS.lib.WordArray.random(16);
-  const ciphertext = CryptoJS.AES.encrypt(stringifyData, keys.cipherKey, { iv }).ciphertext.toString(
-    CryptoJS.enc.Base64,
-  );
-  const ivBase64 = iv.toString(CryptoJS.enc.Base64);
-  const mac = CryptoJS.HmacSHA256(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, keys.macKey).toString();
+  const iv = randomBytes(16);
+  const ciphertext = bytesToBase64(aesCbcEncrypt(stringifyData, keys.cipherKey, iv));
+  const ivBase64 = bytesToBase64(iv);
+  const mac = hmacSha256Hex(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, keys.macKey);
 
   return `${BACKUP_CIPHER_PREFIX_V2}${JSON.stringify({ iv: ivBase64, ciphertext, mac })}`;
 }
@@ -254,13 +261,13 @@ function encryptDataWithKey(data: any, encryptionKey?: string, field = ""): stri
     return stringifyData;
   }
 
-  const salt = CryptoJS.lib.WordArray.random(16);
-  const iv = CryptoJS.lib.WordArray.random(16);
+  const salt = randomBytes(16);
+  const iv = randomBytes(16);
   const { cipherKey, macKey } = deriveAuthenticatedKeys(encryptionKey, salt);
-  const ciphertext = CryptoJS.AES.encrypt(stringifyData, cipherKey, { iv }).ciphertext.toString(CryptoJS.enc.Base64);
-  const saltBase64 = salt.toString(CryptoJS.enc.Base64);
-  const ivBase64 = iv.toString(CryptoJS.enc.Base64);
-  const mac = CryptoJS.HmacSHA256(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, macKey).toString();
+  const ciphertext = bytesToBase64(aesCbcEncrypt(stringifyData, cipherKey, iv));
+  const saltBase64 = bytesToBase64(salt);
+  const ivBase64 = bytesToBase64(iv);
+  const mac = hmacSha256Hex(`${field}.${saltBase64}.${ivBase64}.${ciphertext}`, macKey);
 
   return `${BACKUP_CIPHER_PREFIX}${JSON.stringify({ salt: saltBase64, iv: ivBase64, ciphertext, mac })}`;
 }
@@ -314,22 +321,18 @@ export function decryptData<T = any>(
     ) {
       throw new Error("Invalid encrypted backup envelope");
     }
-    const iv = CryptoJS.enc.Base64.parse(envelope.iv);
-    if (iv.sigBytes !== 16) {
+    const iv = base64ToBytes(envelope.iv);
+    if (iv.length !== 16) {
       throw new Error("Invalid encrypted backup envelope");
     }
-    const actualMac = CryptoJS.HmacSHA256(
+    const actualMac = hmacSha256Hex(
       `${field}.${options.saltBase64}.${envelope.iv}.${envelope.ciphertext}`,
       options.derivedKeys.macKey,
-    ).toString();
+    );
     if (!macMatches(actualMac, envelope.mac)) {
       throw new Error("Backup integrity/authentication check failed");
     }
-    const decrypted = CryptoJS.AES.decrypt(
-      { ciphertext: CryptoJS.enc.Base64.parse(envelope.ciphertext) } as CryptoJS.lib.CipherParams,
-      options.derivedKeys.cipherKey,
-      { iv },
-    ).toString(CryptoJS.enc.Utf8);
+    const decrypted = bytesToUtf8(aesCbcDecrypt(base64ToBytes(envelope.ciphertext), options.derivedKeys.cipherKey, iv));
     return JSON.parse(decrypted, stripProtoKeys) as T;
   }
 
@@ -354,25 +357,18 @@ export function decryptData<T = any>(
     ) {
       throw new Error("Invalid encrypted backup envelope");
     }
-    const salt = CryptoJS.enc.Base64.parse(envelope.salt);
-    const iv = CryptoJS.enc.Base64.parse(envelope.iv);
-    if (salt.sigBytes !== 16 || iv.sigBytes !== 16) {
+    const salt = base64ToBytes(envelope.salt);
+    const iv = base64ToBytes(envelope.iv);
+    if (salt.length !== 16 || iv.length !== 16) {
       throw new Error("Invalid encrypted backup envelope");
     }
     const { cipherKey, macKey } = deriveAuthenticatedKeys(encryptionKey, salt);
-    const actualMac = CryptoJS.HmacSHA256(
-      `${field}.${envelope.salt}.${envelope.iv}.${envelope.ciphertext}`,
-      macKey,
-    ).toString();
+    const actualMac = hmacSha256Hex(`${field}.${envelope.salt}.${envelope.iv}.${envelope.ciphertext}`, macKey);
     if (!macMatches(actualMac, envelope.mac)) {
       throw new Error("Backup integrity/authentication check failed");
     }
 
-    const decrypted = CryptoJS.AES.decrypt(
-      { ciphertext: CryptoJS.enc.Base64.parse(envelope.ciphertext) } as CryptoJS.lib.CipherParams,
-      cipherKey,
-      { iv },
-    ).toString(CryptoJS.enc.Utf8);
+    const decrypted = bytesToUtf8(aesCbcDecrypt(base64ToBytes(envelope.ciphertext), cipherKey, iv));
     return JSON.parse(decrypted, stripProtoKeys) as T;
   }
 
@@ -383,15 +379,16 @@ export function decryptData<T = any>(
   if (options.allowLegacy === false) {
     throw new BackupDowngradeError("Encrypted backup entry is missing authenticated v1/v2 envelope");
   }
-  const legacyKey = CryptoJS.MD5(encryptionKey).toString().substring(0, 16);
-  const decrypted = CryptoJS.AES.decrypt(data, legacyKey).toString(CryptoJS.enc.Utf8);
+  // 旧版条目：OpenSSL `Salted__` 格式，口令为 MD5(encryptionKey).hex 的前 16 个字符（不是原始密钥）
+  const legacyKey = md5Hex(encryptionKey).substring(0, 16);
+  const decrypted = opensslEvpDecrypt(data, legacyKey);
   return JSON.parse(decrypted, stripProtoKeys) as T;
 }
 
 export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: string): Promise<Blob> {
   const isEncrypted = typeof encryptionKey === "string" && encryptionKey !== "";
-  const backupSalt = isEncrypted ? CryptoJS.lib.WordArray.random(16) : undefined;
-  const backupSaltBase64 = backupSalt?.toString(CryptoJS.enc.Base64);
+  const backupSalt = isEncrypted ? randomBytes(16) : undefined;
+  const backupSaltBase64 = backupSalt ? bytesToBase64(backupSalt) : undefined;
   const backupKeys = isEncrypted ? deriveAuthenticatedKeys(encryptionKey!, backupSalt!) : undefined;
 
   const manifest = {
@@ -426,7 +423,7 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
           ? encryptDataWithDerivedKeys(value, backupKeys, backupSaltBase64, key)
           : encryptDataWithKey(value, encryptionKey, key);
       // 这里的 MD5 是备份格式的一部分（manifest.files[*].hash），恢复时会用于校验，因此必须计算一次
-      manifest.files[key] = { name: fileName, hash: CryptoJS.MD5(fileContent).toString() };
+      manifest.files[key] = { name: fileName, hash: md5Hex(fileContent) };
       yield { name: fileName, content: fileContent };
     }
     yield { name: "manifest.json", content: JSON.stringify(manifest) };
@@ -544,8 +541,8 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
       if (typeof saltBase64 !== "string") {
         throw new Error("Invalid encrypted backup manifest");
       }
-      const salt = CryptoJS.enc.Base64.parse(saltBase64);
-      if (salt.sigBytes !== 16) {
+      const salt = base64ToBytes(saltBase64);
+      if (salt.length !== 16) {
         throw new Error("Invalid encrypted backup manifest");
       }
       decryptOptions = {
@@ -605,7 +602,7 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
             );
           }
 
-          const fileContentHash = CryptoJS.MD5(fileContent).toString();
+          const fileContentHash = md5Hex(fileContent);
           if (fileKey != "manifest" && fileContentHash !== manifestFileHash) {
             throw new Error(`File hash mismatch for ${fileName}.`);
           }

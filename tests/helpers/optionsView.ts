@@ -76,7 +76,7 @@ export function loadScopedStyles(sfcRelativePath: string): void {
  * `useXxxStore()`，没有 active pinia 会直接抛 `getActivePinia()` 错误（静态 import 时序无法保证，
  * 所以各测试用 `beforeAll(async () => { View = (await import("...")).default })` 延迟加载）。
  *
- * `$onReady` 是 `pinia-plugin-state-persistence` 注入的：这里给一个立即 resolve 的替身，
+ * `$onReady` 是 `~/extends/pinia/webExtPersistence.ts` 注入的：这里给一个立即 resolve 的替身，
  * 表示"存储已水合"，从而不必在单测里搭 chrome.storage。
  */
 export function prepareOptionsPinia(): Pinia {

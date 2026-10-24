@@ -1,11 +1,7 @@
 [
   {
-    "resources": ["icons/*", "lib/*", "chenbinpt.css"],
+    "resources": ["icons/*", "lib/*"],
     "matches": ["*://*/*"],
     "use_dynamic_url": true
-  },
-  {
-    "resources": ["assets/*", "vendor/*"],
-    "matches": ["*://*/*"]
   }
 ]

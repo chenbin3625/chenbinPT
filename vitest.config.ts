@@ -4,10 +4,10 @@ import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
 /**
- * 与 vite.config.ts 的 `resolve.alias` 保持一致：
+ * 与 wxt.config.ts 的项目别名（projectAliases）保持一致：
  * `~` → src、`@` → src/entries、`@ptd` → src/packages。
  *
- * 这里用绝对路径而非相对路径，语义与 vite.config.ts 中的 `path.resolve(__dirname, ...)` 相同，
+ * 这里用绝对路径而非相对路径，语义与 wxt.config.ts 中的 `path.resolve(root, ...)` 相同，
  * 保证同一份 import 说明符在构建、单测、类型检查三种环境下落到同一个文件。
  */
 const alias = {

@@ -12,8 +12,9 @@
  * - the top-bar search button navigates to the search route;
  * - the Set Site "Add" button opens its modal;
  * - the Set Site "Rebuild Site Cache" button opens a second modal.
- * - a matched site mounts the content script without module load errors;
- * - the fixed-ID JS WAR remains accessible (known extension-fingerprinting risk).
+ * - a matched site gets the content script UI injected (scripting.executeScript) and mounted without errors;
+ * - no extension script is web-accessible: pages cannot fetch the content script UI bundle or any chunk
+ *   by its chrome-extension:// URL (the old build exposed assets/* and vendor/* with a fixed ID).
  *
  * The test uses a temporary browser profile and never touches the user's
  * installed extension data or persistent browser profile.
@@ -27,7 +28,7 @@ import { chromium } from "playwright";
 const root = resolve(import.meta.dirname, "..");
 const extensionDir = resolve(root, process.env.EXTENSION_DIR ?? "dist-chrome");
 const timeoutMs = Number(process.env.E2E_TIMEOUT_MS ?? 45_000);
-const serviceWorkerPath = "/src/entries/background/main.js";
+const serviceWorkerPath = "/background.js";
 
 function assert(condition, message) {
   if (!condition) {
@@ -84,7 +85,7 @@ async function runSmoke() {
     const serviceWorker = await waitForProjectServiceWorker(context);
 
     const extensionId = new URL(serviceWorker.url()).hostname;
-    const optionsUrl = `chrome-extension://${extensionId}/src/entries/options/index.html`;
+    const optionsUrl = `chrome-extension://${extensionId}/options.html`;
     const page = await context.newPage();
     const pageErrors = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -155,31 +156,42 @@ async function runSmoke() {
     } catch (error) {
       throw new Error(`Content script did not mount: ${error.message}\n${contentScriptErrors.join("\n")}`);
     }
-    // task-12（P2）：挂载点是引导先插入的，cs-app chunk / 样式资源仍在异步加载。
-    // 若立刻断言「零 console error」，会漏掉 200ms 后才出现的 chunk/style 加载失败（漏报）。
-    // 这里给资源与微任务一个 settle 窗口，并显式等待入口 chunk 的 resource timing 出现（最多 2s）。
-    await sitePage
-      .waitForFunction(
-        (entrySuffix) => performance.getEntriesByType("resource").some((entry) => entry.name.includes(entrySuffix)),
-        "assets/cs-app.js",
-        { timeout: 2000 },
-      )
-      .catch(() => undefined);
-    await sitePage.waitForTimeout(800);
-    const fixedResourceAccessible = await sitePage.evaluate(async (url) => {
-      try {
-        return (await fetch(url)).ok;
-      } catch {
-        return false;
-      }
-    }, `chrome-extension://${extensionId}/assets/cs-app.js`);
-    assert(
-      fixedResourceAccessible,
-      "The fixed-ID JS WAR is unavailable; static ESM imports will fail to mount the content script.",
+    // task-12（P2）：挂载点插入后 Vue 应用仍在异步初始化（store 水合、站点识别）。
+    // 若立刻断言「零 console error」，会漏掉稍后才出现的挂载失败（漏报），这里给一个 settle 窗口。
+    await sitePage.waitForTimeout(1500);
+
+    // WXT 迁移后的指纹面收窄：页面不应能按固定扩展 ID 拉到任何扩展脚本（内容脚本 UI 由后台注入，不需要 WAR）。
+    const webAccessibleScripts = await sitePage.evaluate(
+      async (urls) => {
+        const accessible = [];
+        for (const url of urls) {
+          try {
+            if ((await fetch(url)).ok) accessible.push(url);
+          } catch {
+            // 预期：net::ERR_FAILED（不在 WAR 内）
+          }
+        }
+        return accessible;
+      },
+      [
+        `chrome-extension://${extensionId}/content-scripts/cs-app.js`,
+        `chrome-extension://${extensionId}/content-scripts/content.js`,
+        `chrome-extension://${extensionId}/background.js`,
+        `chrome-extension://${extensionId}/options.html`,
+      ],
     );
     assert(
-      contentScriptErrors.length === 0,
-      `The content script raised ${contentScriptErrors.length} exception(s):\n${contentScriptErrors.join("\n")}`,
+      webAccessibleScripts.length === 0,
+      `Extension scripts are web-accessible (fingerprinting surface): ${webAccessibleScripts.join(", ")}`,
+    );
+    // 上面主动探测会让 Chrome 在页面控制台留下「Denying load of chrome-extension://…」/ net::ERR_FAILED，
+    // 这些正是预期的拒绝结果，不计入内容脚本错误
+    const unexpectedContentScriptErrors = contentScriptErrors.filter(
+      (text) => !/Denying load of chrome-extension:\/\/|ERR_FAILED|Failed to load resource/.test(text),
+    );
+    assert(
+      unexpectedContentScriptErrors.length === 0,
+      `The content script raised ${unexpectedContentScriptErrors.length} exception(s):\n${unexpectedContentScriptErrors.join("\n")}`,
     );
     console.log(`Extension smoke E2E passed (${extensionId})`);
   } finally {

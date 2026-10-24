@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendMessageMock = vi.hoisted(() => vi.fn());
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
-vi.mock("file-saver", () => ({ saveAs: vi.fn() }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: vi.fn() }));
 vi.mock("@ptd/downloader", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {

@@ -11,7 +11,7 @@
  *   node_modules/@webext-core/messaging/dist/index.mjs），**Chrome 对消息体使用 JSON 序列化**：
  *   `Map`/`Set`/`Blob`/`Error` → `{}`、`Date` → ISO 字符串、类型化数组 → `{"0":…}`；
  * - manifest 没有开启 `message_serialization: "structured_clone"`，而且该选项要求 Chrome 148+，
- *   本项目 `vite.config.ts` 声明的是 `minimum_chrome_version: "140"` ⇒ **加 manifest 选项不是可行修复**；
+ *   本项目 `vite/manifest.ts` 声明的是 `minimum_chrome_version: "140"` ⇒ **加 manifest 选项不是可行修复**；
  * - Firefox 走结构化克隆，同样的数据能活下来 ⇒ 同一个消息在 Chrome/Firefox 下类型不同；
  * - 更糟的是**同一浏览器内**：`createMessageWrapper` 的本地 handler 快路径（同上下文注册了 handler 时直接调用）
  *   返回的是真对象，而远端路径返回的是平台序列化后的形状 ⇒ 同一条消息因分发路径不同而类型不同。

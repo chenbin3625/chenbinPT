@@ -11,6 +11,7 @@ import "./utils/alarms.ts";
 import "./utils/webRequest.ts";
 import "./utils/nativeMessaging.ts";
 import "./utils/siteIndex.ts";
+import "./utils/contentScriptApp.ts";
 
 // 监听 点击图标 事件
 chrome.action.onClicked.addListener(async () => {

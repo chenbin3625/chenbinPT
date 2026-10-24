@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeftOutlined, ExportOutlined, HistoryOutlined, SaveOutlined } from "@ant-design/icons-vue";
-import { saveAs } from "file-saver";
+import { saveAs } from "@/options/utils/saveAs.ts";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { useElementSize } from "@vueuse/core";

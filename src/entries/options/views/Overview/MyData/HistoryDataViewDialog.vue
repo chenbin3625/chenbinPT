@@ -3,7 +3,7 @@ import { DeleteOutlined, DownOutlined, ExportOutlined, EyeOutlined, UpOutlined }
 import { toAntdColumns, toPagination } from "../utils/antdTable.ts";
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { saveAs } from "file-saver";
+import { saveAs } from "@/options/utils/saveAs.ts";
 import { type IUserInfo, type TSiteID } from "@ptd/site";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 

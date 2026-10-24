@@ -4,8 +4,9 @@
  * - C2-B-8：localSort 返回副本，不就地修改调用方数组
  * - C2-B-11：DropBox ping 改用备份功能本身就依赖的 files/list_folder（不需要 account_info.read）
  */
-import CryptoJS from "crypto-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { cookieCloudPassphrase, opensslDecrypt } from "./helpers/nodeCryptoOracle.ts";
 
 const axiosMock = vi.hoisted(() => ({ request: vi.fn() }));
 
@@ -43,8 +44,9 @@ describe("C2-B-7：CookieCloud.deleteFile 清空语义", () => {
     await expect(server.deleteFile("")).resolves.toBe(true);
 
     const requestData = axiosMock.request.mock.calls[0][0] as any;
-    const key = CryptoJS.MD5("uuid-pass").toString().substring(0, 16);
-    const decrypted = JSON.parse(CryptoJS.AES.decrypt(requestData.data.encrypted, key).toString(CryptoJS.enc.Utf8));
+    // 用独立的 OpenSSL 实现解密：CookieCloud 服务端/官方扩展能读出的格式
+    const key = cookieCloudPassphrase("uuid", "pass");
+    const decrypted = JSON.parse(opensslDecrypt(requestData.data.encrypted, key));
 
     expect(decrypted.cookie_data).toEqual({});
     expect(decrypted.ptd_data).toEqual({});

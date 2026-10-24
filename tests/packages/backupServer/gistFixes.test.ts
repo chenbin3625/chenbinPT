@@ -7,8 +7,9 @@
  * - 恢复明文备份（manifest.encryption=false + 本机有密钥）时，BackupDowngradeError 被吞成
  *   "Failed to decrypt file."，用户不知道「清空密钥即可恢复」。
  */
-import CryptoJS from "crypto-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { md5Hex } from "./helpers/nodeCryptoOracle.ts";
 
 const logMessageMock = vi.hoisted(() => vi.fn());
 const axiosGetMock = vi.hoisted(() => vi.fn());
@@ -96,7 +97,7 @@ describe("C2-B-10：降级错误不能被通用解密失败文案吞掉", () => 
       version: "v",
       time: 0,
       encryption: false,
-      files: { config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() } },
+      files: { config: { name: "config.json", hash: md5Hex(configContent) } },
     };
     (client as any).request = vi.fn().mockResolvedValue({
       data: {
@@ -127,7 +128,7 @@ describe("复检 P2：Gist raw_url / 候选密钥顺序 / 缺失文件提示", (
       version: "v",
       time: 0,
       encryption: false,
-      files: { config: { name: "config.json", hash: CryptoJS.MD5(configContent).toString() } },
+      files: { config: { name: "config.json", hash: md5Hex(configContent) } },
     };
     const rawUrl = "https://gist.githubusercontent.com/u/abc/raw/def/config.json";
     (client as any).request = vi.fn().mockResolvedValue({
@@ -160,7 +161,7 @@ describe("复检 P2：Gist raw_url / 候选密钥顺序 / 缺失文件提示", (
       version: "v",
       time: 0,
       encryption: true,
-      files: { config: { name: "config.json", hash: CryptoJS.MD5(encrypted).toString() } },
+      files: { config: { name: "config.json", hash: md5Hex(encrypted) } },
     };
     (client as any).request = vi.fn().mockResolvedValue({
       data: {
@@ -183,7 +184,7 @@ describe("复检 P2：Gist raw_url / 候选密钥顺序 / 缺失文件提示", (
       version: "v",
       time: 0,
       encryption: false,
-      files: { config: { name: "config.json", hash: CryptoJS.MD5("{}").toString() } },
+      files: { config: { name: "config.json", hash: md5Hex("{}") } },
     };
     (client as any).request = vi.fn().mockResolvedValue({
       data: { files: { "_manifest.json": { content: JSON.stringify(manifest), truncated: false } } },

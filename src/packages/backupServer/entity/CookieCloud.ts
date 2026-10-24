@@ -15,9 +15,18 @@
  *  4. 使用公用 CookieCloud 可能存在数据丢失、泄露的风险，同时 CookieCloud Server 也有备份文件大小的限制
  */
 
-import CryptoJS from "crypto-js";
 import axios, { AxiosRequestConfig } from "axios";
 import AbstractBackupServer from "../AbstractBackupServer.ts";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  hmacSha256Hex,
+  md5Hex,
+  opensslEvpDecrypt,
+  opensslEvpEncrypt,
+  pbkdf2Sha256,
+  randomBytes,
+} from "../crypto.ts";
 import { getBackupRequestTimeout, macMatches, validateBackupPayload } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type {
@@ -89,12 +98,14 @@ interface ICookieCloudFile {
   integritySalt?: string;
 }
 
-function cookieCloudIntegrityKey(password: string, salt: string): CryptoJS.lib.WordArray {
-  return CryptoJS.PBKDF2(password, CryptoJS.enc.Base64.parse(salt), {
-    keySize: 256 / 32,
-    iterations: 100_000,
-    hasher: CryptoJS.algo.SHA256,
-  });
+/** integrity 的 HMAC 密钥：PBKDF2-SHA256(`${uuid}-${password}`, Base64(salt), 100k) → 32 字节 */
+function cookieCloudIntegrityKey(password: string, salt: string): Uint8Array {
+  return pbkdf2Sha256(password, base64ToBytes(salt), 100_000, 32);
+}
+
+/** CookieCloud 协议的 AES 口令：MD5(`${uuid}-${password}`).hex 的前 16 个字符（OpenSSL Salted__ 格式的口令） */
+function cookieCloudPassphrase(uuid: string, password: string): string {
+  return md5Hex(`${uuid}-${password}`).substring(0, 16);
 }
 
 export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig> {
@@ -204,9 +215,9 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
       this.logBackupFailure("addFile", e);
       return false;
     }
-    const theKey = CryptoJS.MD5(`${uuid}-${this.userConfig.password}`).toString().substring(0, 16);
-    fileData.integritySalt = CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Base64);
-    fileData.integrity = CryptoJS.HmacSHA256(
+    const theKey = cookieCloudPassphrase(uuid, this.userConfig.password);
+    fileData.integritySalt = bytesToBase64(randomBytes(16));
+    fileData.integrity = hmacSha256Hex(
       JSON.stringify({
         cookie_data: fileData.cookie_data,
         local_storage_data: fileData.local_storage_data,
@@ -214,8 +225,9 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
         manifest: fileData.manifest,
       }),
       cookieCloudIntegrityKey(`${uuid}-${this.userConfig.password}`, fileData.integritySalt),
-    ).toString();
-    const encryptedFileData = CryptoJS.AES.encrypt(JSON.stringify(fileData), theKey).toString();
+    );
+    // CookieCloud 协议：OpenSSL `Salted__` + EVP_BytesToKey(MD5) + AES-256-CBC，Base64 输出
+    const encryptedFileData = opensslEvpEncrypt(JSON.stringify(fileData), theKey);
 
     try {
       const updateResp = await this.request<{ action: "done" | "error" }>("/update", {
@@ -280,8 +292,9 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
     const uuid = this.getNormalizedUuid();
     const fileResp = await this.request<{ encrypted: string }>(`/get/${encodeURIComponent(uuid)}`);
     if (fileResp.data?.encrypted) {
-      const theKey = CryptoJS.MD5(`${uuid}-${this.userConfig.password}`).toString().substring(0, 16);
-      const decrypted = CryptoJS.AES.decrypt(fileResp.data.encrypted, theKey).toString(CryptoJS.enc.Utf8);
+      const theKey = cookieCloudPassphrase(uuid, this.userConfig.password);
+      // 密码错误时与旧实现一致：通常抛 `Malformed UTF-8 data`，或得到空串/垃圾串后由下面的 JSON.parse 抛错
+      const decrypted = opensslEvpDecrypt(fileResp.data.encrypted, theKey);
       const parsed = JSON.parse(decrypted, (key, value) =>
         key === "__proto__" ? undefined : value,
       ) as ICookieCloudFile;
@@ -290,7 +303,7 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
         if (typeof parsed.integritySalt !== "string") {
           throw new Error("CookieCloud backup integrity salt is missing");
         }
-        const expectedIntegrity = CryptoJS.HmacSHA256(
+        const expectedIntegrity = hmacSha256Hex(
           JSON.stringify({
             cookie_data: parsed.cookie_data,
             local_storage_data: parsed.local_storage_data,
@@ -298,7 +311,7 @@ export default class CookieCloud extends AbstractBackupServer<CookieCloudConfig>
             manifest: parsed.manifest,
           }),
           cookieCloudIntegrityKey(`${uuid}-${this.userConfig.password}`, parsed.integritySalt),
-        ).toString();
+        );
         // 复检 P2（E）：MAC 比较必须常量时间（复用 utils 的 macMatches），不能用 `!==`。
         if (!macMatches(expectedIntegrity, parsed.integrity)) {
           throw new Error("CookieCloud backup integrity check failed");

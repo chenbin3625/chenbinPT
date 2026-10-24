@@ -1,6 +1,7 @@
-import CryptoJS from "crypto-js";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+
+import { legacyBackupEncrypt, md5Hex } from "./helpers/nodeCryptoOracle.ts";
 
 import {
   backupDataToJSZipBlob,
@@ -68,8 +69,8 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
     expect(decryptData(current, "backup-key")).toEqual(data);
     expect(() => decryptData(current, "wrong-key")).toThrow(/integrity|authentication/i);
 
-    const legacyKey = CryptoJS.MD5("backup-key").toString().substring(0, 16);
-    const legacy = CryptoJS.AES.encrypt(JSON.stringify(data), legacyKey).toString();
+    // 旧版条目：OpenSSL Salted__ 格式，口令 = MD5(key).hex 前 16 位（由独立 node:crypto 实现生成）
+    const legacy = legacyBackupEncrypt(data, "backup-key");
     expect(decryptData(legacy, "backup-key")).toEqual(data);
   });
 
@@ -131,7 +132,7 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
         "manifest.json",
         JSON.stringify({
           encryption: false,
-          files: { config: { name: "config.json", hash: CryptoJS.MD5("").toString() } },
+          files: { config: { name: "config.json", hash: md5Hex("") } },
         }),
       );
       if (kind === "empty") zip.file("config.json", "");
@@ -151,7 +152,7 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
       const name = `f${i}.json`;
       const content = JSON.stringify({ i });
       zip.file(name, content);
-      files[`f${i}`] = { name, hash: CryptoJS.MD5(content).toString() };
+      files[`f${i}`] = { name, hash: md5Hex(content) };
     }
     zip.file("manifest.json", JSON.stringify({ encryption: false, files }));
 

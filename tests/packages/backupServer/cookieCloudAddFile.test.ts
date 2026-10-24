@@ -10,8 +10,9 @@
  * 2. 上传内容仍要把 cookies 放进 `cookie_data`、`ptd_data` 中不再重复包含 cookies/manifest；
  * 3. 上传成功后仍要作废 30s 缓存（保持既有行为）。
  */
-import CryptoJS from "crypto-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { cookieCloudPassphrase, opensslDecrypt, opensslEncrypt } from "./helpers/nodeCryptoOracle.ts";
 
 vi.mock("axios", async (importOriginal) => {
   const actual = await importOriginal<typeof import("axios")>();
@@ -53,8 +54,9 @@ function makeBackupData() {
 
 function decryptUploadedPayload(): any {
   const requestData = vi.mocked(axios.request).mock.calls[0]![0] as any;
-  const key = CryptoJS.MD5("test-uuid-test-password").toString().substring(0, 16);
-  const decrypted = CryptoJS.AES.decrypt(requestData.data.encrypted, key).toString(CryptoJS.enc.Utf8);
+  // 用独立的 OpenSSL 实现解密：即 CookieCloud 服务端 / 官方扩展读取的格式
+  const key = cookieCloudPassphrase("test-uuid", "test-password");
+  const decrypted = opensslDecrypt(requestData.data.encrypted, key);
   return JSON.parse(decrypted);
 }
 
@@ -134,9 +136,9 @@ describe("CookieCloud 恢复不可信 JSON", () => {
   it("解密时剥离嵌套 __proto__ 键", async () => {
     const raw =
       '{"cookie_data":{},"ptd_data":{"metadata":{"sites":{"__proto__":{"polluted":"yes"}}}},"manifest":{"files":{},"version":"1"}}';
-    const key = CryptoJS.MD5("test-uuid-test-password").toString().substring(0, 16);
+    const key = cookieCloudPassphrase("test-uuid", "test-password");
     vi.mocked(axios.request).mockResolvedValue({
-      data: { encrypted: CryptoJS.AES.encrypt(raw, key).toString() },
+      data: { encrypted: opensslEncrypt(raw, key) },
       headers: {},
     } as any);
 
@@ -147,14 +149,14 @@ describe("CookieCloud 恢复不可信 JSON", () => {
   });
 
   it("新写入的 payload 经篡改后拒绝恢复", async () => {
-    const key = CryptoJS.MD5("test-uuid-test-password").toString().substring(0, 16);
+    const key = cookieCloudPassphrase("test-uuid", "test-password");
     vi.mocked(axios.request)
       .mockResolvedValueOnce({ data: { action: "done" } } as any)
       .mockImplementationOnce(async (_request) => {
         const uploaded = decryptUploadedPayload();
         uploaded.ptd_data.config.lang = "attacker";
         return {
-          data: { encrypted: CryptoJS.AES.encrypt(JSON.stringify(uploaded), key).toString() },
+          data: { encrypted: opensslEncrypt(JSON.stringify(uploaded), key) },
           headers: {},
         } as any;
       });

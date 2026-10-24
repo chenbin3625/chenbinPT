@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
-import { checkCsAppWarClosure, checkWarWildcardsHaveMatches } from "./lib/war-coverage.mjs";
+import { checkWarExposesNoScripts, checkWarWildcardsHaveMatches } from "./lib/war-coverage.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -29,23 +29,24 @@ const REPORT_ONLY = args.includes("--report");
 const DIST = join(ROOT, `dist-${TARGET}`);
 
 /**
- * 后台入口的产物名按目标不同：
- * - chrome（MV3）：`background.service_worker: src/entries/background/main.js`
- * - firefox（MV2）：`background.scripts: ["src/entries/background/ff_main.js"]`
- * 二者都必须在清单里被守护——后台脚本缺失时扩展能装上但**完全不能用**（比空白页更严重）。
+ * WXT 产物布局（src/entrypoints/* → dist-<target>/*）：
+ * - background.js：chrome 是 service worker，firefox 是常驻 background script（含 offscreen 的处理函数）；
+ * - content-scripts/content.js：manifest 注册、**每个页面**都会执行的轻量引导；
+ * - content-scripts/cs-app.js：内容脚本 UI，由后台按需 `scripting.executeScript` 注入；
+ * - options.html / offscreen.html（offscreen 仅 chrome）。
+ * 后台脚本缺失时扩展能装上但**完全不能用**（比空白页更严重），因此都列为必需产物。
  */
-const BACKGROUND_ARTIFACT =
-  TARGET === "firefox" ? "src/entries/background/ff_main.js" : "src/entries/background/main.js";
+const CONTENT_SCRIPT_BOOTSTRAP = "content-scripts/content.js";
+const CONTENT_SCRIPT_APP = "content-scripts/cs-app.js";
 
 /** 必须存在的关键产物（相对 dist-<target>）。缺任何一个都视为构建失败。 */
 const REQUIRED_ARTIFACTS = [
   "manifest.json",
-  "chenbinpt.css",
-  "assets/cs-app.js",
-  BACKGROUND_ARTIFACT,
-  "src/entries/options/index.html",
-  "src/entries/offscreen/offscreen.html",
-  "src/entries/content-script/index.js",
+  "background.js",
+  CONTENT_SCRIPT_BOOTSTRAP,
+  CONTENT_SCRIPT_APP,
+  "options.html",
+  "offscreen.html",
   "_locales/en/messages.json",
   "_locales/zh_CN/messages.json",
   "lib/mdi/webfont.woff2",
@@ -54,24 +55,29 @@ const REQUIRED_ARTIFACTS = [
 ];
 
 /**
- * 体积预算（KB，**实际字节和**，不是 `du` 的磁盘占用——后者会因块对齐明显偏大：
- * 当前 dist-chrome 目录 780+ 个文件，`du` 报 8.4MB，字节和只有 6.7MB）。
+ * 体积预算（KB，**实际字节和**，不是 `du` 的磁盘占用——后者会因块对齐明显偏大）。
  * 取值 = 当前实测值 + 约 10~30% 余量，避免正常的代码增长就把 CI 打红，
  * 同时又能拦住「把 4.5MB 图标加回来」这种量级的回归。
+ *
+ * WXT 迁移后的口径变化：内容脚本 UI（cs-app.js）是自包含的 IIFE（Vue + antd + 全部站点定义，
+ * 站点定义按需惰性初始化），不再与管理页共享 chunk，因此 total 比旧构建大约 3MB。
+ * `content-bootstrap` 单列：它在**每个页面**都会执行，必须保持轻量。
  */
 const BUDGETS_KB_BY_TARGET = {
   chrome: {
-    total: 7680, // 实测 ~6850（约 6.7 MB 字节）
+    total: 10752, // 实测 ~9180（8.97 MB）
     icons: 1536, // 实测 ~1114
     "lib/mdi": 24, // 实测 11（子集化 webfont，icons.css/fontface.css 已随 DOM 侧 MDI 图标退役删除）
-    "largest-js-chunk": 1792, // 实测 ~1359
+    "content-bootstrap": 32, // 实测 ~15（content-scripts/content.js）
+    "largest-js-chunk": 3584, // 实测 ~3030（content-scripts/cs-app.js）
   },
   firefox: {
     // Firefox 使用 background script，不能像 Chrome MV3 一样把下载/站点逻辑放到 offscreen 页面里分摊。
-    total: 9728, // 实测 ~8630
+    total: 12800, // 实测 ~11040（10.78 MB）
     icons: 1536, // 实测 ~1114
     "lib/mdi": 24, // 实测 11（子集化 webfont，icons.css/fontface.css 已随 DOM 侧 MDI 图标退役删除）
-    "largest-js-chunk": 2816, // 实测 ~2310（src/entries/background/ff_main.js）
+    "content-bootstrap": 32, // 实测 ~15（content-scripts/content.js）
+    "largest-js-chunk": 3584, // 实测 ~3030（content-scripts/cs-app.js；background.js ~2080）
   },
 };
 
@@ -141,31 +147,25 @@ if (stillMissing.length) {
   failures.push(`缺少关键产物 ${stillMissing.length} 个：\n    - ${stillMissing.join("\n    - ")}`);
 }
 
-// ---- 1b. WAR 覆盖（G3 / G16）----
-// 只断言「cs-app 的 import 闭包全部存在且可被页面访问」，并**不**要求收窄 WAR
-// （收窄需要真实浏览器验证，见 fix report 延期项）；未来若有人把 `assets/*` 收窄成
-// 精确前缀而漏了某个 chunk，这里会直接失败，而不是让站点侧内容脚本白屏。
-let warClosure = { checked: 0, problems: [] };
+// ---- 1b. WAR 收窄（G3 / G16，WXT 迁移后）----
+// 内容脚本 UI 由后台 scripting.executeScript 注入、样式内联，WAR 只应保留页面直接引用的静态资源。
+// 1) 每个模式都要真实匹配到产物；2) 不得暴露任何 .js / .html（防止回退到「把 chunk 暴露给网页」）；
+// 3) 内容脚本 UI 不能被写进 manifest 的 content_scripts（否则每个页面都会执行 3MB 的脚本）。
 let warWildcardProblems = [];
 if (existsSync(join(DIST, "manifest.json"))) {
-  warClosure = await checkCsAppWarClosure({
-    fileExists: (rel) => existsSync(join(DIST, rel)),
-    readFile: (rel) => {
-      const full = join(DIST, rel);
-      return existsSync(full) ? readFileSync(full, "utf8") : null;
-    },
-  });
-  if (warClosure.problems.length) {
-    failures.push(`WAR 覆盖不足（cs-app 会加载失败）：\n    - ${warClosure.problems.join("\n    - ")}`);
-  }
   const manifestForWar = JSON.parse(readFileSync(join(DIST, "manifest.json"), "utf8"));
-  warWildcardProblems = checkWarWildcardsHaveMatches(manifestForWar, () => listAllFiles(DIST));
+  const distFiles = listAllFiles(DIST);
+  warWildcardProblems = checkWarWildcardsHaveMatches(manifestForWar, () => distFiles);
   if (warWildcardProblems.length) {
     failures.push(`WAR 通配符没有匹配到产物：\n    - ${warWildcardProblems.join("\n    - ")}`);
   }
+  const warScriptProblems = checkWarExposesNoScripts(manifestForWar, () => distFiles);
+  if (warScriptProblems.length) {
+    failures.push(`WAR 暴露了脚本/页面：\n    - ${warScriptProblems.join("\n    - ")}`);
+  }
 
   // WAR 的 `use_dynamic_url` 是 Chrome 特性（task-12 / P2-8）：
-  // - chrome 必须保留（第一组 icons/lib/css 用动态 URL 降低指纹面）；
+  // - chrome 必须保留（icons/lib 用动态 URL 降低指纹面）；
   // - firefox 必须剥离（Firefox 不生成 dynamic URL，未知属性只会产生 AMO/manifest 警告）。
   const warEntries = manifestForWar.web_accessible_resources ?? [];
   const dynamicUrlEntries = warEntries.filter((entry) => entry?.use_dynamic_url === true);
@@ -175,8 +175,19 @@ if (existsSync(join(DIST, "manifest.json"))) {
         dynamicUrlEntries.flatMap((entry) => entry.resources ?? []).join(", "),
     );
   }
-  if (TARGET === "chrome" && dynamicUrlEntries.length === 0) {
-    failures.push("chrome manifest 缺少 use_dynamic_url（第一组 WAR 应使用动态 URL 降低指纹面）");
+  if (TARGET === "chrome" && warEntries.some((entry) => entry?.use_dynamic_url !== true)) {
+    failures.push("chrome manifest 的 WAR 条目必须全部使用 use_dynamic_url（降低指纹面）");
+  }
+
+  const manifestContentScripts = (manifestForWar.content_scripts ?? []).flatMap((entry) => entry.js ?? []);
+  if (manifestContentScripts.includes(CONTENT_SCRIPT_APP)) {
+    failures.push(`${CONTENT_SCRIPT_APP} 不应出现在 manifest.content_scripts（应由后台按需注入）`);
+  }
+  if (!manifestContentScripts.includes(CONTENT_SCRIPT_BOOTSTRAP)) {
+    failures.push(`manifest.content_scripts 缺少引导脚本 ${CONTENT_SCRIPT_BOOTSTRAP}`);
+  }
+  if (!(manifestForWar.permissions ?? []).includes("scripting")) {
+    failures.push("manifest 缺少 scripting 权限（后台无法注入内容脚本 UI）");
   }
 }
 
@@ -185,6 +196,9 @@ const measured = {
   total: dirSize(DIST),
   icons: existsSync(join(DIST, "icons")) ? dirSize(join(DIST, "icons")) : 0,
   "lib/mdi": existsSync(join(DIST, "lib/mdi")) ? dirSize(join(DIST, "lib/mdi")) : 0,
+  "content-bootstrap": existsSync(join(DIST, CONTENT_SCRIPT_BOOTSTRAP))
+    ? statSync(join(DIST, CONTENT_SCRIPT_BOOTSTRAP)).size
+    : 0,
 };
 const chunk = largestJsChunk(DIST);
 measured["largest-js-chunk"] = chunk.size;
@@ -212,9 +226,6 @@ console.log(
   `关键产物：${presentForTarget}/${requiredForTarget} 就位` +
     (exempted.length ? `（${TARGET} 目标豁免：${exempted.join(", ")}）` : ""),
 );
-if (warClosure.checked > 0) {
-  console.log(`WAR 覆盖：cs-app 的 ${warClosure.checked} 个 import 闭包文件全部存在且可被页面访问`);
-}
 
 if (failures.length) {
   console.error("\n✗ 构建产物检查未通过：");

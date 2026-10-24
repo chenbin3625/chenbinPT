@@ -10,9 +10,18 @@
  * 4. 未加密路径走同一个流式写出器（compress=true → raw deflate），两条路径都能往返。
  */
 import JSZip from "jszip";
-import CryptoJS from "crypto-js";
 import { describe, expect, it, vi } from "vitest";
 
+/**
+ * 把 PBKDF2 包一层透传 spy（行为不变，只记录调用次数）。
+ * ESM 命名空间的导出不可被 vi.spyOn 重定义，因此用 vi.mock 的 importOriginal 透传。
+ */
+vi.mock("@ptd/backupServer/crypto.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ptd/backupServer/crypto.ts")>();
+  return { ...actual, pbkdf2Sha256: vi.fn(actual.pbkdf2Sha256) };
+});
+
+import { pbkdf2Sha256 } from "@ptd/backupServer/crypto.ts";
 import { backupDataToJSZipBlob, jsZipBlobToBackupData } from "@ptd/backupServer/utils.ts";
 import { crc32, createZipBlob } from "@ptd/backupServer/zipStream.ts";
 
@@ -93,13 +102,13 @@ describe("加密备份走流式写出器后的往返（真实恢复路径）", (
   const encryptionKey = "test-encryption-key";
 
   it("整份备份只做一次 PBKDF2 派生，避免字段数 × 400ms 的主线程冻结", async () => {
-    const spy = vi.spyOn(CryptoJS, "PBKDF2");
-    try {
-      await backupDataToJSZipBlob(makeBackupData(), encryptionKey);
-      expect(spy).toHaveBeenCalledTimes(1);
-    } finally {
-      spy.mockRestore();
-    }
+    const spy = vi.mocked(pbkdf2Sha256);
+    spy.mockClear();
+    await backupDataToJSZipBlob(makeBackupData(), encryptionKey);
+    expect(spy).toHaveBeenCalledTimes(1);
+    // 且确实是 100k 次迭代、32 字节输出（v2 格式参数）
+    expect(spy.mock.calls[0]![2]).toBe(100_000);
+    expect(spy.mock.calls[0]![3]).toBe(32);
   }, 15_000);
 
   it("导出 → 恢复：数据完全一致，manifest 约定不变", async () => {

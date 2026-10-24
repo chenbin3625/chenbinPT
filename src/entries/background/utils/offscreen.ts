@@ -2,7 +2,8 @@ import { onMessage } from "@/messages.ts";
 
 let creating: Promise<void> | null = null; // A global promise to avoid concurrency issues
 
-const offscreenPath = "src/entries/offscreen/offscreen.html";
+// WXT 产物路径：src/entrypoints/offscreen/index.html → offscreen.html（仅 chrome 构建）
+const offscreenPath = "offscreen.html";
 
 export async function setupOffscreenDocument() {
   // Firefox 环境下不构建 offscreen

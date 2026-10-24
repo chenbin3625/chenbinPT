@@ -13,7 +13,7 @@
  *
  * 用法：
  *   npm run pack:crx                # 用现有 dist-chrome 打包到 build/extension.crx
- *   npm run pack:crx:build          # 先 vite build 再打包
+ *   npm run pack:crx:build          # 先 wxt build 再打包
  *   node scripts/pack-crx.mjs --zip build/extension-chrome.zip   # 直接签名已有 zip（与构建目录打包同口径）
  *   node scripts/pack-crx.mjs --help
  *
@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 
 import JSZip from "jszip";
 
-import { checkCsAppWarClosure, checkWarWildcardsHaveMatches } from "./lib/war-coverage.mjs";
+import { checkWarExposesNoScripts, checkWarWildcardsHaveMatches } from "./lib/war-coverage.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_KEY = "build/chrome-extension-signing-key.pem";
@@ -225,10 +225,9 @@ async function listZipEntries(buffer) {
 /**
  * manifest 结构自校验（G19）。
  *
- * `vite.config.ts` 用 `skipManifestValidation: true` 关掉了 vite-plugin-web-extension 的 schema
- * 校验（`{{chrome}}` / `{{firefox}}` 条件字段让默认校验不适用），于是结构性错误只能等到
- * 「装到浏览器」才暴露。这里补最低限度的必填项检查：只断言扩展能装上、内容脚本会注入
- * 所必需的结构，不引入完整 schema（避免把合法的动态字段判错）。
+ * manifest 由 WXT 根据 `src/entrypoints/` 与 `vite/manifest.ts` 生成，WXT 只做少量校验，
+ * 结构性错误仍要等到「装到浏览器」才暴露。这里补最低限度的必填项检查：只断言扩展能装上、
+ * 内容脚本会注入所必需的结构，不引入完整 schema（避免把合法的动态字段判错）。
  */
 function checkManifestShape(manifest) {
   const problems = [];
@@ -313,46 +312,42 @@ async function checkManifestReferences(zip) {
     }
   }
 
-  // G19：skipManifestValidation 之后的最后一道结构检查
+  // G19：装到浏览器之前的最后一道结构检查
   const shapeProblems = checkManifestShape(manifest);
   if (shapeProblems.length > 0) {
     throw new Error(`manifest 结构校验失败：${shapeProblems.join("；")}`);
   }
 
   // G16：manifest 之外的关键运行时产物。
-  // `assets/cs-app.js` 由 content-script 引导在运行时 `chrome.runtime.getURL` 动态加载、不在 manifest 里，
+  // `content-scripts/cs-app.js`（内容脚本 UI）由后台 `scripting.executeScript` 按需注入、不在 manifest 里，
   // 它缺失时包仍然「装得上」，但站点侧完全没有任何反应 —— 这正是 `npm run pack:crx`（不带 :build）
   // 过去会为半成品打印「✓ 自校验通过」的缺口。
-  const requiredRuntimeArtifacts = ["assets/cs-app.js", "src/entries/content-script/index.js", "chenbinpt.css"];
+  const requiredRuntimeArtifacts = ["content-scripts/cs-app.js"];
   if ((manifest.permissions ?? []).includes("offscreen")) {
     // offscreen 文档由 offscreen API 按 URL 打开，也不在 manifest 的静态引用里（firefox 没有该页面）
-    requiredRuntimeArtifacts.push("src/entries/offscreen/offscreen.html");
+    requiredRuntimeArtifacts.push("offscreen.html");
   }
   const missingRuntimeArtifacts = requiredRuntimeArtifacts.filter((p) => !zip.file(p));
   if (missingRuntimeArtifacts.length > 0) {
     throw new Error(`包内缺少关键运行时产物：${missingRuntimeArtifacts.join(", ")}`);
   }
 
-  // G3 / G16：WAR 通配符必须匹配到真实文件；cs-app 的相对 import 闭包必须全部存在且被 WAR 覆盖。
-  // 这不是「收窄 WAR」——收窄需要真实浏览器验证（见 fix report 延期项）；这里只保证任何 WAR
-  // 调整都不会悄悄弄坏内容脚本加载。
+  // G3 / G16：WAR 通配符必须匹配到真实文件，且不得暴露任何脚本/页面（网页可据此探测扩展）。
+  // 内容脚本 UI 由后台注入，不需要 WAR；任何把 chunk 加回 WAR 的改动都会在这里失败。
   const zipPaths = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
   const warWildcardProblems = checkWarWildcardsHaveMatches(manifest, () => zipPaths);
   if (warWildcardProblems.length > 0) {
     throw new Error(`WAR 通配符校验失败：${warWildcardProblems.join("；")}`);
   }
-  const warClosure = await checkCsAppWarClosure({
-    fileExists: (p) => Boolean(zip.file(p)),
-    readFile: async (p) => {
-      const entry = zip.file(p);
-      return entry ? await entry.async("string") : null;
-    },
-  });
-  if (warClosure.problems.length > 0) {
-    throw new Error(`WAR 覆盖不足（cs-app 会加载失败）：${warClosure.problems.join("；")}`);
+  const warScriptProblems = checkWarExposesNoScripts(manifest, () => zipPaths);
+  if (warScriptProblems.length > 0) {
+    throw new Error(`WAR 暴露了脚本/页面：${warScriptProblems.join("；")}`);
+  }
+  if (!(manifest.permissions ?? []).includes("scripting")) {
+    throw new Error("manifest 缺少 scripting 权限（后台无法注入内容脚本 UI）");
   }
 
-  return { manifest, referencedCount: new Set(referenced).size, warClosureChecked: warClosure.checked };
+  return { manifest, referencedCount: new Set(referenced).size };
 }
 
 // ---------------------------------------------------------------- CRX3 组装与校验
@@ -469,7 +464,7 @@ async function verifyCrx(crxBuffer, keyMaterial, zipFileCount) {
 /**
  * 陈旧检查要跳过**构建自己生成**的文件。
  *
- * `public/_locales/` 正是这种情况：它由 `vite/plugin/generateWebextLocales.ts` 在构建期间写入
+ * `public/_locales/` 正是这种情况：它由 `vite/plugin/generateWebextLocales.ts`（wxt.config.ts 的 build:before 钩子）在构建期间写入
  * （所以它已在 .gitignore 里），而它写在 `dist-{chrome,firefox}` 里的 `manifest.json` **之后** ——
  * 于是每次全新构建完，「源码比产物新」都成立，警告必然误报。生成物不是输入，不该参与陈旧判断。
  * 2026-10-04 修复：此前每次发布都会看到这条无意义的警告。
@@ -481,7 +476,7 @@ function warnIfStale(dir) {
   const marker = path.join(path.resolve(ROOT, dir), "manifest.json");
   if (!fs.existsSync(marker)) return null;
   const distTime = fs.statSync(marker).mtimeMs;
-  const watched = ["src", "public", "vite", "package.json", "vite.config.ts"];
+  const watched = ["src", "public", "vite", "package.json", "wxt.config.ts"];
   let newest = 0;
   const walk = (p) => {
     const rel = path.relative(ROOT, p);
@@ -533,11 +528,10 @@ async function main() {
   }
 
   const zip = await listZipEntries(zipBuffer);
-  const { manifest, referencedCount, warClosureChecked } = await checkManifestReferences(zip);
+  const { manifest, referencedCount } = await checkManifestReferences(zip);
   if (!opts.quiet)
     console.log(
-      `▶ manifest v${manifest.manifest_version} ${manifest.version}，引用资源 ${referencedCount} 项全部就位` +
-        (warClosureChecked > 0 ? `，cs-app import 闭包 ${warClosureChecked} 个文件均在 WAR 覆盖内` : ""),
+      `▶ manifest v${manifest.manifest_version} ${manifest.version}，引用资源 ${referencedCount} 项全部就位，WAR 未暴露脚本/页面`,
     );
 
   // 2) 私钥

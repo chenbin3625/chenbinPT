@@ -21,7 +21,7 @@ vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
 // 下面三个 mock 只服务「挂载整个搜索结果页」的接线用例：Index.vue 的子组件会拉真实下载器 / 站点组件，
 // 单测里既没有 Vite 的 import.meta.glob，也不需要它们的行为。
-vi.mock("file-saver", () => ({ saveAs: vi.fn() }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: vi.fn() }));
 vi.mock("@ptd/downloader", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {

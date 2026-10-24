@@ -1,7 +1,7 @@
-// This file is the entry point for the content script
+// This file is the entry point for the content script（WXT 入口：src/entrypoints/content.ts）
 //
 // 此入口应保持轻量（仅做"当前页面是否需要挂载"的判断），
-// 重资源（Vue/组件库/站点包）都在多页构建的 assets/cs-app.js 中按需加载；
+// 重资源（Vue/组件库/站点包）都在 content-scripts/cs-app.js 中，确认需要挂载后才由后台注入当前 frame；
 // social 匹配判断经消息由 offscreen 代查，避免把 social 包打进引导（见 issue #1467）。
 //
 // 性能说明（见 docs/performance-audit.md P1-3）：引导在每次页面加载时都会执行，
@@ -12,12 +12,11 @@
 import { getHostFromUrl } from "@ptd/site/utils/html.ts";
 
 import { sendMessage } from "@/messages.ts";
+import { setContentScriptAppProps } from "@/shared/contentScriptApp.ts";
 import type { IConfigPiniaStorageSchema } from "@/shared/types/storages/config.ts";
 
-/** 多页构建产出的 ESM 入口固定文件名（对应 vite.config.ts 中的 cs-app 输入） */
-const APP_CHUNK_PATH = "assets/cs-app.js";
-/** chunk 首次加载失败后的重试间隔（毫秒） */
-const APP_CHUNK_RETRY_DELAY = 300;
+/** 首次注入失败后的重试间隔（毫秒） */
+const APP_INJECT_RETRY_DELAY = 300;
 
 /**
  * 交给 offscreen 做社交站点匹配的 URL：只取 `origin + pathname`。
@@ -33,27 +32,23 @@ function getSocialMatchUrl(): string {
 }
 
 async function loadApp(props: Parameters<(typeof import("./app/init.ts"))["mountApp"]>[1]) {
-  // 运行时从扩展包内加载多页构建产出的 ESM 入口（assets/cs-app.js，固定文件名），
-  // @vite-ignore 阻止本入口（IIFE 单文件构建）将 app 静态打进引导
-  const appUrl = chrome.runtime.getURL(APP_CHUNK_PATH);
-  console.debug("[PTD] loading app from", appUrl);
+  // 挂载参数先放到 isolated world 的 globalThis，再请后台用 scripting.executeScript 把
+  // content-scripts/cs-app.js 注入当前 frame（UI 侧在 app/entry.ts 里取走参数并挂载）。
+  // 这样站点页面不需要访问任何扩展内的 JS chunk（不再暴露 assets/* / vendor/* 为 WAR）。
+  setContentScriptAppProps(props);
+  console.debug("[PTD] requesting content script app injection");
 
-  let appModule: typeof import("./app/init.ts");
   try {
-    appModule = (await import(/* @vite-ignore */ appUrl)) as typeof import("./app/init.ts");
+    await sendMessage("injectContentScriptApp", undefined);
   } catch (firstError) {
-    // 首屏 chunk 失败常见于：扩展刚热重载（Extension context invalidated）或瞬时 IO 错误。
-    // 浏览器会把失败的模块记入 ESM module map，直接重试同一 URL 可能命中失败缓存，
-    // 因此重试时带一次性查询参数强制重新拉取；仍失败则抛出，交由引导链外层的 catch 降级。
-    console.warn(`[PTD] failed to load app chunk ${appUrl}, retrying once...`, firstError);
-    await new Promise((resolve) => setTimeout(resolve, APP_CHUNK_RETRY_DELAY));
-    const retryUrl = `${appUrl}${appUrl.includes("?") ? "&" : "?"}ptdRetry=${Date.now()}`;
-    appModule = (await import(/* @vite-ignore */ retryUrl)) as typeof import("./app/init.ts");
+    // 常见于：扩展刚重载、service worker 正在唤醒的瞬时失败。重试一次，仍失败则抛出，
+    // 交由引导链外层的 catch 降级。
+    console.warn("[PTD] failed to inject content script app, retrying once...", firstError);
+    await new Promise((resolve) => setTimeout(resolve, APP_INJECT_RETRY_DELAY));
+    await sendMessage("injectContentScriptApp", undefined);
   }
 
-  console.debug("[PTD] app module loaded");
-  await appModule.mountApp(document, props);
-  console.debug("[PTD] app mounted");
+  console.debug("[PTD] content script app injected");
 }
 
 let bootstrapDataPromise: Promise<any> | null = null;
@@ -132,7 +127,7 @@ sendMessage("getExtStoragePath", {
   })
   .catch((error) => {
     // 引导链的唯一兜底出口：SW 未就绪、扩展上下文失效（Extension context invalidated）、
-    // chunk 在一次重试后仍加载失败、或 mountApp 内部抛错，都在这里留下可诊断信息，
+    // UI 注入在一次重试后仍失败，都在这里留下可诊断信息（UI 自身的挂载错误由 app/entry.ts 记录），
     // 而不是变成静默的 unhandled rejection（页面侧永不挂载且无任何提示）。
     // 该脚本运行在宿主页面：页面控制台是当前唯一对开发者可见的渠道，
     // 因此这里刻意保留 console.error（不引入 Vue/站点包，保持入口轻量，也不影响宿主页面 UI）。

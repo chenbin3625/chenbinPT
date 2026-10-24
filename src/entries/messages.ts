@@ -108,6 +108,11 @@ interface ProtocolMap {
   }): any;
   getContentScriptBootstrapData(): { config: Record<string, any>; metadata: Record<string, any> };
   /**
+   * 内容脚本引导确认需要挂载 UI 后调用：后台把 content-scripts/cs-app.js 注入**发送方所在的 frame**。
+   * 不接受任何参数（目标只取自 sender），见 background/utils/contentScriptApp.ts。
+   */
+  injectContentScriptApp(): void;
+  /**
    * 局部更新：在 service worker 内「读 → 改指定路径 → 写回」，避免大对象跨上下文往返与并发读改写。
    * `remove: true` 表示删除该路径。
    */
@@ -402,6 +407,7 @@ export const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
 export const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
   "ensureOffscreenDocument",
   "getContentScriptBootstrapData",
+  "injectContentScriptApp",
   "getExtStoragePath",
   "patchExtStoragePath",
   "getSiteUserConfig",

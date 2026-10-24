@@ -1,7 +1,7 @@
 /**
  * content-script overlay 的 `--ptd-*` 主题变量同步（见 src/entries/content-script/app/themeVars.ts）。
  *
- * 为什么需要：overlay 跑在 shadow root 里，`chenbinpt.css` 的样式依赖 `--ptd-*`；
+ * 为什么需要：overlay 跑在 shadow root 里，注入的 options/style.css 依赖 `--ptd-*`；
  * 变量必须与 init.ts 里 `appliedThemeConfig` 的判定一致——`contentScript.applyTheme`
  * 关闭时 overlay 用的是 antd 默认（浅色）algorithm，因此变量也必须是显式浅色一套，
  * **不能**依赖 style.css 里 `var(--ptd-x, <浅色回退>)` 的回退值（回退值属于 style.css

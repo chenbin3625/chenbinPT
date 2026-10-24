@@ -39,8 +39,9 @@ export default tseslint.config(
   {
     name: "ptd/ignores",
     ignores: [
-      // 构建产物
+      // 构建产物与 WXT 生成的类型/缓存目录
       "dist-*/**",
+      ".wxt/**",
       // 依赖（flat config 默认也忽略，这里显式化）与生成的静态资源
       "node_modules/**",
       "public/**",
@@ -128,7 +129,7 @@ export default tseslint.config(
    * 因此 `no-console: off`；`no-empty` 保持 error。
    *
    * 类型感知规则只加在**属于 tsconfig program** 的文件上：
-   * - vite 目录下的 `.ts` 与 `vite.config.ts` 在 `tsconfig.node.json` 里，可以启用 `no-floating-promises`；
+   * - vite 目录下的 `.ts` 与 `wxt.config.ts` 在 `tsconfig.node.json` 里，可以启用 `no-floating-promises`；
    * - `vitest.config.ts` 在 `tsconfig.json` 里；
    * - scripts 下的 `.mjs` 与 tests 目前不在任何 program 内，给它们建 project 属测试体系重构，
    *   因此只做非类型规则覆盖（见 docs/review-2026-10-23/fix-reports/g-tooling.md 的延期项）。
@@ -153,7 +154,7 @@ export default tseslint.config(
   },
   {
     name: "ptd/vite-ts",
-    files: ["vite/**/*.ts", "vite.config.ts", "vitest.config.ts"],
+    files: ["vite/**/*.ts", "wxt.config.ts", "vitest.config.ts"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
