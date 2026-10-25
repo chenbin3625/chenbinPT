@@ -101,7 +101,7 @@ export const siteMetadata: ISiteMetadata = {
     CategoryInclbookmarked,
   ],
 
-  officialGroupPattern: [/(-Audies|.*@Audies|-ADE|-ADWeb|.*@ADWeb)/i],
+  officialGroupPattern: [/[@-]\s?(Audies|ADE|ADWeb|ADAudio|ADeBook|ADMusic)\b/i],
 
   search: {
     ...SchemaMetadata.search!,
