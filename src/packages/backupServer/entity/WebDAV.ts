@@ -108,7 +108,7 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
   }
 
   async addFile(fileName: string, file: IBackupData): Promise<boolean> {
-    const fileBlob = await this.backupDataToJSZipBlob(file);
+    const fileBlob = await this.backupDataToZipBlob(file);
     // webdav 客户端（浏览器环境）只接受 string / ArrayBuffer / Uint8Array / Node 流，
     // 不接受 Blob（会被当成 JSON 序列化），因此这里必须整包转成 ArrayBuffer 一次并直接复用。
     const fileBuffer = await fileBlob.arrayBuffer();
@@ -126,7 +126,7 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
     );
     const data = new Blob([fileBuffer as ArrayBuffer]);
 
-    return await this.jsZipBlobToBackupData(data);
+    return await this.zipBlobToBackupData(data);
   }
 
   async deleteFile(path: string): Promise<boolean> {

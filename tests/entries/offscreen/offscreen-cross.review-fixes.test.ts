@@ -56,7 +56,7 @@ vi.mock("@ptd/downloader", () => ({
 }));
 vi.mock("@ptd/downloader/utils.ts", () => ({ getRemoteTorrentFile: mocks.getRemoteTorrentFile }));
 vi.mock("@ptd/backupServer/utils.ts", () => ({
-  backupDataToJSZipBlob: vi.fn(),
+  backupDataToZipBlob: vi.fn(),
   getBackupFilename: vi.fn(() => "PTD_backup_test.zip"),
   hasBackupRetentionToApply: vi.fn(() => false),
   isBackupFilename: vi.fn(() => false),

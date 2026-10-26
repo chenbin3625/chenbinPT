@@ -23,7 +23,7 @@ vi.mock("@/offscreen/utils/logger.ts", () => ({ logger: mocks.logger }));
 vi.mock("@/offscreen/utils/download.ts", () => ({ releaseBlobUrlWhenDownloadSettled: vi.fn() }));
 vi.mock("@/offscreen/adapter/indexdb.ts", () => ({ ptdIndexDb: Promise.resolve({ getAll: mocks.getAll }) }));
 vi.mock("@ptd/backupServer/utils.ts", () => ({
-  backupDataToJSZipBlob: vi.fn(),
+  backupDataToZipBlob: vi.fn(),
   getBackupFilename: vi.fn(() => "PTD_backup_test.zip"),
   hasBackupRetentionToApply: vi.fn(() => false),
   isBackupFilename: vi.fn(() => false),
@@ -261,7 +261,7 @@ describe("exportBackupData：自动备份链路的字段装配不被放宽（TES
     storage.set("config", { lang: "zh_CN" }); // 没有 backup.encryptionKey
     mocks.getAll.mockResolvedValue([]);
     const utils = await import("@ptd/backupServer/utils.ts");
-    vi.mocked(utils.backupDataToJSZipBlob).mockResolvedValue(new Blob(["zip"]));
+    vi.mocked(utils.backupDataToZipBlob).mockResolvedValue(new Blob(["zip"]));
 
     await expect(exportBackupData("local", ["downloadHistory", "config"])).resolves.toBe(true);
 

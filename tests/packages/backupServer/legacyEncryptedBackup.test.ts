@@ -5,14 +5,14 @@
  * - `manifest.encryption === true`，但没有 `encryptionFormat`；
  * - 每个条目是 `CryptoJS.AES.encrypt(JSON.stringify(data), MD5(key).slice(0, 16))` 的 OpenSSL 字符串（无封套、无 MAC）。
  *
- * 修复前 `jsZipBlobToBackupData` 对「manifest 声称加密但无 v2 标记」的情况传 `allowLegacy: false`，
+ * 修复前 `zipBlobToBackupData` 对「manifest 声称加密但无 v2 标记」的情况传 `allowLegacy: false`，
  * 导致这类历史备份恢复时一律抛 BackupDowngradeError（输对密钥也没用）。本用例走**完整恢复路径**，
  * 防止 `decryptData` 单测通过、恢复路径却不可用的假阳性。
  */
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { decryptData, encryptData, jsZipBlobToBackupData } from "@ptd/backupServer/utils.ts";
+import { decryptData, encryptData, zipBlobToBackupData } from "@ptd/backupServer/utils.ts";
 
 import { legacyBackupEncrypt, md5Hex } from "./helpers/nodeCryptoOracle.ts";
 
@@ -47,14 +47,14 @@ async function buildLegacyBackupZip(payloads: Record<string, unknown>, encryptio
 }
 
 describe("C2-B-1：legacy 加密 zip 备份恢复", () => {
-  it("完整恢复路径（jsZipBlobToBackupData）能解出旧版 OpenSSL 条目", async () => {
+  it("完整恢复路径（zipBlobToBackupData）能解出旧版 OpenSSL 条目", async () => {
     const origin = {
       config: { lang: "zh_CN", backup: { encryptionKey: ENCRYPTION_KEY } },
       userInfo: { mteam: { "2026-01-01": { uploaded: 1 } } },
     };
     const blob = await buildLegacyBackupZip(origin, ENCRYPTION_KEY);
 
-    const restored = await jsZipBlobToBackupData(blob, ENCRYPTION_KEY);
+    const restored = await zipBlobToBackupData(blob, ENCRYPTION_KEY);
 
     expect(restored.config).toEqual(origin.config);
     expect(restored.userInfo).toEqual(origin.userInfo);
@@ -64,7 +64,7 @@ describe("C2-B-1：legacy 加密 zip 备份恢复", () => {
   it("密钥错误时仍然拒绝（不能因为放开 legacy 就吞掉解密失败）", async () => {
     const blob = await buildLegacyBackupZip({ config: { lang: "zh_CN" } }, ENCRYPTION_KEY);
 
-    await expect(jsZipBlobToBackupData(blob, "wrong-key")).rejects.toThrow(/Failed to decrypt file/);
+    await expect(zipBlobToBackupData(blob, "wrong-key")).rejects.toThrow(/Failed to decrypt file/);
   });
 
   it("manifest 声称加密、条目却是明文时拒绝（legacy 解密失败仍会报错）", async () => {
@@ -80,7 +80,7 @@ describe("C2-B-1：legacy 加密 zip 备份恢复", () => {
     );
     const blob = await zip.generateAsync({ type: "blob" });
 
-    await expect(jsZipBlobToBackupData(blob, ENCRYPTION_KEY)).rejects.toThrow(/Failed to decrypt file/);
+    await expect(zipBlobToBackupData(blob, ENCRYPTION_KEY)).rejects.toThrow(/Failed to decrypt file/);
   });
 
   it("新格式（v2）篡改仍然被 MAC 拒绝（放开 legacy 不影响认证性）", async () => {

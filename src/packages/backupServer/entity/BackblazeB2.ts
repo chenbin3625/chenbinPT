@@ -241,7 +241,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
         { headers: { Authorization: this.authToken }, timeout: getBackupRequestTimeout(this.userConfig) },
       );
 
-      const fileBlob = await this.backupDataToJSZipBlob(file);
+      const fileBlob = await this.backupDataToZipBlob(file);
       const fileBuffer = await fileBlob.arrayBuffer();
       const sha1 = await sha1Hex(fileBuffer);
 
@@ -274,7 +274,7 @@ export default class BackblazeB2 extends AbstractBackupServer<BackblazeB2Config>
       },
     );
 
-    return await this.jsZipBlobToBackupData(data);
+    return await this.zipBlobToBackupData(data);
   }
 
   async deleteFile(path: string): Promise<boolean> {

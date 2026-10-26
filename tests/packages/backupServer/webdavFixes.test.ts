@@ -25,7 +25,7 @@ const serverConfig = {
 function createServer(client: Record<string, any>) {
   const server = new WebDAVCtor(serverConfig);
   (server as any).server = client;
-  (server as any).jsZipBlobToBackupData = vi.fn().mockResolvedValue({});
+  (server as any).zipBlobToBackupData = vi.fn().mockResolvedValue({});
   return server;
 }
 
@@ -38,7 +38,7 @@ describe("C2-B-2：WebDAV 请求带 AbortSignal", () => {
       deleteFile: vi.fn().mockResolvedValue(undefined),
     };
     const server = createServer(client);
-    (server as any).backupDataToJSZipBlob = vi.fn().mockResolvedValue(new Blob(["zip"]));
+    (server as any).backupDataToZipBlob = vi.fn().mockResolvedValue(new Blob(["zip"]));
 
     await expect(server.ping()).resolves.toBe(true);
     await expect(server.list()).resolves.toEqual([]);

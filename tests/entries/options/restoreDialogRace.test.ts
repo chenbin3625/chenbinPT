@@ -9,7 +9,7 @@ const { sendMessageMock, parseFileMock } = vi.hoisted(() => ({
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
 vi.mock("@ptd/backupServer/utils.ts", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  jsZipBlobToBackupData: parseFileMock,
+  zipBlobToBackupData: parseFileMock,
 }));
 
 function deferred<T>() {

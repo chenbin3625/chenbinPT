@@ -2,11 +2,11 @@ import { logMessage } from "@ptd/site/utils/adapter.ts";
 
 import { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption } from "./type.ts";
 import {
-  backupDataToJSZipBlob,
+  backupDataToZipBlob,
   decryptData,
   encryptData,
   getBackupRequestTimeout,
-  jsZipBlobToBackupData,
+  zipBlobToBackupData,
 } from "./utils.ts";
 
 export default abstract class AbstractBackupServer<T extends IBackupConfig> {
@@ -62,12 +62,12 @@ export default abstract class AbstractBackupServer<T extends IBackupConfig> {
     return decryptData(data, this.encryptionKey);
   }
 
-  protected async backupDataToJSZipBlob(data: IBackupData): Promise<Blob> {
-    return await backupDataToJSZipBlob(data, this.encryptionKey);
+  protected async backupDataToZipBlob(data: IBackupData): Promise<Blob> {
+    return await backupDataToZipBlob(data, this.encryptionKey);
   }
 
-  protected async jsZipBlobToBackupData(blob: Blob): Promise<IBackupData> {
-    return await jsZipBlobToBackupData(blob, this.encryptionKey);
+  protected async zipBlobToBackupData(blob: Blob): Promise<IBackupData> {
+    return await zipBlobToBackupData(blob, this.encryptionKey);
   }
 
   /**

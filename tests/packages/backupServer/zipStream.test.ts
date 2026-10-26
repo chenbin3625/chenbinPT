@@ -4,7 +4,7 @@
  * 关键点：备份 zip 现在由自带的 `createZipBlob` 产出（加密=STORE，未加密=raw deflate），
  * 因此必须证明：
  * 1. CRC-32 实现正确（用标准向量 `123456789` → 0xCBF43926 校验）；
- * 2. 产物是**标准 ZIP**，能被真实恢复路径 `jsZipBlobToBackupData`（JSZip）完整读回；
+ * 2. 产物是**标准 ZIP**，能被真实恢复路径 `zipBlobToBackupData`（fflate）与独立实现 JSZip 完整读回；
  * 3. 备份格式约定不变：文件名仍为 `<key>.json` + `manifest.json`，
  *    manifest 中有 `files[*].{name,hash}`（MD5）与 `encryption: true`，解密后数据与原始一致；
  * 4. 未加密路径走同一个流式写出器（compress=true → raw deflate），两条路径都能往返。
@@ -22,7 +22,7 @@ vi.mock("@ptd/backupServer/crypto.ts", async (importOriginal) => {
 });
 
 import { pbkdf2Sha256 } from "@ptd/backupServer/crypto.ts";
-import { backupDataToJSZipBlob, jsZipBlobToBackupData } from "@ptd/backupServer/utils.ts";
+import { backupDataToZipBlob, zipBlobToBackupData } from "@ptd/backupServer/utils.ts";
 import { crc32, createZipBlob } from "@ptd/backupServer/zipStream.ts";
 
 function makeBackupData(): any {
@@ -104,7 +104,7 @@ describe("加密备份走流式写出器后的往返（真实恢复路径）", (
   it("整份备份只做一次 PBKDF2 派生，避免字段数 × 400ms 的主线程冻结", async () => {
     const spy = vi.mocked(pbkdf2Sha256);
     spy.mockClear();
-    await backupDataToJSZipBlob(makeBackupData(), encryptionKey);
+    await backupDataToZipBlob(makeBackupData(), encryptionKey);
     expect(spy).toHaveBeenCalledTimes(1);
     // 且确实是 100k 次迭代、32 字节输出（v2 格式参数）
     expect(spy.mock.calls[0]![2]).toBe(100_000);
@@ -113,7 +113,7 @@ describe("加密备份走流式写出器后的往返（真实恢复路径）", (
 
   it("导出 → 恢复：数据完全一致，manifest 约定不变", async () => {
     const data = makeBackupData();
-    const blob = await backupDataToJSZipBlob(JSON.parse(JSON.stringify(data)), encryptionKey);
+    const blob = await backupDataToZipBlob(JSON.parse(JSON.stringify(data)), encryptionKey);
 
     // 产物是标准 zip：条目名与格式约定不变
     const zip = await JSZip.loadAsync(blob);
@@ -126,27 +126,27 @@ describe("加密备份走流式写出器后的往返（真实恢复路径）", (
       expect(manifest.files[key].hash).toMatch(/^[a-f0-9]{32}$/); // MD5 hex
     }
 
-    const restored: any = await jsZipBlobToBackupData(blob, encryptionKey);
+    const restored: any = await zipBlobToBackupData(blob, encryptionKey);
     expect(restored.config).toEqual(data.config);
     expect(restored.metadata).toEqual(data.metadata);
     expect(restored.userInfo).toEqual(data.userInfo);
   }, 15_000);
 
   it("密钥错误时恢复必须失败（条目仍受 AES 保护）", async () => {
-    const blob = await backupDataToJSZipBlob(makeBackupData(), encryptionKey);
-    await expect(jsZipBlobToBackupData(blob, "wrong-key")).rejects.toBeTruthy();
+    const blob = await backupDataToZipBlob(makeBackupData(), encryptionKey);
+    await expect(zipBlobToBackupData(blob, "wrong-key")).rejects.toBeTruthy();
   });
 });
 
 describe("C2-I-B1：导出不修改入参对象", () => {
-  it("backupDataToJSZipBlob 不再就地 delete data.manifest", async () => {
+  it("backupDataToZipBlob 不再就地 delete data.manifest", async () => {
     const data: any = {
       config: { lang: "zh_CN" },
       manifest: { version: "chenbinPT (v0.0.10)", time: 1, files: {} },
     };
     const snapshot = JSON.parse(JSON.stringify(data));
 
-    await backupDataToJSZipBlob(data);
+    await backupDataToZipBlob(data);
 
     expect(data).toEqual(snapshot);
   });
@@ -155,12 +155,12 @@ describe("C2-I-B1：导出不修改入参对象", () => {
 describe("未加密备份仍走 DEFLATE 且可往返", () => {
   it("导出 → 恢复数据一致，manifest.encryption 为 false", async () => {
     const data = makeBackupData();
-    const blob = await backupDataToJSZipBlob(JSON.parse(JSON.stringify(data)), "");
+    const blob = await backupDataToZipBlob(JSON.parse(JSON.stringify(data)), "");
     const zip = await JSZip.loadAsync(blob);
     const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
     expect(manifest.encryption).toBe(false);
 
-    const restored: any = await jsZipBlobToBackupData(blob, "");
+    const restored: any = await zipBlobToBackupData(blob, "");
     expect(restored.config).toEqual(data.config);
     expect(restored.metadata).toEqual(data.metadata);
     expect(restored.userInfo).toEqual(data.userInfo);

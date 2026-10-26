@@ -150,7 +150,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
   async addFile(fileName: string, file: IBackupData): Promise<boolean> {
     // SERVERSSOCIAL-2：不再用非机密的 gist_id 派生「默认加密」密钥（旧实现等于用字面量 `|<gist_id>`
     // 当口令，知道 gist 链接的人都能解密，而 manifest 仍宣称 encryption: true）。
-    // 未设置备份加密密钥时如实退化为明文 JSON（与 backupDataToJSZipBlob 的 zip 路径一致），
+    // 未设置备份加密密钥时如实退化为明文 JSON（与 backupDataToZipBlob 的 zip 路径一致），
     // 并在 manifest 里写 encryption: false，不再伪造「已加密」。
     const hasEncryptionKey = typeof this.encryptionKey === "string" && this.encryptionKey !== "";
     if (!hasEncryptionKey) {
@@ -225,7 +225,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     const warnings: string[] = [];
 
     // SERVERSSOCIAL-5：_manifest.json 是不可信输入（他人分享/被篡改的 gist），
-    // 与 zip 路径 jsZipBlobToBackupData 对齐，解析时剥离 __proto__
+    // 与 zip 路径 zipBlobToBackupData 对齐，解析时剥离 __proto__
     const manifest = JSON.parse(fileManifestContent, stripProtoKeys) as IGistBackupFileManifest;
     for (const [key, value] of Object.entries((manifest.files ?? {}) as Record<string, unknown>)) {
       // manifest.files[*] 的形状同样来自不可信输入，先确认能安全解构（否则解构 null 会抛 TypeError）
@@ -276,7 +276,7 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
           // 但消费端旧实现无条件走 this.decryptData（候选密钥取自本机配置的加密密钥与 gist_id）。
           // 一旦用户配置了非空备份密钥（恢复对话框会自动带上），明文既不以密文前缀开头、也过不了
           // legacy AES，于是一律抛「Failed to decrypt file.」——同一份备份走本地 zip 路径却正常。
-          // 这里对齐 zip 姊妹路径的守卫（utils.ts jsZipBlobToBackupData 的 `!manifest.encryption && encryptionKey`）：
+          // 这里对齐 zip 姊妹路径的守卫（utils.ts zipBlobToBackupData 的 `!manifest.encryption && encryptionKey`）：
           // 显式 false 时按明文 JSON 解析；字段缺失时保持旧的解密语义，兼容修复前的历史备份。
           if (manifest.encryption === false && this.encryptionKey) {
             throw new BackupDowngradeError(

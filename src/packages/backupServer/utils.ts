@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import { unzipSync } from "fflate";
 import PQueue from "p-queue";
 import { formatDate, isValid, parse } from "date-fns";
 import { EListOrderBy, EListOrderMode } from "./type";
@@ -385,7 +385,7 @@ export function decryptData<T = any>(
   return JSON.parse(decrypted, stripProtoKeys) as T;
 }
 
-export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: string): Promise<Blob> {
+export async function backupDataToZipBlob(data: IBackupData, encryptionKey?: string): Promise<Blob> {
   const isEncrypted = typeof encryptionKey === "string" && encryptionKey !== "";
   const backupSalt = isEncrypted ? randomBytes(16) : undefined;
   const backupSaltBase64 = backupSalt ? bytesToBase64(backupSalt) : undefined;
@@ -412,8 +412,8 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
   // 若同一份 backupData 先用于本地导出、再用于远端上传就会丢数据）。这里用白名单迭代。
   const backupEntries = Object.entries(omit(data, ["manifest"]));
   /**
-   * 逐条目产出（生成器 = 惰性）：边加密边产出，调用方决定是立即写进 zip 流
-   * 还是交给 JSZip 持有。manifest 必须最后产出（它的 files[*].hash 依赖前面每个条目的内容）。
+   * 逐条目产出（生成器 = 惰性）：边加密边产出，由 zip 写出器立即写进 Blob。
+   * manifest 必须最后产出（它的 files[*].hash 依赖前面每个条目的内容）。
    */
   function* buildZipEntries(): Generator<{ name: string; content: string }> {
     for (const [key, value] of backupEntries) {
@@ -433,7 +433,7 @@ export async function backupDataToJSZipBlob(data: IBackupData, encryptionKey?: s
   // 峰值 ≈ 单条条目，而不是「全部内容 + 整包输出」（见 docs/performance-audit.md P1-25）。
   // - 加密备份：条目是不可压缩的 base64 密文 → STORE
   // - 未加密备份：JSON 压缩收益明显 → raw deflate（CompressionStream，浏览器原生实现）
-  // 产物仍是标准 ZIP（JSZip 等任意实现可读，已有测试覆盖恢复路径）。
+  // 产物仍是标准 ZIP（fflate / JSZip 等任意实现可读，已有测试覆盖恢复路径）。
   return await createZipBlob(buildZipEntries(), { compress: !isEncrypted });
 }
 
@@ -446,7 +446,7 @@ const isPlainObject = (value: unknown): value is Record<string, any> =>
  * L-15：原先用非枚举属性携带，但「从备份服务器恢复」要经 offscreen → options 的消息传递
  * （toSerializable 只走 Object.keys，Chrome 消息是 JSON 语义），非枚举属性在这一跳必然丢失，
  * 于是远端恢复时被丢弃的条目完全没有提示。现改为挂在 `manifest` 上的普通字段：
- * manifest 本来就随数据一起传递、不作为恢复条目，导出时 backupDataToJSZipBlob 会显式去掉它，
+ * manifest 本来就随数据一起传递、不作为恢复条目，导出时 backupDataToZipBlob 会显式去掉它，
  * 不会被写进下一个备份。
  */
 const BACKUP_WARNINGS_KEY = "__backupWarnings";
@@ -513,19 +513,44 @@ export function validateBackupPayload(key: string, value: unknown): string | nul
   }
 }
 
-export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string): Promise<IBackupData> {
-  const zip = new JSZip();
-  const zipContent = await zip.loadAsync(blob);
+/**
+ * 解码 zip 条目时保留开头的 U+FEFF：与原先 JSZip `async("string")` 的行为一致
+ * （fflate 的 strFromU8 会吞掉 BOM，从而改变 manifest 里 MD5 校验的输入）。
+ */
+const zipEntryDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+
+/**
+ * 从 zip 中只解压名为 `name` 的条目并按 UTF-8 解码；不存在时返回 undefined。
+ *
+ * 逐条目调用（而不是一次解压全部）：与原先 JSZip 的按需解压一致，恢复时 JS 堆里只同时持有
+ * 并发上限（RESTORE_FILE_CONCURRENCY）个条目。中央目录声明的原始大小超过解压上限的条目
+ * 直接拒绝，不为其分配缓冲区（zip bomb 防御；解压后仍按实际内容累计校验）。
+ */
+function readZipEntryText(bytes: Uint8Array, name: string): string | undefined {
+  const entries = unzipSync(bytes, {
+    filter: (file) => {
+      if (file.name !== name) return false;
+      if (file.originalSize > MAX_BACKUP_UNCOMPRESSED_BYTES) {
+        throw new Error(
+          `备份解压体积超过上限（> ${Math.round(MAX_BACKUP_UNCOMPRESSED_BYTES / 1024 / 1024)}MB），已拒绝恢复`,
+        );
+      }
+      return true;
+    },
+  });
+  const entry = entries[name];
+  return entry ? zipEntryDecoder.decode(entry) : undefined;
+}
+
+export async function zipBlobToBackupData(blob: Blob, encryptionKey?: string): Promise<IBackupData> {
+  const zipBytes = new Uint8Array(await blob.arrayBuffer());
   const data = {} as IBackupData;
 
   // 首先解出 manifest.json 的内容
-  const manifest = await zipContent
-    .file("manifest.json")
-    ?.async("string")
-    .then((content) => {
-      // manifest 同样是不可信输入：走同一套 __proto__ 剥离
-      return JSON.parse(content, stripProtoKeys) as IBackupFileManifest;
-    });
+  const manifestContent = readZipEntryText(zipBytes, "manifest.json");
+  // manifest 同样是不可信输入：走同一套 __proto__ 剥离
+  const manifest =
+    manifestContent === undefined ? undefined : (JSON.parse(manifestContent, stripProtoKeys) as IBackupFileManifest);
 
   if (manifest?.files) {
     if (!manifest.encryption && encryptionKey) {
@@ -588,7 +613,7 @@ export async function jsZipBlobToBackupData(blob: Blob, encryptionKey?: string):
             return;
           }
           const { name: fileName, hash: manifestFileHash } = manifestFileData;
-          const fileContent = await zipContent.file(fileName)?.async("string");
+          const fileContent = readZipEntryText(zipBytes, fileName);
           if (fileContent === undefined || fileContent === "") {
             // 复检 P2（H）：与 Gist 路径统一为「warning + 跳过」，而不是整份恢复失败
             warnings.push(`${fileKey}：备份中缺少文件 ${fileName}（或内容为空），已跳过该条目`);
@@ -677,7 +702,7 @@ export interface IDownloadHistoryTransaction {
 /**
  * 用备份中的记录原子替换本机下载历史。
  *
- * - 先校验数据类型：zip 中缺少某个文件时 `jsZipBlobToBackupData` 只会跳过该 key（manifest 里却仍有它的名字），
+ * - 先校验数据类型：zip 中缺少某个文件时 `zipBlobToBackupData` 只会跳过该 key（manifest 里却仍有它的名字），
  *   因此 `downloadHistory` 可能是 undefined。旧实现在 `clear()` 之后才 `.map(...)`，会先把本机历史清空、
  *   再抛错且不回滚，属于不可恢复的数据丢失。
  * - `clear` 与全部 `put` 放在同一个事务里按顺序执行：任一步失败都会由 IndexedDB 整体回滚，

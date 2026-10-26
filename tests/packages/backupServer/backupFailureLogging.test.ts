@@ -106,7 +106,7 @@ describe("SERVERSSOCIAL-3：备份实体失败必须留下原因", () => {
     expect(lastLogMessage()).toBe("[S3] ping 失败");
     expect(logMessageMock.mock.calls.at(-1)?.[1]).toMatchObject({ error: "SignatureDoesNotMatch" });
 
-    anyClient.backupDataToJSZipBlob = vi.fn().mockRejectedValue(new Error("zip boom"));
+    anyClient.backupDataToZipBlob = vi.fn().mockRejectedValue(new Error("zip boom"));
     expect(await client.addFile("a.zip", {} as any)).toBe(false);
     expect(lastLogMessage()).toBe("[S3] addFile 失败");
 
@@ -123,7 +123,7 @@ describe("SERVERSSOCIAL-3：备份实体失败必须留下原因", () => {
     expect(lastLogMessage()).toBe("[DropBox] ping 失败");
     expect(logMessageMock.mock.calls.at(-1)?.[1]).toMatchObject({ error: "invalid_access_token" });
 
-    anyClient.backupDataToJSZipBlob = vi.fn().mockRejectedValue(new Error("zip boom"));
+    anyClient.backupDataToZipBlob = vi.fn().mockRejectedValue(new Error("zip boom"));
     expect(await client.addFile("a.zip", {} as any)).toBe(false);
     expect(lastLogMessage()).toBe("[DropBox] addFile 失败");
 
@@ -150,7 +150,7 @@ describe("SERVERSSOCIAL-3：备份实体失败必须留下原因", () => {
     expect(lastLogMessage()).toBe("[BackblazeB2] ping 失败");
 
     const addClient = primeB2(b2Client());
-    addClient.backupDataToJSZipBlob = vi.fn().mockResolvedValue(new Blob(["zip"]));
+    addClient.backupDataToZipBlob = vi.fn().mockResolvedValue(new Blob(["zip"]));
     axiosMock.post
       .mockResolvedValueOnce({ data: { uploadUrl: "https://upload.b2.example", authorizationToken: "t" } })
       .mockRejectedValueOnce(new Error("Upload quota exceeded"));

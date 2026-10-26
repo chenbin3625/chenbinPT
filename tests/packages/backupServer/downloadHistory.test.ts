@@ -3,7 +3,7 @@
  *
  * 历史缺陷：`restoreBackupData` 先执行 `db.clear("download_history")`（独立事务，立即提交），
  * 之后才对 `restoreData.downloadHistory` 执行 `.map(...)`。而 zip 中缺少对应文件时
- * `jsZipBlobToBackupData` 只会跳过该 key（manifest 里却仍有它的名字），于是该值可能是 undefined：
+ * `zipBlobToBackupData` 只会跳过该 key（manifest 里却仍有它的名字），于是该值可能是 undefined：
  * 本机下载历史先被清空、随后抛错且不回滚，属于不可恢复的数据丢失。
  *
  * 回归要点：

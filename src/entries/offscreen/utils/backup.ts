@@ -2,7 +2,7 @@ import { intersection, isEqual, toMerged } from "es-toolkit";
 import { formatDate } from "date-fns";
 import { entityList, getBackupServer, getBackupServerMetaData, IBackupData, IBackupFileInfo } from "@ptd/backupServer";
 import {
-  backupDataToJSZipBlob,
+  backupDataToZipBlob,
   getBackupFilename,
   hasBackupRetentionToApply,
   isBackupFilename,
@@ -267,10 +267,10 @@ export async function exportBackupData(
 
   logger({ msg: `Exporting backup data to ${backupServerId}`, data: { backupFields, backupFilename } });
   if (backupServerId === "local") {
-    const jsZipBlob = await backupDataToJSZipBlob(backupData, encryptionKey);
+    const zipBlob = await backupDataToZipBlob(backupData, encryptionKey);
     // blob: URL 必须释放（见 L-5）：早期实现在这里**从不** revoke，每导出一次本地备份就泄漏一份 zip 的内存。
     // 下载被接受后交给释放器，等下载读完（或超时兜底）再 revoke。
-    const blobUrl = URL.createObjectURL(jsZipBlob);
+    const blobUrl = URL.createObjectURL(zipBlob);
     try {
       const chromeDownloadId = await sendMessage("downloadFile", {
         url: blobUrl,

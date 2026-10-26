@@ -153,7 +153,7 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
     try {
       const formData = new FormData();
       formData.append("name", fileName);
-      formData.append("data", await this.backupDataToJSZipBlob(file), fileName);
+      formData.append("data", await this.backupDataToZipBlob(file), fileName);
 
       const { data } = await this.request<OWSSResponse<boolean>>({
         method: "post",
@@ -195,7 +195,7 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
         url: urlJoin("/get", path),
         responseType: "blob",
       });
-      return await this.jsZipBlobToBackupData(data);
+      return await this.zipBlobToBackupData(data);
     } catch (e) {
       this.logBackupFailure("getFile", e);
       throw e;

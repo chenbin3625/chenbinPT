@@ -31,7 +31,7 @@ function createServer() {
   };
   // getServer() 会复用已存在的实例，直接注入替身即可绕开真实 WebDAV 客户端
   (server as any).server = client;
-  (server as any).jsZipBlobToBackupData = vi.fn().mockResolvedValue({});
+  (server as any).zipBlobToBackupData = vi.fn().mockResolvedValue({});
   return { server, client };
 }
 

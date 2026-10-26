@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 import { legacyBackupEncrypt, md5Hex } from "./helpers/nodeCryptoOracle.ts";
 
 import {
-  backupDataToJSZipBlob,
+  backupDataToZipBlob,
   decryptData,
   encryptData,
   getBackupWarnings,
-  jsZipBlobToBackupData,
+  zipBlobToBackupData,
   setBackupWarnings,
   validateBackupPayload,
 } from "@ptd/backupServer/utils.ts";
@@ -27,7 +27,7 @@ import type { IBackupData } from "@ptd/backupServer";
  *  2. `validateBackupPayload` 做结构校验，形状不符的条目会被丢弃并记录原因，
  *     而不是静默写进 chrome.storage；
  *  3. 合法备份**不被误拒**（否则等于静默丢用户数据）；
- *  4. 警告用非枚举属性携带，避免被 `backupDataToJSZipBlob` 的 `Object.entries` 写回下一个备份。
+ *  4. 警告用非枚举属性携带，避免被 `backupDataToZipBlob` 的 `Object.entries` 写回下一个备份。
  *
  * 「backupServers 默认不恢复」的**策略**部分在 offscreen 侧依据
  * `IRestoreOptions.restoreBackupServers` 执行，不在本文件的覆盖范围内。
@@ -118,9 +118,9 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
 
   describe("降级攻击防护（M-4）", () => {
     it("用户提供了解密密钥时，manifest.encryption=false 的明文备份不得静默恢复", async () => {
-      const blob = await backupDataToJSZipBlob({ config: { lang: "zh_CN" } }, "");
+      const blob = await backupDataToZipBlob({ config: { lang: "zh_CN" } }, "");
 
-      await expect(jsZipBlobToBackupData(blob, "user-secret")).rejects.toThrow(/downgrade|unencrypted|integrity/i);
+      await expect(zipBlobToBackupData(blob, "user-secret")).rejects.toThrow(/downgrade|unencrypted|integrity/i);
     });
   });
 
@@ -139,7 +139,7 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
 
       // 复检 P2（H）：旧实现 throw 导致整份恢复失败；现在统一为「记录 warning、跳过该条目」，
       // 让恢复对话框能显示「少了哪一块数据」，其余字段仍可恢复。
-      const restored = await jsZipBlobToBackupData(await zip.generateAsync({ type: "blob" }));
+      const restored = await zipBlobToBackupData(await zip.generateAsync({ type: "blob" }));
       expect(restored.config).toBeUndefined();
       expect(getBackupWarnings(restored).some((warning) => /config\.json/.test(warning))).toBe(true);
     },
@@ -156,7 +156,57 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
     }
     zip.file("manifest.json", JSON.stringify({ encryption: false, files }));
 
-    await expect(jsZipBlobToBackupData(await zip.generateAsync({ type: "blob" }))).rejects.toThrow(/条目数超过上限/);
+    await expect(zipBlobToBackupData(await zip.generateAsync({ type: "blob" }))).rejects.toThrow(/条目数超过上限/);
+  });
+
+  describe("fflate 读取路径（替换 JSZip 后的兼容性）", () => {
+    it("读取 JSZip 以 DEFLATE 生成的旧备份", async () => {
+      const content = JSON.stringify({ lang: "zh_CN" });
+      const zip = new JSZip();
+      zip.file("config.json", content);
+      zip.file(
+        "manifest.json",
+        JSON.stringify({ encryption: false, files: { config: { name: "config.json", hash: md5Hex(content) } } }),
+      );
+
+      const restored = await zipBlobToBackupData(await zip.generateAsync({ type: "blob", compression: "DEFLATE" }));
+      expect(restored.config).toEqual({ lang: "zh_CN" });
+    });
+
+    it("条目开头的 BOM 与 JSZip 一样原样参与 MD5 校验（不会被解码器吞掉）", async () => {
+      const content = JSON.stringify({ lang: "zh_CN" });
+      const zip = new JSZip();
+      zip.file("config.json", "\ufeff" + content);
+      // manifest 的 hash 按「去掉 BOM 后」的内容计算：只有当解码器吞掉 BOM 时校验才会通过
+      zip.file(
+        "manifest.json",
+        JSON.stringify({ encryption: false, files: { config: { name: "config.json", hash: md5Hex(content) } } }),
+      );
+
+      await expect(zipBlobToBackupData(await zip.generateAsync({ type: "blob" }))).rejects.toThrow(/hash mismatch/);
+    });
+
+    it("中央目录声明的原始大小超过解压上限时拒绝恢复（不为其分配缓冲区）", async () => {
+      const zip = new JSZip();
+      zip.file("config.json", JSON.stringify({ lang: "zh_CN" }));
+      zip.file("manifest.json", JSON.stringify({ encryption: false, files: { config: { name: "config.json" } } }));
+      const bytes = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
+
+      // 把 config.json 在中央目录里的「原始大小」改成 300MB（伪造的 zip bomb 头）
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      for (let i = 0; i + 46 <= bytes.length; i++) {
+        if (view.getUint32(i, true) !== 0x02014b50) continue;
+        const nameLength = view.getUint16(i + 28, true);
+        const name = new TextDecoder().decode(bytes.subarray(i + 46, i + 46 + nameLength));
+        if (name === "config.json") view.setUint32(i + 24, 300 * 1024 * 1024, true);
+      }
+
+      await expect(zipBlobToBackupData(new Blob([bytes as unknown as BlobPart]))).rejects.toThrow(/解压体积超过上限/);
+    });
+
+    it("不是 zip 的文件给出明确错误", async () => {
+      await expect(zipBlobToBackupData(new Blob(["not a zip"]))).rejects.toThrow();
+    });
   });
 
   describe("结构校验：不能误拒合法备份", () => {
@@ -211,8 +261,8 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
       const data: IBackupData = { config: { a: 1 }, manifest: { version: "v0.0.10" } };
       setBackupWarnings(data, ["stale warning"]);
 
-      const blob = await backupDataToJSZipBlob(data);
-      const restored = await jsZipBlobToBackupData(blob);
+      const blob = await backupDataToZipBlob(data);
+      const restored = await zipBlobToBackupData(blob);
       expect(restored.manifest?.version).toBe("v0.0.10");
       expect(getBackupWarnings(restored)).toEqual([]);
     });

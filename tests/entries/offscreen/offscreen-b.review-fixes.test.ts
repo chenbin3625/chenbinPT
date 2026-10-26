@@ -86,7 +86,7 @@ async function loadBackupModule() {
     ptdIndexDb: Promise.resolve({ transaction: () => ({}), getAll: async () => [] }),
   }));
   vi.doMock("@ptd/backupServer/utils.ts", () => ({
-    backupDataToJSZipBlob: vi.fn(),
+    backupDataToZipBlob: vi.fn(),
     getBackupFilename: vi.fn(() => "PTD_backup_20261006T0000.zip"),
     hasBackupRetentionToApply: vi.fn(() => false),
     isBackupFilename: vi.fn(() => false),

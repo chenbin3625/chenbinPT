@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/messages.ts", () => ({ sendMessage: mocks.sendMessage, onMessage: vi.fn() }));
 vi.mock("@ptd/backupServer/utils.ts", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  jsZipBlobToBackupData: mocks.parseFile,
+  zipBlobToBackupData: mocks.parseFile,
 }));
 
 const repoRoot = resolve(import.meta.dirname, "../../..");

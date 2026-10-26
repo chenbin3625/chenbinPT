@@ -45,11 +45,11 @@ import CookieCloud from "@ptd/backupServer/entity/CookieCloud.ts";
 import Gist from "@ptd/backupServer/entity/Gist.ts";
 import {
   BackupDowngradeError,
-  backupDataToJSZipBlob,
+  backupDataToZipBlob,
   decryptData,
   encryptData,
   getBackupWarnings,
-  jsZipBlobToBackupData,
+  zipBlobToBackupData,
 } from "@ptd/backupServer/utils.ts";
 
 import { GOLDEN } from "./fixtures/cryptoGolden.ts";
@@ -225,7 +225,7 @@ describe("PTD-AES-HMAC-v2 zip 备份", () => {
   it("导出：manifest（含 kdf.salt 与每个条目的 MD5）与条目密文与旧实现逐字节一致", async () => {
     vi.useFakeTimers({ now: IN.FIXED_NOW, toFake: ["Date"] });
     const blob = await withDeterministicRandom([IN.BACKUP_SALT, IN.IV_CONFIG, IN.IV_USERINFO], () =>
-      backupDataToJSZipBlob(v2Input(), IN.PASSWORD),
+      backupDataToZipBlob(v2Input(), IN.PASSWORD),
     );
     vi.useRealTimers();
 
@@ -249,10 +249,10 @@ describe("PTD-AES-HMAC-v2 zip 备份", () => {
   }
 
   it("恢复旧实现写出的 v2 备份；错误密钥的报错与旧实现一致", async () => {
-    const restored: any = await jsZipBlobToBackupData(await goldenV2Zip(), IN.PASSWORD);
+    const restored: any = await zipBlobToBackupData(await goldenV2Zip(), IN.PASSWORD);
     expect({ config: restored.config, userInfo: restored.userInfo }).toEqual(G.v2Restore.ok);
     expect(getBackupWarnings(restored)).toEqual([]);
-    await expect(jsZipBlobToBackupData(await goldenV2Zip(), "wrong")).rejects.toThrow(G.v2WrongKey.message);
+    await expect(zipBlobToBackupData(await goldenV2Zip(), "wrong")).rejects.toThrow(G.v2WrongKey.message);
   });
 
   it("独立 oracle 也能解出 v2 条目（manifest 级 salt + 条目字段名参与 MAC）", () => {
@@ -264,7 +264,7 @@ describe("PTD-AES-HMAC-v2 zip 备份", () => {
     const manifest = JSON.parse(G.v2.manifest);
     manifest.files.config.hash = oracle.md5Hex(G.legacy);
     const blob = await goldenV2Zip({ "manifest.json": JSON.stringify(manifest), "config.json": G.legacy });
-    await expect(jsZipBlobToBackupData(blob, IN.PASSWORD)).rejects.toBeInstanceOf(BackupDowngradeError);
+    await expect(zipBlobToBackupData(blob, IN.PASSWORD)).rejects.toBeInstanceOf(BackupDowngradeError);
   });
 });
 
@@ -320,7 +320,7 @@ describe("legacy OpenSSL `Salted__` 备份条目（v1 之前的格式）", () =>
       "manifest.json",
       JSON.stringify({ encryption: true, files: { config: { name: "config.json", hash: oracle.md5Hex(G.legacy) } } }),
     );
-    const restored: any = await jsZipBlobToBackupData(await zip.generateAsync({ type: "blob" }), IN.PASSWORD);
+    const restored: any = await zipBlobToBackupData(await zip.generateAsync({ type: "blob" }), IN.PASSWORD);
     expect(restored.config).toEqual(IN.DATA);
     expect(getBackupWarnings(restored).some((w) => w.includes("config.json") && w.includes("MAC"))).toBe(true);
   });

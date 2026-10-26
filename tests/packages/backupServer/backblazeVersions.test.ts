@@ -75,7 +75,7 @@ describe("BackblazeB2 versions", () => {
     expect(logMessage).toHaveBeenLastCalledWith("[BackblazeB2] addFile 失败", { error: "upload URL denied" });
 
     post.mockResolvedValueOnce({ data: { uploadUrl: "https://upload.example", authorizationToken: "upload" } });
-    (b2 as any).backupDataToJSZipBlob = vi.fn().mockRejectedValue(new Error("zip failed"));
+    (b2 as any).backupDataToZipBlob = vi.fn().mockRejectedValue(new Error("zip failed"));
     expect(await b2.addFile("a.zip", {} as any)).toBe(false);
     expect(logMessage).toHaveBeenLastCalledWith("[BackblazeB2] addFile 失败", { error: "zip failed" });
   });

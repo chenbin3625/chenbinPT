@@ -4,7 +4,7 @@ import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { Modal } from "ant-design-vue";
 import { EyeInvisibleOutlined, EyeOutlined, SyncOutlined, UploadOutlined } from "@ant-design/icons-vue";
 import { isEmpty } from "es-toolkit/compat";
-import { jsZipBlobToBackupData, getBackupWarnings } from "@ptd/backupServer/utils.ts";
+import { zipBlobToBackupData, getBackupWarnings } from "@ptd/backupServer/utils.ts";
 import type { IBackupData } from "@ptd/backupServer";
 import { useRouter } from "vue-router";
 
@@ -86,7 +86,7 @@ function loadLocalBackupFile() {
   const loadToken = ++backupLoadToken;
   restoreData.value = undefined;
   isDecryptKeyValid.value = true;
-  jsZipBlobToBackupData(backupFile.value as Blob, decryptKey.value)
+  zipBlobToBackupData(backupFile.value as Blob, decryptKey.value)
     .then((data) => {
       if (loadToken !== backupLoadToken || !showDialog.value) return;
       restoreData.value = data;
