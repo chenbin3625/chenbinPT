@@ -186,4 +186,18 @@ describe("站点登录检查和 Cloudflare 邮箱解码", () => {
 
     expect(query).not.toHaveBeenCalled();
   });
+
+  it("缺少 data-cfemail 的邮箱 span 不会把成功取回的文档判成网络错误（上游 4b1b8c53）", async () => {
+    const doc = document.implementation.createHTMLDocument("cf");
+    doc.body.innerHTML =
+      '<p><span class="__cf_email__" data-cfemail="412023">[email protected]</span>' +
+      '<span class="__cf_email__">[email protected]</span></p>';
+    mocks.request.mockResolvedValue({ status: 200, headers: {}, data: doc, request: {} });
+
+    const resp = await newSite().request<Document>({ url: "/", responseType: "document" }, false);
+
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(resp.data.querySelectorAll(".__cf_email__")).toHaveLength(0);
+    expect(resp.data.body.textContent).toBe("ab");
+  });
 });

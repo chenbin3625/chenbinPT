@@ -12,12 +12,16 @@ import type { TSiteFullUrl, TSiteHost } from "../types";
  * 2) 循环条件 `encodedString.length - n` 在长度 < 2 或为奇数时恒为真值 →
  *    **无限循环直至 OOM**（`data-cfemail` 缺失/为空时可达）。已改为 `n + 2 <= length`。
  *
- * @param encodedString 站点上 `data-cfemail` 属性的原始值
- * @returns 解码后的邮箱；输入非法（过短 / 非十六进制）时返回空串
+ * 3) 参数不防空：没有 `data-cfemail` 的 span（站点改版 / 半截标签）会传入 `undefined`，
+ *    在 `.length` 上抛 TypeError，被 `performRequestWithRetry` 的 catch 当成「没拿到响应」，
+ *    把整页成功取回的文档误判为网络故障。现在空值直接返回空串。
+ *
+ * @param encodedString 站点上 `data-cfemail` 属性的原始值（属性缺失时为 undefined）
+ * @returns 解码后的邮箱；输入为空 / 非法（过短 / 非十六进制）时返回空串
  */
-export function cfDecodeEmail(encodedString: string): string {
+export function cfDecodeEmail(encodedString: string | undefined | null): string {
   // 至少需要「2 位异或键 + 2 位数据」才能解出 1 个字符
-  if (encodedString.length < 4) {
+  if (!encodedString || encodedString.length < 4) {
     return "";
   }
 

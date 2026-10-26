@@ -184,6 +184,12 @@ describe("cfDecodeEmail", () => {
   it("对非十六进制输入返回空串", () => {
     expect(cfDecodeEmail("zzzz")).toBe("");
   });
+
+  // 上游 4b1b8c53：没有 data-cfemail 的 span 会传进 undefined，旧实现在 .length 上抛 TypeError，
+  // 被请求层的 catch 改判成网络错误
+  it.each([undefined, null])("对空值（%j）返回空串而不抛错", (input) => {
+    expect(cfDecodeEmail(input)).toBe("");
+  });
 });
 
 describe("createDocument", () => {

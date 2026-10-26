@@ -480,7 +480,8 @@ export default class BittorrentSite {
             const cfProtectSpan = selectElements(".__cf_email__", doc);
 
             cfProtectSpan.forEach((element) => {
-              element.replaceWith(cfDecodeEmail((element as HTMLElement).dataset.cfemail!));
+              // data-cfemail 缺失时 cfDecodeEmail 返回空串，不能让一个畸形 span 把整页判成网络错误
+              element.replaceWith(cfDecodeEmail((element as HTMLElement).dataset.cfemail));
             });
           }
 
