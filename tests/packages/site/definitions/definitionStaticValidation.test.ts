@@ -361,9 +361,10 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
 
     expect(compared, "没有扫到字段对，说明遍历坏了").toBeGreaterThan(1000);
 
-    // 棘轮：`0magnet` 的 url / id 有意复用同一个 <a href>（id 只是「用链接当标识」），
-    // 不是缺陷。除此之外不允许新增同源字段对；把缺陷修掉后请把上界一起下调。
-    const knownSharedQueryPairs = new Set(["0magnet: url == id"]);
+    // 棘轮：`0magnet` / `sexypics` 的 url / id 有意复用同一个 <a href>（id 只是「用链接当标识」）；
+    // `damagnet` 的列表行本身就是磁力链接，url 与 link 指向同一个 <a href>（与 Jackett 定义一致）。
+    // 这些都不是缺陷。除此之外不允许新增同源字段对；把缺陷修掉后请把上界一起下调。
+    const knownSharedQueryPairs = new Set(["0magnet: url == id", "sexypics: url == id", "damagnet: url == link"]);
     const unexpected = duplicates.filter((item) => !knownSharedQueryPairs.has(item));
     if (duplicates.length) console.warn("[static] 已知的同源字段对：", duplicates);
     expect(unexpected, "两个字段指向同一个 (selector, attr, elementProcess) 时，两个指标必然显示同一个数").toEqual([]);

@@ -208,7 +208,7 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   list: [
-    ...SchemaMetadata.list,
+    ...SchemaMetadata.list!,
     {
       // 保种区（rescue.php）同样是种子列表页，需要展示完整的侧边栏操作
       urlPattern: ["/rescue\\.php"],

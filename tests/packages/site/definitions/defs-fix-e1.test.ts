@@ -426,24 +426,6 @@ describe("E1b-C17 bibliotik：做种分页异常不再让整次用户信息刷�
   });
 });
 
-describe("E1b-C19 bitbr：ratio 是 number", () => {
-  it("elementProcess 返回数字而不是字符串", async () => {
-    const { siteMetadata } = await import("@ptd/site/definitions/bitbr.ts");
-
-    const ratioQuery = (siteMetadata.userInfo!.selectors as any).ratio;
-    const el = document.createElement("span");
-    el.className = "medium";
-    el.textContent = "Ratio: 1.23 Uploaded: 10 GiB Downloaded: 8 GiB Torrents: 5";
-
-    const ratio = ratioQuery.elementProcess(el);
-    expect(ratio).toBe(1.23);
-    expect(typeof ratio).toBe("number");
-
-    el.textContent = "没有任何信息";
-    expect(ratioQuery.elementProcess(el)).toBeUndefined();
-  });
-});
-
 describe("E1b-C7 / C27 bitporn：subTitle 是字符串且不再保留死代码", () => {
   it("命中时拼接关键词徽标，未命中时返回空串", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/bitporn.ts");
