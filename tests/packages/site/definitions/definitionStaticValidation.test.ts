@@ -51,6 +51,8 @@
  *   第一层守卫是 filter.ts 的 `satisfies Record<string, TQueryFilterFn>` + vue-tsc（见 utils/filterNameTyping.test.ts）。
  * - 成人站点地址保护（上游 22573d1c）：tags 含 成人 / xxx / adult 的站点，urls / legacyUrls / trackerUrls 必须写成 rot13，
  *   且定义文件里其它字符串字面量不得出现本站域名的明文地址；trackerUrls 同样要求 rot13 还原后是 http(s)。
+ * - favicon 守卫（上游 0f300197）：显式 `./x` 引用的本地文件必须存在；实际命中的本地图标不超过 256x256（棘轮）；
+ *   远端地址 / data URI 只打印提示（上游同样只是警告）。
  *
  * 上游的「id 合法/唯一」「schema 存在或有 default class」「category key 唯一」「timezoneOffset 格式」
  * 上面已有对应用例；「明文 http」与 version 口径只是上游的提示/警告，不在这里断言。
@@ -360,6 +362,95 @@ function findPlainOwnHostLiterals(fileName: string, text: string, ownHosts: Set<
   };
   visit(source);
   return found;
+}
+
+/** 本地站点图标目录（wxt.config.ts 注入的 `__RESOURCE_SITE_ICONS__` 就是这个目录的文件列表） */
+const ICONS_DIR = "public/icons/site";
+
+/**
+ * 本地图标的尺寸上限（上游 0f300197）。站点图标在界面里只显示 14~36px，
+ * 超过这个边长基本说明资产没压缩过（上游曾出现 512x512 / 264KB 的 favicon）。
+ */
+const MAX_LOCAL_ICON_DIM = 256;
+
+/**
+ * 本地图标的候选文件名，顺序与 site/utils/favicon.ts 的 getFavicon 一致：
+ * `favicon` 以 `./` 开头时该文件排在最前，否则依次是 `<id>.png` / `<id>.ico` / `<id>.svg`。
+ */
+function localIconCandidates(siteId: string, favicon: unknown): string[] {
+  const byId = [`${siteId}.png`, `${siteId}.ico`, `${siteId}.svg`];
+  return typeof favicon === "string" && favicon.startsWith("./") ? [favicon.slice(2), ...byId] : byId;
+}
+
+/**
+ * 只读文件头解析图片尺寸（PNG / ICO / GIF / WebP / JPEG / SVG 的显式 width、height），移植自上游 0f300197。
+ * 识别不出来的格式返回 null，调用方按「跳过」处理，不产生误报。
+ */
+function readImageSize(buf: Buffer): { width: number; height: number } | null {
+  // PNG：IHDR 里的宽高
+  if (buf.length >= 24 && buf.toString("latin1", 1, 4) === "PNG") {
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+
+  // ICO：取所有帧里最大的声明尺寸（目录项里 0 表示 256）
+  if (buf.length >= 22 && buf.readUInt16LE(0) === 0 && buf.readUInt16LE(2) === 1) {
+    let width = 0;
+    let height = 0;
+    const count = buf.readUInt16LE(4);
+    for (let i = 0; i < count; i++) {
+      const offset = 6 + i * 16;
+      if (offset + 16 > buf.length) break;
+      width = Math.max(width, buf[offset] === 0 ? 256 : buf[offset]);
+      height = Math.max(height, buf[offset + 1] === 0 ? 256 : buf[offset + 1]);
+    }
+    return width && height ? { width, height } : null;
+  }
+
+  // GIF
+  if (buf.length >= 10 && buf.toString("latin1", 0, 3) === "GIF") {
+    return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+  }
+
+  // WebP：VP8X / VP8L / VP8 三种块头的宽高编码各不相同
+  if (buf.length >= 30 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP") {
+    const chunk = buf.toString("latin1", 12, 16);
+    if (chunk === "VP8X") return { width: buf.readUIntLE(24, 3) + 1, height: buf.readUIntLE(27, 3) + 1 };
+    if (chunk === "VP8L") {
+      const bits = buf.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+    }
+    if (chunk === "VP8 ") return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+  }
+
+  // JPEG：扫到 SOFn 段取宽高
+  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) {
+        i++;
+        continue;
+      }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { width: buf.readUInt16BE(i + 7), height: buf.readUInt16BE(i + 5) };
+      }
+      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) {
+        i += 2;
+        continue;
+      }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+
+  // SVG：矢量没有固有像素尺寸，只认显式 width / height（读不到就跳过）
+  const head = buf.toString("utf8", 0, Math.min(buf.length, 2000));
+  if (head.includes("<svg")) {
+    const width = head.match(/\bwidth\s*=\s*["']?(\d+(?:\.\d+)?)/i);
+    const height = head.match(/\bheight\s*=\s*["']?(\d+(?:\.\d+)?)/i);
+    if (width && height) return { width: Math.round(Number(width[1])), height: Math.round(Number(height[1])) };
+  }
+
+  return null;
 }
 
 beforeAll(async () => {
@@ -925,6 +1016,62 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
     expect(unexpected, "成人站点的地址必须写成 rot13（types/base.ts 的 TSiteUrl），其它字段不得出现明文域名").toEqual(
       [],
     );
+  });
+
+  it("favicon：显式 ./x 引用的本地文件必须存在；本地图标不超过 256x256（[ratchet]）；远端地址只提示", () => {
+    const iconsDir = path.join(repoRoot, ICONS_DIR);
+    const icons = new Set(fs.readdirSync(iconsDir));
+
+    // 自证：尺寸解析对 PNG / ICO 都要有结果，且与文件头一致
+    const pngSample = [...icons].find((name) => name.endsWith(".png"))!;
+    const pngBuf = fs.readFileSync(path.join(iconsDir, pngSample));
+    expect(readImageSize(pngBuf)).toEqual({ width: pngBuf.readUInt32BE(16), height: pngBuf.readUInt32BE(20) });
+    const icoSample = [...icons].find((name) => name.endsWith(".ico"))!;
+    expect(readImageSize(fs.readFileSync(path.join(iconsDir, icoSample)))).not.toBeNull();
+
+    const missing: string[] = [];
+    const oversize: string[] = [];
+    const remote: string[] = [];
+    let checkedIcons = 0;
+
+    for (const { fileId, metadata } of definitions) {
+      const favicon = metadata.favicon as unknown;
+
+      if (typeof favicon === "string") {
+        if (/^https?:\/\//i.test(favicon)) remote.push(`${fileId}: ${favicon}`);
+        else if (favicon.startsWith("data:image/")) remote.push(`${fileId}: 内联 data URI`);
+        // favicon.ts 会静默跳过不存在的本地文件，最终回落到运行时抓取
+        else if (favicon.startsWith("./") && !icons.has(favicon.slice(2))) missing.push(`${fileId}: ${favicon}`);
+      }
+
+      // 真正会命中的那一个（favicon.ts 按顺序取第一个存在于包内的文件）
+      const hit = localIconCandidates(fileId, favicon).find((name) => icons.has(name));
+      if (!hit) continue;
+      const size = readImageSize(fs.readFileSync(path.join(iconsDir, hit)));
+      if (!size) continue; // 识别不出格式时跳过，与上游一致
+      checkedIcons++;
+      if (size.width > MAX_LOCAL_ICON_DIM || size.height > MAX_LOCAL_ICON_DIM) {
+        oversize.push(`${hit} ${size.width}x${size.height}`);
+      }
+    }
+
+    expect(checkedIcons, "没有解析到本地图标尺寸，说明遍历或解析坏了").toBeGreaterThan(200);
+    expect(missing, "favicon 指向的本地文件不存在时会静默回落到运行时抓取").toEqual([]);
+
+    // 上游只把远端 / data URI 的 favicon 作为提示：本地资产优先，且不受站点改版、防盗链、CF 拦截影响
+    if (remote.length) console.warn("[static] favicon 使用远端地址或 data URI，建议落成本地资产：", remote);
+
+    // [ratchet] 已知超限图标：上游 0f300197 已把它们压到 128x128，lane-b 移植该提交后应为空 —— lane-b 集成后删除。
+    const knownOversizeIcons = new Set([
+      "fsm.jpg 640x640",
+      "homiehelpdesk.png 512x512",
+      "rastastugan.png 500x500",
+      "tlzdigital.png 512x512",
+      "ydypt.jpg 320x320",
+    ]);
+    const unexpected = oversize.filter((item) => !knownOversizeIcons.has(item));
+    if (oversize.length) console.warn("[static] 已知的超限本地图标：", oversize);
+    expect(unexpected, "站点图标只显示 14~36px，超过 256x256 说明资产没压缩，会让扩展包体积变大").toEqual([]);
   });
 
   it("requestConfig 里的 $field$ 占位符必须出现在 assertion 声明的 pathKey 处（占位符名对、路径写错）", () => {
