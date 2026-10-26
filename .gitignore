@@ -7,6 +7,7 @@ node_modules
 # 原先这里还有一条 `!docs/code-review-2026-10-04.md` 放行，而该文件早已不在 docs/ 下（L-14），
 # 留着只会让人误以为某份报告应当入库。
 docs/*
+.research-*
 
 ## Build files
 dist
