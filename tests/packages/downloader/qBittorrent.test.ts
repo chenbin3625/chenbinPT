@@ -386,6 +386,41 @@ describe("qBittorrent：C1 修复轮", () => {
     expect(torrent.label).toBe("movie");
   });
 
+  it("列表项带出 trackerUrls（tracker + magnet_uri 的 tr 参数去重）与 isPrivate（兼容 private / isPrivate 两个键）", async () => {
+    const client = apiKeyClient();
+    const magnet =
+      "magnet:?xt=urn:btih:HASH&dn=Torrent" +
+      `&tr=${encodeURIComponent("https://tracker.example.com/announce?passkey=x")}` +
+      `&tr=${encodeURIComponent("udp://open.example.org:6969/announce")}`;
+    axiosMock.request.mockResolvedValue({
+      data: {
+        rid: 1,
+        full_update: true,
+        torrents: {
+          A: rawTorrent("uploading", {
+            tracker: "https://tracker.example.com/announce?passkey=x",
+            magnet_uri: magnet,
+            private: true,
+          }),
+          B: rawTorrent("uploading", { isPrivate: false }),
+          C: rawTorrent("uploading"),
+        },
+      },
+    });
+
+    const [a, b, c] = await client.getAllTorrents();
+    expect(a.trackerUrls).toEqual([
+      "https://tracker.example.com/announce?passkey=x",
+      "udp://open.example.org:6969/announce",
+    ]);
+    expect(a.isPrivate).toBe(true);
+    // 无 tracker 信息时为 undefined（MyClient 会按需再请求 /torrents/trackers），而不是空数组
+    expect(b.trackerUrls).toBeUndefined();
+    expect(b.isPrivate).toBe(false);
+    // qBittorrent 4.x 不提供 private 字段：未知而不是「公开」
+    expect(c.isPrivate).toBeUndefined();
+  });
+
   it("QB-3：setTorrentLabel 加法语义——只 addTags，不删除种子上其它 tag", async () => {
     const client = apiKeyClient();
     const calls: any[] = [];

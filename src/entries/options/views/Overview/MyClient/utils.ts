@@ -6,6 +6,8 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useI18n, type ComposerTranslation } from "vue-i18n";
 
+import { annotateTorrentSites } from "./torrentSite.ts";
+
 // ── module-level shared state ─────────────────────────────────────────────
 
 /**
@@ -232,6 +234,9 @@ export function useClientRefresh() {
       const result = await sendMessage("getClientTorrents", id);
       // P1-20：结果来自 sendMessage 的结构化克隆，永远不会被就地修改，标记为 raw 避免被代理
       torrents.value = { ...torrents.value, [id]: markRaw(result) };
+      // 站点判定在列表加载完成后统一进行，结果写入响应式缓存，不阻塞列表展示；
+      // 已判定过的种子直接命中缓存（自动刷新时不会重复显示加载态）
+      void annotateTorrentSites(result);
       failCounts.set(id, 0);
     } catch {
       const prev = failCounts.get(id) ?? 0;

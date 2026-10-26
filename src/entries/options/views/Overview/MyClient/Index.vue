@@ -45,6 +45,7 @@ import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 import DeleteDialog from "./DeleteDialog.vue";
 import PushToDownloaderDialog from "./PushToDownloaderDialog.vue";
+import TorrentSiteTd from "./TorrentSiteTd.vue";
 import TorrentStateTd from "./TorrentStateTd.vue";
 import ClientStatusDialog from "./ClientStatusDialog.vue";
 import TorrentDetailDialog from "./TorrentDetailDialog.vue";
@@ -223,6 +224,14 @@ const fullTableHeader = computed(
       // 1152–1536 窗口下的可用宽度（见 docs/style-layout-audit.md 第 7 条），从而挤出横向滚动条。
       { title: t("MyClient.table.client"), key: "clientId", align: "center", width: "90", props: { disabled: true } },
       { title: t("MyClient.table.name"), key: "name", align: "start", maxWidth: "20rem", props: { disabled: true } },
+      {
+        // 站点判定在 loadSingleDownloader 中统一完成（urls / legacyUrls / trackerUrls 的 host 匹配），
+        // 判定未完成的行先显示加载态，故该列不参与排序
+        title: t("common.site"),
+        key: "site",
+        align: "center",
+        sortable: false,
+      },
       { title: t("MyClient.table.size"), key: "totalSize", align: "end" },
       { title: t("MyClient.table.progress"), key: "progress", align: "end", width: "120" },
       { title: t("MyClient.table.status"), key: "state", align: "center" },
@@ -731,6 +740,11 @@ function clearDownloaderFilter() {
               <TagOutlined class="ptd-icon-sm" /> {{ record.label }}
             </div>
           </div>
+        </template>
+
+        <!-- site column: 根据种子内的 tracker 地址识别所属站点，未匹配时按 public / unmatched 区分显示 -->
+        <template v-else-if="column.key === 'site'">
+          <TorrentSiteTd :item="record" />
         </template>
 
         <!-- size column -->
