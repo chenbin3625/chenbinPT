@@ -15,10 +15,12 @@ import {
 } from "../types.ts";
 import {
   buildCategoryOptionsFromList,
+  logMessage,
   parseSizeString,
   parseTimeToLiveToDate,
   parseTimeWithZone,
   parseValidTimeString,
+  siteErrorLogData,
 } from "../utils.ts";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
@@ -493,7 +495,12 @@ export default class Anthelion extends Gazelle {
       }
       flushUserInfo.status = EResultParseStatus.success;
     } catch (error) {
-      if (import.meta.env.DEV) console.error(error);
+      // fork 的 eslint 禁止直接 console（no-console），与其它定义一样走 logMessage 进日志页
+      logMessage(
+        `[Site] ${this.name} API getUserInfoResult failed`,
+        { site: this.metadata.id, error: siteErrorLogData(error) },
+        "error",
+      );
       flushUserInfo.status = EResultParseStatus.parseError;
 
       if (error instanceof CFBlockedError) {
