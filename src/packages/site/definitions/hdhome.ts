@@ -339,7 +339,7 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       subTitle: {
         text: "",
         selector: ["a[href*='hit'][title]", "a[href*='hit']:has(b)"],
@@ -347,7 +347,7 @@ export const siteMetadata: ISiteMetadata = {
       },
       progress: selectorSearchProgress,
       status: selectorSearchStatus,
-      tags: [...SchemaMetadata.search!.selectors!.tags!, ...allTagSelectors],
+      tags: [...SchemaMetadata.search.selectors!.tags!, ...allTagSelectors],
     },
   },
 
@@ -358,7 +358,7 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       // B2：`/mybonus.php` 的时魔单元格。解析逻辑在下面的 parseUserInfoForBonusPerHour（动态方法优先于
       // selector），这里保留 selector 是为了 locate 元素与 `hasFieldMatch` 的命中判据。
       bonusPerHour: {
@@ -366,7 +366,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     donorConfig: {
-      ...SchemaMetadata.userInfo!.donorConfig,
+      ...SchemaMetadata.userInfo.donorConfig,
       bonusPerHourMultiplier: 1, // 下面的解析方法已能正确选中加倍后的时魔
     },
   },

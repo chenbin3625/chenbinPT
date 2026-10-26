@@ -101,7 +101,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     advanceKeywordParams: {
-      ...SchemaMetadata.search!.advanceKeywordParams,
+      ...SchemaMetadata.search.advanceKeywordParams,
       imdb: {
         requestConfigTransformer: ({ requestConfig: config }) => {
           if (config?.params?.name) {

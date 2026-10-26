@@ -285,7 +285,7 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     keywordPath: "params.iwannaseethis",
     requestConfig: {
       url: "/pt",
@@ -344,19 +344,19 @@ export const siteMetadata: ISiteMetadata = {
         selector: ".mbottom a[href*='viewsnatches']",
         filters: [(query: string) => parseInt(query.match(/(\d+)/)?.[1] ?? "0", 10) || 0],
       },
-      tags: [...SchemaMetadata.search!.selectors!.tags!],
+      tags: [...SchemaMetadata.search.selectors!.tags!],
     },
   },
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     pickLast: ["id", "joinTime"],
     process: [
       {
         requestConfig: { url: "/userdetails", responseType: "document" },
-        fields: [...(SchemaMetadata.userInfo!.process?.[0]?.fields || []), "id", "joinTime", "invites"],
+        fields: [...(SchemaMetadata.userInfo.process?.[0]?.fields || []), "id", "joinTime", "invites"],
         selectors: {
-          ...SchemaMetadata.userInfo!.process?.[0]?.selectors,
+          ...SchemaMetadata.userInfo.process?.[0]?.selectors,
           id: {
             selector: ["center .text_alt .text:contains('ID')"],
             // E3-9：文案变化时 match 返回 null，`![1]` 会让整个 userInfo 步骤失败（已解析字段一并丢失）

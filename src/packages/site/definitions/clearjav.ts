@@ -22,7 +22,7 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       // D-3：UNIT3D 按用户的「显示海报」设置二选一渲染 __row / __no-poster-row（上游默认关闭海报），两种都要匹配
       rows: { selector: "tr.torrent-search--list__row, tr.torrent-search--list__no-poster-row" },
       id: { selector: ":self", attr: "data-torrent-id" },

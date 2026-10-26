@@ -126,7 +126,7 @@ export const siteMetadata: ISiteMetadata = {
           (item: IHDBitsRawTorrent) => {
             const { filename, name, type_category, type_medium } = item;
             // Use release name for XXX content and full discs
-            return type_category != 7 && type_medium != 1 && filename ? filename!.replace(".torrent", "") : name;
+            return type_category != 7 && type_medium != 1 && filename ? filename.replace(".torrent", "") : name;
           },
         ],
       },

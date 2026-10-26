@@ -113,13 +113,13 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata!.search!,
+    ...SchemaMetadata.search,
     requestConfig: {
-      ...SchemaMetadata!.search!.requestConfig!,
+      ...SchemaMetadata.search.requestConfig!,
       // M1：params 会被整体替换（不是深合并），必须展开父层 params 才能保留 Luminance 的 action=advanced；
       // 否则关键词（advanceKeywordParams 改写的 searchtext）与 filter_cat/taglist/filter_freeleech 全部失效。
       params: {
-        ...SchemaMetadata!.search!.requestConfig!.params,
+        ...SchemaMetadata.search.requestConfig!.params,
         perPage: 100,
       },
     },
@@ -136,7 +136,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     selectors: {
-      ...SchemaMetadata!.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       category: {
         selector: ["td.cats_col > div"],
         attr: "title",

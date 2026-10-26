@@ -128,7 +128,7 @@ export const siteMetadata: ISiteMetadata = {
     { id: 205, name: "Super Admin", groupType: "manager" },
   ],
 
-  userInputSettingMeta: [...SchemaMetadata.userInputSettingMeta!],
+  userInputSettingMeta: [...SchemaMetadata.userInputSettingMeta],
 };
 
 export interface IAvzRawTorrent extends IAvzNetRawTorrent {

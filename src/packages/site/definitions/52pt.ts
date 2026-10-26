@@ -15,9 +15,9 @@ import NexusPHP from "../schemas/NexusPHP";
  * 使 52pt 不再依赖死站点文件。
  */
 const userInfoWithInvites = {
-  ...SchemaMetadata.userInfo!,
+  ...SchemaMetadata.userInfo,
   selectors: {
-    ...SchemaMetadata.userInfo!.selectors!,
+    ...SchemaMetadata.userInfo.selectors!,
     invites: {
       selector: [
         "td.rowhead:contains('邀请') + td",
@@ -47,7 +47,7 @@ const userInfoWithInvites = {
     },
   },
   process: [
-    ...SchemaMetadata.userInfo!.process!.map((item) => {
+    ...SchemaMetadata.userInfo.process!.map((item) => {
       // 在用户详情页面添加 invites 字段
       if (item.requestConfig.url === "/userdetails.php") {
         return {

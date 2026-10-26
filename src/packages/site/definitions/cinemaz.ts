@@ -84,7 +84,7 @@ export const siteMetadata: ISiteMetadata = {
     },
   ],
 
-  userInputSettingMeta: [...SchemaMetadata.userInputSettingMeta!],
+  userInputSettingMeta: [...SchemaMetadata.userInputSettingMeta],
 };
 
 interface ICinemaZRawTorrent extends IAvzNetRawTorrent {

@@ -80,7 +80,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       title: {
         selector: ["a.tooltip[href*='hit']"],
       },
@@ -138,7 +138,7 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       bonus: {
         selector: ["td.rowhead:contains('UCoin') + td > span"],
         attr: "title",

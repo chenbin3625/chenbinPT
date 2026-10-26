@@ -92,12 +92,12 @@ export default class BtEtree extends BittorrentSite {
   protected parseTorrentRowForTime(torrent: Partial<ITorrent> = {}, row: Element, searchConfig: ISearchInput) {
     // 如果还没解析出来id，则强行解析一次，以保证能拿到id
     if (!torrent.id) {
-      torrent.id = this.getFieldData(row, searchConfig!.searchEntry!.selectors!.id!);
+      torrent.id = this.getFieldData(row, searchConfig.searchEntry!.selectors!.id!);
     }
     const torrentId = Number.parseInt(String(torrent.id ?? ""), 10);
 
     // 按照默认方式获取 MM/dd HH:mm 信息
-    const torrentTimeByString = this.getFieldData(row, searchConfig!.searchEntry!.selectors!.time!);
+    const torrentTimeByString = this.getFieldData(row, searchConfig.searchEntry!.selectors!.time!);
 
     // E1b-C3 / E1b-C26：年份只能靠 torrentId 阈值表反推，原实现有两个定时炸弹：
     // ① id 解析失败（NaN）时 `NaN < testTid` 恒为 false，循环不会 break，年份会被一路覆盖到表末（2026）；

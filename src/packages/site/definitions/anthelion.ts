@@ -92,7 +92,7 @@ const detailPageSelectors = {
   ...detailPageList.selectors,
   category: { text: "N/A" }, // 没有相关信息
   time: {
-    ...detailPageList!.selectors!.time!,
+    ...detailPageList.selectors!.time!,
     selector: ["+ tr span.time[title]", "+ tr span.time"],
     // SITECORE-1 / DEFS2-3：原来这里给 `"+ tr span.time"`（无 title 的相对时间）叠了
     // `(ts) => ts + new Date().getTimezoneOffset() * 60000`。但 baseTimeSelector.elementProcess
@@ -189,9 +189,9 @@ export const siteMetadata: ISiteMetadata = {
       tmdb: { enabled: true },
     },
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       title: {
-        ...SchemaMetadata.search!.selectors!.title!,
+        ...SchemaMetadata.search.selectors!.title!,
         elementProcess: GazelleUtils.genTitleElementProcess({ extractTagsFunc: extractTags }),
       },
       subTitle: {
@@ -298,7 +298,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     ],
     selectors: {
-      ...SchemaMetadata!.userInfo!.selectors!,
+      ...SchemaMetadata.userInfo.selectors!,
       bonusPerHour: {
         selector: "h3.float_right",
         filters: [

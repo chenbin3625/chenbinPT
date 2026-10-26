@@ -49,7 +49,7 @@ export const siteMetadata: ISiteMetadata = {
     // TLFBits 并无这套配色（Jackett tlfbits.yml 也不解析行内状态），于是状态恒 unknown、进度回落空串。
     // 去掉后沿用 NexusPHP schema 的默认解析。
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
     },
   },
 

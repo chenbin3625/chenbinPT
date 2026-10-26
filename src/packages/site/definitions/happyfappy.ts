@@ -82,9 +82,9 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata!.search!,
+    ...SchemaMetadata.search,
     requestConfig: {
-      ...SchemaMetadata!.search!.requestConfig!,
+      ...SchemaMetadata.search.requestConfig!,
       params: {
         perPage: 100,
       },
@@ -93,7 +93,7 @@ export const siteMetadata: ISiteMetadata = {
     // （types/search.ts 只约定 imdb/douban/bangumi/anidb/tmdb/tvdb/mal），且 `searchtext` 不是
     // Luminance 的搜索参数（该引擎的 keywordPath 就是 params.title），永远不会被触发，已删除。
     selectors: {
-      ...SchemaMetadata!.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       category: {
         selector: ["td.cats_col > div"],
         attr: "title",

@@ -14,9 +14,9 @@ import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetada
  * 与 52pt / yinguskg 的处理方式一致；选择器逐字取自 kunlun 原导出，未做猜测。
  */
 const userInfoWithInvitesInUserDetailsPage = {
-  ...SchemaMetadata.userInfo!,
+  ...SchemaMetadata.userInfo,
   selectors: {
-    ...SchemaMetadata.userInfo!.selectors!,
+    ...SchemaMetadata.userInfo.selectors!,
     invites: {
       selector: [
         "td.rowhead:contains('邀请') + td",
@@ -46,7 +46,7 @@ const userInfoWithInvitesInUserDetailsPage = {
     },
   },
   process: [
-    ...SchemaMetadata.userInfo!.process!.map((item) => {
+    ...SchemaMetadata.userInfo.process!.map((item) => {
       // 在用户详情页面添加 invites 字段
       if (item.requestConfig.url === "/userdetails.php") {
         return {
@@ -126,9 +126,9 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       rows: { selector: ".torrent_wrap" },
       link: linkQuery,
       url: {
@@ -196,7 +196,7 @@ export const siteMetadata: ISiteMetadata = {
       },
 
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         { name: "官方", selector: "label:contains('官方')", color: "#ff0000" },
         { name: "中字", selector: "label:contains('中字')", color: "#0000ff" },
         { name: "外语", selector: "label:contains('外语')", color: "#004040" },

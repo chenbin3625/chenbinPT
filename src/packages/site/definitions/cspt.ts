@@ -184,9 +184,9 @@ export const siteMetadata: ISiteMetadata = {
     },
   ],
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       rows: { selector: "div.torrent-table-sub-info" },
       // E2b-01：rows 已换成站点自定义卡片布局，但 link/url/id 仍继承 NexusPHP 的
       // `a[href*="download.php?id="]:has(> img[alt="download"])`（原生表格的下载图标假设）。
@@ -207,7 +207,7 @@ export const siteMetadata: ISiteMetadata = {
         filters: [{ name: "querystring", args: ["id"] }],
       },
       subTitle: { selector: ".torrent-info-text-small_name" },
-      time: { selector: ".torrent-info-text-added", ...SchemaMetadata.search!.selectors!.time! },
+      time: { selector: ".torrent-info-text-added", ...SchemaMetadata.search.selectors!.time! },
       size: { selector: ".torrent-info-text-size", filters: [{ name: "parseSize" }] },
       author: { selector: ".torrent-info-text-author" },
       seeders: { selector: ".torrent-info-text-seeders" },
@@ -240,9 +240,9 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       bonus: {
         selector: ["td.rowhead:contains('金元宝') + td"],
         filters: [{ name: "parseNumber" }],

@@ -124,9 +124,9 @@ export const siteMetadata: ISiteMetadata = {
   officialGroupPattern: [/[@-]\s?(PTH(?:ome|web|tv|eBook|Audio|music)?)\b/i],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       subTitle: {
         // PTHome wraps its subtitle in a <span> element. The default NexusPHP handler removes
         // all span elements, which strips the subtitle text. We only remove <a> and <img>

@@ -283,9 +283,9 @@ export const siteMetadata: ISiteMetadata = {
   officialGroupPattern: [/[@-]\s?(HDSky|HDSWEB|HDSTV|HDSPad|HDS)\b/i],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       id: {
         ...baseIdSelector,
         filters: [{ name: "querystring", args: ["id"] }],

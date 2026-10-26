@@ -245,11 +245,11 @@ export const siteMetadata: ISiteMetadata = {
       imdb: false,
     },
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       progress: selectorSearchProgress,
       status: selectorSearchStatus,
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         // DEFS2-2：原先这里的 H&R 用 selector:"*"（对任意行恒真），会把整站搜索结果全部标成 H&R；
         // 列表页没有 H&R 徽标，故删除该标签、只保留引擎共享 tags。
         { selector: "img[src*='pic/share_rule_1.gif']", name: "Excl.", color: "deep-orange-darken-1" }, // 禁转
@@ -287,9 +287,9 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors!,
+      ...SchemaMetadata.userInfo.selectors!,
       hnrUnsatisfied: {
         text: 0,
         selector: ["td.rowfollow > a[href*='torrents.php?option-torrents=8']"],

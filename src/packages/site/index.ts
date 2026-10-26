@@ -50,7 +50,7 @@ export async function getDefinedSiteMetadata(definition: string): Promise<ISiteM
   const siteMetadata = cloneDeep(definedSiteMetadata);
 
   // 解密url加密过的站点
-  siteMetadata.urls = siteMetadata.urls!.map(restoreSecureLink);
+  siteMetadata.urls = siteMetadata.urls.map(restoreSecureLink);
   if (siteMetadata.legacyUrls?.length) {
     siteMetadata.legacyUrls = siteMetadata.legacyUrls.map(restoreSecureLink);
   }
@@ -76,9 +76,9 @@ export async function getSite<TYPE extends "private" | "public">(
   let SiteClass,
     siteMetadata = {} as ISiteMetadata;
 
-  if (definitionList.includes(siteId!)) {
+  if (definitionList.includes(siteId)) {
     siteMetadata = await getDefinedSiteMetadata(siteId);
-    const DefinitionClass = (await getDefinitionModule(siteId!)).default;
+    const DefinitionClass = (await getDefinitionModule(siteId)).default;
     if (DefinitionClass) {
       SiteClass = DefinitionClass;
     }

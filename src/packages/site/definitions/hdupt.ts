@@ -151,9 +151,9 @@ export const siteMetadata: ISiteMetadata = {
     CategoryInclbookmarked,
   ],
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       progress: {
         // E3-10：selector 零命中时 getFieldData 会回落到 elementQuery.text（缺省 ""），且不会再跑 filters。
         // 没有 text 默认值时非本人发布的种子会得到 `progress = ""`、`status = ""`（而不是 unknown/0），
@@ -193,7 +193,7 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       bonus: {
         selector: ["td.rowhead:contains('魔力值') + td"],
         filters: [{ name: "parseNumber" }],

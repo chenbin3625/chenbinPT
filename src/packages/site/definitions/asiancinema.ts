@@ -67,14 +67,14 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       category: {
         selector: ":self",
         data: "categoryId",
         filters: [(query: string) => categoryMap[Number(query)]],
       },
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         // DEFS2-2 复核（统一判据：站点是否全站 H&R）：本站属上游 fb79a2a7「feat: add default H&R tags with red
         // color for global sites」(PR #336) 明确列出的全站 H&R 站点——站点规则对**全部**下载都规定 H&R 义务，
         // 故用恒真 selector:"*" 表达「所有结果行都带 H&R」（与 torrenting.ts 同一约定）。

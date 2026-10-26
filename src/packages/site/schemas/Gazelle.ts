@@ -626,8 +626,8 @@ export default class Gazelle extends GazelleBase {
     const legacyTableSelector = "table.torrent_table:last";
 
     // 生成 rows的
-    if (!searchEntry!.selectors?.rows) {
-      searchEntry!.selectors!.rows = {
+    if (!searchEntry.selectors?.rows) {
+      searchEntry.selectors!.rows = {
         selector: `${legacyTableSelector} tr:gt(0)`,
       };
     }
@@ -673,7 +673,7 @@ export default class Gazelle extends GazelleBase {
       }
     });
 
-    const rowsSelector = searchEntry!.selectors!.rows;
+    const rowsSelector = searchEntry.selectors!.rows;
     let trs = this.findElementsBySelectors(rowsSelector.selector, doc) as HTMLTableRowElement[];
     if (rowsSelector.filter) {
       trs = rowsSelector.filter(trs);
@@ -847,7 +847,7 @@ export default class Gazelle extends GazelleBase {
     searchConfig: ISearchInput,
   ): Promise<ITorrent | null> {
     // 对 link 结果做个检查，检查通过的再进入 parseRowToTorrent
-    const link = this.getFieldData(torrentEl, searchConfig!.searchEntry!.selectors!.link!);
+    const link = this.getFieldData(torrentEl, searchConfig.searchEntry!.selectors!.link!);
     if (!link) {
       this._searchRowFailures++; // SITECORE-4
       return null;

@@ -89,7 +89,7 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata!.search!,
+    ...SchemaMetadata.search,
     advanceKeywordParams: {
       imdb: false,
       // 支持站点的高级搜索
@@ -104,7 +104,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     selectors: {
-      ...SchemaMetadata!.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       category: {
         selector: "td.cats_col > div[title] > a",
         attr: "href",

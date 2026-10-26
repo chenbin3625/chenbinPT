@@ -101,15 +101,15 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       seeders: { selector: "a[href*='seeders']" },
       leechers: { selector: "a[href*='leechers']" },
       completed: { selector: "a[href*='viewsnatches']" },
       comments: { selector: "a[href*='comments']" },
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         { name: "条漫", selector: "span:contains('条漫')", color: "#1892EC" },
         { name: "自购", selector: "span:contains('自购')", color: "#9400D3" },
         { name: "电子版", selector: "span:contains('电子版')", color: "#732E67" },

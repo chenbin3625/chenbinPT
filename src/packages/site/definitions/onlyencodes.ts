@@ -69,7 +69,7 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata.search,
     skipNonLatinCharacters: true,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       category: {
         selector: ":self",
         data: "categoryId",
@@ -77,7 +77,7 @@ export const siteMetadata: ISiteMetadata = {
         filters: [(query: number | string) => categoryMap[Number(query)] ?? (query === "" ? undefined : query)],
       },
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         // DEFS2-2：原先这里的 H&R 用 selector:"*"（对任意行恒真），会把整站搜索结果全部标成 H&R；
         // 列表页没有 H&R 徽标，故删除该标签、只保留引擎共享 tags。
       ],

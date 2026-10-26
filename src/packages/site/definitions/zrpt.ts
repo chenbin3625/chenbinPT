@@ -156,16 +156,16 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
 
       // ZRPT特有的选择器优化
       title: {
         selector: ["a[href*='details.php?id='][title]:first", "a[href*='details.php?id=']:first"],
       },
       subTitle: {
-        ...SchemaMetadata.search!.selectors!.subTitle!,
+        ...SchemaMetadata.search.selectors!.subTitle!,
       },
 
       // 扩展字段支持
@@ -181,15 +181,15 @@ export const siteMetadata: ISiteMetadata = {
 
       // 进度和状态处理 - 使用NexusPHP标准配置
       progress: {
-        ...SchemaMetadata.search!.selectors!.progress!,
+        ...SchemaMetadata.search.selectors!.progress!,
       },
       status: {
-        ...SchemaMetadata.search!.selectors!.status!,
+        ...SchemaMetadata.search.selectors!.status!,
       },
 
       // 增强的标签系统 - 继承NexusPHP基础标签，添加ZRPT特有标签
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         // ZRPT特有的分类标签（D-32：与上面的分类 id 保持同一套语义）
         { name: "军事", selector: "a[href*='torrents.php?cat=401']", color: "brown" },
         { name: "自然", selector: "a[href*='torrents.php?cat=402']", color: "green" },
@@ -207,9 +207,9 @@ export const siteMetadata: ISiteMetadata = {
   ],
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors!,
+      ...SchemaMetadata.userInfo.selectors!,
       // ZRPT特有的等级解析配置
       levelId: {
         selector: ["td.rowhead:contains('等级') + td > img"],

@@ -67,7 +67,7 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata.search,
     skipNonLatinCharacters: true,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       category: {
         selector: ":self",
         data: "categoryId",

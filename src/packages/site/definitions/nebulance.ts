@@ -93,7 +93,7 @@ export const siteMetadata: ISiteMetadata = {
         // L10：params 会被整体替换（不是深合并），必须展开父层 Gazelle 的 searchsubmit=1。
         // keywordPath/searchtext 已按上游参考实现（PT-Plugin-Plus nebulance.io：queryString=searchtext=$key$）核对，
         // 站点读取的正是 searchtext，故保持不变。
-        ...SchemaMetadata.search!.requestConfig!.params,
+        ...SchemaMetadata.search.requestConfig!.params,
         order_by: "time",
         order_way: "desc",
         tags_type: 1,
@@ -112,7 +112,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       id: { selector: "a[href*='torrents.php?id=']", data: "browseId" },
       title: { selector: "a[href*='torrents.php?id=']", data: "src" },
       size: { selector: "a[href*='torrents.php?id=']", data: "filesize" },
@@ -153,7 +153,7 @@ export const siteMetadata: ISiteMetadata = {
       // 列表页没有 H&R 徽标（hnrUnsatisfied 是账号维度数据），故删除这条恒真标签。
       // 但 `tags: []` 会连 Gazelle 共享 tags 一起覆盖掉（Gazelle.ts 的 strong:contains('Freeleech!') → Free），
       // 等于把「恒真 H&R」换成「什么标签都没有」；这里改为展开共享 tags，保留引擎对 Freeleech 的真实检测。
-      tags: [...(SchemaMetadata.search!.selectors!.tags ?? [])],
+      tags: [...(SchemaMetadata.search.selectors!.tags ?? [])],
 
       ext_tvmaze: {
         selector: "a[href*='showid=']",
@@ -240,7 +240,7 @@ export const siteMetadata: ISiteMetadata = {
       // TODO hnrPreWarning
     ],
     selectors: {
-      ...SchemaMetadata!.userInfo!.selectors!,
+      ...SchemaMetadata.userInfo.selectors!,
       id: { selector: "response.id" },
       name: { selector: "response.username" },
       joinTime: {
@@ -249,7 +249,7 @@ export const siteMetadata: ISiteMetadata = {
         filters: [{ name: "parseTime", args: ["MMM d yyyy, HH:mm"] }],
       },
       levelName: {
-        ...SchemaMetadata!.userInfo!.selectors!.levelName!,
+        ...SchemaMetadata.userInfo.selectors!.levelName!,
         selector: "li:contains('Class:')",
       },
       lastAccessAt: {

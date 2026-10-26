@@ -80,7 +80,7 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       rows: { selector: "table.torrents:last > tbody > tr:gt(0)" }, // 前 50 条
       category: { text: "DEFAULT", selector: ["span.category"], attr: "title" },
       // E5-1：原写法 `{ selector: [":self"], attr: "data" }` 读的是字面名为 data 的属性，
@@ -135,7 +135,7 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       levelName: {
         selector: [
           "td.rowhead:contains('等级') + td > b",

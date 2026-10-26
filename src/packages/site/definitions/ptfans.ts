@@ -129,7 +129,7 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       // I5：NexusPHP 默认 tags 已包含 `img.hitandrun`（H&R），此处重复追加会让列表页解析产出两个同名标签。
       // 虽然搜索后处理会 uniqBy，但 content-script 的列表页解析不走去重，故直接复用引擎默认值。
     },
@@ -143,7 +143,7 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       hnrUnsatisfied: {
         selector: ['a[href*="myhr.php?userid="]'],
         // E5-13：链接文本通常形如 `H&R: 2/1/5`，split("/") 后直接 parseInt 会得到 NaN。

@@ -181,7 +181,7 @@ export const siteMetadata: ISiteMetadata = {
         requestConfigTransformer: ({ requestConfig: config }) => {
           if (config?.data?.search) {
             config.data.imdb_id = config.data.search;
-            delete config!.data.search;
+            delete config.data.search;
           }
           return config!;
         },
@@ -190,7 +190,7 @@ export const siteMetadata: ISiteMetadata = {
         requestConfigTransformer: ({ requestConfig: config }) => {
           if (config?.data?.search) {
             config.data.tmdb_id = config.data.search;
-            delete config!.data.search;
+            delete config.data.search;
           }
           return config!;
         },

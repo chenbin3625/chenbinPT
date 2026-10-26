@@ -80,7 +80,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       url: {
         selector: "a[href*='torrents.php?id='][href*='torrentid=']", // 更精确的种子链接选择器
         attr: "href",
@@ -107,7 +107,7 @@ export const siteMetadata: ISiteMetadata = {
       tags: [
         // D-25 / DEFS1-2：数组整体替换会把 Gazelle 引擎共享的 tags（strong:contains('Freeleech!') → Free）
         // 一起丢掉，BTN 结果的免费种不再显示 Free 标签；这里必须展开共享 tags。
-        ...(SchemaMetadata.search!.selectors!.tags ?? []),
+        ...(SchemaMetadata.search.selectors!.tags ?? []),
         // DEFS2-2 复核（统一判据：站点是否全站 H&R）：本站属上游 fb79a2a7「feat: add default H&R tags with red
         // color for global sites」(PR #336) 明确列出的全站 H&R 站点——站点规则对**全部**下载都规定 H&R 义务，
         // 故用恒真 selector:"*" 表达「所有结果行都带 H&R」（与 torrenting.ts 同一约定）。
@@ -118,7 +118,7 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     process: [
       {
         requestConfig: { url: "/index.php", responseType: "document" },
@@ -164,7 +164,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     ],
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       uploaded: {
         selector: "ul.nobullet > li:contains('Upload:')",
         filters: [{ name: "parseSize" }],

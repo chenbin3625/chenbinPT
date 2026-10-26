@@ -301,9 +301,9 @@ export const siteMetadata: ISiteMetadata = {
   officialGroupPattern: [/[@-]\s?(HDChina|HDCTV|HDWinG|HDWTV|HDC|k9611|tudou|iHD)\b/i],
 
   search: {
-    ...SchemaMetadata.search!,
+    ...SchemaMetadata.search,
     selectors: {
-      ...SchemaMetadata.search!.selectors!,
+      ...SchemaMetadata.search.selectors!,
       // NexusPHP 的列表表格被换成了 table.torrent_list，且表头是 tr.tab_header
       rows: {
         selector: "table.torrent_list > tbody > tr:not(.tab_header)",
@@ -381,7 +381,7 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         // 分享规则：/pic/share_rule_1.gif 即「禁止转载」；站点另有 share_rule_2/3/255 三种规则，此处只标最严格的一档
         { name: "禁转", selector: "img[src*='pic/share_rule_1.gif']", color: "deep-orange-darken-1" },
       ],
@@ -416,11 +416,11 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     process: [
-      { ...SchemaMetadata.userInfo!.process![0] },
+      { ...SchemaMetadata.userInfo.process![0] },
       {
-        ...SchemaMetadata.userInfo!.process![1],
+        ...SchemaMetadata.userInfo.process![1],
         // 站点没有 H&R（myhr.php 不存在），也没有「实际上传/下载量」，这些字段直接不取
         fields: [
           "name",
@@ -435,7 +435,7 @@ export const siteMetadata: ISiteMetadata = {
           "lastAccessAt",
         ],
       },
-      { ...SchemaMetadata.userInfo!.process![2] },
+      { ...SchemaMetadata.userInfo.process![2] },
     ],
   },
 

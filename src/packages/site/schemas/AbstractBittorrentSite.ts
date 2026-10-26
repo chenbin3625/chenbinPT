@@ -952,8 +952,8 @@ export default class BittorrentSite {
         }
 
         // 应用 filters
-        if (selectors.length > 0 && elementQuery.switchFilters?.[usedSelector!]) {
-          query = this.runQueryFilters(query, elementQuery.switchFilters[usedSelector!]);
+        if (selectors.length > 0 && elementQuery.switchFilters?.[usedSelector]) {
+          query = this.runQueryFilters(query, elementQuery.switchFilters[usedSelector]);
         } else if (elementQuery.filters && elementQuery.filters?.length > 0) {
           query = this.runQueryFilters(query, elementQuery.filters);
         }
@@ -1118,7 +1118,7 @@ export default class BittorrentSite {
 
     for (const tr of trs) {
       try {
-        torrents.push((await this.parseWholeTorrentFromRow({}, tr, searchConfig!)) as ITorrent);
+        torrents.push((await this.parseWholeTorrentFromRow({}, tr, searchConfig)) as ITorrent);
       } catch (e) {
         failedRows++;
         // B-1：单行解析失败（典型场景是时间单元格为空 / "昨天" / "01.03.2024 10:00" 这类
@@ -1144,7 +1144,7 @@ export default class BittorrentSite {
    * 避免每一行都重复 Object.keys/union/pascalCase 与 `in this` 反射。
    */
   protected getTorrentRowParsePlan(searchEntry: ISearchEntryRequestConfig): TorrentRowParsePlanItem[] {
-    const selectors = searchEntry!.selectors! as Record<string, any>;
+    const selectors = searchEntry.selectors! as Record<string, any>;
     const cacheKey = selectors as object;
 
     let parsePlan = this._torrentRowParsePlanCache.get(cacheKey);
@@ -1316,7 +1316,7 @@ export default class BittorrentSite {
     // 使用 list 中定义的 selectors 覆盖掉 search 中的 selectors
     for (const list of this.metadata.list ?? []) {
       const { urlPattern: listUrlPattern = [], selectors: listSelectors = {}, mergeSearchSelectors = true } = list;
-      if (listUrlPattern.some((pattern) => new RegExp(pattern!, "i").test(parsedListPageUrl))) {
+      if (listUrlPattern.some((pattern) => new RegExp(pattern, "i").test(parsedListPageUrl))) {
         searchEntry.selectors = { ...(mergeSearchSelectors ? searchEntry.selectors : {}), ...listSelectors };
         break; // 找到匹配的 list 后，直接跳出循环
       }

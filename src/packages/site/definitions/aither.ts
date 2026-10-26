@@ -88,14 +88,14 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata.search,
     skipNonLatinCharacters: true,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       category: {
         selector: ":self",
         data: "categoryId",
         filters: [(query: string) => categoryMap[Number(query)]],
       },
       tags: [
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         // DEFS2-2：原先这里追加的 H&R 用 selector:"*"（对任意行恒真），会把整站结果全标成 H&R；
         // Unit3D 列表页不渲染 H&R 状态（没有可用的真实徽标选择器），故只保留引擎共享 tags。
       ],
@@ -103,23 +103,23 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors!,
+      ...SchemaMetadata.userInfo.selectors!,
       id: {
-        ...SchemaMetadata.userInfo!.selectors!.id,
+        ...SchemaMetadata.userInfo.selectors!.id,
         selector: profileCardValue(userInfoTrans.id),
       },
       seedingSize: {
-        ...SchemaMetadata.userInfo!.selectors!.seedingSize,
+        ...SchemaMetadata.userInfo.selectors!.seedingSize,
         selector: profileCardValue(userInfoTrans.seedingSize),
       },
       joinTime: {
-        ...SchemaMetadata.userInfo!.selectors!.joinTime,
+        ...SchemaMetadata.userInfo.selectors!.joinTime,
         selector: userInfoTrans.joinTime.map((x) => `span[title='${x}'] span`),
       },
       averageSeedingTime: {
-        ...SchemaMetadata.userInfo!.selectors!.averageSeedingTime,
+        ...SchemaMetadata.userInfo.selectors!.averageSeedingTime,
         selector: profileCardValue(userInfoTrans.averageSeedingTime),
       },
       lastAccessAt: {
@@ -127,7 +127,7 @@ export const siteMetadata: ISiteMetadata = {
         filters: [{ name: "parseTTL" }],
       },
       invites: {
-        ...SchemaMetadata.userInfo!.selectors!.invites,
+        ...SchemaMetadata.userInfo.selectors!.invites,
         selector: ".ratio-bar__invites",
       },
       ratio: {

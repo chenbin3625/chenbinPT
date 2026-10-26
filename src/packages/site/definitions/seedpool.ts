@@ -37,9 +37,9 @@ export const siteMetadata: ISiteMetadata = {
   urls: ["uggcf://frrqcbby.bet/"],
 
   userInfo: {
-    ...SchemaMetadata.userInfo!,
+    ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors!,
+      ...SchemaMetadata.userInfo.selectors!,
       bonus: { text: "N/A" },
       bonusPerHour: { text: "N/A" },
       seeding: {
@@ -192,7 +192,7 @@ export const siteMetadata: ISiteMetadata = {
     ...SchemaMetadata.search,
     skipNonLatinCharacters: true,
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       category: {
         selector: ":self",
         data: "categoryId",

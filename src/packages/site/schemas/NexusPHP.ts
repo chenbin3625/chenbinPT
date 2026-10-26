@@ -923,8 +923,8 @@ export default class NexusPHP extends PrivateSite {
       // 对于NPHP，一般来说，表的第一行应该是标题行，即 `> tbody > tr:nth-child(1)` ，但是也有部分站点为 `> thead > tr`
       const legacyTableHasThead = selectElements(`${legacyTableSelector} > thead > tr`, doc).length > 0;
 
-      if (!searchEntry!.selectors!.rows) {
-        searchEntry!.selectors!.rows = {
+      if (!searchEntry.selectors!.rows) {
+        searchEntry.selectors!.rows = {
           // 对于有thead的站点，认为 > tbody > tr 均为种子信息，而无 thead 的站点则为 > tbody > tr:gt(0)
           selector: `${legacyTableSelector} > tbody > tr` + (legacyTableHasThead ? "" : ":gt(0)"),
         };

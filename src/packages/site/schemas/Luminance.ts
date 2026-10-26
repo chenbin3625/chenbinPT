@@ -249,8 +249,8 @@ export default class Luminance extends GazelleBase {
       const legacyTableSelector = "table#torrent_table:last";
 
       // 生成 rows的
-      if (!searchEntry!.selectors?.rows) {
-        searchEntry!.selectors!.rows = {
+      if (!searchEntry.selectors?.rows) {
+        searchEntry.selectors!.rows = {
           selector: `${legacyTableSelector} tr:gt(0)`,
         };
       }

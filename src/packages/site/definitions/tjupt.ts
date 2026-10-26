@@ -122,7 +122,7 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     ...SchemaMetadata.search,
     advanceKeywordParams: {
-      ...SchemaMetadata.search!.advanceKeywordParams,
+      ...SchemaMetadata.search.advanceKeywordParams,
       douban: {
         requestConfigTransformer: ({ requestConfig: config }) => {
           set(config!, "params.search_area", 5); // params "&search_area=5"
@@ -131,7 +131,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     selectors: {
-      ...SchemaMetadata.search!.selectors,
+      ...SchemaMetadata.search.selectors,
       rows: { selector: "table.torrents:last > tbody > tr:gt(0):not(:last)" },
       progress: selectorSearchProgress,
       status: selectorSearchStatus,
@@ -141,7 +141,7 @@ export const siteMetadata: ISiteMetadata = {
         // DEFS3-5 收尾：整数组替换还会覆盖 NexusPHP 共享 tags（img.hitandrun 的 H&R、img.pro_free* 的
         // Free/2xFree/2xUp/30%/50%），这里先展开共享 tags，再追加 TJUPT 自有的 `.tag.tag-*` 列表。
         // 共享里已有 img.hitandrun → H&R，本站不再重复声明同名标签（否则同一徽标会被计入两次）。
-        ...SchemaMetadata.search!.selectors!.tags!,
+        ...SchemaMetadata.search.selectors!.tags!,
         { name: "禁转", selector: ".tag.tag-exclusive", color: "red" },
         { name: "官方", selector: ".tag.tag-tjupt", color: "light-blue" },
         { name: "驻站", selector: ".tag.tag-internal-team", color: "green" },
@@ -157,7 +157,7 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   list: [
-    ...SchemaMetadata.list!,
+    ...SchemaMetadata.list,
     {
       urlPattern: ["/speedup.php"], // additional page
     },
@@ -166,13 +166,13 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     ...SchemaMetadata.userInfo,
     selectors: {
-      ...SchemaMetadata.userInfo!.selectors,
+      ...SchemaMetadata.userInfo.selectors,
       uploaded: {
         selector: ["td.rowhead:contains('上传量') + td"],
         filters: [{ name: "parseSize" }],
       },
       messageCount: {
-        ...SchemaMetadata.userInfo!.selectors!.messageCount,
+        ...SchemaMetadata.userInfo.selectors!.messageCount,
         selector: ["#msg-bar a[href*='messages.php'] strong"],
       },
       hnrPreWarning: {
@@ -182,7 +182,7 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
     process: [
-      ...SchemaMetadata.userInfo!.process!.filter((item) => item.requestConfig.url !== "/mybonus.php"),
+      ...SchemaMetadata.userInfo.process!.filter((item) => item.requestConfig.url !== "/mybonus.php"),
       {
         requestConfig: { url: "/bonus.php", params: { show: "description" }, responseType: "document" },
         // L-14：NexusPHP 默认第 3 步的 fields 同时声明了 bonusPerHour 与 seedingBonusPerHour，
