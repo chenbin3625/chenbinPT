@@ -49,6 +49,8 @@
  * - 具名过滤器的源码级守卫（上游 a269aa8c）：按 AST 扫描 definitions 与 schemas 里所有 `filters` / `switchFilters`
  *   的 `{ name: "xxx" }`，补上运行时用例走不到的位置（类方法里内联的查询、未挂到 metadata 的导出常量）。
  *   第一层守卫是 filter.ts 的 `satisfies Record<string, TQueryFilterFn>` + vue-tsc（见 utils/filterNameTyping.test.ts）。
+ * - 成人站点地址保护（上游 22573d1c）：tags 含 成人 / xxx / adult 的站点，urls / legacyUrls / trackerUrls 必须写成 rot13，
+ *   且定义文件里其它字符串字面量不得出现本站域名的明文地址；trackerUrls 同样要求 rot13 还原后是 http(s)。
  *
  * 上游的「id 合法/唯一」「schema 存在或有 default class」「category key 唯一」「timezoneOffset 格式」
  * 上面已有对应用例；「明文 http」与 version 口径只是上游的提示/警告，不在这里断言。
@@ -322,6 +324,42 @@ function checkFilterNameLiterals(
   visit(source);
 
   return { errors, count };
+}
+
+/**
+ * 成人站点的标记（上游 22573d1c）。命中时该站点的 urls / legacyUrls / trackerUrls 必须写成 rot13，
+ * 避免仓库里出现明文成人站点域名（加载时由 site/index.ts 的 restoreSecureLink 还原）。
+ * `adult` 一并收进来是因为 pornbits 用的是 `tags: ["Adult"]`，词汇不统一会留下漏网口子。
+ */
+const ADULT_TAG_PATTERN = /^(成人|xxx|adult)$/i;
+
+/** 会被 restoreSecureLink 还原的地址字段（trackerUrls 为可选字段） */
+const SECURE_URL_FIELDS = ["urls", "legacyUrls", "trackerUrls"] as const;
+
+/** 取 http(s) 地址的主机名（去掉 `www.` 与端口），取不到返回 undefined */
+function urlHost(url: string): string | undefined {
+  const match = url.match(/^https?:\/\/([^/?#\s]+)/i);
+  if (!match) return undefined;
+  const host = match[1].toLowerCase().replace(/:\d+$/, "");
+  return host.startsWith("www.") ? host.slice(4) : host;
+}
+
+/**
+ * 按源码 AST 找出「主机名属于 ownHosts 的明文 http(s) 字符串字面量」（上游 22573d1c §7.1）。
+ * `skip` 里的字面量（urls 等字段本身的值）由字段级检查负责，这里不重复报。
+ */
+function findPlainOwnHostLiterals(fileName: string, text: string, ownHosts: Set<string>, skip: Set<string>): string[] {
+  const found: string[] = [];
+  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const visit = (node: ts.Node) => {
+    if (ts.isStringLiteralLike(node) && /^https?:\/\/[^\s/]+/i.test(node.text) && !skip.has(node.text)) {
+      const host = urlHost(node.text);
+      if (host && ownHosts.has(host)) found.push(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 beforeAll(async () => {
@@ -673,7 +711,7 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
     expect(problems).toEqual([]);
   });
 
-  it("urls / legacyUrls 经 rot13 还原后都是 http(s) 地址，且 legacyUrls 不与 urls 重复", async () => {
+  it("urls / legacyUrls / trackerUrls 经 rot13 还原后都是 http(s) 地址，且 legacyUrls 不与 urls 重复", async () => {
     const { restoreSecureLink } = await import("@ptd/site/utils/html.ts");
     const isHttpUrl = (url: string) => /^https?:\/\/[^\s/]+/i.test(url);
     const problems: string[] = [];
@@ -693,6 +731,14 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
           problems.push(`${fileId}: legacyUrls[${index}] = ${JSON.stringify(url)} 不是 http(s) 地址`);
         } else if (urls.includes(url)) {
           problems.push(`${fileId}: legacyUrls[${index}] 与 urls 重复：${url}`);
+        }
+      });
+
+      // 上游 22573d1c：trackerUrls 与 urls 一样会被 restoreSecureLink 还原，坏值同样要拦下来。
+      // 该字段由 0538dcf9（按 tracker 识别站点）引入，这里按可选字段读取
+      (((metadata as any).trackerUrls ?? []) as unknown[]).forEach((url, index) => {
+        if (typeof url !== "string" || !isHttpUrl(restoreSecureLink(url))) {
+          problems.push(`${fileId}: trackerUrls[${index}] = ${JSON.stringify(url)} 不是 http(s) 地址`);
         }
       });
     }
@@ -814,6 +860,69 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
 
     expect(count, "没有扫到具名过滤器，说明遍历坏了").toBeGreaterThan(1000);
     expect(errors, "过滤器名写错时 runQueryFilters 会静默跳过，只给出错值（broadcasthenet 曾因此偏高 24 倍）").toEqual(
+      [],
+    );
+  });
+
+  it("成人站点（tags 含 成人 / xxx / adult）的地址必须写成 rot13，文件其它位置也不得出现本站明文域名", async () => {
+    // 自证：明文字面量里属于本站域名的要报（含 www. 与端口归一），urls 本身的值与其它域名不报
+    expect(
+      findPlainOwnHostLiterals(
+        "synthetic.ts",
+        `const a = { urls: ["https://adult.example/"], Origin: "https://www.adult.example:8443/x", b: "https://other.example/" };`,
+        new Set(["adult.example"]),
+        new Set(["https://adult.example/"]),
+      ),
+    ).toEqual(["https://www.adult.example:8443/x"]);
+
+    const { restoreSecureLink } = await import("@ptd/site/utils/html.ts");
+    const problems: string[] = [];
+    const adultSites: string[] = [];
+
+    for (const { fileId, metadata } of definitions) {
+      const tags = metadata.tags as unknown;
+      if (!Array.isArray(tags) || !tags.some((tag) => typeof tag === "string" && ADULT_TAG_PATTERN.test(tag))) {
+        continue;
+      }
+      adultSites.push(fileId);
+
+      const ownHosts = new Set<string>();
+      const fieldLiterals = new Set<string>();
+      for (const field of SECURE_URL_FIELDS) {
+        (((metadata as any)[field] ?? []) as unknown[]).forEach((url, index) => {
+          if (typeof url !== "string") return;
+          fieldLiterals.add(url);
+          const host = urlHost(restoreSecureLink(url));
+          if (host) ownHosts.add(host);
+          if (/^https?:\/\//i.test(url)) problems.push(`${fileId}: ${field}[${index}] 是明文地址`);
+        });
+      }
+
+      // §7.1：只有 urls / legacyUrls / trackerUrls 会被 rot13 还原，favicon / Origin / Referer /
+      // 绝对 requestConfig.url 这类字段必须改用 this.url 派生、本地图标，或者省略
+      const relPath = `src/packages/site/definitions/${fileId}.ts`;
+      const text = fs.readFileSync(path.join(repoRoot, relPath), "utf8");
+      for (const literal of new Set(findPlainOwnHostLiterals(relPath, text, ownHosts, fieldLiterals))) {
+        problems.push(`${fileId}: ${literal}`);
+      }
+    }
+
+    // 自证：大小写与三种写法都要认（pornbits 用 "Adult"、pussytorrents 用 "XXX"）
+    expect(adultSites).toEqual(expect.arrayContaining(["pornbits", "pussytorrents", "ehentai"]));
+    expect(adultSites.length, "没有扫到成人站点，说明 tags 结构变了").toBeGreaterThan(30);
+
+    // 已知条目：上游 22573d1c 已修好这两个站点（0dayfiles 改 rot13 并去掉明文 favicon，pussytorrents 用
+    // restoreSecureLink 派生 Origin / Referer），lane-b 移植该提交后这里应为空 —— lane-b 集成后删除。
+    const knownPlainAdultUrls = new Set([
+      "0dayfiles: urls[0] 是明文地址",
+      "0dayfiles: https://0dayfiles.net/favicon.ico",
+      "pussytorrents: https://pussytorrents.org",
+      "pussytorrents: https://pussytorrents.org/user/account/snatchlist",
+      "pussytorrents: https://pussytorrents.org/user/account/uploadedtorrents",
+    ]);
+    const unexpected = problems.filter((item) => !knownPlainAdultUrls.has(item));
+    if (problems.length) console.warn("[static] 已知的成人站点明文地址：", problems);
+    expect(unexpected, "成人站点的地址必须写成 rot13（types/base.ts 的 TSiteUrl），其它字段不得出现明文域名").toEqual(
       [],
     );
   });
