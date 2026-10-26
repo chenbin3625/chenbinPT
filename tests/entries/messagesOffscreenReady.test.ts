@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -454,6 +454,34 @@ describe("敏感消息的发送方限制：extensionPageOnlyMessages 完备性�
     // 两个名单都不该有重复项
     expect(new Set(offscreenTypes).size).toBe(offscreenTypes.length);
     expect(new Set(extensionOnlyTypes).size).toBe(extensionOnlyTypes.length);
+  });
+
+  it("ProtocolMap 的每条消息都有 onMessage handler，且没有未声明的 handler（上游 f9780a2f）", () => {
+    // 回归背景：setDownloadHistoryStatus 曾经只有协议声明和调用方、没有 handler，调用必然抛「无 handler」
+    // 又被调用点的 .catch() 吞掉；showNotification 则是声明了却既无 handler 也无调用方的死协议项。
+    const protocolNames = parseProtocolMessageNames();
+    const handlerNames = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|vue)$/.test(entry.name)) {
+          for (const match of readFileSync(full, "utf8").matchAll(/onMessage\(\s*["'`]([\w$]+)["'`]/g)) {
+            handlerNames.add(match[1]!);
+          }
+        }
+      }
+    };
+    walk(resolve(process.cwd(), "src"));
+
+    expect(
+      protocolNames.filter((name) => !handlerNames.has(name)),
+      "声明了但没有 handler 的消息",
+    ).toEqual([]);
+    expect(
+      [...handlerNames].filter((name) => !protocolNames.includes(name)),
+      "有 handler 但 ProtocolMap 未声明的消息",
+    ).toEqual([]);
   });
 
   it("会读写扩展存储 / Cookie / 备份 / DNR / 原生桥接的消息都必须登记（豁免表逐条给理由）", async () => {
