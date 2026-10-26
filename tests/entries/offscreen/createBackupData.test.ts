@@ -250,6 +250,8 @@ describe("exportBackupData：自动备份链路的字段装配不被放宽（TES
 
     await expect(exportBackupData("srv", ["cookies", "metadata", "config"])).rejects.toThrow(/未设置备份加密密钥/);
     await expect(exportBackupData("srv", ["downloadHistory"])).rejects.toThrow(/downloadHistory/);
+    // 种子收藏保存了完整的 ITorrent（含 link），与 downloadHistory 同样可能带 passkey
+    await expect(exportBackupData("srv", ["torrentFavorite"])).rejects.toThrow(/torrentFavorite/);
     expect(addFile).not.toHaveBeenCalled();
     // 拒绝发生在读取 IndexedDB / 抓 cookie 之前
     expect(mocks.getAll).not.toHaveBeenCalled();

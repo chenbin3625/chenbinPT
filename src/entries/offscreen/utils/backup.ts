@@ -58,7 +58,13 @@ export const storageKey = [
  * 「防止明文上传第三方」的威胁模型无关；改为记一条 warn，由 UI 决定是否二次确认
  * （SetBackup 页面提示由 options 任务负责）。
  */
-export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = ["cookies", "metadata", "downloadHistory"];
+export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = [
+  "cookies",
+  "metadata",
+  "downloadHistory",
+  // 种子收藏保存了完整的 ITorrent（含 link / url），与 downloadHistory 一样可能带 passkey
+  "torrentFavorite",
+];
 
 /** 无密钥 + 敏感字段时的提示文案（remote 拒绝用错误、local 仅告警） */
 function buildPlaintextSensitiveMessage(blockedFields: TBackupFields[]): string {

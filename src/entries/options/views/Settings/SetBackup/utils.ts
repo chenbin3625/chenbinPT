@@ -14,7 +14,12 @@ type ErrorWithStatus = {
  * 与 `src/entries/offscreen/utils/backup.ts` 的 `PLAINTEXT_UNSAFE_BACKUP_FIELDS` 保持同口径
  * （本地导出允许明文，不受这条限制）。UI 需要据此给出可操作指引，而不是只显示「备份失败」。
  */
-export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = ["cookies", "metadata", "downloadHistory"];
+export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = [
+  "cookies",
+  "metadata",
+  "downloadHistory",
+  "torrentFavorite",
+];
 
 /**
  * H-2：本次备份是否会因「无加密密钥 + 含敏感字段」被远端拒绝。
