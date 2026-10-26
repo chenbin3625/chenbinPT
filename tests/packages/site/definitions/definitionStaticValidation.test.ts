@@ -30,8 +30,31 @@
  *   的棘轮守住 —— ① 两个字段共享同一查询（`0magnet` 的 url/id 是有意复用）；② `assertion` 声明了依赖
  *   但路径是静态串（teamhd / wihd，E6 遗留）；③ 等级阶梯倒挂（含插入在阶梯中间的特殊等级，不能简单判错）。
  *   这些条目在 fix report 里列为「待收紧」，修好之后请把上界一起下调。
+ *
+ * 对照上游 182140c2 的 `vite/checkSiteDefinition.ts`（上游挂在 `pnpm check`；fork 没有这个脚本，
+ * 站点定义静态校验统一放在本文件，随 `npm test` 运行）补齐的检查：
+ *
+ * - 必填字段：`version` 是数字、`name` 非空、`type` 只能是 private / public；
+ *   非模板类引擎的 `version` 必须 > 0（types/site.ts 的 version 约定）；
+ * - `urls` / `legacyUrls` 每项经 `restoreSecureLink`（rot13 还原）后必须是 http(s) 地址，
+ *   `legacyUrls` 不得与 `urls` 重复；
+ * - `category` 每组都有非空 `name` / `key` 与 `options` 数组；
+ * - `levelRequirements` 的 id 是数字、唯一且严格递增，且每级都有 `name`；
+ * - `default class` 必须继承 `schema` 声明的引擎类（否则 schema 字段只是摆设）；
+ * - `TPatterns` 字段（urlPattern / excludeUrlPattern / urlPatterns / refreshHeaderPattern / officialGroupPattern）
+ *   里的字符串字面量必须能 `new RegExp(pattern, "i")`：坏一个括号会在内容脚本里抛 SyntaxError，
+ *   把整页列表解析带崩。这一项按源码 AST 扫描 definitions 与 schemas 全部文件（与上游一致），
+ *   因此也覆盖 `listTorrentPageMetadata` 这类不挂在 siteMetadata 上的导出常量。
+ *
+ * 上游的「id 合法/唯一」「schema 存在或有 default class」「category key 唯一」「timezoneOffset 格式」
+ * 上面已有对应用例；「明文 http」与 version 口径只是上游的提示/警告，不在这里断言。
  */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { get } from "es-toolkit/compat";
+import ts from "typescript";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
@@ -46,6 +69,7 @@ interface IDefinition {
   metadata: any;
   /** 定义自带的站点类（`export default class`）；没有时由 schema 引擎类承载 */
   hasDefaultClass: boolean;
+  defaultClass?: Function;
 }
 
 const definitions: IDefinition[] = [];
@@ -54,6 +78,8 @@ let filterNames = new Set<string>();
 let schemaNames = new Set<string>();
 /** 各 schema 引擎的 SchemaMetadata 是否自带 `search.selectors.rows`（NexusPHP 会运行时自动生成，另行豁免） */
 const schemaProvidesRows = new Map<string, boolean>();
+/** 各 schema 模块导出的引擎类（`export default class`），用于校验定义的 default class 继承关系 */
+const schemaClasses = new Map<string, Function>();
 /** 引擎自己补齐 rows / 走 JSON 行的 schema：不需要站点写 rows 也不会「取不到行」 */
 const ROWS_ENGINE_EXEMPT = new Set(["NexusPHP", "GazelleJSONAPI"]);
 
@@ -168,6 +194,62 @@ function findMisplacedPlaceholderPaths(process: any[]): { misplaced: string[]; c
   return { misplaced, compared };
 }
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+
+/** 会被 `new RegExp(pattern, "i")` 编译的字段（类型里的 `TPatterns`），与上游 checkSiteDefinition.ts 一致 */
+const PATTERN_FIELDS = new Set([
+  "urlPattern", // site.urlPattern / list[].urlPattern / search.urlPattern / detail.urlPattern
+  "excludeUrlPattern",
+  "urlPatterns", // noLoginAssert.urlPatterns
+  "refreshHeaderPattern",
+  "officialGroupPattern",
+]);
+
+/** 收集一棵子树里的所有字符串字面量（无插值的模板串也算） */
+function collectStringLiterals(node: ts.Node, out: ts.StringLiteralLike[] = []): ts.StringLiteralLike[] {
+  if (ts.isStringLiteralLike(node)) {
+    out.push(node);
+    return out;
+  }
+  // 回调必须返回 undefined：`ts.forEachChild` 的回调返回真值就会停止遍历，
+  // 只收到数组里的第一个字面量（上游 182140c2 修过的同一个坑）
+  ts.forEachChild(node, (child) => {
+    collectStringLiterals(child, out);
+  });
+  return out;
+}
+
+/**
+ * 按源码 AST 找出 PATTERN_FIELDS 属性里所有字符串字面量，并尝试编译。
+ * 用 AST 而不是运行时对象，是为了覆盖不挂在 siteMetadata 上的导出常量与类内部的配置。
+ */
+function checkPatternLiterals(fileName: string, text: string): { errors: string[]; count: number } {
+  const errors: string[] = [];
+  let count = 0;
+  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+
+  const visit = (node: ts.Node) => {
+    if (ts.isPropertyAssignment(node) && (ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name))) {
+      const field = node.name.text;
+      if (PATTERN_FIELDS.has(field)) {
+        for (const literal of collectStringLiterals(node.initializer)) {
+          count++;
+          try {
+            new RegExp(literal.text, "i");
+          } catch (e) {
+            const { line } = source.getLineAndCharacterOfPosition(literal.getStart(source));
+            errors.push(`${fileName}:${line + 1} ${field} = ${JSON.stringify(literal.text)}：${(e as Error).message}`);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  return { errors, count };
+}
+
 beforeAll(async () => {
   const { definedFilters } = await import("@ptd/site/utils/filter.ts");
   filterNames = new Set(Object.keys(definedFilters));
@@ -182,6 +264,7 @@ beforeAll(async () => {
     const mod = (await loader()) as any;
     const schemaMetadata = mod?.SchemaMetadata ?? mod?.default?.SchemaMetadata ?? {};
     schemaProvidesRows.set(name, !!(schemaMetadata as any)?.search?.selectors?.rows);
+    if (typeof mod?.default === "function") schemaClasses.set(name, mod.default);
   }
 
   for (const [path, loader] of Object.entries(definitionModules)) {
@@ -191,6 +274,7 @@ beforeAll(async () => {
       path,
       metadata: mod?.siteMetadata,
       hasDefaultClass: typeof mod?.default === "function",
+      defaultClass: typeof mod?.default === "function" ? mod.default : undefined,
     });
   }
 });
@@ -477,6 +561,150 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
     expect(tagCount, "没有扫到 tags，说明定义结构变了").toBeGreaterThan(200);
     expect(badTags).toEqual([]);
     expect(badOffsets, "timezoneOffset 格式错误会让 parseTime 静默回落成宿主时区").toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // 上游 182140c2（vite/checkSiteDefinition.ts）中 fork 此前缺少的检查
+  // -------------------------------------------------------------------------
+
+  it("必填字段：version 是数字、name 非空、type 只能是 private / public；非模板类引擎 version > 0", () => {
+    // types/site.ts 的 version 约定：模板类 -1，NexusPHP / Unit3D / Gazelle / GazelleJSONAPI / AvistazNetwork 为 0，
+    // 其余站点必须 > 0。仓库现状多数写 1（保持站点内一致即可），这里只拦「非模板类却写了 <= 0」。
+    const templateEngines = new Set([
+      "AbstractBittorrentSite",
+      "AbstractPrivateSite",
+      "NexusPHP",
+      "Unit3D",
+      "Gazelle",
+      "GazelleJSONAPI",
+      "AvistazNetwork",
+    ]);
+    const problems: string[] = [];
+
+    for (const { fileId, metadata } of definitions) {
+      if (typeof metadata.version !== "number" || Number.isNaN(metadata.version)) {
+        problems.push(`${fileId}: version=${String(metadata.version)} 不是数字`);
+      }
+      if (typeof metadata.name !== "string" || metadata.name.trim() === "") problems.push(`${fileId}: 缺少 name`);
+      if (metadata.type !== "private" && metadata.type !== "public") {
+        problems.push(`${fileId}: type=${String(metadata.type)} 只能是 "private" 或 "public"`);
+      }
+
+      const engine = metadata.schema ?? (metadata.type === "public" ? "AbstractBittorrentSite" : "AbstractPrivateSite");
+      if (!templateEngines.has(engine) && typeof metadata.version === "number" && metadata.version <= 0) {
+        problems.push(`${fileId}: schema=${engine} 不是模板类引擎，version=${metadata.version} 应 > 0`);
+      }
+    }
+
+    expect(problems).toEqual([]);
+  });
+
+  it("urls / legacyUrls 经 rot13 还原后都是 http(s) 地址，且 legacyUrls 不与 urls 重复", async () => {
+    const { restoreSecureLink } = await import("@ptd/site/utils/html.ts");
+    const isHttpUrl = (url: string) => /^https?:\/\/[^\s/]+/i.test(url);
+    const problems: string[] = [];
+    let urlCount = 0;
+
+    for (const { fileId, metadata } of definitions) {
+      const urls = (metadata.urls ?? []) as unknown[];
+      urls.forEach((url, index) => {
+        urlCount++;
+        if (typeof url !== "string" || !isHttpUrl(restoreSecureLink(url))) {
+          problems.push(`${fileId}: urls[${index}] = ${JSON.stringify(url)} 不是 http(s) 地址（rot13 还原后也不是）`);
+        }
+      });
+
+      ((metadata.legacyUrls ?? []) as unknown[]).forEach((url, index) => {
+        if (typeof url !== "string" || !isHttpUrl(restoreSecureLink(url))) {
+          problems.push(`${fileId}: legacyUrls[${index}] = ${JSON.stringify(url)} 不是 http(s) 地址`);
+        } else if (urls.includes(url)) {
+          problems.push(`${fileId}: legacyUrls[${index}] 与 urls 重复：${url}`);
+        }
+      });
+    }
+
+    expect(urlCount, "没有扫到 urls，说明定义结构变了").toBeGreaterThan(300);
+    expect(problems, "站点地址写错时 index.ts 还原出的地址无法请求").toEqual([]);
+  });
+
+  it("category 每组都有 name / key 与 options 数组；levelRequirements 的 id 唯一、严格递增且每级有 name", () => {
+    const badCategories: string[] = [];
+    const badLevels: string[] = [];
+    let levelCount = 0;
+
+    for (const { fileId, metadata } of definitions) {
+      ((metadata.category ?? []) as any[]).forEach((group, index) => {
+        if (typeof group?.key !== "string" || group.key === "") badCategories.push(`${fileId}[${index}]: 缺少 key`);
+        if (typeof group?.name !== "string" || group.name === "") badCategories.push(`${fileId}[${index}]: 缺少 name`);
+        if (!Array.isArray(group?.options)) badCategories.push(`${fileId}[${index}] ${group?.key}: 缺少 options 数组`);
+      });
+
+      const levels = (metadata.levelRequirements ?? []) as any[];
+      const ids: number[] = [];
+      levels.forEach((level, index) => {
+        levelCount++;
+        if (typeof level?.id !== "number") badLevels.push(`${fileId}[${index}]: id 不是数字`);
+        else ids.push(level.id);
+        if (!level?.name) badLevels.push(`${fileId}[${index}] id${level?.id}: 缺少 name`);
+      });
+      const duplicated = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+      if (duplicated.length) badLevels.push(`${fileId}: id 重复 ${duplicated.join(", ")}`);
+      // utils/level.ts 按 id 大小比较等级高低（`level.id <= currentLevelId`、`levelRequirement.id > testLevel`），
+      // 数组顺序与 id 顺序不一致时界面上的「下一等级」会错位，因此 id 必须严格递增
+      for (let i = 1; i < ids.length; i++) {
+        if (ids[i] <= ids[i - 1]) {
+          badLevels.push(`${fileId}: id 非严格递增 ${ids[i - 1]} → ${ids[i]}（第 ${i} 项）`);
+          break;
+        }
+      }
+    }
+
+    expect(levelCount, "没有扫到 levelRequirements，说明定义结构变了").toBeGreaterThan(500);
+    expect(badCategories, "缺 key / options 的分类组在搜索方案界面里无法勾选").toEqual([]);
+    expect(badLevels, "等级 id 重复或乱序时下一等级的计算会错位").toEqual([]);
+  });
+
+  it("default class 必须继承 schema 声明的引擎类（否则 schema 字段与实际行为不一致）", () => {
+    const mismatched: string[] = [];
+    let compared = 0;
+
+    for (const { fileId, metadata, defaultClass } of definitions) {
+      const schemaClass = metadata.schema ? schemaClasses.get(metadata.schema) : undefined;
+      if (!defaultClass || !schemaClass) continue; // schema 不在 schemas/ 时由上面的 G24 用例负责
+      compared++;
+      if (defaultClass !== schemaClass && !(defaultClass.prototype instanceof schemaClass)) {
+        mismatched.push(
+          `${fileId}: schema=${metadata.schema}，default class 继承 ${Object.getPrototypeOf(defaultClass)?.name}`,
+        );
+      }
+    }
+
+    expect(compared, "没有扫到带 default class 的定义，说明遍历坏了").toBeGreaterThan(50);
+    expect(mismatched).toEqual([]);
+  });
+
+  it("TPatterns 字段里的字符串字面量都能编译为正则（按源码扫描 definitions 与 schemas）", () => {
+    // 自证：数组第二项的坏正则也要能扫到（上游修过的 forEachChild 早停问题）
+    const synthetic = checkPatternLiterals(
+      "synthetic.ts",
+      `export const x = { list: [{ urlPattern: ["/ok", "/bad(", /re/] }], noLoginAssert: { urlPatterns: ["["] } };`,
+    );
+    expect(synthetic.count).toBe(3);
+    expect(synthetic.errors).toEqual([expect.stringContaining('"/bad("'), expect.stringContaining('"["')]);
+
+    const errors: string[] = [];
+    let count = 0;
+    for (const dir of ["src/packages/site/definitions", "src/packages/site/schemas"]) {
+      for (const file of fs.readdirSync(path.join(repoRoot, dir)).filter((name) => name.endsWith(".ts"))) {
+        const relPath = `${dir}/${file}`;
+        const result = checkPatternLiterals(relPath, fs.readFileSync(path.join(repoRoot, relPath), "utf8"));
+        count += result.count;
+        errors.push(...result.errors);
+      }
+    }
+
+    expect(count, "没有扫到 pattern 字面量，说明遍历坏了").toBeGreaterThan(200);
+    expect(errors, "pattern 写坏时内容脚本里 new RegExp 会抛 SyntaxError，整页列表解析一起失败").toEqual([]);
   });
 
   it("requestConfig 里的 $field$ 占位符必须出现在 assertion 声明的 pathKey 处（占位符名对、路径写错）", () => {
