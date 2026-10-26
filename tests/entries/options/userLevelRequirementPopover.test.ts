@@ -185,3 +185,62 @@ describe("F9：没有等级要求 / 元数据未加载完时不得显示「已�
     view.unmount();
   });
 });
+
+describe("等级列限宽（移植自上游 07692725）", () => {
+  async function mountWithWidth(levelNameMaxWidth: string | undefined, showLevelRequirement: boolean) {
+    const pinia = prepareOptionsPinia();
+    const { useConfigStore } = await import("@/options/stores/config.ts");
+    const { default: UserLevelRequirementsTd } =
+      await import("@/options/views/Overview/MyData/UserLevelRequirementsTd.vue");
+
+    const configStore = useConfigStore();
+    configStore.myDataTableControl.showLevelRequirement = showLevelRequirement;
+    configStore.myDataTableControl.normalizeLevelName = false;
+
+    const view = mountOptionsView(UserLevelRequirementsTd, { props: { userInfo, levelNameMaxWidth }, pinia });
+    await view.settle();
+    return view;
+  }
+
+  /**
+   * 包着等级名文字的那个元素（浮层触发元素 / 无浮层时的 span）：组件根是 `<span v-if="levelName">`，
+   * 所以取根节点下第一个同时包含等级图标与等级名的子 span，而不是根节点本身
+   */
+  const levelNameHolder = (view: { host: HTMLElement }) => {
+    const root = view.host.firstElementChild!;
+    return Array.from(root.querySelectorAll<HTMLElement>(":scope > span")).find(
+      (element) => element.querySelector(".anticon") && element.textContent?.includes("User"),
+    )!;
+  };
+
+  it("限宽时截断样式加在浮层触发元素本身（而不是外层容器）", async () => {
+    const view = await mountWithWidth("32vw", true);
+    const holder = levelNameHolder(view);
+
+    expect(holder.style.maxWidth).toBe("32vw");
+    expect(holder.style.overflow).toBe("hidden");
+    expect(holder.style.textOverflow).toBe("ellipsis");
+
+    // 悬停的正是这个被截断的元素，浮层照常出现
+    holder.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    await view.settle(300);
+    expect(popoversInDocument().length).toBeGreaterThan(0);
+
+    view.unmount();
+    cleanupOverlays();
+  });
+
+  it("不渲染浮层时，被截断的等级名用原生 title 提供完整内容；不限宽时不加截断与 title", async () => {
+    const limited = await mountWithWidth("32vw", false);
+    const limitedHolder = levelNameHolder(limited);
+    expect(limitedHolder.style.maxWidth).toBe("32vw");
+    expect(limitedHolder.getAttribute("title")).toBe("User");
+    limited.unmount();
+
+    const free = await mountWithWidth(undefined, false);
+    const freeHolder = levelNameHolder(free);
+    expect(freeHolder.style.maxWidth).toBe("");
+    expect(freeHolder.hasAttribute("title")).toBe(false);
+    free.unmount();
+  });
+});

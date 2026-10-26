@@ -24,6 +24,7 @@ import { isUndefined } from "es-toolkit/compat";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 import { EResultParseStatus, type ISiteUserConfig, type IUserInfo, type TSiteID } from "@ptd/site";
 
+import { useDisplay } from "@/options/composables/useDisplay.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -72,6 +73,16 @@ const isTableLoading = computed<boolean>(() => isStoreHydrating.value || isTable
 
 type TExtendDataTableHeader = DataTableHeader & { props?: any };
 
+const display = useDisplay();
+
+/**
+ * 等级列的最大宽度：用户开启「限制等级栏宽度」，或处于小屏时生效（与搜索结果页标题列的移动端策略一致）。
+ * 等级列由 #bodyCell 插槽渲染，表头的 maxWidth 不会作用到单元格，所以限宽统一交给单元格自身截断。
+ */
+const levelNameMaxWidth = computed(() =>
+  configStore.myDataTableControl.limitLevelNameTdWidth || display.smAndDown.value ? "32vw" : undefined,
+);
+
 const fullTableHeader = reactive([
   {
     title: t("common.site"),
@@ -80,7 +91,8 @@ const fullTableHeader = reactive([
     props: { disabled: true },
   },
   { title: t("common.username"), key: "name", align: "center" },
-  { title: t("MyData.table.levelName"), key: "levelName", align: "start", width: "15%" },
+  // 基准宽度 10%；限宽（用户开启「限制等级栏宽度」或小屏）时由单元格自身截断，见 levelNameMaxWidth
+  { title: t("MyData.table.levelName"), key: "levelName", align: "start", width: "10%" },
   // NOTE: 这里将 key 设为 uploaded, trueUploaded 而不是虚拟的 userData，可以让数据表格使用 uploaded 进行排序
   { title: t("MyData.table.userData"), key: "uploaded", align: "end" },
   { title: t("MyData.table.trueUserData"), key: "trueUploaded", align: "end" }, // 默认不显示
@@ -542,7 +554,7 @@ const showExportDialog = ref(false);
 
         <!-- 等级信息，升级信息 -->
         <template v-else-if="column.key === 'levelName'">
-          <UserLevelRequirementsTd :user-info="record" />
+          <UserLevelRequirementsTd :user-info="record" :level-name-max-width="levelNameMaxWidth" />
         </template>
 
         <!-- 上传、下载 -->

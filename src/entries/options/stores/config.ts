@@ -229,6 +229,7 @@ export const useConfigStore = defineStore("config", {
       showUnreadMessage: true,
       showUserName: true,
       normalizeLevelName: true,
+      limitLevelNameTdWidth: true,
       showLevelRequirement: true,
       onlyShowUserLevelRequirement: true,
       showNextLevelInTable: false,

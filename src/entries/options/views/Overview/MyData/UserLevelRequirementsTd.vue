@@ -20,9 +20,26 @@ import UserLevelsComponent from "./UserLevelsComponent.vue";
 import UserNextLevelUnMet from "@/options/views/Overview/MyData/UserNextLevelUnMet.vue";
 import { getSiteLevelMetadata } from "./utils/siteMetadataCache.ts";
 
-const { userInfo } = defineProps<{
+const { userInfo, levelNameMaxWidth } = defineProps<{
   userInfo: IUserInfo;
+  /**
+   * 等级列的最大宽度（undefined = 不限宽）。由父表格统一计算后传入：
+   * 行组件（每个站点一行）不再各自创建相同的 computed，表头与单元格共用同一条件
+   */
+  levelNameMaxWidth?: string;
 }>();
+
+/**
+ * 限宽生效时给单元格内容加的截断样式（单行省略，超出部分由浮层 / 原生 title 展示完整内容）。
+ *
+ * 截断样式必须加在浮层的触发元素本身：若只裁剪外层容器，触发元素的 getBoundingClientRect()
+ * 仍按完整文字宽度计算，浮层会被定位到隐藏文字的末端（远离单元格）。
+ */
+const truncateStyle = computed(() =>
+  levelNameMaxWidth
+    ? { display: "block", maxWidth: levelNameMaxWidth, overflow: "hidden", textOverflow: "ellipsis" }
+    : {},
+);
 
 const display = useDisplay();
 const { t } = useI18n();
@@ -167,7 +184,7 @@ const userLevelGroupIcon = computed(() => {
         </div>
       </template>
 
-      <span>
+      <span :style="truncateStyle">
         <component :is="userLevelGroupIcon" style="margin-right: 4px" />
         <span :style="{ color: resolveColor(currentUserLevelColor) }">{{ levelName }}</span>
         <CheckOutlined
@@ -196,7 +213,8 @@ const userLevelGroupIcon = computed(() => {
         </template>
       </span>
     </a-popover>
-    <span v-else>
+    <!-- 未渲染等级浮层（如关闭了等级要求展示）时，被截断的等级名通过原生 title 提供完整内容 -->
+    <span v-else :style="truncateStyle" :title="levelNameMaxWidth ? levelName : undefined">
       <component :is="userLevelGroupIcon" />
       {{ levelName }}
     </span>
