@@ -24,10 +24,28 @@ async function loadSiteMetadataInBatches<T>(
   return results;
 }
 
+/**
+ * 按 definitionList 的顺序逐批产出「尚未添加」的站点定义。
+ *
+ * 站点定义是一个站点一个 chunk 的动态 import，全部加载完再渲染会让调用方空白较久；
+ * 这里沿用上面的「memo + 每批并发」读取，每读完一批就把这一批按顺序产出，调用方可以边拿边渲染
+ * （一键导入 dialog 据此渐进刷新列表）。
+ */
+export async function* iterateCanAddedSiteMetadata(): AsyncGenerator<ISiteMetadata> {
+  const metadataStore = useMetadataStore();
+  const addedSiteIds = new Set(metadataStore.getAddedSiteIds);
+  const canAddedSiteList = definitionList.filter((siteId) => !addedSiteIds.has(siteId));
+  for (let i = 0; i < canAddedSiteList.length; i += SITE_METADATA_CONCURRENCY) {
+    const batch = canAddedSiteList.slice(i, i + SITE_METADATA_CONCURRENCY);
+    yield* await Promise.all(batch.map((siteId) => getCachedSiteMetadata(siteId)));
+  }
+}
+
 export async function getCanAddedSiteMetadata() {
   const canAddedSiteMetadata: Record<TSiteID, ISiteMetadata> = {};
   const metadataStore = useMetadataStore();
-  const canAddedSiteList = definitionList.filter((x) => !metadataStore.getAddedSiteIds.includes(x));
+  const addedSiteIds = new Set(metadataStore.getAddedSiteIds);
+  const canAddedSiteList = definitionList.filter((x) => !addedSiteIds.has(x));
   const metadatas = await loadSiteMetadataInBatches(canAddedSiteList, (siteId) => getCachedSiteMetadata(siteId));
   canAddedSiteList.forEach((siteId, index) => {
     canAddedSiteMetadata[siteId] = metadatas[index]!;

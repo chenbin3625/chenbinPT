@@ -41,6 +41,10 @@ vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => meta })
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
 vi.mock("@/options/views/Settings/SetSite/utils.ts", () => ({
   getCanAddedSiteMetadata: vi.fn(async () => canAddSites.value),
+  // 一键导入 dialog 改为边读边渲染（移植上游 7f8cb48a），读的是这个异步生成器
+  iterateCanAddedSiteMetadata: async function* () {
+    yield* Object.values(canAddSites.value);
+  },
 }));
 
 const SITE_A_METADATA = {
@@ -197,6 +201,23 @@ describe("OPTIONSSETTINGS-4：一键导入失败回滚临时写入的站点", ()
       return undefined;
     });
 
+    // 站点卡片由 LazyMount 在进入视口后才挂载；happy-dom 的 IntersectionObserver 是空实现，
+    // 这里换成「observe 即报告可见」的替身，模拟卡片位于视口内
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+        observe(target: Element) {
+          this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as any);
+        }
+        disconnect() {}
+        unobserve() {}
+        takeRecords() {
+          return [];
+        }
+      },
+    );
+
     const { default: OneClickImportDialog } = await import("@/options/views/Settings/SetSite/OneClickImportDialog.vue");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 
@@ -236,6 +257,7 @@ describe("OPTIONSSETTINGS-4：一键导入失败回滚临时写入的站点", ()
       ).toBeGreaterThan(0);
     } finally {
       view.unmount();
+      vi.unstubAllGlobals();
     }
   });
 });
