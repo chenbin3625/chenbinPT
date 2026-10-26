@@ -17,6 +17,7 @@ const { clientId } = defineProps<{
 const clientConfig = ref<IMediaServerMetadata>();
 // F2-Medium-15：编辑已有媒体服务器同样持续校验；校验不通过时「确定」禁用。
 const isFormValid = ref<boolean>(false);
+const isSaving = ref(false);
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
@@ -33,12 +34,15 @@ function dialogEnter() {
 }
 
 async function editClientConfig() {
-  if (!isFormValid.value) return;
+  if (!isFormValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addMediaServer(clientConfig.value as IMediaServerMetadata);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 
@@ -51,6 +55,11 @@ watch(showDialog, (open) => {
 <template>
   <a-modal
     v-model:open="showDialog"
+    :confirm-loading="isSaving"
+    :cancel-button-props="{ disabled: isSaving }"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
     :cancel-text="t('common.dialog.cancel')"
     :ok-button-props="{ disabled: !isFormValid }"
     :ok-text="t('common.dialog.ok')"

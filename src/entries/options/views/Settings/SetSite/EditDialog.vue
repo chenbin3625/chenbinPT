@@ -19,6 +19,7 @@ const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
 
 const isFormValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 const storedSiteUserConfig = ref<ISiteUserConfig & { valid?: boolean }>({ valid: false });
 provide("storedSiteUserConfig", storedSiteUserConfig);
@@ -26,11 +27,15 @@ provide("storedSiteUserConfig", storedSiteUserConfig);
 const editorRef = useTemplateRef<{ resetLocalState?: () => void }>("editor");
 
 async function patchSite() {
+  if (!isFormValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addSite(props.siteId, storedSiteUserConfig.value);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 
@@ -55,6 +60,11 @@ watch(showDialog, (open) => {
 <template>
   <a-modal
     v-model:open="showDialog"
+    :confirm-loading="isSaving"
+    :cancel-button-props="{ disabled: isSaving }"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
     :cancel-text="t('common.dialog.cancel')"
     :ok-button-props="{ disabled: !isFormValid }"
     :ok-text="t('common.dialog.ok')"

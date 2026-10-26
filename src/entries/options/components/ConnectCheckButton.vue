@@ -48,6 +48,7 @@ function scheduleStatusReset() {
 }
 
 async function checkConnect() {
+  if (isTestingConnectRef.value) return;
   clearTimeout(resetTimer);
   resetTimer = undefined;
   isTestingConnectRef.value = true;

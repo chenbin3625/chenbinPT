@@ -27,7 +27,7 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
     updateTableFilterValueFn,
     buildFilterDictFn,
   };
-  return { tableCustomFilter: filterMock.state };
+  return { tableCustomFilter: filterMock.state, updateTableFilterNow: updateTableFilterValueFn };
 });
 
 const emptyDict = () => ({

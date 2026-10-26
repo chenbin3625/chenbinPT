@@ -1,5 +1,6 @@
 <script lang="ts" setup>
-import { computed, h, watch, type Component } from "vue";
+import { computed, h, ref, watch, type Component } from "vue";
+import { LeftOutlined, MenuOutlined, RightOutlined } from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import type { ItemType } from "ant-design-vue";
@@ -17,6 +18,12 @@ const configStore = useConfigStore();
 
 // 当页面窗口大小发生变化时，调整 Navigation 的显示
 const display = useDisplay();
+const narrowNavOpen = ref(false);
+const navCollapsed = computed(() => !(display.smAndUp.value ? configStore.isNavBarOpen : narrowNavOpen.value));
+
+watch(display.smAndUp, () => {
+  narrowNavOpen.value = false;
+});
 // 注意：这里刻意**不加** `{ immediate: true }`。
 // `isNavBarOpen` 是持久化字段（stores/config.ts 的 persistWebExt，用户点击侧栏原生折叠按钮后会 $save），
 // 若在加载时用当前断点值无条件覆盖，用户手动折叠/展开的选择会在刷新后丢失（functional-audit SH-07）。
@@ -31,6 +38,10 @@ watch(display.mdAndUp, (isMdAndUp, previousIsMdAndUp) => {
 // 使用 antd 原生的折叠触发器（底部折叠条；窄屏 collapsed-width=0 时为侧栏右侧的零宽悬浮按钮）
 // 来切换侧栏，并持久化用户的选择（替代原顶栏自绘的折叠按钮）。
 function onNavBarCollapsed(collapsed: boolean) {
+  if (!display.smAndUp.value) {
+    narrowNavOpen.value = !collapsed;
+    return;
+  }
   configStore.isNavBarOpen = !collapsed;
   configStore.$save();
 }
@@ -57,23 +68,54 @@ const menuItems = computed<ItemType[]>(() =>
 // 子路由（如 SetBase 的各个 tab）也需要高亮其父级菜单
 const selectedKeys = computed(() => route.matched.map((r) => String(r.name)));
 
-function onMenuClick({ key }: { key: string | number }) {
-  router.push({ name: String(key) });
+async function onMenuClick({ key }: { key: string | number }) {
+  await router.push({ name: String(key) });
+  narrowNavOpen.value = false;
 }
 </script>
 
 <template>
+  <button
+    v-if="!display.smAndUp.value && narrowNavOpen"
+    class="ptd-navigation-backdrop"
+    :aria-label="t('common.dialog.close')"
+    @click="narrowNavOpen = false"
+  />
   <a-layout-sider
     id="ptd-navigation"
-    :collapsed="!configStore.isNavBarOpen"
+    :class="{ 'ptd-navigation--overlay': !display.smAndUp.value }"
+    :collapsed="navCollapsed"
     :collapsed-width="display.smAndUp.value ? 64 : 0"
     :width="168"
     theme="light"
     collapsible
     @update:collapsed="onNavBarCollapsed"
+    @keydown.esc="narrowNavOpen = false"
   >
+    <template #trigger>
+      <a-button
+        class="ptd-navigation-toggle"
+        type="text"
+        :aria-label="t('layout.header.navBarTip')"
+        :title="t('layout.header.navBarTip')"
+        :aria-expanded="!navCollapsed"
+        aria-controls="ptd-navigation-menu"
+      >
+        <template #icon>
+          <MenuOutlined v-if="!display.smAndUp.value" />
+          <RightOutlined v-else-if="navCollapsed" />
+          <LeftOutlined v-else />
+        </template>
+      </a-button>
+    </template>
     <div class="ptd-navigation-inner">
-      <a-menu :items="menuItems" :selected-keys="selectedKeys" mode="inline" @click="onMenuClick" />
+      <a-menu
+        id="ptd-navigation-menu"
+        :items="menuItems"
+        :selected-keys="selectedKeys"
+        mode="inline"
+        @click="onMenuClick"
+      />
 
       <!-- 调试构建下展示测试标记（按产品决策：侧栏不再展示版本号） -->
       <div v-if="isDebug" class="ptd-navigation-footer">

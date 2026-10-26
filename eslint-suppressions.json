@@ -68,11 +68,6 @@
       "count": 1
     }
   },
-  "src/entries/options/components/DeleteDialog.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
   "src/entries/options/components/SentToDownloaderDialog/Index.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 3
@@ -90,7 +85,7 @@
   },
   "src/entries/options/views/Layout/Navigation.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Layout/RecommendationMenu.vue": {
@@ -137,11 +132,6 @@
     }
   },
   "src/entries/options/views/Overview/MyClient/PushToDownloaderDialog.vue": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    }
-  },
-  "src/entries/options/views/Overview/MyClient/RecheckConfirmDialog.vue": {
     "@typescript-eslint/no-floating-promises": {
       "count": 1
     }

@@ -349,6 +349,42 @@ body {
   top: 0;
 }
 
+.ptd-navigation-toggle {
+  width: 100%;
+  height: 100%;
+}
+
+#ptd-navigation.ptd-navigation--overlay {
+  position: fixed;
+  left: 0;
+  z-index: 30;
+}
+
+#ptd-navigation.ptd-navigation--overlay .ant-layout-sider-zero-width-trigger {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: auto;
+  width: 32px;
+  height: 32px;
+  line-height: 32px;
+  background: var(--ptd-surface, #fff);
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+}
+
+#ptd-navigation .ant-layout-sider-zero-width-trigger::after {
+  pointer-events: none;
+}
+
+.ptd-navigation-backdrop {
+  position: fixed;
+  inset: 48px 0 0;
+  z-index: 25;
+  padding: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.25);
+}
+
 /* ── 主内容区 ─────────────────────────────────────────────────────────── */
 
 #ptd-main {
@@ -1044,5 +1080,23 @@ body {
   .page-toolbar > .ant-input-affix-wrapper {
     flex: 1 1 100%;
     min-width: 100%;
+  }
+}
+
+@media (max-width: 599px) {
+  .ptd-topbar-title {
+    margin-left: 40px;
+  }
+
+  .search-filter-bar {
+    flex-wrap: wrap;
+  }
+
+  .search-filter-chips {
+    flex-basis: 100%;
+  }
+
+  .search-filter-search {
+    max-width: none;
   }
 }

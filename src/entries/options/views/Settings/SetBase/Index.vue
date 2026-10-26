@@ -93,8 +93,11 @@ const activeTab = computed({
 const showSaveButton = computed(() => {
   return route.meta?.usesGlobalSave !== false;
 });
+const isSaving = ref(false);
 
 async function save() {
+  if (isSaving.value) return;
+  isSaving.value = true;
   try {
     // L1：所有已访问页签的副作用都执行（不只是当前页签），幂等
     await runAllTabHooks("beforeSave");
@@ -108,6 +111,8 @@ async function save() {
     runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 </script>
@@ -125,7 +130,7 @@ async function save() {
 
       <!-- 保存按钮与页签同一行、贴行尾：与对话框页脚保持一致的原生 antd 按钮层级（主操作 = 实心 primary） -->
       <template v-if="showSaveButton" #rightExtra>
-        <a-button class="set-base-save" type="primary" @click="save">
+        <a-button class="set-base-save" type="primary" :loading="isSaving" @click="save">
           <template #icon>
             <CheckCircleOutlined />
           </template>

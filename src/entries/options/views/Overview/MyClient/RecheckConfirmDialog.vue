@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { CTorrent } from "@ptd/downloader";
@@ -30,21 +30,14 @@ async function confirmRecheck() {
     showDialog.value = false;
   }
 }
-
-function dialogEnter() {
-  isRechecking.value = false;
-}
-
-// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
-watch(showDialog, (open) => {
-  if (open) nextTick(dialogEnter);
-});
 </script>
 
 <template>
   <a-modal
     v-model:open="showDialog"
     :cancel-text="t('common.dialog.cancel')"
+    :cancel-button-props="{ disabled: isRechecking }"
+    :closable="!isRechecking"
     :confirm-loading="isRechecking"
     :keyboard="!isRechecking"
     :mask-closable="!isRechecking"

@@ -31,6 +31,7 @@ const currentStep = ref<0 | 1>(0);
 const selectedMediaServerType = ref<TMediaServerKey | null>(null);
 const storedMediaServerConfig = ref<Partial<IMediaServerUserConfig>>({});
 const isMediaServerConfigValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 function resetDialog() {
   currentStep.value = 0;
@@ -61,18 +62,29 @@ async function updateStoredMediaServerConfigByDefault(e: TDownloaderKey) {
 
 async function saveStoredMediaServerConfig() {
   // F2-Medium-15：校验未通过不保存；写盘/实体验证失败要有提示，而不是把 promise 丢成 unhandled rejection。
-  if (!isMediaServerConfigValid.value) return;
+  if (!isMediaServerConfigValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addMediaServer(storedMediaServerConfig.value as IMediaServerUserConfig);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 </script>
 
 <template>
-  <a-modal v-model:open="showDialog" :title="t('SetMediaServer.add.title')" :width="800" :after-close="resetDialog">
+  <a-modal
+    v-model:open="showDialog"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
+    :title="t('SetMediaServer.add.title')"
+    :width="800"
+    :after-close="resetDialog"
+  >
     <div v-if="currentStep === 0">
       <a-select
         v-model:value="selectedMediaServerType"
@@ -80,7 +92,7 @@ async function saveStoredMediaServerConfig() {
         option-label-prop="children"
         show-search
         style="width: 100%"
-        @update:value="(e: any) => updateStoredMediaServerConfigByDefault(e)"
+        @change="(e: any) => updateStoredMediaServerConfigByDefault(e)"
       >
         <a-select-option
           v-for="mediaServer in Object.values(allMediaServerMetaData)"
@@ -107,8 +119,10 @@ async function saveStoredMediaServerConfig() {
 
     <template #footer>
       <a-flex align="center" justify="flex-end" :gap="8">
-        <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
-        <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+        <a-button :disabled="isSaving" @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+        <a-button v-if="currentStep === 1" :disabled="isSaving" @click="currentStep--">{{
+          t("common.dialog.prev")
+        }}</a-button>
         <a-button
           v-if="currentStep === 0"
           :disabled="selectedMediaServerType == null"
@@ -120,6 +134,7 @@ async function saveStoredMediaServerConfig() {
         <a-button
           v-if="currentStep === 1"
           :disabled="!isMediaServerConfigValid"
+          :loading="isSaving"
           type="primary"
           @click="saveStoredMediaServerConfig"
         >

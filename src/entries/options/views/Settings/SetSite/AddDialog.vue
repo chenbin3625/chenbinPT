@@ -24,6 +24,7 @@ const currentStep = ref<0 | 1>(0);
 const selectedSiteId = ref<TSiteID | null>(null);
 const storedSiteUserConfig = ref<ISiteUserConfig>({});
 const isFormValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 provide("storedSiteUserConfig", storedSiteUserConfig);
 
@@ -65,17 +66,29 @@ watch(showDialog, (open) => {
 });
 
 async function saveSite() {
+  if (!isFormValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addSite(selectedSiteId.value!, storedSiteUserConfig.value!);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 </script>
 
 <template>
-  <a-modal v-model:open="showDialog" :title="t('SetSite.add.title')" :width="800" :after-close="resetDialog">
+  <a-modal
+    v-model:open="showDialog"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
+    :title="t('SetSite.add.title')"
+    :width="800"
+    :after-close="resetDialog"
+  >
     <div v-if="currentStep === 0">
       <!-- 选取可添加的站点 -->
       <a-select
@@ -166,12 +179,20 @@ async function saveSite() {
         </a-flex>
 
         <a-flex align="center" :gap="8">
-          <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
-          <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+          <a-button :disabled="isSaving" @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+          <a-button v-if="currentStep === 1" :disabled="isSaving" @click="currentStep--">{{
+            t("common.dialog.prev")
+          }}</a-button>
           <a-button v-if="currentStep === 0" :disabled="selectedSiteId == null" type="primary" @click="currentStep++">
             {{ t("common.dialog.next") }}
           </a-button>
-          <a-button v-if="currentStep === 1" :disabled="!isFormValid" type="primary" @click="saveSite">
+          <a-button
+            v-if="currentStep === 1"
+            :disabled="!isFormValid"
+            :loading="isSaving"
+            type="primary"
+            @click="saveSite"
+          >
             {{ t("common.dialog.ok") }}
           </a-button>
         </a-flex>

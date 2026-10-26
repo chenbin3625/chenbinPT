@@ -47,6 +47,9 @@ export const mediaServerConfig: IEmbyConfig = {
   timeout: 5000,
 };
 
+const LEGACY_SEARCH_FIELDS =
+  "BasicSyncInfo,Path,Status,ExternalUrls,CommunityRating,MediaSources,DisplayPreferences,Genres,DateCreated,Overview,ExtraIds";
+
 export interface IEmbySystemInfo {
   ServerName: string;
   Version: string;
@@ -194,6 +197,11 @@ export abstract class MediaBrowser<
 
   /** 鉴权头：两家取值不同 */
   protected abstract get authHeaders(): Record<string, string>;
+
+  /** 可选的旧版搜索字段回退；只有兼容性确实需要的实体才启用。 */
+  protected getLegacySearchFields(): string | undefined {
+    return undefined;
+  }
 
   /** 组装搜索请求：路径（`/Items` 还是 `/Users/{id}/Items`）与参数命名的差异都在子类里 */
   protected abstract buildSearchRequest(
@@ -407,9 +415,30 @@ export abstract class MediaBrowser<
     };
 
     const { url, requestConfig } = this.buildSearchRequest(keywords, config);
+    const legacySearchFields = this.getLegacySearchFields();
+
+    const requestSearch = async () => {
+      try {
+        const response = await this.request<IEmbyQueryResult<TQueryItem>>(url, requestConfig);
+        if (response.status !== 500 || !legacySearchFields) return response;
+      } catch (e) {
+        if (!(e instanceof AxiosError) || e.response?.status !== 500 || !legacySearchFields) throw e;
+      }
+
+      // Older Emby versions can fail the whole /Items request when a newer
+      // optional field is included. Retry once with the fields used before
+      // the extended media metadata was added.
+      return await this.request<IEmbyQueryResult<TQueryItem>>(url, {
+        ...requestConfig,
+        params: {
+          ...(requestConfig.params ?? {}),
+          Fields: legacySearchFields,
+        },
+      });
+    };
 
     try {
-      const response = await this.request<IEmbyQueryResult<TQueryItem>>(url, requestConfig);
+      const response = await requestSearch();
       if (response.status === 200) {
         const {
           data: { Items = [] },
@@ -586,6 +615,10 @@ export default class Emby extends MediaBrowser<IEmbyConfig, IEmbyQueryItem> {
     return {
       "X-Emby-Token": this.config.auth.apikey,
     };
+  }
+
+  protected override getLegacySearchFields(): string {
+    return LEGACY_SEARCH_FIELDS;
   }
 
   protected override buildSearchRequest(

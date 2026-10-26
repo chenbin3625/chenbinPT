@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
@@ -30,6 +30,7 @@ const { t } = useI18n();
 const isDeleting = ref(false);
 
 async function confirmDelete() {
+  if (isDeleting.value) return;
   isDeleting.value = true;
 
   let failedIds: TDeleteId[] = [];
@@ -78,21 +79,14 @@ async function confirmDelete() {
   showDialog.value = false;
   emits("allDelete");
 }
-
-async function dialogEnter() {
-  isDeleting.value = false;
-}
-
-// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
-watch(showDialog, (open) => {
-  if (open) nextTick(dialogEnter);
-});
 </script>
 
 <template>
   <a-modal
     v-model:open="showDialog"
     :cancel-text="t('common.dialog.cancel')"
+    :cancel-button-props="{ disabled: isDeleting }"
+    :closable="!isDeleting"
     :confirm-loading="isDeleting"
     :keyboard="!isDeleting"
     :mask-closable="!isDeleting"

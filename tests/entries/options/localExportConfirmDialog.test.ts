@@ -50,6 +50,10 @@ describe("SetBackup 本地导出确认弹窗（L-11）", () => {
       await view.settle();
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
       expect(open.value).toBe(true);
+      expect(document.querySelector(".ant-modal-close")).toBeNull();
+      expect(
+        document.querySelector<HTMLButtonElement>(".ant-modal-footer button:not(.ant-btn-primary)")?.disabled,
+      ).toBe(true);
 
       release();
       await view.settle();

@@ -128,6 +128,7 @@ watch(selectedDownloader, (value) => {
 });
 
 async function sendToDownloader() {
+  if (isSending.value) return;
   if (!selectedDownloader.value?.id) {
     runtimeStore.showSnakebar(t("SentToDownloaderDialog.selectDownloaderFirst"), { color: "error" });
     return;
@@ -167,6 +168,7 @@ async function sendToDownloader() {
 }
 
 function quickSendToDownloader(downloader: IDownloaderMetadata, path: string = "", label?: string) {
+  if (isSending.value) return;
   selectedDownloader.value = downloader;
 
   // 设置下载推送选项
@@ -239,6 +241,7 @@ watch(
 <template>
   <a-modal
     v-model:open="showDialog"
+    :closable="!isSending"
     :keyboard="!isSending"
     :mask-closable="!isSending"
     :title="t('SentToDownloaderDialog.title', [torrentItems.length])"
@@ -390,6 +393,7 @@ watch(
         <a-flex align="center" :gap="8">
           <a-button
             :title="t('SentToDownloaderDialog.moreOptions')"
+            :disabled="isSending"
             type="text"
             @click="quickSendToClient = !quickSendToClient"
           >

@@ -91,6 +91,7 @@ const {
 
 // ── state ──────────────────────────────────────────────────────────────────
 const loading = ref(false);
+const pendingCommand = ref<"pause" | "resume" | "queue" | null>(null);
 
 const tableSelected = ref<CTorrent[]>([]);
 const searchText = ref("");
@@ -112,9 +113,11 @@ const detailTorrent = ref<CTorrent | null>(null);
 
 // speed limit dialog
 const showSpeedLimitDialog = ref(false);
+const toSpeedLimitTorrents = ref<CTorrent[]>([]);
 
 // label dialog
 const showLabelDialog = ref(false);
+const toLabelTorrents = ref<CTorrent[]>([]);
 
 // recheck confirm dialog
 const showRecheckDialog = ref(false);
@@ -382,28 +385,39 @@ function showBatchResult(results: readonly PromiseSettledResult<unknown>[], succ
 }
 
 async function pauseTorrents(torrents: CTorrent[]) {
-  if (torrents.length === 0) return;
-  const results = await Promise.allSettled(
-    torrents.map((t) => sendMessage("pauseClientTorrent", { downloaderId: t.clientId, id: t.id })),
-  );
-  // OPTIONSOVERVIEW-9：与 recheckTorrents/moveTorrentsInQueue 对齐 —— 0 个成功不能仍报绿色成功
-  showBatchResult(results, "MyClient.action.pauseSelectedSuccess");
-  const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
-  await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+  if (torrents.length === 0 || pendingCommand.value) return;
+  pendingCommand.value = "pause";
+  try {
+    const results = await Promise.allSettled(
+      torrents.map((t) => sendMessage("pauseClientTorrent", { downloaderId: t.clientId, id: t.id })),
+    );
+    // OPTIONSOVERVIEW-9：与 recheckTorrents/moveTorrentsInQueue 对齐 —— 0 个成功不能仍报绿色成功
+    showBatchResult(results, "MyClient.action.pauseSelectedSuccess");
+    const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
+    await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+  } finally {
+    pendingCommand.value = null;
+  }
 }
 
 async function resumeTorrents(torrents: CTorrent[]) {
-  if (torrents.length === 0) return;
-  const results = await Promise.allSettled(
-    torrents.map((t) => sendMessage("resumeClientTorrent", { downloaderId: t.clientId, id: t.id })),
-  );
-  // OPTIONSOVERVIEW-9：同 pauseTorrents，全部失败时用 error 色提示
-  showBatchResult(results, "MyClient.action.resumeSelectedSuccess");
-  const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
-  await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+  if (torrents.length === 0 || pendingCommand.value) return;
+  pendingCommand.value = "resume";
+  try {
+    const results = await Promise.allSettled(
+      torrents.map((t) => sendMessage("resumeClientTorrent", { downloaderId: t.clientId, id: t.id })),
+    );
+    // OPTIONSOVERVIEW-9：同 pauseTorrents，全部失败时用 error 色提示
+    showBatchResult(results, "MyClient.action.resumeSelectedSuccess");
+    const affectedIds = [...new Set(torrents.map((t) => t.clientId))];
+    await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+  } finally {
+    pendingCommand.value = null;
+  }
 }
 
 function openDeleteDialog(torrentList: CTorrent[]) {
+  if (torrentList.length === 0 || pendingCommand.value) return;
   toDeleteTorrents.value = torrentList;
   // 每次打开都清空上一轮的失败原因，避免把旧的提示带到新的删除操作上
   deleteFailureHints.value = {};
@@ -416,7 +430,7 @@ function openDetailDialog(item: CTorrent) {
 }
 
 function openRecheckDialog(torrentList: CTorrent[]) {
-  if (torrentList.length === 0) return;
+  if (torrentList.length === 0 || pendingCommand.value) return;
   toRecheckTorrents.value = torrentList;
   showRecheckDialog.value = true;
 }
@@ -428,12 +442,14 @@ function openRecheckDialog(torrentList: CTorrent[]) {
  * 「已设置 0 个」，无法判断是「不支持」还是「临时失败」。按钮的 disabled 条件用同一个判定。
  */
 function openSpeedLimitDialog() {
-  if (!isFeatureAllowedForAll(selectedTorrents.value, "SpeedLimit")) return;
+  if (selectedTorrents.value.length === 0 || !isFeatureAllowedForAll(selectedTorrents.value, "SpeedLimit")) return;
+  toSpeedLimitTorrents.value = [...selectedTorrents.value];
   showSpeedLimitDialog.value = true;
 }
 
 function openLabelDialog() {
-  if (!isFeatureAllowedForAll(selectedTorrents.value, "Label")) return;
+  if (selectedTorrents.value.length === 0 || !isFeatureAllowedForAll(selectedTorrents.value, "Label")) return;
+  toLabelTorrents.value = [...selectedTorrents.value];
   showLabelDialog.value = true;
 }
 
@@ -466,13 +482,20 @@ async function recheckTorrents() {
 }
 
 async function moveTorrentsInQueue(torrentList: CTorrent[], direction: TorrentQueueDirection) {
-  if (torrentList.length === 0) return;
-  const results = await Promise.allSettled(
-    torrentList.map((t) => sendMessage("moveClientTorrentInQueue", { downloaderId: t.clientId, id: t.id, direction })),
-  );
-  showBatchResult(results, "MyClient.action.moveQueueSuccess");
-  const affectedIds = [...new Set(torrentList.map((t) => t.clientId))];
-  await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+  if (torrentList.length === 0 || pendingCommand.value) return;
+  pendingCommand.value = "queue";
+  try {
+    const results = await Promise.allSettled(
+      torrentList.map((t) =>
+        sendMessage("moveClientTorrentInQueue", { downloaderId: t.clientId, id: t.id, direction }),
+      ),
+    );
+    showBatchResult(results, "MyClient.action.moveQueueSuccess");
+    const affectedIds = [...new Set(torrentList.map((t) => t.clientId))];
+    await Promise.allSettled(affectedIds.map(loadSingleDownloader));
+  } finally {
+    pendingCommand.value = null;
+  }
 }
 
 /** 批量限速 / 批量标签弹窗成功后刷新受影响下载器（D2-09：标签列不再等下一轮自动刷新）。 */
@@ -556,7 +579,8 @@ function clearDownloaderFilter() {
           <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
 
           <a-button
-            :disabled="selectedTorrents.length === 0"
+            :disabled="selectedTorrents.length === 0 || !!pendingCommand"
+            :loading="pendingCommand === 'resume'"
             :title="t('MyClient.resumeSelected')"
             @click="() => resumeTorrents(selectedTorrents)"
             type="link"
@@ -564,7 +588,8 @@ function clearDownloaderFilter() {
           >
 
           <a-button
-            :disabled="selectedTorrents.length === 0"
+            :disabled="selectedTorrents.length === 0 || !!pendingCommand"
+            :loading="pendingCommand === 'pause'"
             :title="t('MyClient.pauseSelected')"
             @click="() => pauseTorrents(selectedTorrents)"
             type="text"
@@ -572,7 +597,7 @@ function clearDownloaderFilter() {
           >
 
           <a-button
-            :disabled="selectedTorrents.length === 0"
+            :disabled="selectedTorrents.length === 0 || !!pendingCommand"
             :title="t('MyClient.deleteSelected')"
             @click="() => openDeleteDialog(selectedTorrents)"
             type="text"
@@ -581,7 +606,9 @@ function clearDownloaderFilter() {
           >
 
           <a-button
-            :disabled="selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Recheck')"
+            :disabled="
+              !!pendingCommand || selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Recheck')
+            "
             :title="
               selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'Recheck')
                 ? t('MyClient.batch.unsupported')
@@ -593,7 +620,11 @@ function clearDownloaderFilter() {
           >
 
           <a-button
-            :disabled="selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')"
+            :disabled="
+              !!pendingCommand ||
+              selectedTorrents.length === 0 ||
+              !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')
+            "
             :title="
               selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')
                 ? t('MyClient.batch.unsupported')
@@ -605,7 +636,9 @@ function clearDownloaderFilter() {
           >
 
           <a-button
-            :disabled="selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Label')"
+            :disabled="
+              !!pendingCommand || selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Label')
+            "
             :title="
               selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'Label')
                 ? t('MyClient.batch.unsupported')
@@ -830,6 +863,7 @@ function clearDownloaderFilter() {
           <a-button-group class="table-action">
             <a-button
               v-if="record.state === CTorrentState.downloading || record.state === CTorrentState.seeding"
+              :disabled="!!pendingCommand"
               :title="t('MyClient.action.pause')"
               @click="() => pauseTorrents([record])"
               size="small"
@@ -837,6 +871,7 @@ function clearDownloaderFilter() {
             ></a-button>
             <a-button
               v-else-if="record.state === CTorrentState.paused || record.state === CTorrentState.error"
+              :disabled="!!pendingCommand"
               :title="t('MyClient.action.resume')"
               @click="() => resumeTorrents([record])"
               type="primary"
@@ -847,6 +882,7 @@ function clearDownloaderFilter() {
             <!-- 重新校验 -->
             <a-button
               v-if="isFeatureAllowed(record.clientId, 'Recheck')"
+              :disabled="!!pendingCommand"
               :title="t('MyClient.action.recheck')"
               @click="() => openRecheckDialog([record])"
               size="small"
@@ -854,9 +890,10 @@ function clearDownloaderFilter() {
             ></a-button>
 
             <!-- 队列调整 -->
-            <a-dropdown placement="bottom" :trigger="['click']">
+            <a-dropdown placement="bottom" :trigger="['click']" :disabled="!!pendingCommand">
               <a-button
                 v-if="isFeatureAllowed(record.clientId, 'Queue')"
+                :disabled="!!pendingCommand"
                 :title="t('MyClient.action.queue')"
                 size="small"
                 ><template #icon><SwapOutlined /></template
@@ -888,7 +925,12 @@ function clearDownloaderFilter() {
               ><template #icon><FileSearchOutlined /></template
             ></a-button>
 
-            <a-button :title="t('MyClient.action.delete')" @click="() => openDeleteDialog([record])" danger size="small"
+            <a-button
+              :disabled="!!pendingCommand"
+              :title="t('MyClient.action.delete')"
+              @click="() => openDeleteDialog([record])"
+              danger
+              size="small"
               ><template #icon><DeleteOutlined /></template
             ></a-button>
           </a-button-group>
@@ -930,9 +972,9 @@ function clearDownloaderFilter() {
 
   <TorrentDetailDialog v-model="showDetailDialog" :torrent="detailTorrent" />
 
-  <SpeedLimitDialog v-model="showSpeedLimitDialog" :torrents="selectedTorrents" @done="onBatchDialogDone" />
+  <SpeedLimitDialog v-model="showSpeedLimitDialog" :torrents="toSpeedLimitTorrents" @done="onBatchDialogDone" />
 
-  <LabelDialog v-model="showLabelDialog" :torrents="selectedTorrents" @done="onBatchDialogDone" />
+  <LabelDialog v-model="showLabelDialog" :torrents="toLabelTorrents" @done="onBatchDialogDone" />
 
   <RecheckConfirmDialog
     v-model="showRecheckDialog"

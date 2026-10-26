@@ -29,6 +29,7 @@ const isDanger = computed(() => ["error", "red"].includes(color ?? ""));
 
 <template>
   <a-button
+    :aria-label="text"
     :danger="isDanger"
     :disabled="disabled"
     :style="iconOnly ? { width: '32px', paddingInline: 0 } : undefined"

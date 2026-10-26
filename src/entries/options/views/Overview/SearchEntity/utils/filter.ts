@@ -36,6 +36,11 @@ export const tableCustomFilter = useTableCustomFilter({
  */
 const writableTableFilterRef = toRaw(tableCustomFilter.tableFilterRef) as Ref<string>;
 
+export function updateTableFilterNow() {
+  tableCustomFilter.updateTableFilterValueFn();
+  writableTableFilterRef.value = tableCustomFilter.tableWaitFilterRef.value;
+}
+
 /**
  * 当前处于「必选」状态的标签名（供视图高亮已激活的标签）。
  * 返回拷贝：调用方是 computed，不能让外部拿到字典里那个可变数组的引用。
@@ -56,7 +61,7 @@ export function getActiveTagFilterNames(): string[] {
  * 随后防抖回调写回的也是同一个串，不会把状态改回去。
  */
 export function toggleTagFilter(tagName: string): boolean {
-  const { advanceFilterDictRef, tableWaitFilterRef, updateTableFilterValueFn } = tableCustomFilter;
+  const { advanceFilterDictRef } = tableCustomFilter;
 
   // 显式标注类型：advanceFilterDictRef 的值是 Record<string, any>，不标注会让
   // `tagsState.exclude.filter((name) => ...)` 的 name 退回隐式 any（vue-tsc TS7006）。
@@ -74,8 +79,7 @@ export function toggleTagFilter(tagName: string): boolean {
     tagsState.required.splice(index, 1);
   }
 
-  updateTableFilterValueFn();
-  writableTableFilterRef.value = tableWaitFilterRef.value;
+  updateTableFilterNow();
 
   return active;
 }

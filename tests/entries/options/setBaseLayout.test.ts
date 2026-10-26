@@ -51,15 +51,14 @@ describe("SetBase 页签切换的滚动行为", () => {
     expect(result).not.toBe(false);
   });
 
-  it("进入 / 离开常规设置时滚动到主内容区顶部", () => {
-    // 不是「页签之间」的切换 → 回到 #ptd-main 顶部
+  it("进入 / 离开常规设置时为固定顶栏保留 48px，避免遮住页签和保存按钮", () => {
     expect(scrollBehavior(routeNamed("MyData"), routeNamed("SearchEntity"), null)).toEqual({
       el: "#ptd-main",
-      top: 0,
+      top: 48,
     });
     expect(scrollBehavior(routeNamed("SetBaseUi"), routeNamed("MyData"), null)).toEqual({
       el: "#ptd-main",
-      top: 0,
+      top: 48,
     });
   });
 });

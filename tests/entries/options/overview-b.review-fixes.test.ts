@@ -78,7 +78,12 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
     tableFilterFn,
   };
 
-  return { tableCustomFilter: filterMock.state, getActiveTagFilterNames, toggleTagFilter };
+  return {
+    tableCustomFilter: filterMock.state,
+    getActiveTagFilterNames,
+    toggleTagFilter,
+    updateTableFilterNow: updateTableFilterValueFn,
+  };
 });
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
@@ -417,7 +422,7 @@ const MYCLIENT_ALL_STATES = [
   },
 ];
 
-async function mountMyClientForBatch(pauseImpl?: (data: any) => boolean) {
+async function mountMyClientForBatch(pauseImpl?: (data: any) => boolean | Promise<boolean>) {
   const pinia = prepareOptionsPinia();
   const { useMetadataStore } = await import("@/options/stores/metadata.ts");
   const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
@@ -497,6 +502,68 @@ describe("D2-07：批量操作只作用于当前可见（筛选后）的选中�
       view.unmount();
     }
   });
+
+  it.each([
+    ["MyClient.speedLimit.batchBtn", "setClientTorrentSpeedLimit"],
+    ["MyClient.label.batchBtn", "setClientTorrentLabel"],
+  ])("%s 打开后固定确认对象，不受稍后生效的筛选影响", async (buttonKey, command) => {
+    const { view, t, selectAllRows } = await mountMyClientForBatch();
+    try {
+      await selectAllRows();
+      const search = view.$<HTMLInputElement>(".my-client-toolbar__filters input")!;
+      search.value = "no matching torrent";
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      view.$<HTMLButtonElement>(`.my-client-toolbar__actions button[title="${t(buttonKey!)}"]`)!.click();
+      await view.settle(400);
+      expect(document.querySelector(".ant-modal-title")?.textContent).toContain("3");
+
+      const input = document.querySelector<HTMLInputElement>(".ant-modal input")!;
+      input.value = command === "setClientTorrentSpeedLimit" ? "100" : "test-label";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.dispatchEvent(new Event("blur", { bubbles: true }));
+      await view.settle();
+      document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!.click();
+      await view.settle();
+      expect(
+        sendMessageMock.mock.calls
+          .filter(([type]) => type === command)
+          .map(([, data]) => data.id)
+          .sort(),
+      ).toEqual(["hash-1", "hash-2", "hash-3"]);
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+it("批量暂停在请求完成前只提交一次，并显示忙碌状态", async () => {
+  let finish!: (result: boolean) => void;
+  const pending = new Promise<boolean>((resolve) => (finish = resolve));
+  const { view, t, selectAllRows } = await mountMyClientForBatch(() => pending);
+  try {
+    await selectAllRows();
+    const button = view.$<HTMLButtonElement>(
+      `.my-client-toolbar__actions button[title="${t("MyClient.pauseSelected")}"]`,
+    )!;
+    button.click();
+    button.click();
+    await view.settle();
+    expect(sendMessageMock.mock.calls.filter(([type]) => type === "pauseClientTorrent")).toHaveLength(3);
+    expect(button.classList.contains("ant-btn-loading")).toBe(true);
+    const deleteButton = view.$<HTMLButtonElement>(`.table-action button[title="${t("MyClient.action.delete")}"]`)!;
+    expect(deleteButton.disabled).toBe(true);
+    const state = (view.app as any)._instance.setupState;
+    const torrent = MYCLIENT_ALL_STATES[0];
+    state.openDeleteDialog([torrent]);
+    state.openRecheckDialog([torrent]);
+    await view.settle();
+    expect(document.querySelector(".ant-modal")).toBeNull();
+  } finally {
+    finish(true);
+    await view.settle();
+    view.unmount();
+  }
 });
 
 describe("D2-09：批量操作的部分失败计数与原因", () => {

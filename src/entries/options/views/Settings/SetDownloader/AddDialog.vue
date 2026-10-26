@@ -29,6 +29,7 @@ const currentStep = ref<0 | 1>(0);
 const selectedClientType = ref<string | null>(null);
 const storedDownloaderConfig = ref<Partial<IDownloaderMetadata>>({});
 const isDownloaderConfigValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 function resetDialog() {
   currentStep.value = 0;
@@ -58,7 +59,8 @@ async function updateStoredDownloaderConfigByDefault(type: string) {
 
 async function saveStoredDownloaderConfig() {
   // F2-Medium-03：表单校验未通过时不得保存（「确定」按钮已禁用，这里再挡一次）
-  if (!isDownloaderConfigValid.value) return;
+  if (!isDownloaderConfigValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addDownloader(storedDownloaderConfig.value as IDownloaderMetadata);
 
@@ -70,12 +72,22 @@ async function saveStoredDownloaderConfig() {
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 </script>
 
 <template>
-  <a-modal v-model:open="showDialog" :title="t('SetDownloader.add.title')" :width="800" :after-close="resetDialog">
+  <a-modal
+    v-model:open="showDialog"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
+    :title="t('SetDownloader.add.title')"
+    :width="800"
+    :after-close="resetDialog"
+  >
     <div v-if="currentStep === 0">
       <!-- 选取可添加的客户端 -->
       <a-select
@@ -84,7 +96,7 @@ async function saveStoredDownloaderConfig() {
         option-label-prop="children"
         show-search
         style="width: 100%"
-        @update:value="(e: string) => updateStoredDownloaderConfigByDefault(e)"
+        @change="(e: string) => updateStoredDownloaderConfigByDefault(e)"
       >
         <a-select-option
           v-for="downloader in Object.values(allTorrentClientMetaData)"
@@ -133,8 +145,10 @@ async function saveStoredDownloaderConfig() {
         </a-flex>
 
         <a-flex align="center" :gap="8">
-          <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
-          <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+          <a-button :disabled="isSaving" @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+          <a-button v-if="currentStep === 1" :disabled="isSaving" @click="currentStep--">{{
+            t("common.dialog.prev")
+          }}</a-button>
           <a-button
             v-if="currentStep === 0"
             :disabled="selectedClientType == null"
@@ -146,6 +160,7 @@ async function saveStoredDownloaderConfig() {
           <a-button
             v-if="currentStep === 1"
             :disabled="!isDownloaderConfigValid"
+            :loading="isSaving"
             type="primary"
             @click="saveStoredDownloaderConfig"
           >

@@ -16,6 +16,7 @@ const { clientId } = defineProps<{
 const clientConfig = ref<IBackupServerMetadata>();
 // F2-Medium-12：编辑已有备份服务器同样持续校验；校验不通过时「确定」禁用。
 const isFormValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
@@ -33,13 +34,16 @@ function dialogEnter() {
 }
 
 async function editClientConfig() {
-  if (!isFormValid.value) return;
+  if (!isFormValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     // F2-Medium-12：旧实现既不等 addBackupServer 完成、也没有 try/catch，保存失败会变成 unhandled rejection。
     await metadataStore.addBackupServer(clientConfig.value as IBackupServerMetadata);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 
@@ -52,6 +56,11 @@ watch(showDialog, (open) => {
 <template>
   <a-modal
     v-model:open="showDialog"
+    :confirm-loading="isSaving"
+    :cancel-button-props="{ disabled: isSaving }"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
     :cancel-text="t('common.dialog.cancel')"
     :ok-button-props="{ disabled: !isFormValid }"
     :ok-text="t('common.dialog.ok')"

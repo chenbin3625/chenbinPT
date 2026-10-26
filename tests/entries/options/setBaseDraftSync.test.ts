@@ -34,6 +34,7 @@ async function mountSetBase(initialRoute = "SetBaseUi", configSetup?: (configSto
   const configStore = useConfigStore(pinia);
   configSetup?.(configStore);
   const metadataStore = useMetadataStore(pinia);
+  (metadataStore as any).$save = vi.fn(async () => undefined);
   const runtimeStore = useRuntimeStore(pinia);
   const configSave = vi.fn(async () => undefined);
   (configStore as any).$save = configSave;
@@ -210,4 +211,28 @@ describe("G：冷启动等 config store 水合完成后再建草稿", () => {
     app.unmount();
     host.remove();
   });
+});
+
+it("常规设置保存期间显示忙碌状态，连续点击仅保存一次", async () => {
+  const harness = await mountSetBase();
+  let finish!: () => void;
+  harness.configSave.mockImplementation(
+    () =>
+      new Promise<undefined>((resolve) => {
+        finish = () => resolve(undefined);
+      }),
+  );
+  try {
+    const save = harness.host.querySelector<HTMLButtonElement>(".set-base-save")!;
+    save.click();
+    save.click();
+    await sleep();
+    expect(harness.configSave).toHaveBeenCalledTimes(1);
+    expect(save.classList.contains("ant-btn-loading")).toBe(true);
+  } finally {
+    finish();
+    await sleep();
+    harness.app.unmount();
+    harness.host.remove();
+  }
 });

@@ -215,6 +215,7 @@ export const routerInstance = createRouter({
     const isSetBaseTab = (route: typeof to) => typeof route.name === "string" && setBaseTabNames.has(route.name);
     if (isSetBaseTab(to) && isSetBaseTab(from)) return { top: 0 };
 
-    return { el: "#ptd-main", top: 0 };
+    // 顶栏固定在视口上沿，保留其高度，避免首行控件被遮住。
+    return { el: "#ptd-main", top: 48 };
   },
 });

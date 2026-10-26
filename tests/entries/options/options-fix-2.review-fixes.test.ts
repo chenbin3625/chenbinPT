@@ -61,7 +61,7 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
     buildFilterDictFn,
   };
 
-  return { tableCustomFilter: filterMock.state };
+  return { tableCustomFilter: filterMock.state, updateTableFilterNow: updateTableFilterValueFn };
 });
 
 /** 站点名 / favicon 子组件会去读 store 并打后台消息，这里只关心父组件结构 */

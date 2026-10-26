@@ -25,6 +25,8 @@ const runtimeStore = useRuntimeStore();
 
 const searchKey = ref<string>("");
 const searchPlanKey = ref<string>("default");
+const isSubmittingSearch = ref(false);
+const searchBusy = computed(() => runtimeStore.search.isSearching || isSubmittingSearch.value);
 
 const searchPlans = computed(() =>
   metadataStore.getSearchSolutions
@@ -64,36 +66,48 @@ async function refreshSingleSearchSiteIds() {
 // 监听整个已添加站点配置（而非仅ID列表），使站点编辑器中切换 allowSearch/isOffline 后菜单同步刷新
 watch(() => metadataStore.getAddedSites, refreshSingleSearchSiteIds, { immediate: true, deep: true });
 
-function startSearchEntity() {
-  void router.push({
-    name: "SearchEntity",
-    query: {
-      search: searchKey.value,
-      plan: searchPlanKey.value,
-      flush: 1,
-      // D2-Medium-02：加一个单调递增的 nonce。同一关键词/方案再次搜索时，若 query 完全相同，
-      // vue-router 会把它当成重复导航直接丢弃 → `SearchEntity` 的 `watch(route.query)` 不触发，
-      // 用户看到的是「点搜索/回车没有任何反应」。nonce 让每次导航都是不同的 location。
-      t: Date.now(),
-    },
-  });
+async function startSearchEntity() {
+  if (searchBusy.value) return;
+  isSubmittingSearch.value = true;
+  try {
+    await router.push({
+      name: "SearchEntity",
+      query: {
+        search: searchKey.value,
+        plan: searchPlanKey.value,
+        flush: 1,
+        // D2-Medium-02：加一个单调递增的 nonce。同一关键词/方案再次搜索时，若 query 完全相同，
+        // vue-router 会把它当成重复导航直接丢弃 → `SearchEntity` 的 `watch(route.query)` 不触发，
+        // 用户看到的是「点搜索/回车没有任何反应」。nonce 让每次导航都是不同的 location。
+        t: Date.now(),
+      },
+    });
+  } finally {
+    isSubmittingSearch.value = false;
+  }
+}
+
+function onSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return;
+  void startSearchEntity();
 }
 
 function searchRecommendation(title: string) {
   searchKey.value = title;
-  startSearchEntity();
+  void startSearchEntity();
 }
 
 watch(
   () => route.query,
   (newQuery) => {
-    if (newQuery?.search && (newQuery.search as string) !== searchKey.value) {
-      searchKey.value = newQuery.search as string;
+    if (typeof newQuery.search === "string") {
+      searchKey.value = newQuery.search;
     }
-    if (newQuery?.plan && (newQuery.plan as string) !== searchPlanKey.value) {
-      searchPlanKey.value = newQuery.plan as string;
+    if (typeof newQuery.plan === "string") {
+      searchPlanKey.value = newQuery.plan;
     }
   },
+  { immediate: true },
 );
 
 const searchPlanLabel = computed(() => {
@@ -127,12 +141,12 @@ function selectSearchPlan({ key }: { key: string | number }) {
     <a-space-compact class="ptd-search-input">
       <!-- 搜索方案选择框 -->
       <a-dropdown :trigger="['click']">
-        <a-button class="ptd-search-plan-btn" type="primary">
+        <a-button class="ptd-search-plan-btn" type="primary" :title="searchPlanLabel">
           <span class="ptd-search-plan-label">{{ searchPlanLabel }}</span>
           <DownOutlined />
         </a-button>
         <template #overlay>
-          <a-menu @click="selectSearchPlan">
+          <a-menu :selected-keys="[searchPlanKey]" @click="selectSearchPlan">
             <!-- 默认搜索方案 -->
             <a-menu-item key="default">
               {{ t("layout.header.searchPlan.default") }}
@@ -178,23 +192,30 @@ function selectSearchPlan({ key }: { key: string | number }) {
 
       <a-input
         v-model:value="searchKey"
+        :aria-label="t('common.search')"
         :placeholder="t('layout.header.searchTip')"
         allow-clear
         class="ptd-search-key"
         enterkeyhint="search"
-        @press-enter="startSearchEntity"
+        @press-enter="onSearchEnter"
       >
         <template #suffix>
           <RecommendationMenu
             v-if="configStore.searchEntity.showHotRecommendations"
-            :disabled="runtimeStore.search.isSearching"
+            :disabled="searchBusy"
             @search="searchRecommendation"
           />
         </template>
       </a-input>
 
       <!-- 搜索按键 -->
-      <a-button :disabled="runtimeStore.search.isSearching" :title="t('common.search')" @click="startSearchEntity">
+      <a-button
+        :disabled="searchBusy"
+        :loading="searchBusy"
+        :aria-label="t('common.search')"
+        :title="t('common.search')"
+        @click="startSearchEntity"
+      >
         <template #icon><SearchOutlined /></template>
       </a-button>
     </a-space-compact>

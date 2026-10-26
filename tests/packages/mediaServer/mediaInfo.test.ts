@@ -7,6 +7,7 @@
  * - fnOS：概览按视图分页并在服务端只取 Movie/Series
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AxiosError } from "axios";
 
 const axiosMock = vi.hoisted(() => ({
   request: vi.fn(),
@@ -170,6 +171,52 @@ describe("mediaServer utils", () => {
 });
 
 describe("MediaBrowser（Emby / Jellyfin）条目映射", () => {
+  it("Emby 扩展 Fields 返回 500 时回退基础字段请求", async () => {
+    const server = new EmbyCtor(mediaBrowserConfig("emby"));
+    const item = embyItem();
+    axiosMock.request
+      .mockRejectedValueOnce(
+        new AxiosError("Request failed with status code 500", "ERR_BAD_RESPONSE", undefined, undefined, {
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: {},
+          config: {} as any,
+          data: {},
+        }),
+      )
+      .mockImplementationOnce(async (config: any) => {
+        if (config.responseType === "blob") return { data: poster };
+        expect(config.params.Fields).toBe(
+          "BasicSyncInfo,Path,Status,ExternalUrls,CommunityRating,MediaSources,DisplayPreferences,Genres,DateCreated,Overview,ExtraIds",
+        );
+        return { status: 200, data: { Items: [item] } };
+      });
+
+    const result = await server.getSearchResult("movie");
+
+    expect(result.items).toHaveLength(1);
+    expect(axiosMock.request.mock.calls[0][0].params.Fields).toContain("MediaSourceCount");
+    expect(axiosMock.request.mock.calls.slice(0, 2)).toHaveLength(2);
+  });
+
+  it("Jellyfin 搜索 500 时不回退到 Emby 的 Fields 参数", async () => {
+    const server = new JellyfinCtor(mediaBrowserConfig("jellyfin"));
+    axiosMock.request.mockRejectedValue(
+      new AxiosError("Request failed with status code 500", "ERR_BAD_RESPONSE", undefined, undefined, {
+        status: 500,
+        statusText: "Internal Server Error",
+        headers: {},
+        config: {} as any,
+        data: {},
+      }),
+    );
+
+    const result = await server.getSearchResult("movie");
+
+    expect(result.items).toEqual([]);
+    expect(axiosMock.request).toHaveBeenCalledTimes(1);
+  });
+
   it("Emby 搜索结果带结构化 mediaInfo / providerIds / 观看深度，海报仍是 data URL", async () => {
     const server = new EmbyCtor(mediaBrowserConfig("emby"));
     axiosMock.request.mockImplementation(async (config: any) => {

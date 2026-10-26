@@ -7,7 +7,7 @@ import { DownOutlined } from "@ant-design/icons-vue";
 import { ETorrentStatus, sortTorrentTags } from "@ptd/site";
 import { formatDate } from "@/options/utils.ts";
 import SiteName from "@/options/components/SiteName.vue";
-import { tableCustomFilter } from "./utils/filter.ts";
+import { tableCustomFilter, updateTableFilterNow as updateTableFilterValueFn } from "./utils/filter.ts";
 
 type KeywordField = "site" | "tags" | "status" | "text";
 type RangeField = "time" | "size" | "seeders" | "leechers" | "completed";
@@ -15,8 +15,7 @@ type FilterField = KeywordField | RangeField | "exclude";
 type DatePreset = "today" | "week" | "month" | "year" | "last7";
 
 const { t } = useI18n();
-const { advanceFilterDictRef, advanceItemPropsRef, tableWaitFilterRef, buildFilterDictFn, updateTableFilterValueFn } =
-  tableCustomFilter;
+const { advanceFilterDictRef, advanceItemPropsRef, tableWaitFilterRef, buildFilterDictFn } = tableCustomFilter;
 
 const fields: FilterField[] = [
   "site",

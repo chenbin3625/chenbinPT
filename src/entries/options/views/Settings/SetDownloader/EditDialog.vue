@@ -16,6 +16,7 @@ const { clientId } = defineProps<{
 const clientConfig = ref<IDownloaderMetadata>();
 // F2-Medium-03：编辑已有下载器同样要持续校验，校验不通过时「确定」禁用。
 const isFormValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 const { t } = useI18n();
 const metadataStore = useMetadataStore();
@@ -40,12 +41,15 @@ function dialogEnter() {
 }
 
 async function editClientConfig() {
-  if (!isFormValid.value) return;
+  if (!isFormValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 
@@ -58,6 +62,11 @@ watch(showDialog, (open) => {
 <template>
   <a-modal
     v-model:open="showDialog"
+    :confirm-loading="isSaving"
+    :cancel-button-props="{ disabled: isSaving }"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
     :cancel-text="t('common.dialog.cancel')"
     :ok-button-props="{ disabled: !isFormValid }"
     :ok-text="t('common.dialog.ok')"

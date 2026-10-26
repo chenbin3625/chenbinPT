@@ -27,6 +27,7 @@ const currentStep = ref<0 | 1>(0);
 const selectedBackupServerType = ref<IBackupServerMetadata["type"] | null>(null);
 const storedBackupServerConfig = ref<IBackupServerMetadata>({} as IBackupServerMetadata);
 const isBackupServerConfigValid = ref<boolean>(false);
+const isSaving = ref(false);
 
 const allBackupServerMetaData = computedAsync(async () => {
   const clientMetaData: Record<string, IBackupMetadata<any> & { type: string }> = {};
@@ -47,12 +48,15 @@ async function updateStoredDownloaderConfigByDefault(type: IBackupServerMetadata
 
 async function saveStoredBackupServerConfig() {
   // F2-Medium-12：校验未通过不保存；保存失败要提示，不能让 rejection 静默丢失。
-  if (!isBackupServerConfigValid.value) return;
+  if (!isBackupServerConfigValid.value || isSaving.value) return;
+  isSaving.value = true;
   try {
     await metadataStore.addBackupServer(storedBackupServerConfig.value as IBackupServerMetadata);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+  } finally {
+    isSaving.value = false;
   }
 }
 
@@ -65,7 +69,15 @@ function resetDialog() {
 </script>
 
 <template>
-  <a-modal v-model:open="showDialog" :title="t('SetBackup.AddDialog.title')" :width="800" :after-close="resetDialog">
+  <a-modal
+    v-model:open="showDialog"
+    :closable="!isSaving"
+    :keyboard="!isSaving"
+    :mask-closable="!isSaving"
+    :title="t('SetBackup.AddDialog.title')"
+    :width="800"
+    :after-close="resetDialog"
+  >
     <div>
       <!-- 选取可添加的备份服务器类型 -->
       <div v-show="currentStep === 0">
@@ -102,8 +114,10 @@ function resetDialog() {
     <template #footer>
       <a-flex align="center" justify="end">
         <a-flex align="center" :gap="8">
-          <a-button @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
-          <a-button v-if="currentStep === 1" @click="currentStep--">{{ t("common.dialog.prev") }}</a-button>
+          <a-button :disabled="isSaving" @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
+          <a-button v-if="currentStep === 1" :disabled="isSaving" @click="currentStep--">{{
+            t("common.dialog.prev")
+          }}</a-button>
           <a-button
             v-if="currentStep === 0"
             :disabled="selectedBackupServerType == null"
@@ -115,6 +129,7 @@ function resetDialog() {
           <a-button
             v-if="currentStep === 1"
             :disabled="!isBackupServerConfigValid"
+            :loading="isSaving"
             type="primary"
             @click="saveStoredBackupServerConfig"
           >

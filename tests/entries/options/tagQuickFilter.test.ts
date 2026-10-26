@@ -55,6 +55,7 @@ const TAGS = [{ name: "中字", color: "pink-darken-1" }, { name: "Free", color:
 
 let TorrentTitleTd: any;
 let SearchEntityView: any;
+let SearchFilterBar: any;
 let pinia: ReturnType<typeof prepareOptionsPinia>;
 let filterModule: typeof import("@/options/views/Overview/SearchEntity/utils/filter.ts");
 let tableCustomFilter: typeof filterModule.tableCustomFilter;
@@ -66,6 +67,7 @@ beforeAll(async () => {
   tableCustomFilter = filterModule.tableCustomFilter;
   // 搜索结果页视图同样在求值期碰 store，必须排在 prepareOptionsPinia() 之后
   SearchEntityView = (await import("@/options/views/Overview/SearchEntity/Index.vue")).default;
+  SearchFilterBar = (await import("@/options/views/Overview/SearchEntity/SearchFilterBar.vue")).default;
 });
 
 /** 每个用例都从「无筛选、标签纯展示偏好」的干净状态出发 */
@@ -320,6 +322,38 @@ describe("点击标签切换筛选（filter.ts 行为）", () => {
 
     // 清掉假定时器里尚未落地的防抖任务，避免影响后续用例
     await flushDebounce();
+  });
+
+  it("下拉筛选和清除立即更新结果，较早的输入防抖不会覆盖新状态", async () => {
+    tableCustomFilter.advanceItemPropsRef.value.tags = TAGS;
+    const view = mountOptionsView(SearchFilterBar, { pinia });
+    try {
+      await nextTick();
+      view.$<HTMLButtonElement>('[data-filter="tags"]')!.click();
+      await nextTick();
+      const menu = document.querySelector<HTMLElement>(".search-filter-menu")!;
+      const checkbox = Array.from(menu.querySelectorAll<HTMLElement>(".ant-checkbox-wrapper"))
+        .find((item) => item.textContent?.trim() === "Free")!
+        .querySelector<HTMLInputElement>("input")!;
+
+      tableCustomFilter.tableWaitFilterRef.value = "old query";
+      await nextTick();
+      checkbox.click();
+      await nextTick();
+      expect(tableCustomFilter.tableFilterRef.value).toContain("tags:Free");
+      expect(matchRow(torrent(["Free"]))).toBe(true);
+      expect(matchRow(torrent(["中字"]))).toBe(false);
+      await flushDebounce();
+      expect(matchRow(torrent(["中字"]))).toBe(false);
+
+      menu.querySelector<HTMLButtonElement>(".search-filter-clear")!.click();
+      await nextTick();
+      expect(tableCustomFilter.tableFilterRef.value.trim()).toBe("");
+      expect(matchRow(torrent(["中字"]))).toBe(true);
+    } finally {
+      view.unmount();
+      await flushDebounce();
+    }
   });
 });
 
