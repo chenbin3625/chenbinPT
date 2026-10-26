@@ -30,6 +30,7 @@ import EditDialog from "./EditDialog.vue";
 import EditSearchEntryList from "./EditSearchEntryList.vue";
 import OneClickImportDialog from "./OneClickImportDialog.vue";
 import RebuildMapDialog from "./RebuildMapDialog.vue";
+import SortIndexMoveButton from "./SortIndexMoveButton.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
@@ -273,6 +274,50 @@ async function flushSiteFavicon(siteId: TSiteID | TSiteID[]) {
   }
 }
 
+// 站点 id 列表（按优先级降序排列，与表格中按 userConfig.sortIndex 排序时的顺序一致）
+const orderedSiteIds = computed(() => metadataStore.getSortedAddedSites.map((x) => x.id));
+
+// 表格排序中的优先级列：快捷排序只在排序包含优先级时才有意义，否则改优先级不会让行移动
+// （多列排序时只要排序里带了优先级即可，不要求它排在第一列）
+const sortIndexSortBy = computed(() =>
+  (configStore.tableBehavior.SetSite.sortBy ?? []).find((sortBy) => sortBy.key === "userConfig.sortIndex"),
+);
+const isSortBySortIndex = computed(() => sortIndexSortBy.value !== undefined);
+
+// 优先级按升序排列时，视觉上的「上移/移至最前」对应优先级的下降，需要反转位置
+const isSortIndexAsc = computed(() => sortIndexSortBy.value?.order === "asc");
+
+type TSortIndexPosition = "up" | "down" | "top" | "bottom";
+const reversedSortIndexPosition: Record<TSortIndexPosition, TSortIndexPosition> = {
+  up: "down",
+  down: "up",
+  top: "bottom",
+  bottom: "top",
+};
+
+function resolveSortIndexPosition(position: TSortIndexPosition): TSortIndexPosition {
+  return isSortIndexAsc.value ? reversedSortIndexPosition[position] : position;
+}
+
+function canMoveSiteSortIndex(siteId: TSiteID, direction: "up" | "down") {
+  if (!isSortBySortIndex.value) return false; // 未按优先级排序时禁用快捷排序
+  const index = orderedSiteIds.value.indexOf(siteId);
+  const position = resolveSortIndexPosition(direction);
+  return position === "up" ? index > 0 : index !== -1 && index < orderedSiteIds.value.length - 1;
+}
+
+function sortIndexMoveTitle(direction: "up" | "down") {
+  if (!isSortBySortIndex.value) return t("SetSite.index.table.moveNeedSortIndex");
+  return direction === "up" ? t("SetSite.index.table.moveUp") : t("SetSite.index.table.moveDown");
+}
+
+async function moveSiteSortIndex(siteId: TSiteID, position: TSortIndexPosition) {
+  const isRedistributed = await metadataStore.moveSiteSortIndex(siteId, resolveSortIndexPosition(position));
+  if (isRedistributed) {
+    runtimeStore.showSnakebar(t("SetSite.index.sortIndexRedistributed"), { color: "info" });
+  }
+}
+
 /** V-21：该关键字当前是否以「排除」形式参与筛选（勾选之外还需要展示的第三种状态） */
 function isKeywordExcluded(filterKey: string, value: unknown): boolean {
   const exclude: unknown[] = advanceFilterDictRef.value[filterKey]?.exclude ?? [];
@@ -493,6 +538,20 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                 <SearchOutlined />
               </a-button>
             </a-popover>
+
+            <!-- 站点排序（短按：与相邻站点交换位置；长按：移至最前/最后，均要求表格按优先级排序） -->
+            <SortIndexMoveButton
+              direction="up"
+              :disabled="!canMoveSiteSortIndex(record.id, 'up')"
+              :title="sortIndexMoveTitle('up')"
+              @move="(position) => moveSiteSortIndex(record.id, position)"
+            />
+            <SortIndexMoveButton
+              direction="down"
+              :disabled="!canMoveSiteSortIndex(record.id, 'down')"
+              :title="sortIndexMoveTitle('down')"
+              @move="(position) => moveSiteSortIndex(record.id, position)"
+            />
 
             <a-tooltip :title="t('SetSite.index.table.flushFavicon')">
               <a-button
