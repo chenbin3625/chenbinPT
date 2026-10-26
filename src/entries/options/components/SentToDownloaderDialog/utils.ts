@@ -4,7 +4,8 @@ import type { ITorrent } from "@ptd/site";
 import type { IDownloadTorrentResult } from "@/shared/types.ts";
 import type { TDownloaderKey } from "@/shared/types/storages/metadata.ts";
 import type { CAddTorrentOptions } from "@ptd/downloader";
-import { formatDate, sanitizeDynamicReplaceValue } from "@/options/utils.ts";
+import { datePathTemplateVars, expandPathTemplate } from "@ptd/downloader/utils/pathTemplate.ts";
+import { sanitizeDynamicReplaceValue } from "@/options/utils.ts";
 import { i18n } from "@/options/plugins/i18n.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -86,9 +87,7 @@ export async function sendTorrentToDownloader(
   // 预构造动态替换映射表
   const nowDate = new Date();
   const baseReplaceMap: Record<string, string> = {
-    "date:YYYY": formatDate(nowDate, "yyyy"),
-    "date:MM": formatDate(nowDate, "MM"),
-    "date:DD": formatDate(nowDate, "dd"),
+    ...datePathTemplateVars(nowDate),
   };
 
   // 搜索相关动态替换（Info8：替换值会进保存路径 / 标签，先做路径安全化）
@@ -129,12 +128,9 @@ export async function sendTorrentToDownloader(
         delete realAddTorrentOptions[key];
         continue;
       }
-      let replaced = rawValue;
-      for (const [replaceKey, value] of Object.entries(replaceMap)) {
-        replaced = replaced.replaceAll(`$${replaceKey}$`, value);
-      }
+      // 一次扫描展开（替换结果不再二次扫描：标题里即使含 `$torrent.site$` 也不会被当成变量）
       // @ts-expect-error 原因：同上，按动态字段名对字符串字段做占位符替换
-      realAddTorrentOptions[key] = replaced;
+      realAddTorrentOptions[key] = expandPathTemplate(rawValue, replaceMap) ?? rawValue;
     }
 
     promises.push(
