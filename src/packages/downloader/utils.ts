@@ -1,4 +1,3 @@
-import { Buffer } from "buffer";
 import axios, { AxiosRequestConfig } from "axios";
 import parseTorrent, { Instance as TorrentInstance } from "parse-torrent";
 import isValidFilename from "valid-filename";
@@ -40,11 +39,24 @@ function decodeUrlEncodedAscii(str: string): string {
   return bytes.map((byte) => (byte >= 0x80 ? "\uFFFD" : String.fromCharCode(Number.isNaN(byte) ? 0 : byte))).join("");
 }
 
+/**
+ * 字节 → 标准 base64（带 `=` 填充），与原先 `Buffer.toString("base64")` 输出逐字节一致。
+ *
+ * 不用 `Uint8Array.prototype.toBase64()`：扩展的最低浏览器版本虽然支持，但单测运行的 Node 24 尚未提供。
+ * 分块拼接二进制串，避免 `String.fromCharCode(...大数组)` 爆栈（种子文件上限见 MAX_TORRENT_FILE_SIZE）。
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export interface ParsedTorrent {
   name: string;
   metadata: {
-    arraybuffer: ArrayBuffer;
-    buffer: Buffer;
     blob: () => Blob;
     base64: () => string;
   };
@@ -125,11 +137,14 @@ export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Pr
     throw new Error("Invalid Torrent From Server");
   }
 
-  // 将获取到的 ArrayBuffer 转成 Buffer
-  const metaDataBuffer = Buffer.from(req.data, "binary");
+  // parse-torrent 的入参是 ArrayBufferView（内部按 `ArrayBuffer.isView(torrentId)` 判定），
+  // 裸 ArrayBuffer 会走到最后抛 `Invalid torrent identifier`，所以这里包一层零拷贝视图。
+  // 原来用 `Buffer.from(req.data, "binary")` 只是为了拿到一个视图，改用 Uint8Array 后
+  // 整个仓库不再依赖 buffer 垫片。
+  const metaDataBytes = new Uint8Array(req.data);
   let parsedInfo: TorrentInstance;
   try {
-    parsedInfo = (await parseTorrent(metaDataBuffer)) as TorrentInstance;
+    parsedInfo = (await parseTorrent(metaDataBytes)) as TorrentInstance;
   } catch {
     // parseTorrent 失败说明响应体不是合法种子（例如站点返回登录页/错误页）
     throw new Error("Invalid Torrent From Server");
@@ -176,9 +191,7 @@ export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Pr
   return {
     name: torrentName,
     metadata: {
-      arraybuffer: req.data,
-      buffer: metaDataBuffer,
-      base64: () => metaDataBuffer.toString("base64"),
+      base64: () => bytesToBase64(metaDataBytes),
       blob: () => new Blob([req.data], { type: "application/x-bittorrent" }),
     },
     info: parsedInfo,

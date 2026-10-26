@@ -4,7 +4,6 @@ import path from "node:path";
 import vue from "@vitejs/plugin-vue";
 import git from "git-rev-sync";
 import type { Plugin } from "vite";
-import { nodePolyfills } from "vite-plugin-node-polyfills";
 import { defineConfig } from "wxt";
 
 import pkg from "./package.json" with { type: "json" };
@@ -75,6 +74,10 @@ function projectAliasPlugin(target: TBuildTarget): Plugin {
                 target === "firefox" ? "src/entries/background/ff_main.ts" : "src/entries/background/main.ts",
               ),
             },
+            // `parse-torrent` 会 `import path from "path"`，而它只用到 `join` + `sep`
+            // （见 src/extends/shims/path.ts 的开头注释）。用本仓的最小实现接管，
+            // 换掉 path-browserify 的 478 行实现。用正则做精确匹配，避免误伤 `path/xxx` 子路径。
+            { find: /^(node:)?path$/, replacement: base_path("./src/extends/shims/path.ts") },
           ],
         },
       };
@@ -127,17 +130,18 @@ export default defineConfig({
         chunkSizeWarningLimit: 800,
         reportCompressedSize: false,
       },
-      plugins: [
-        nodePolyfills({
-          // parse-torrent 运行时会调用 path.join；Vite 无 polyfill 时会把 path externalize 为空对象。
-          include: ["buffer", "path"],
-          globals: {
-            Buffer: true,
-          },
-        }),
-        vue(),
-        projectAliasPlugin(target),
-      ],
+      // 这里曾有 `vite-plugin-node-polyfills`（`include: ["buffer","path"]`，globals 默认全开）。已移除，
+      // 因为本仓已不再有任何 Node 内建的运行时依赖：
+      //   · `buffer`：源码里最后一处用法（downloader 把 ArrayBuffer 转成 Buffer 交给 parse-torrent）
+      //     已改为零拷贝的 `new Uint8Array(...)`；
+      //   · `path`：唯一使用方 parse-torrent 只用 `join` + `sep`，已由 projectAliasPlugin 的 alias 指向自实现；
+      //   · `process` / 裸 `Buffer`：该插件的 globals 只在代码里出现裸标识符时注入，现存引用（axios 的
+      //     `typeof process !== "undefined"`、jszip / konva 的 `typeof Buffer` 探测）都带 typeof 守卫，
+      //     浏览器里走 queueMicrotask / Uint8Array / btoa 分支；
+      //   · `global`：见下方 define（`global` → `globalThis`）。
+      // ⚠️ 将来若新增的依赖 import 了 Node 内建：`path` 认 projectAliasPlugin 里那条 alias；其余需要像
+      // `src/extends/shims/` 那样补一个等价实现（**不要**重新引入多模块垫片 —— 它们会把用不到的成员一起打进产物）。
+      plugins: [vue(), projectAliasPlugin(target)],
       define: {
         __BROWSER__: JSON.stringify(target),
         __EXT_VERSION__: JSON.stringify(`v${commit_version}`),
@@ -150,6 +154,11 @@ export default defineConfig({
         }),
         __BUILD_TIME__: JSON.stringify(+Date.now()),
         __RESOURCE_SITE_ICONS__: JSON.stringify(fs.readdirSync(base_path("./public/icons/site"))),
+        // 原垫片插件的 globals.global 会把裸 `global` 注入为垫片；移除后用 define 等价接管（零体积）。
+        // 现存唯一无 typeof 守卫的引用是 parse-torrent 依赖的 queue-microtask：
+        // `queueMicrotask.bind(typeof window !== "undefined" ? window : global)`，在没有 window 的
+        // service worker 里会走到 `global` 分支（当前 chrome 的 background.js 未引入它，这里防患于未然）。
+        global: "globalThis",
       },
     };
   },

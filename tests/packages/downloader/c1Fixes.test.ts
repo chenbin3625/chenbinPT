@@ -110,6 +110,20 @@ describe("PKG-3：getRemoteTorrentFile 的响应类型/体积校验", () => {
     expect(parsed.info.name).toBe("test");
   });
 
+  it("生产形态的裸 ArrayBuffer 响应可解析，base64() 与 Buffer.toString('base64') 逐字节一致（去 buffer 垫片回归）", async () => {
+    const bytes = bencodedTorrent();
+    // axios 的 responseType: "arraybuffer" 在浏览器里给的是裸 ArrayBuffer（不是 Node Buffer）
+    const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    axiosRequestMock.mockResolvedValue({
+      headers: { "content-type": "application/x-bittorrent" },
+      data: arrayBuffer,
+    });
+    const parsed = await getRemoteTorrentFile({ url: "https://pt.example/download.php?id=1" });
+    expect(parsed.info.name).toBe("test");
+    expect(parsed.metadata.base64()).toBe(bytes.toString("base64"));
+    expect(new Uint8Array(await parsed.metadata.blob().arrayBuffer())).toEqual(new Uint8Array(bytes));
+  });
+
   it("超过体积上限时拒绝，避免误下载大文件", async () => {
     axiosRequestMock.mockResolvedValue({
       headers: { "content-type": "application/x-bittorrent", "content-length": String(60 * 1024 * 1024) },

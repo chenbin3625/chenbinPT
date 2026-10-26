@@ -164,9 +164,13 @@ const invariants: Invariant[] = [
   // 的行为用例覆盖 —— 与本文件头「行为已被用例覆盖时不要再加形态断言」的纪律冲突，故移除。
   {
     id: "correctness",
-    description: "浏览器构建保留 path polyfill（parse-torrent 会调用 path.join）",
+    description:
+      "浏览器构建把 path 别名到 src/extends/shims/path.ts（parse-torrent 会调用 path.join），且不再引入多模块 node 垫片",
     file: "wxt.config.ts",
-    mustMatch: /include:\s*\[[^\]]*"buffer"[^\]]*"path"[^\]]*\]/,
+    // shim 本身的语义由 tests/extends/shims/path.test.ts 与 node:path 差分覆盖；这里只锁「构建期真的接管了 path」
+    mustMatch:
+      /find:\s*\/\^\(node:\)\?path\$\/,\s*replacement:\s*base_path\(["']\.\/src\/extends\/shims\/path\.ts["']\)/,
+    mustNotMatch: /^import[^;]*from\s*["']vite-plugin-node-polyfills["']/m,
   },
   {
     id: "P1-3",
