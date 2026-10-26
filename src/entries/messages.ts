@@ -62,6 +62,9 @@ import {
   AugmentedRequired,
   IKeepUploadTask,
   TKeepUploadTaskKey,
+  ITorrentFavoriteItem,
+  ITorrentFavoriteStatus,
+  TTorrentFavoriteKey,
   BridgeStatus,
 } from "@/shared/types.ts";
 
@@ -275,6 +278,15 @@ interface ProtocolMap {
   deleteKeepUploadTask(taskId: TKeepUploadTaskKey): void;
   clearKeepUploadTasks(): void;
 
+  // 2.7.1 种子收藏 ( utils/torrentFavorite )
+  // 整表读取（含 link / url，可能内嵌 passkey）只对扩展页开放；内容脚本用 getTorrentFavoriteStatus
+  getTorrentFavorites(): ITorrentFavoriteItem[];
+  getTorrentFavoriteStatus(data: {
+    torrents: Array<Pick<ITorrent, "site" | "id" | "link" | "url">>;
+  }): ITorrentFavoriteStatus;
+  createTorrentFavorites(data: { torrents: ITorrent[]; favCategories?: string[]; comment?: string }): number;
+  deleteTorrentFavorites(keys: TTorrentFavoriteKey[]): void;
+
   // 2.8 Lightweight list queries (for CLI discovery)
   getSiteList(): Array<{ id: string; name: string; url: string; offline: boolean }>;
   getDownloaderList(): Array<{ id: string; name: string; type: string; enabled: boolean; address: string }>;
@@ -357,6 +369,10 @@ export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "updateKeepUploadTask",
   "deleteKeepUploadTask",
   "clearKeepUploadTasks",
+  "getTorrentFavorites",
+  "getTorrentFavoriteStatus",
+  "createTorrentFavorites",
+  "deleteTorrentFavorites",
   "getSiteList",
   "getDownloaderList",
 ]);
@@ -404,6 +420,10 @@ export const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "updateKeepUploadTask",
   "deleteKeepUploadTask",
   "clearKeepUploadTasks",
+  // 种子收藏：整表读取含各站点下载链接，删除是写操作，均只对扩展页开放
+  //（createTorrentFavorites / getTorrentFavoriteStatus 对内容脚本开放，由 offscreen 按站点绑定校验）
+  "getTorrentFavorites",
+  "deleteTorrentFavorites",
   "updateDNRSessionRules",
   "removeDNRSessionRuleById",
   "nativeBridgeGetStatus",
@@ -428,6 +448,9 @@ export const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
   "downloadTorrent",
   "matchSocialPage",
   "openOptionsPage",
+  // 种子收藏：offscreen 侧要求每个 torrent.site 与发送页面绑定（utils/torrentFavorite.ts）
+  "createTorrentFavorites",
+  "getTorrentFavoriteStatus",
 ]);
 
 /**
@@ -590,6 +613,9 @@ export const retryableOffscreenMessageTypes = new Set<keyof ProtocolMap>([
   // 2.7 辅种任务只读查询（create / update / delete / clear 都是写，不在此列）
   "getKeepUploadTasks",
   "getKeepUploadTaskById",
+  // 2.7.1 种子收藏只读查询（create / delete 都是写，不在此列）
+  "getTorrentFavorites",
+  "getTorrentFavoriteStatus",
   // 2.8 轻量列表查询（CLI 发现用）
   "getSiteList",
   "getDownloaderList",

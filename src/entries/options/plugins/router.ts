@@ -15,6 +15,7 @@ import {
   ReloadOutlined,
   SearchOutlined,
   SettingOutlined,
+  StarOutlined,
   UserOutlined,
 } from "@ant-design/icons-vue";
 
@@ -96,6 +97,12 @@ export const routes: RouteRecordRaw[] = [
         name: "SearchResultSnapshot",
         meta: { icon: CameraOutlined },
         component: () => import("../views/Overview/SearchResultSnapshot/Index.vue"),
+      },
+      {
+        path: "/my-collection",
+        name: "MyCollection",
+        meta: { icon: StarOutlined },
+        component: () => import("../views/Overview/MyCollection/Index.vue"),
       },
       {
         path: "/media-server-entity",

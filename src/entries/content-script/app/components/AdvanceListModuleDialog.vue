@@ -8,6 +8,7 @@ import {
   DownloadOutlined,
   InboxOutlined,
   SaveOutlined,
+  StarOutlined,
   StopOutlined,
 } from "@ant-design/icons-vue";
 import { ETorrentStatus, ITorrent } from "@ptd/site";
@@ -34,6 +35,15 @@ const tableScrollHeight = computed(() => Math.max(160, Math.min(360, windowHeigh
 const { torrentItems } = defineProps<{
   torrentItems: ITorrent[];
 }>();
+
+const emits = defineEmits<{
+  (e: "favorite", torrents: ITorrent[]): void;
+}>();
+
+// 收藏勾选的种子（由外层 SiteListPage 打开收藏对话框，避免对话框嵌套）
+function handleFavoriteMulti() {
+  emits("favorite", selectedTorrents.value);
+}
 
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
@@ -293,6 +303,13 @@ watch(showDialog, (open) => {
             :icon="DownloadOutlined"
             :text="t('contentScript.pushToDefault')"
             @click="() => handleRemoteDownloadMulti(true)"
+          />
+
+          <NavButton
+            :disabled="!hasSelectedTorrent"
+            :icon="StarOutlined"
+            :text="t('contentScript.favoriteTorrents')"
+            @click="handleFavoriteMulti"
           />
         </a-flex>
       </a-flex>

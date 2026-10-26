@@ -14,6 +14,7 @@ export * from "./types/storages/metadata.ts";
 export * from "./types/storages/runtime.ts";
 export * from "./types/storages/other.ts";
 export * from "./types/storages/keepUploadTask.ts";
+export * from "./types/storages/torrentFavorite.ts";
 
 export interface IRestoreOptions {
   fields?: TBackupFields[]; // 需要恢复的字段

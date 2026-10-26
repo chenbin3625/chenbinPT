@@ -5,16 +5,18 @@ import {
   DownloadOutlined,
   MergeCellsOutlined,
   SaveOutlined,
+  StarOutlined,
 } from "@ant-design/icons-vue";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import type { ITorrent } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
-import type { ISearchResultTorrent } from "@/shared/types.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
 import SentToDownloaderDialog from "@/options/components/SentToDownloaderDialog/Index.vue";
+import TorrentFavoriteDialog from "@/options/components/TorrentFavoriteDialog.vue";
 import KeepUploadDialog from "./KeepUploadDialog.vue";
 
 const {
@@ -23,14 +25,22 @@ const {
   showKeepUploadBtn = true,
   showLabel = false,
   variant = "table",
+  favoriteBtnTitle,
 } = defineProps<{
-  torrentItems: ISearchResultTorrent[];
+  // 收藏列表页复用本组件（收藏项是 ITorrent 而不是搜索结果），因此放宽为 ITorrent
+  torrentItems: ITorrent[];
   compact?: boolean;
   showKeepUploadBtn?: boolean;
   /** 文字按钮模式：在图标右侧显示短文案（用于页面底部的多选操作条），表格行内仍只显示图标 */
   showLabel?: boolean;
   /** table: 表格单元格内的 24px 图标小按钮；bar: 页面底部的多选操作条（不套表格操作栏尺寸样式） */
   variant?: "table" | "bar";
+  /** 收藏按钮的提示文案（例如收藏列表页中它承担的是「编辑收藏」），缺省使用通用文案 */
+  favoriteBtnTitle?: string;
+}>();
+
+const emits = defineEmits<{
+  (e: "favoriteSaved"): void;
 }>();
 
 const isBarVariant = computed(() => variant === "bar");
@@ -144,6 +154,8 @@ const showKeepUploadDialog = ref(false);
 function openKeepUploadDialog() {
   showKeepUploadDialog.value = true;
 }
+
+const showFavoriteDialog = ref(false);
 </script>
 
 <template>
@@ -192,6 +204,16 @@ function openKeepUploadDialog() {
       :size="btnSize"
       ><template #icon><MergeCellsOutlined /></template>{{ buttonLabel("keepUpload") }}</a-button
     >
+    <!-- 收藏 -->
+    <a-button
+      :disabled="torrentItems.length == 0"
+      :title="favoriteBtnTitle ?? t('SearchEntity.ActionTd.favorite')"
+      @click="showFavoriteDialog = true"
+      :size="btnSize"
+      ><template #icon><StarOutlined /></template>{{ buttonLabel("favorite") }}</a-button
+    >
+    <!-- 调用方可追加与上方同组的按钮（如收藏列表页的删除） -->
+    <slot name="append" />
   </a-button-group>
 
   <!-- 在点击发送到远程服务器时，弹出选择下载器及其他自定义选项 -->
@@ -208,5 +230,13 @@ function openKeepUploadDialog() {
     v-if="showKeepUploadBtn && showKeepUploadDialog"
     v-model="showKeepUploadDialog"
     :torrent-items="torrentItems"
+  />
+
+  <!-- 收藏对话框（同样按需挂载） -->
+  <TorrentFavoriteDialog
+    v-if="showFavoriteDialog"
+    v-model="showFavoriteDialog"
+    :torrent-items="torrentItems"
+    @saved="emits('favoriteSaved')"
   />
 </template>

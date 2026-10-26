@@ -262,9 +262,10 @@ describe("DOWNLOADER-8：搜索页推送汇总不能把「成功但降级」吞�
     });
     await view.settle();
 
-    // 本地下载按钮（默认下载器为空时按钮组顺序为：推送 / 复制链接 / 本地下载）
+    // 本地下载按钮（默认下载器为空时按钮组顺序为：推送 / 复制链接 / 本地下载 / 收藏）
     const buttons = view.$$<HTMLButtonElement>(".ptd-action-bar button");
-    expect(buttons.length).toBe(3);
+    expect(buttons.length).toBe(4);
+    expect(buttons[2]!.getAttribute("title")).toBe("下载种子文件到本地");
     buttons[2]!.click();
     await view.settle(80);
 

@@ -167,7 +167,12 @@ function canAdvanceSearch(site: TSupportSocialSite) {
       <div style="flex: 0 0 auto; margin-left: 8px">
         <template v-if="showSocial && configStore.searchEntifyControl.showSocialInformation">
           <template v-for="(meta, key) in socialBuildUrlMap" :key="key">
-            <a-dropdown v-if="item[`ext_${key}`]" :trigger="['hover']" placement="bottomRight">
+            <!--
+              不要移除 mouse-leave-delay：卡片里是可点击的（搜索 / 访问），而激活它的头像只有 20px，
+              指针斜向移向卡片的过程中必然先离开头像；antd 默认 0.1s 后关闭，稍慢移动就会超时。
+              这里留出 0.8s，指针进入卡片后即可取消关闭（上游 #1580 / #1582 同类问题）。
+            -->
+            <a-dropdown v-if="item[`ext_${key}`]" :mouse-leave-delay="0.8" :trigger="['hover']" placement="bottomRight">
               <a-avatar
                 :size="20"
                 :src="`/icons/social/${key}.png`"

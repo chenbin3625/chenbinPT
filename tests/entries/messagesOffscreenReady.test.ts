@@ -794,6 +794,9 @@ describe("内容脚本白名单完备性（TEST-6）", () => {
       "clearDownloadHistory",
       "removeSiteUserInfo",
       "clearKeepUploadTasks",
+      // 种子收藏：整表含各站点下载链接（可能内嵌 passkey），删除是写操作；内容脚本只开放 create / status
+      "getTorrentFavorites",
+      "deleteTorrentFavorites",
     ]) {
       expect(allowed, `${type} 不应开放给内容脚本`).not.toContain(type);
     }

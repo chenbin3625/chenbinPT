@@ -206,6 +206,8 @@ describe("nativeMessaging 桥接权限面（A4）", () => {
       "clearSiteFaviconCache",
       // 整库遍历需用户在设置页显式确认，不能经桥接静默触发
       "getMediaServerOverview",
+      "createTorrentFavorites",
+      "deleteTorrentFavorites",
     ]) {
       expect(ALLOWED_METHODS.has(removed), `${removed} 不应再开放给原生宿主`).toBe(false);
     }
@@ -225,6 +227,7 @@ describe("nativeMessaging 桥接权限面（A4）", () => {
       "getSiteUserInfo",
       "getKeepUploadTasks",
       "getKeepUploadTaskById",
+      "getTorrentFavorites",
     ]) {
       expect(ALLOWED_METHODS.has(kept), `${kept} 应保留（只读）`).toBe(true);
     }

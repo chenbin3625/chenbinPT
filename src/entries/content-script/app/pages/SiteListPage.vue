@@ -8,6 +8,7 @@ import {
   DownloadOutlined,
   SaveOutlined,
   SearchOutlined,
+  StarOutlined,
 } from "@ant-design/icons-vue";
 import { type ITorrent } from "@ptd/site";
 
@@ -28,6 +29,7 @@ import {
 
 import AdvanceListModuleDialog from "../components/AdvanceListModuleDialog.vue";
 import SpeedDialBtn from "../components/SpeedDialBtn.vue";
+import TorrentFavoriteDialog from "@/options/components/TorrentFavoriteDialog.vue";
 
 const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
@@ -131,6 +133,33 @@ async function handleAdvanceListModule() {
   }
 }
 
+// 收藏（当前页面解析出的全部种子，或高级列表中勾选的种子）
+// 写入由 offscreen 校验：每个 torrent.site 都必须与当前页面所属站点绑定（utils/torrentFavorite.ts）
+const favoriteTorrents = shallowRef<ITorrent[]>([]);
+const showFavoriteDialog = ref<boolean>(false);
+
+function openFavoriteDialog(torrents: ITorrent[]) {
+  if (torrents.length === 0) {
+    return;
+  }
+  favoriteTorrents.value = torrents;
+  showFavoriteDialog.value = true;
+}
+
+async function handleFavoriteMulti() {
+  try {
+    const { torrents } = await parseListPage();
+    openFavoriteDialog(torrents);
+  } catch (e) {
+    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+  }
+}
+
+function handleFavoriteSelected(torrents: ITorrent[]) {
+  showAdvanceListModuleDialog.value = false;
+  openFavoriteDialog(torrents);
+}
+
 async function handleSearch() {
   // CONTENTSCRIPT-3：await parseListPage() 同样要处理失败，否则快捷搜索的点击会留下 unhandled rejection
   try {
@@ -144,6 +173,14 @@ async function handleSearch() {
 </script>
 
 <template>
+  <!-- SpeedDial 中越靠前的按钮越靠近主按钮，收藏放在最前（与上游一致） -->
+  <SpeedDialBtn
+    key="favorite"
+    :icon="StarOutlined"
+    :title="t('contentScript.favoriteTorrents')"
+    :label="t('contentScript.speedDial.favorite')"
+    @click="handleFavoriteMulti"
+  />
   <SpeedDialBtn
     key="save"
     :loading="localDownloadMultiStatus"
@@ -197,5 +234,11 @@ async function handleSearch() {
     @click="handleSearch"
   />
 
-  <AdvanceListModuleDialog v-model="showAdvanceListModuleDialog" :torrent-items="parsedTorrents" />
+  <AdvanceListModuleDialog
+    v-model="showAdvanceListModuleDialog"
+    :torrent-items="parsedTorrents"
+    @favorite="handleFavoriteSelected"
+  />
+
+  <TorrentFavoriteDialog v-model="showFavoriteDialog" :torrent-items="favoriteTorrents" />
 </template>

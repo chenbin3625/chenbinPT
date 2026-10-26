@@ -29,6 +29,7 @@ import { releaseBlobUrlWhenDownloadSettled } from "./download.ts";
 import { sanitizeDownloadHistoryRecordForExport } from "./downloadHistorySanitize.ts";
 import { clearSiteInstanceCache } from "./siteInstanceCache.ts";
 import { replaceKeepUploadTasks } from "./keepUploadTask.ts";
+import { replaceTorrentFavorites } from "./torrentFavorite.ts";
 import { ptdIndexDb } from "../adapter/indexdb.ts";
 
 export const storageKey = [
@@ -37,6 +38,7 @@ export const storageKey = [
   "userInfo",
   "searchResultSnapshot",
   "keepUploadTask",
+  "torrentFavorite",
 ] as TExtensionStorageKey[];
 
 /**
@@ -773,6 +775,9 @@ export async function restoreBackupData(
        */
       if (key === "keepUploadTask") {
         await replaceKeepUploadTasks(value as Parameters<typeof replaceKeepUploadTasks>[0]);
+      } else if (key === "torrentFavorite") {
+        // 种子收藏同理：走 torrentFavorite 模块的串行链，避免与在途的收藏 / 删除互相覆盖
+        await replaceTorrentFavorites(value as Parameters<typeof replaceTorrentFavorites>[0]);
       } else {
         await sendMessage("setExtStorage", { key, value });
       }
@@ -832,6 +837,8 @@ export async function restoreBackupData(
         // 与写入路径一致：keepUploadTask 的回滚也走串行突变链
         if (key === "keepUploadTask") {
           await replaceKeepUploadTasks(snapshot as Parameters<typeof replaceKeepUploadTasks>[0]);
+        } else if (key === "torrentFavorite") {
+          await replaceTorrentFavorites(snapshot as Parameters<typeof replaceTorrentFavorites>[0]);
         } else {
           await sendMessage("setExtStorage", { key, value: snapshot });
         }

@@ -298,6 +298,42 @@
       "upSpeed": "上传速度"
     }
   },
+  "MyCollection": {
+    "alert": "收藏的种子保存在本地，可等到站免等活动时集中推送到下载器。",
+    "clearAll": "清空全部",
+    "clearConfirm": "确认清空全部种子收藏吗？",
+    "deleteSuccess": "删除成功",
+    "dialog": {
+      "alreadyFavorited": "已收藏",
+      "alreadyFavoritedNotice": "其中 {0} 个种子已被收藏，本次操作会更新它们的收藏分类与备注。",
+      "comment": "备注",
+      "editSuccess": "已更新 {0} 个收藏的分类与备注",
+      "editTitle": "编辑收藏",
+      "favCategories": "收藏分类",
+      "favCategoriesHint": "可多选已有分类，也可输入新分类后回车创建；同一种子可归入多个分类，留空表示未分类",
+      "saveAndEditSuccess": "已收藏 {0} 个种子，并更新 {1} 个收藏",
+      "saveError": "收藏失败",
+      "saveSuccess": "已收藏 {0} 个种子",
+      "title": "收藏 {0} 个种子",
+      "totalSize": "共 {0}"
+    },
+    "emptyNotice": "暂无种子收藏，可在搜索结果页、种子列表页或种子详情页中点击收藏按钮添加",
+    "filterAll": "全部分类",
+    "filterLabel": "过滤收藏",
+    "loadError": "获取种子收藏失败",
+    "table": {
+      "action": {
+        "edit": "编辑收藏分类与备注"
+      },
+      "category": "分类",
+      "createdAt": "收藏时间",
+      "favCategories": "收藏分类",
+      "size": "大小",
+      "time": "发布时间",
+      "title": "标题",
+      "unclassified": "未分类"
+    }
+  },
   "MyData": {
     "HistoryDataView": {
       "action": {
@@ -393,8 +429,10 @@
       "copyLink": "复制下载链接",
       "copyLinkFailed": "复制下载链接失败",
       "copyLinkSuccess": "下载链接已复制到剪贴板",
+      "favorite": "收藏",
       "label": {
         "copyLink": "复制链接",
+        "favorite": "收藏",
         "keepUpload": "辅种检测",
         "localDownload": "下载到本地",
         "sendToDefault": "默认下载器",
@@ -689,6 +727,7 @@
       "keepUploadTask": "辅种任务（keepUploadTask）",
       "metadata": "站点与服务配置（metadata）",
       "searchResultSnapshot": "搜索结果快照（searchResultSnapshot）",
+      "torrentFavorite": "种子收藏（torrentFavorite）",
       "userInfo": "用户信息（userInfo）"
     },
     "localExport": "本地导出",
@@ -1387,6 +1426,8 @@
     "copyLinkSuccess": "下载链接已复制到剪贴板",
     "confirmAction": "确定要执行此操作吗？",
     "emptySearchKeyword": "搜索关键词不能为空",
+    "favoriteTorrent": "收藏当前种子",
+    "favoriteTorrents": "收藏种子",
     "ignoredForeignLinks": "已忽略 {count} 条不属于本站点的下载链接",
     "inputSearchKeywords": "未解析到搜索关键词，请输入：",
     "invalidDropData": "拖拽内容不是有效的种子数据，已忽略",
@@ -1402,6 +1443,7 @@
     "speedDial": {
       "advanceList": "高级列表",
       "copyLink": "复制链接",
+      "favorite": "收藏种子",
       "localDownload": "本地下载",
       "openPTD": "打开面板",
       "pushTo": "选择下载",

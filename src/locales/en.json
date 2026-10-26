@@ -298,6 +298,42 @@
       "upSpeed": "Upload Speed"
     }
   },
+  "MyCollection": {
+    "alert": "Favorites are stored locally; push them to your downloader in bulk when a site-wide freeleech starts.",
+    "clearAll": "Clear all",
+    "clearConfirm": "Clear all torrent favorites?",
+    "deleteSuccess": "Deleted",
+    "dialog": {
+      "alreadyFavorited": "In favorites",
+      "alreadyFavoritedNotice": "{0} of them are already in favorites — this will update their category and comment.",
+      "comment": "Comment",
+      "editSuccess": "Updated {0} favorite(s)",
+      "editTitle": "Edit favorite",
+      "favCategories": "Categories",
+      "favCategoriesHint": "Pick existing categories or type a new one and press Enter; a torrent can belong to several categories, leave empty for uncategorized",
+      "saveAndEditSuccess": "Added {0} torrent(s) and updated {1} favorite(s)",
+      "saveError": "Failed to add to favorites",
+      "saveSuccess": "Added {0} torrent(s) to favorites",
+      "title": "Add {0} torrent(s) to favorites",
+      "totalSize": "Total {0}"
+    },
+    "emptyNotice": "No favorites yet. Use the favorite button on the search results page, a torrent list page, or a torrent detail page.",
+    "filterAll": "All categories",
+    "filterLabel": "Filter favorites",
+    "loadError": "Failed to load torrent favorites",
+    "table": {
+      "action": {
+        "edit": "Edit categories and comment"
+      },
+      "category": "Category",
+      "createdAt": "Favorited at",
+      "favCategories": "Fav. categories",
+      "size": "Size",
+      "time": "Published at",
+      "title": "Title",
+      "unclassified": "Uncategorized"
+    }
+  },
   "MyData": {
     "HistoryDataView": {
       "action": {
@@ -393,8 +429,10 @@
       "copyLink": "Copy Download Link",
       "copyLinkFailed": "Failed to copy download link",
       "copyLinkSuccess": "Download link copied to clipboard",
+      "favorite": "Add to favorites",
       "label": {
         "copyLink": "Copy Links",
+        "favorite": "Favorite",
         "keepUpload": "Reseed Check",
         "localDownload": "Download Locally",
         "sendToDefault": "Default Downloader",
@@ -689,6 +727,7 @@
       "keepUploadTask": "Reseed tasks (keepUploadTask)",
       "metadata": "Site and service configuration (metadata)",
       "searchResultSnapshot": "Search result snapshots (searchResultSnapshot)",
+      "torrentFavorite": "Torrent favorites (torrentFavorite)",
       "userInfo": "User information (userInfo)"
     },
     "localExport": "Local Export",
@@ -1390,6 +1429,8 @@
     "copyLinkSuccess": "Download link copied to clipboard",
     "confirmAction": "Are you sure you want to perform this action?",
     "emptySearchKeyword": "Search keyword cannot be empty",
+    "favoriteTorrent": "Add this torrent to favorites",
+    "favoriteTorrents": "Add torrents to favorites",
     "ignoredForeignLinks": "Ignored {count} download link(s) that do not belong to this site",
     "inputSearchKeywords": "No search keyword was parsed. Please enter one:",
     "invalidDropData": "The dropped content is not valid torrent data and was ignored",
@@ -1405,6 +1446,7 @@
     "speedDial": {
       "advanceList": "List",
       "copyLink": "Copy Link",
+      "favorite": "Favorite",
       "localDownload": "Download",
       "openPTD": "Open PTD",
       "pushTo": "Choose",

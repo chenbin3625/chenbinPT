@@ -56,6 +56,9 @@ export const ALLOWED_METHODS = new Set([
   // 辅种任务（只读；不开放 create/update/delete/clear）
   "getKeepUploadTasks",
   "getKeepUploadTaskById",
+  // 种子收藏（只读，结果经脱敏）：createTorrentFavorites / deleteTorrentFavorites 是写操作，
+  // 与上面辅种任务的写类消息同理不开放给原生宿主（上游三条都开放了）
+  "getTorrentFavorites",
 ]);
 
 /**

@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed, inject } from "vue";
+import { computed, inject, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
-import { CloudDownloadOutlined, CopyOutlined, DownloadOutlined, SearchOutlined } from "@ant-design/icons-vue";
+import {
+  CloudDownloadOutlined,
+  CopyOutlined,
+  DownloadOutlined,
+  SearchOutlined,
+  StarOutlined,
+} from "@ant-design/icons-vue";
 import type { ITorrent } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
@@ -18,6 +24,7 @@ import {
 } from "../utils.ts";
 
 import SpeedDialBtn from "../components/SpeedDialBtn.vue";
+import TorrentFavoriteDialog from "@/options/components/TorrentFavoriteDialog.vue";
 
 const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
@@ -101,6 +108,22 @@ async function handleRemoteDownload(isDefaultSend = false) {
   remoteDownloadDialogData.show = true;
 }
 
+// 收藏当前详情页种子：只需要能识别种子（标题 / id），不要求解析出下载链接；
+// 写入由 offscreen 校验 torrent.site 与当前页面所属站点绑定
+const favoriteTorrents = shallowRef<ITorrent[]>([]);
+const showFavoriteDialog = ref<boolean>(false);
+
+function handleFavorite() {
+  parseDetailPage({ requireLink: false })
+    .then((torrent) => {
+      favoriteTorrents.value = [torrent];
+      showFavoriteDialog.value = true;
+    })
+    .catch(() => {
+      // parseDetailPage 内部已经给出提示
+    });
+}
+
 function handleSearch() {
   // B2-4：快捷搜索只用到标题，不要求下载链接（link 解析失败不再阻止搜索）
   parseDetailPage({ requireLink: false })
@@ -114,6 +137,14 @@ function handleSearch() {
 </script>
 
 <template>
+  <!-- 与种子列表页一致：收藏放在最前（SpeedDial 中越靠前越靠近主按钮） -->
+  <SpeedDialBtn
+    key="favorite"
+    :icon="StarOutlined"
+    :title="t('contentScript.favoriteTorrent')"
+    :label="t('contentScript.speedDial.favorite')"
+    @click="handleFavorite"
+  />
   <SpeedDialBtn
     key="copy"
     type="primary"
@@ -148,4 +179,6 @@ function handleSearch() {
     :label="t('contentScript.speedDial.quickSearch')"
     @click="handleSearch"
   />
+
+  <TorrentFavoriteDialog v-model="showFavoriteDialog" :torrent-items="favoriteTorrents" />
 </template>
