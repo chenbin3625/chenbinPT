@@ -11,7 +11,7 @@ vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
 vi.stubGlobal("__RESOURCE_SITE_ICONS__", []);
 vi.stubGlobal("fetch", fetchMock);
 
-const { getFavicon, NO_IMAGE } = await import("@ptd/site/utils/favicon.ts");
+const { FAVICON_REQUEST_TIMEOUT, getFavicon, NO_IMAGE } = await import("@ptd/site/utils/favicon.ts");
 
 function response(
   data: Document | Blob | object,
@@ -72,6 +72,7 @@ describe("getFavicon：manifest 中的坏条目（M-32）", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://pt.example/icon.png", {
       credentials: "same-origin",
       redirect: "follow",
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -270,9 +271,33 @@ describe("getFavicon：manifest 中的坏条目（M-32）", () => {
 
     expect(await getFavicon({ id: "pt", urls: ["https://pt.example/"] })).toBe(NO_IMAGE);
     expect(fetchMock.mock.calls.map(([, init]) => init)).toEqual([
-      { credentials: "same-origin", redirect: "follow" },
-      { credentials: "same-origin", redirect: "follow" },
+      { credentials: "same-origin", redirect: "follow", signal: expect.any(AbortSignal) },
+      { credentials: "same-origin", redirect: "follow", signal: expect.any(AbortSignal) },
     ]);
+  });
+
+  it("c45040fb：每个图标请求都带超时 signal，挂住的请求超时后按失败处理并回落 NO_IMAGE", async () => {
+    // 用已中止的 signal 代替真实的 10s 计时器，模拟「站点挂住直到超时」
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => AbortSignal.abort(new DOMException("timeout", "TimeoutError")));
+    try {
+      fetchMock.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            // 永不返回响应，只在 signal 中止时失败（等价于站点不响应）
+            if (init.signal?.aborted) reject(init.signal.reason);
+            init.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+          }),
+      );
+
+      expect(await getFavicon({ id: "pt", urls: ["https://pt.example/"] })).toBe(NO_IMAGE);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(timeoutSpy.mock.calls).toEqual([[FAVICON_REQUEST_TIMEOUT]]);
+      expect(FAVICON_REQUEST_TIMEOUT).toBe(10e3);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it("L-3：重定向到可信子域后按最终地址解析相对图标（不再直接回落 NO_IMAGE）", async () => {

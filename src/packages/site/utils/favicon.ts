@@ -22,6 +22,16 @@ import type { ISiteMetadata } from "../types";
 // from: http://proger.i-forge.net/%D0%9A%D0%BE%D0%BC%D0%BF%D1%8C%D1%8E%D1%82%D0%B5%D1%80/[20121112]%20The%20smallest%20transparent%20pixel.html
 export const NO_IMAGE = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=";
 
+/**
+ * 取 favicon 用的请求超时（上游 c45040fb）。
+ *
+ * 必须显式给上：fetch 默认**没有超时**，而这些请求是「页面渲染顺便做的事」——
+ * 站点慢或直接挂住时，没有上界就会一直悬着，调用方（offscreen → 选项页图标）一直等不到结果。
+ * 每次请求各自计时，且 signal 同样约束响应体读取（text / json / blob）；
+ * 超时后按普通请求失败处理（继续尝试下一个候选，最终回落 `NO_IMAGE`）。
+ */
+export const FAVICON_REQUEST_TIMEOUT = 10e3;
+
 const FAVICON_FROM_LINK = [
   "link[rel='icon' i][href]",
   "link[rel='shortcut icon' i][href]",
@@ -158,7 +168,11 @@ async function fetchTrustedIconResource(
   const trustedUrl = trustedIconUrl(url, url, trustedHosts);
   if (!trustedUrl) throw new Error("Icon URL is not on a trusted site host");
 
-  const response = await fetch(trustedUrl, { credentials: "same-origin", redirect: "follow" });
+  const response = await fetch(trustedUrl, {
+    credentials: "same-origin",
+    redirect: "follow",
+    signal: AbortSignal.timeout(FAVICON_REQUEST_TIMEOUT),
+  });
   const finalUrl = response.url || trustedUrl;
   let parsedFinal: URL;
   try {
