@@ -392,21 +392,33 @@ onMounted(async () => {
   }
 });
 
-function exportTimelineImg() {
-  const stage = canvasStage.value!.getStage();
-  stage.toDataURL({
-    mimeType: "image/png",
-    pixelRatio: 3,
-    callback: (dataUrl: string) => {
-      saveAs(
-        dataUrl,
-        t("UserDataTimeline.exportFilename", {
-          name: configStore.userName,
-          date: formatDate(timelineData.value.createAt),
-        }) + ".png",
-      );
-    },
-  });
+/** 导出中：按钮转圈（konva 编码 PNG + 触发下载都算在内） */
+const isExporting = ref(false);
+
+/**
+ * 上游 #1623：导出改走 Blob（而不是把整张图编码成 base64 data URL 再交给 <a download>），
+ * 并把 pixelRatio 从 3 降到 2 —— 2 倍图对 retina 已经够用，3 倍时像素数是 9 倍，整棵树重绘会明显卡住。
+ */
+async function exportTimelineImg() {
+  const stage = canvasStage.value?.getStage();
+  if (!stage || isExporting.value) return;
+
+  isExporting.value = true;
+  const filename =
+    t("UserDataTimeline.exportFilename", {
+      name: configStore.userName,
+      date: formatDate(timelineData.value.createAt),
+    }) + ".png";
+
+  try {
+    const blob = (await stage.toBlob({ mimeType: "image/png", pixelRatio: 2 })) as Blob;
+    saveAs(blob, filename);
+  } catch {
+    // toBlob 编码失败（内存不足等）时 konva 会 reject，给出提示而不是静默无反应
+    useRuntimeStore().showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+  } finally {
+    isExporting.value = false;
+  }
 }
 
 function saveControl() {
@@ -426,6 +438,7 @@ function saveControl() {
         color="info"
         :disabled="realAllSite.length === 0"
         :icon="ExportOutlined"
+        :loading="isExporting"
         :text="t('common.exportImage')"
         @click="exportTimelineImg"
       />

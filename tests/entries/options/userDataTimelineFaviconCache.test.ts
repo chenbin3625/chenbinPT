@@ -10,7 +10,7 @@ import { nextTick, shallowRef } from "vue";
 
 import { mountOptionsView } from "../../helpers/optionsView.ts";
 
-const { initialControl, nodes, canvasCount } = vi.hoisted(() => ({
+const { initialControl, nodes, canvasCount, saveAsMock, showSnakebar, fakeStage } = vi.hoisted(() => ({
   initialControl: {
     title: "",
     backgroundColor: "#101010",
@@ -27,10 +27,14 @@ const { initialControl, nodes, canvasCount } = vi.hoisted(() => ({
   /** 每个 Image 桩对应的「konva 节点」替身：记录 cache 次数与当前底图 */
   nodes: [] as Array<{ cacheCalls: number; image: unknown; cached: boolean }>,
   canvasCount: { value: 0 },
+  saveAsMock: vi.fn(),
+  showSnakebar: vi.fn(),
+  /** Stage 替身：上游 #1623 的导出走 stage.toBlob() */
+  fakeStage: { toBlob: vi.fn(async () => new Blob(["png"], { type: "image/png" })) },
 }));
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
-vi.mock("@/options/stores/runtime.ts", () => ({ useRuntimeStore: () => ({ showSnakebar: vi.fn() }) }));
+vi.mock("@/options/stores/runtime.ts", () => ({ useRuntimeStore: () => ({ showSnakebar }) }));
 vi.mock("@/options/stores/metadata.ts", () => ({
   useMetadataStore: () => ({
     sites: {},
@@ -54,7 +58,7 @@ vi.mock("@/options/stores/config.ts", async () => {
     defaultTimelineTextColor: "#FFFFFF",
   };
 });
-vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: vi.fn() }));
+vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: saveAsMock }));
 vi.mock("@vueuse/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@vueuse/core")>();
   const { ref: vueRef } = await import("vue");
@@ -116,7 +120,7 @@ vi.mock("vue-konva/core", async () => {
           image: () => node.image,
           batchDraw: () => {},
         };
-        expose({ getNode: () => konvaNode, getStage: () => ({}) });
+        expose({ getNode: () => konvaNode, getStage: () => fakeStage });
         return () => h("div", { class: `stub-konva-${name}` }, slots.default?.());
       },
     });
@@ -193,6 +197,44 @@ describe("时间轴 favicon 缓存（上游 #1594）", () => {
       await nextTick();
       await view.settle(20);
       expect(canvasCount.value).toBe(before);
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
+describe("时间轴导出图片（上游 #1623）", () => {
+  it("走 stage.toBlob（2 倍图）并以 Blob 交给 saveAs；编码失败时提示而不是静默", async () => {
+    const { default: TimelineIndex } = await import("@/options/views/Overview/MyData/UserDataTimeline/Index.vue");
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const view = mountOptionsView(TimelineIndex, { router: true });
+    try {
+      await view.settle(60);
+      const exportButton = view
+        .$$<HTMLButtonElement>("button")
+        .find((button) => button.title === i18nInstance.global.t("common.exportImage"))!;
+      expect(exportButton, "应渲染「导出图片」按钮").toBeDefined();
+
+      saveAsMock.mockReset();
+      fakeStage.toBlob.mockClear();
+      exportButton.click();
+      await view.settle(20);
+
+      expect(fakeStage.toBlob).toHaveBeenCalledWith({ mimeType: "image/png", pixelRatio: 2 });
+      expect(saveAsMock).toHaveBeenCalledTimes(1);
+      const [data, filename] = saveAsMock.mock.calls[0]!;
+      expect(data, "导出交给 saveAs 的是 Blob 而不是 base64 data URL").toBeInstanceOf(Blob);
+      expect(filename).toMatch(/\.png$/);
+
+      // 编码失败：不调用 saveAs，按钮退出 loading
+      saveAsMock.mockReset();
+      showSnakebar.mockReset();
+      fakeStage.toBlob.mockRejectedValueOnce(new Error("Konva: toBlob() failed"));
+      exportButton.click();
+      await view.settle(20);
+      expect(saveAsMock).not.toHaveBeenCalled();
+      expect(showSnakebar).toHaveBeenCalledWith(expect.any(String), { color: "warning" });
+      expect(exportButton.classList.contains("ant-btn-loading")).toBe(false);
     } finally {
       view.unmount();
     }
