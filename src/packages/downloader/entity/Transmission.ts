@@ -504,8 +504,15 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       const addedTorrent = data.arguments?.["torrent-added"] ?? data.arguments?.["torrent-duplicate"];
       const torrentId = addedTorrent?.id;
 
+      // L-12：重复种子在各版本上的形态不同 —— 2.77（rpc14）只回 result: "duplicate torrent"、没有 arguments；
+      // 2.80（rpc15）带 torrent-duplicate 但 result 仍不是 success。两者都是「已在库中」的成功语义。
+      const isDuplicate = /duplicate torrent/i.test(data.result ?? "") || !!data.arguments?.["torrent-duplicate"];
+
+      // 重复添加的种子跳过下面的 labels / 上传限速等 torrent-set 附加设置（跟随上游 58395cf0）：
+      // 种子早已在库中，这些设置会改写用户对已有种子的配置，而这并不是本次「添加」的意图。
+
       // Transmission 3.0 以上才支持label
-      if (!supportLabelAtAdd && labels && typeof torrentId !== "undefined") {
+      if (!isDuplicate && !supportLabelAtAdd && labels && typeof torrentId !== "undefined") {
         try {
           await this.request("torrent-set", {
             ids: torrentId,
@@ -522,8 +529,13 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         }
       }
 
-      // 设置上传速度限制 - 必须在添加后使用 torrent-set
-      if (options.uploadSpeedLimit && options.uploadSpeedLimit > 0 && typeof torrentId !== "undefined") {
+      // 设置上传速度限制 - 必须在添加后使用 torrent-set（重复添加的种子跳过）
+      if (
+        !isDuplicate &&
+        options.uploadSpeedLimit &&
+        options.uploadSpeedLimit > 0 &&
+        typeof torrentId !== "undefined"
+      ) {
         try {
           await this.request("torrent-set", {
             ids: torrentId,
@@ -540,9 +552,6 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         }
       }
 
-      // L-12：重复种子在各版本上的形态不同 —— 2.77（rpc14）只回 result: "duplicate torrent"、没有 arguments；
-      // 2.80（rpc15）带 torrent-duplicate 但 result 仍不是 success。两者都是「已在库中」的成功语义。
-      const isDuplicate = /duplicate torrent/i.test(data.result ?? "") || !!data.arguments?.["torrent-duplicate"];
       addResult.success = data.result === "success" || isDuplicate;
       if (typeof torrentId !== "undefined") {
         addResult.id = String(torrentId);

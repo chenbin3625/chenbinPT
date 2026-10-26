@@ -7,7 +7,9 @@
  *   兼容层也只枚举 camelCase）。未知键会被服务端静默忽略且仍返回 success ——
  *   即「限速没生效但 UI 报成功」。
  * - D-5：torrent-add 在种子已在库中时返回 `torrent-duplicate`，旧代码只读
- *   `torrent-added`，会抛 TypeError 把「成功」记成失败，并跳过标签/限速后置设置。
+ *   `torrent-added`，会抛 TypeError 把「成功」记成失败。现在 duplicate 判为成功，
+ *   但**有意跟随上游 58395cf0** 跳过标签/限速等 torrent-set 后置设置（避免改写用户已有种子的配置），
+ *   替代 fork 早先「duplicate 时继续设置标签」的行为。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -94,17 +96,18 @@ describe("Transmission：torrent-duplicate 视为成功（D-5）", () => {
     };
   }
 
-  it("种子已在库中时 addTorrent 仍然成功，并继续设置标签", async () => {
+  it("种子已在库中时 addTorrent 仍然成功，但不再对已有种子补设标签/限速（跟随上游 58395cf0）", async () => {
     const { client, requestMock } = createClient(duplicateResponse());
 
-    const result = await client.addTorrent(MAGNET, { label: "tv", addAtPaused: false });
+    const result = await client.addTorrent(MAGNET, { label: "tv", uploadSpeedLimit: 100, addAtPaused: false });
 
     expect(result.success).toBe(true);
     expect(result.message).toBeUndefined();
+    expect(result.id).toBe("7");
 
-    // [0] session-get（取 RPC 版本）→ [1] torrent-add → [2] torrent-set
-    expect(requestMock.mock.calls.map(([method]) => method)).toEqual(["session-get", "torrent-add", "torrent-set"]);
-    expect(requestMock.mock.calls[2][1]).toEqual({ ids: 7, labels: ["tv"] });
+    // 只有 [0] session-get（取 RPC 版本）→ [1] torrent-add，不发 torrent-set：
+    // 种子早已在库中，补设标签/限速会改写用户对已有种子的配置（替代 fork 早先「继续设置标签」的行为）
+    expect(requestMock.mock.calls.map(([method]) => method)).toEqual(["session-get", "torrent-add"]);
   });
 
   it("新增成功（torrent-added）时行为不变", async () => {
