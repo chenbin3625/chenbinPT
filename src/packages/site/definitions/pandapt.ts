@@ -22,6 +22,13 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["uggcf://cnaqncg.arg/"],
 
+  /**
+   * tracker 子域：下载器里那份副本的 announce 指向 `https://tracker.pandapt.net/announce.php?passkey=…`。
+   * 不声明的话，辅种检测（MyClient 按 tracker 地址反查站点）里本站那一行不会被标成「做种中」。
+   * 与 u2.ts 的 trackerUrls 同用途；这里只声明 tracker 域，不并入 urls（避免影响搜索/用户信息）。
+   */
+  trackerUrls: ["https://tracker.pandapt.net/"],
+
   category: [
     {
       name: "搜索入口",
