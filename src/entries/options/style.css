@@ -664,9 +664,14 @@ body {
  * 斑马纹：antd 没有斑马纹 token，只能自定义。染在 <tr> 上（权重最低），
  * 行 hover / 选中 / 排序列的底色由 antd 画在 <td> 上，天然覆盖本规则，不需要权重工程。
  * 同时命中 content-script 里直接用 `.table-stripe` 的 a-table。
+ *
+ * 只按「数据行」（.ant-table-row）计数：antd 会在同一个 tbody 里插入隐藏的测量行
+ * （.ant-table-measure-row，设置了 scroll.x 时）和展开行（.ant-table-expanded-row，如辅种任务），
+ * 用 :nth-child(2n) 时它们也占位置，展开某一行后其后的隔行底色会整体错位。
+ * `of .ant-table-row` 需要 Chromium 111+ / Firefox 113+，manifest 最低版本为 Chrome 140 / Firefox 133。
  */
-.table-stripe tbody > tr:nth-child(2n),
-.ptd-data-table .ant-table-tbody > tr:nth-child(2n) {
+.table-stripe tbody > tr:nth-child(2n of .ant-table-row),
+.ptd-data-table .ant-table-tbody > tr:nth-child(2n of .ant-table-row) {
   background-color: var(--ptd-stripe, #fafafa);
 }
 

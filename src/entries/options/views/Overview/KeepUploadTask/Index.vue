@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { ArrowUpOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, NumberOutlined } from "@ant-design/icons-vue";
-import { ref, onMounted } from "vue";
+import {
+  ArrowUpOutlined,
+  ClearOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  NumberOutlined,
+} from "@ant-design/icons-vue";
+import { computed, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import type { CAddTorrentOptions } from "@ptd/downloader";
 import { datePathTemplateVars, expandPathTemplate } from "@ptd/downloader/utils/pathTemplate.ts";
@@ -10,15 +17,20 @@ import { sendMessage } from "@/messages.ts";
 import { formatDateTimeForTable, formatSize, sanitizeDynamicReplaceValue } from "@/options/utils.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
+import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
+import NavButton from "@/options/components/NavButton.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import { confirmModal } from "../utils/antdConfirm.ts";
+import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import { summarizeKeepUploadSendOutcomes, type TKeepUploadSendOutcome } from "./utils.ts";
 
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
+const configStore = useConfigStore();
 
 const tasks = ref<IKeepUploadTask[]>([]);
 // 数据表格设置了 row-key="id"，因此 selectedTasks 中保存的是任务ID（TKeepUploadTaskKey）而非任务对象
@@ -26,14 +38,43 @@ const selectedTasks = ref<TKeepUploadTaskKey[]>([]);
 const expanded = ref<string[]>([]);
 const loading = ref(false);
 
-const columns = [
-  { title: t("KeepUploadTask.table.site"), dataIndex: "site", key: "site", align: "center" as const },
-  { title: t("KeepUploadTask.table.title"), dataIndex: "title", key: "title", align: "left" as const },
-  { title: t("KeepUploadTask.table.size"), dataIndex: "size", key: "size", align: "right" as const },
-  { title: t("KeepUploadTask.table.count"), dataIndex: "count", key: "count", align: "center" as const },
-  { title: t("KeepUploadTask.table.time"), dataIndex: "time", key: "time", align: "center" as const },
-  { title: t("common.action"), key: "action", align: "center" as const },
+// 排序 / 分页与其它列表页一致：走共享的 toAntdColumns / toPagination，并持久化到 tableBehavior.KeepUploadTask
+const tableHeader: DataTableHeader[] = [
+  { title: t("KeepUploadTask.table.site"), key: "site", align: "center", sortable: false },
+  { title: t("KeepUploadTask.table.title"), key: "title", align: "start" },
+  { title: t("KeepUploadTask.table.size"), key: "size", align: "end" },
+  { title: t("KeepUploadTask.table.count"), key: "count", align: "center" },
+  { title: t("KeepUploadTask.table.time"), key: "time", align: "center" },
+  { title: t("common.action"), key: "action", align: "center", sortable: false },
 ];
+
+const columns = computed(() =>
+  toAntdColumns(tableHeader, {
+    sortBy: configStore.tableBehavior.KeepUploadTask?.sortBy,
+    multiSort: configStore.enableTableMultiSort,
+  }).map((column) =>
+    // 「种子数」不是任务上的字段（由 items.length 得出），按它排序需要单独的比较函数
+    column.key === "count" && column.sorter
+      ? {
+          ...column,
+          sorter: {
+            ...column.sorter,
+            compare: (a: IKeepUploadTask, b: IKeepUploadTask) => a.items.length - b.items.length,
+          },
+        }
+      : column,
+  ),
+);
+
+const tablePagination = computed(() =>
+  toPagination(configStore.tableBehavior.KeepUploadTask?.itemsPerPage ?? 10, (v) =>
+    configStore.updateTableBehavior("KeepUploadTask", "itemsPerPage", v),
+  ),
+);
+
+function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
+  configStore.updateTableBehavior("KeepUploadTask", "sortBy", toSortBy(sorter as never));
+}
 
 function onSelectionChange(keys: TKeepUploadTaskKey[]) {
   selectedTasks.value = keys;
@@ -311,26 +352,37 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
 <template>
   <a-card>
     <a-typography-text strong>
-      <a-button :disabled="selectedTasks.length === 0" style="margin-right: 8px" danger @click="deleteSelectedTasks">
-        <DeleteOutlined style="margin-right: 8px" />
-        {{ t("common.remove") }}
-      </a-button>
+      <!-- 与其它列表页一致的共享工具条（NavButton：窄屏只显示图标） -->
+      <a-flex class="page-toolbar" align="center" :gap="8">
+        <NavButton
+          :disabled="selectedTasks.length === 0"
+          color="error"
+          :icon="DeleteOutlined"
+          :text="t('common.remove')"
+          @click="deleteSelectedTasks"
+        />
 
-      <a-button :disabled="tasks.length === 0" danger @click="clearAllTasks">
-        <DeleteOutlined style="margin-right: 8px" />
-        {{ t("KeepUploadTask.clearAll") }}
-      </a-button>
+        <NavButton
+          :disabled="tasks.length === 0"
+          color="error"
+          :icon="ClearOutlined"
+          :text="t('KeepUploadTask.clearAll')"
+          @click="clearAllTasks"
+        />
+      </a-flex>
     </a-typography-text>
 
     <a-table
       :columns="columns"
       :data-source="tasks"
       :loading="loading"
-      :pagination="{ pageSize: 25, showSizeChanger: true }"
+      :pagination="tablePagination"
       :row-key="'id'"
       :row-selection="{ selectedRowKeys: selectedTasks, onChange: onSelectionChange }"
       :expanded-row-keys="expanded"
       :scroll="{ x: 'max-content' }"
+      class="table-stripe"
+      @change="onTableChange"
       @expanded-rows-change="onExpandedChange"
     >
       <template #bodyCell="{ column, record }">
@@ -378,22 +430,29 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
           <span class="ptd-date-time">{{ formatDateTimeForTable(record.time) }}</span>
         </template>
 
+        <!-- 操作列：与其它列表页一致的紧凑图标按钮组（.table-action） -->
         <template v-else-if="column.key === 'action'">
-          <a-button :title="t('KeepUploadTask.sendBaseTorrent')" type="link" @click="sendBaseTorrent(record)">
-            <NumberOutlined />
-          </a-button>
-          <a-button :title="t('KeepUploadTask.sendOtherTorrents')" type="text" @click="sendOtherTorrents(record)">
-            <NumberOutlined />
-          </a-button>
-          <a-button :title="t('KeepUploadTask.sendAllTorrents')" type="link" @click="sendAllTorrents(record)">
-            <DownloadOutlined />
-          </a-button>
-          <a-button :title="t('KeepUploadTask.copyLinks')" type="text" @click="copyLinksToClipboard(record)">
-            <CopyOutlined />
-          </a-button>
-          <a-button :title="t('common.remove')" type="text" danger @click="deleteTask(record)">
-            <DeleteOutlined />
-          </a-button>
+          <a-button-group class="table-action">
+            <a-button
+              :title="t('KeepUploadTask.sendBaseTorrent')"
+              size="small"
+              type="primary"
+              @click="sendBaseTorrent(record)"
+              ><template #icon><NumberOutlined /></template
+            ></a-button>
+            <a-button :title="t('KeepUploadTask.sendOtherTorrents')" size="small" @click="sendOtherTorrents(record)"
+              ><template #icon><NumberOutlined /></template
+            ></a-button>
+            <a-button :title="t('KeepUploadTask.sendAllTorrents')" size="small" @click="sendAllTorrents(record)"
+              ><template #icon><DownloadOutlined /></template
+            ></a-button>
+            <a-button :title="t('KeepUploadTask.copyLinks')" size="small" @click="copyLinksToClipboard(record)"
+              ><template #icon><CopyOutlined /></template
+            ></a-button>
+            <a-button :title="t('common.remove')" danger size="small" @click="deleteTask(record)"
+              ><template #icon><DeleteOutlined /></template
+            ></a-button>
+          </a-button-group>
         </template>
       </template>
 
