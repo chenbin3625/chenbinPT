@@ -32,6 +32,8 @@ const { sendMessageMock, runtimeStoreStub, metadataStoreStub, configStoreStub, s
       userDataTimelineControl: {
         title: "",
         backgroundColor: "#101010",
+        userNameColor: "#FFFFFF",
+        textColor: "#FFFFFF",
         faviconBlue: 0,
         dateFormat: "time_added",
         showTop: true,
@@ -58,6 +60,8 @@ vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => metadat
 vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => configStoreStub,
   defaultTimelineBackgroundColor: "#101010",
+  defaultTimelineUserNameColor: "#FFFFFF",
+  defaultTimelineTextColor: "#FFFFFF",
 }));
 vi.mock("@/options/utils/saveAs.ts", () => ({ saveAs: saveAsMock }));
 
@@ -123,15 +127,24 @@ vi.mock("@/options/views/Overview/MyData/UserDataTimeline/utils.ts", async () =>
 });
 
 // 画布组件换成只做标记的桩：既暴露 getNode()/getStage()（:ref 回调会调用），
-// 又把收到的 config 里的 image 有无写进 DOM，便于断言 favicon 的降级结果
-vi.mock("vue-konva", async () => {
+// 又把收到的 config 里的 image 有无写进 DOM，便于断言 favicon 的降级结果。
+// 时间轴按需引入 vue-konva/core（上游 #1594 的 tree-shaking），桩挂在该入口上。
+vi.mock("vue-konva/core", async () => {
   const { defineComponent: define, h: vnode } = await import("vue");
   const stub = (name: string) =>
     define({
       name: `Stub${name}`,
       props: { config: { type: Object, default: () => ({}) } },
       setup(props, { slots, expose }) {
-        expose({ getNode: () => ({ cache: () => {}, batchDraw: () => {} }), getStage: () => ({}) });
+        expose({
+          getNode: () => ({
+            cache: () => {},
+            batchDraw: () => {},
+            isCached: () => false,
+            image: () => (props.config as any)?.image,
+          }),
+          getStage: () => ({}),
+        });
         return () =>
           vnode(
             "div",

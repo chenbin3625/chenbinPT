@@ -6,6 +6,7 @@ import { sendMessage } from "@/messages.ts";
 import { formatSize, simplifyNumber } from "@/options/utils.ts";
 import { useResetableRef } from "@/options/directives/useResetableRef.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { defaultTimelineTextColor, useConfigStore } from "@/options/stores/config.ts";
 import type { IStoredUserInfo, TUserInfoStorageSchema } from "@/shared/types.ts";
 import { i18n } from "@/options/plugins/i18n.ts";
 
@@ -247,7 +248,14 @@ export const timelineDataRef = useResetableRef<ITimelineData>(
 );
 
 export type TKonvaConfig = Record<string, any>;
-export const text = (config: TKonvaConfig) => ({ x: 0, y: 0, fontSize: 24, fill: "#fff", ...config });
+// 默认文字颜色取自「其他文本颜色」配置（上游 #1594）；调用方传入的 fill 优先级更高（见下方 ...config）
+export const text = (config: TKonvaConfig) => ({
+  x: 0,
+  y: 0,
+  fontSize: 24,
+  fill: useConfigStore().userDataTimelineControl.textColor ?? defaultTimelineTextColor,
+  ...config,
+});
 export const divider = (config: TKonvaConfig) => ({ x: 0, y: 0, stroke: "#0000001f", strokeWidth: 2, ...config });
 export const image = (config: TKonvaConfig) => {
   const imageBaseSize = config.size ?? 24;

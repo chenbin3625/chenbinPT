@@ -19,8 +19,9 @@ vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
 // 时间轴画布依赖 konva（需要真实 canvas），单测里替换成结构化替身；
 // 本用例只关心左侧「显示内容」控件区，不关心画布绘制。
-vi.mock("konva", () => ({ default: {} }));
-vi.mock("vue-konva", async () => {
+// 时间轴按需引入 vue-konva/core 与 konva/lib/Core（上游 #1594 的 tree-shaking），替身挂在这两个入口上。
+vi.mock("konva/lib/Core", () => ({ default: {} }));
+vi.mock("vue-konva/core", async () => {
   const { defineComponent, h } = await import("vue");
   const stub = (name: string) =>
     defineComponent({
@@ -191,6 +192,38 @@ describe("时间轴显示内容控件", () => {
     titleInput!.dispatchEvent(new Event("input", { bubbles: true }));
     await view.settle();
     expect(configStore.userDataTimelineControl.title, "标题输入应写回控件配置").toBe("我的时间轴");
+
+    view.unmount();
+  });
+
+  it("上游 #1594：用户名颜色与其他文本颜色可调、可一键恢复默认，并作用到画布文字", async () => {
+    const { view, configStore, t } = await mountTimeline();
+    const control = configStore.userDataTimelineControl;
+    const { defaultTimelineTextColor, defaultTimelineUserNameColor } = await import("@/options/stores/config.ts");
+    const { text } = await import("@/options/views/Overview/MyData/UserDataTimeline/utils.ts");
+
+    for (const [labelKey, field, fallback] of [
+      ["UserDataTimeline.controls.userNameColor", "userNameColor", defaultTimelineUserNameColor],
+      ["UserDataTimeline.controls.textColor", "textColor", defaultTimelineTextColor],
+    ] as const) {
+      const input = view.$<HTMLInputElement>(`input[type="color"][aria-label="${t(labelKey)}"]`);
+      expect(input, `应渲染「${t(labelKey)}」取色器`).not.toBeNull();
+      expect(control[field]).toBe(fallback);
+
+      input!.value = "#123456";
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      await view.settle();
+      expect(control[field], "取色写回控件配置").toBe("#123456");
+
+      const reset = input!.parentElement!.querySelector<HTMLButtonElement>("button")!;
+      reset.click();
+      await view.settle();
+      expect(control[field], "重置按钮恢复默认颜色").toBe(fallback);
+    }
+
+    control.textColor = "#abcdef";
+    expect(text({ text: "x" }).fill, "未显式指定 fill 的文字取「其他文本颜色」").toBe("#abcdef");
+    expect(text({ text: "x", fill: "#9E9E9E" }).fill, "显式 fill（如失效站点灰色）优先").toBe("#9E9E9E");
 
     view.unmount();
   });

@@ -20,6 +20,8 @@ const deprecatedConfigKeys = [
 ];
 
 export const defaultTimelineBackgroundColor = "#455A64";
+export const defaultTimelineUserNameColor = "#FFFFFF";
+export const defaultTimelineTextColor = "#FFFFFF";
 
 /**
  * `usePreferredDark()` 每次调用都会新建一个 ref 并注册一个 matchMedia 监听，
@@ -261,6 +263,8 @@ export const useConfigStore = defineStore("config", {
       showTop: true,
       showTimeline: true,
       backgroundColor: defaultTimelineBackgroundColor,
+      userNameColor: defaultTimelineUserNameColor,
+      textColor: defaultTimelineTextColor,
       dateFormat: "time_added",
       faviconBlue: 3,
       selectedSites: [],

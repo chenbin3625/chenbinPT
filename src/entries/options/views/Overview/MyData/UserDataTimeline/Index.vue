@@ -9,10 +9,21 @@ import {
   VerticalAlignBottomOutlined,
 } from "@ant-design/icons-vue";
 import { saveAs } from "@/options/utils/saveAs.ts";
-import { computed, onBeforeUpdate, onMounted, ref, shallowRef, useTemplateRef } from "vue";
-import Konva from "konva";
-// P2-2：vue-konva 组件改为在此局部注册（原来在 options/main.ts 里 app.use(VueKonva, { prefix: "Vk" })，
+import { computed, nextTick, onMounted, onUpdated, ref, shallowRef, useTemplateRef } from "vue";
+// konva 按需加载（见 vue-konva README「Minimal Bundle (Tree-Shaking)」，上游 #1594）：
+// konva/lib/Core 只含 Stage / Layer / Group 等核心节点，模板里用到的形状必须逐个引入，
+// 否则 vue-konva 会在创建节点时抛 `xxx is not available. Did you forget to import it?`。
+// favicon 的 blur/grayscale 用的是 CSS 字符串滤镜，由 Core 的 Node 直接支持，不需要 konva/lib/filters。
+import Konva from "konva/lib/Core";
+import "konva/lib/shapes/Rect";
+import "konva/lib/shapes/Text";
+import "konva/lib/shapes/Line";
+import "konva/lib/shapes/Image";
+// 仅取类型（运行时由上面那行副作用 import 完成注册）；Konva.Image 不在 Core 的类型面里
+import type { Image as KonvaImage } from "konva/lib/shapes/Image";
+// P2-2：vue-konva 组件在此局部注册（原来在 options/main.ts 里 app.use(VueKonva, { prefix: "Vk" })，
 // 会把 konva 打进 options 入口 chunk）。别名保持 Vk* 以匹配模板里现有的 <vk-xxx> 标签。
+// 从 vue-konva/core 引入：它不会再 import 完整的 konva。
 import {
   Group as VkGroup,
   Image as VkImage,
@@ -21,14 +32,20 @@ import {
   Rect as VkRect,
   Stage as VkStage,
   Text as VkText,
-} from "vue-konva";
+  type VueKonvaRef,
+} from "vue-konva/core";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { useElementSize } from "@vueuse/core";
 
 import { formatDate, formatTimeAgo } from "@/options/utils.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
-import { defaultTimelineBackgroundColor, useConfigStore } from "@/options/stores/config.ts";
+import {
+  defaultTimelineBackgroundColor,
+  defaultTimelineTextColor,
+  defaultTimelineUserNameColor,
+  useConfigStore,
+} from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
@@ -90,11 +107,11 @@ function resetTimelineDataWithControl() {
   }
 }
 
-type KonvaNode = { getNode: () => any; getStage: () => any };
-
+// vue-konva 组件的模板 ref 类型：VueKonvaRef<T> 提供 getNode()/getStage()。
+// 注意 getNode() 的泛型要按实际节点类型给（favicon 是 Image，因为要用到 image()）。
 const { width: containerWidth } = useElementSize(useTemplateRef("canvasContainer"));
-const canvasStage = useTemplateRef<KonvaNode>("canvasStage");
-const canvasLayer = useTemplateRef<KonvaNode>("canvasLayer");
+const canvasStage = useTemplateRef<VueKonvaRef<Konva.Stage>>("canvasStage");
+const canvasLayer = useTemplateRef<VueKonvaRef<Konva.Layer>>("canvasLayer");
 
 const realAllSite = shallowRef<string[]>([]);
 
@@ -134,9 +151,19 @@ const displaySize = computed(() => {
 });
 
 // 绘制相关辅助函数
+//
+// 这里的两层缓存都是为了「同一个 favicon 不重复做同样的活」（上游 #1594）：
+// 1. 合成画布：favicon() 是在模板里按节点调用的，每次渲染都会跑一遍；不缓存的话每个图标
+//    每次渲染都要新建一个 OffscreenCanvas 并重绘。而且 konva 的 Image 会监听 imageChange
+//    去摘挂图片的 load 监听器，image 身份频繁变化本身也有开销。
+// 2. 滤镜数组：konva 的 Node._setAttr 对数组不做内容比较（只有 `oldVal === val &&
+//    !Util.isObject(val)` 才短路），每次传新数组都会把 _filterUpToDate 置 false，
+//    使每次重绘都重跑一遍 blur 滤镜。
+const faviconCanvasCache = new Map<string, OffscreenCanvas>();
+const faviconFilterCache = new Map<string, string[]>();
+
 const favicon = (config: TKonvaConfig) => {
   const imageBaseSize = config.size ?? 24;
-  const imageFilters: any[] = [`blur(${control.faviconBlue}px)`];
 
   const siteConfig = allAddedSiteMetadata[config.site];
 
@@ -148,26 +175,42 @@ const favicon = (config: TKonvaConfig) => {
     return image({ image: undefined, ...config });
   }
 
-  let imageElement: HTMLImageElement | OffscreenCanvas = siteConfig.faviconElement;
-
-  if (siteConfig.isDead) {
-    imageFilters.push("grayscale(1)");
+  const filterKey = `${control.faviconBlue}|${siteConfig.isDead ? 1 : 0}`;
+  let imageFilters = faviconFilterCache.get(filterKey);
+  if (!imageFilters) {
+    imageFilters = [`blur(${control.faviconBlue}px)`];
+    if (siteConfig.isDead) {
+      imageFilters.push("grayscale(1)");
+    }
+    faviconFilterCache.set(filterKey, imageFilters);
   }
+
+  let imageElement: HTMLImageElement | OffscreenCanvas = siteConfig.faviconElement;
 
   // 如果设置中传入了 canvas 这个自定义参数，我们为这个 favicon 生成一个带有背景的 canvas，然后在 canvas 上居中绘制 favicon
   if (config.canvas) {
     const { width: canvasWidth = imageBaseSize, height: canvasHeight = imageBaseSize } = config.canvas;
-    const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-    const ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+    const fillStyle = config.canvas.fillStyle ?? "#fff";
+    const canvasKey = `${config.site}|${imageBaseSize}|${canvasWidth}x${canvasHeight}|${fillStyle}`;
 
-    // 填充背景
-    ctx.fillStyle = config.canvas.fillStyle ?? "#fff";
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    let canvas = faviconCanvasCache.get(canvasKey);
+    if (!canvas) {
+      canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+      const ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
 
-    // 计算缩放比例和位置，并将 favicon 居中填充
-    const x = (canvasWidth - imageBaseSize) / 2;
-    const y = (canvasHeight - imageBaseSize) / 2;
-    ctx.drawImage(imageElement, x, y, imageBaseSize, imageBaseSize);
+      // 填充背景
+      ctx.fillStyle = fillStyle;
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      // 计算缩放比例和位置，并将 favicon 居中填充
+      const x = (canvasWidth - imageBaseSize) / 2;
+      const y = (canvasHeight - imageBaseSize) / 2;
+      ctx.drawImage(siteConfig.faviconElement, x, y, imageBaseSize, imageBaseSize);
+
+      // 背景色可随时调整，限容避免拖动取色器时缓存无限增长
+      if (faviconCanvasCache.size > 500) faviconCanvasCache.clear();
+      faviconCanvasCache.set(canvasKey, canvas);
+    }
 
     // 防止辅助函数 image() 又一次设置 scaleX 和 scaleY
     config.scaleX = 1;
@@ -184,15 +227,15 @@ const favicon = (config: TKonvaConfig) => {
   });
 };
 
+// clipFunc 只需要把路径描出来，konva 随后自己调 ctx.clip()（见 konva 的
+// Container._drawChildren：save → transform → beginPath → clipFunc → clip）。
+// 也就是说 clipFunc 里的 fill()/stroke() 会**真的画到画布上**，而且是 scene 与 hit
+// 两张画布各画一次。这里原来画的白盘会被上面 48x48 白底 favicon 完全盖住，属于纯浪费（上游 #1594）。
 const siteFaviconClipFunc =
   (radius: number = 24, position: [number, number] = [stageConfig.value.width / 2, 0]) =>
   (ctx: any) => {
     ctx.beginPath();
     ctx.arc(position[0], position[1], radius, 0, 2 * Math.PI);
-    ctx.strokeStyle = "#fff";
-    ctx.fillStyle = "#fff";
-    ctx.stroke();
-    ctx.fill();
   };
 
 const siteInfo = computed(() => timelineData.value.siteInfo.filter((x) => selectedSites.value.includes(x.site)));
@@ -225,33 +268,90 @@ const formatSiteDate = (siteDate: number): string => {
   return text;
 };
 
-// P1-18：favicon 节点引用改为按 key 覆盖写入的 Map。
-// 之前用内联函数 ref 往数组里 push，Vue 对「每次渲染都变身份的 ref 函数」不会回调 null，
-// 数组会随渲染次数 × 图标数量无限增长（内存泄漏），拖动模糊滑块时遍历成本越来越高。
-// Map 保证同一节点只保留一份；每次更新开始前清空，由本轮 patch 的 ref 回调重新填充。
-const faviconRefs = new Map<string, KonvaNode>();
+// P1-18：favicon 节点引用按 key 覆盖写入 Map，同一节点只保留一份（数组 push 会随渲染次数无限增长）。
+//
+// 上游 #1594 进一步把 ref 改成「同一个 key 返回同一个函数」：内联箭头函数每次渲染都是新身份，
+// Vue 会先以 null 调用旧函数、再以节点调用新函数，并在每次更新时都执行一遍里面的 `cache()` ——
+// 拖一下模糊滑块，所有 favicon 都要重新 cache 一次。稳定的 ref 函数只在挂载 / 卸载时被调用，
+// 原先配套的 onBeforeUpdate 清空也随之去掉（否则更新后没有 ref 回调来重新填充，Map 会被清空）。
+const faviconNodes = new Map<string, VueKonvaRef<KonvaImage>>();
+const faviconRefCache = new Map<string, (el: unknown) => void>();
 
-function setFaviconRef(key: string, el: any) {
-  if (el) {
-    faviconRefs.set(key, el);
-  } else {
-    faviconRefs.delete(key);
+// 记录每个 favicon 节点「已按哪张底图缓存过」。
+// 用 WeakMap 而不是往 konva 节点上挂自定义属性：不污染节点对象，也不需要 any 断言。
+const faviconCachedImage = new WeakMap<KonvaImage, unknown>();
+
+function syncFaviconNode(key: string, el: unknown) {
+  if (!el) {
+    faviconNodes.delete(key);
+    return;
+  }
+
+  const component = el as VueKonvaRef<KonvaImage>;
+  faviconNodes.set(key, component);
+
+  // 只在「节点还没缓存」或「底图换了」时重新 cache —— 模糊值变化不需要重新 cache：
+  // konva 的滤镜是在绘制时作用在 cache 画布上的（Node._getCachedSceneCanvas），
+  // 改 filters 只会把 _filterUpToDate 置 false，下一次绘制自动重算。
+  const node = component.getNode?.();
+  if (node && (!node.isCached() || faviconCachedImage.get(node) !== node.image())) {
+    node.cache();
+    faviconCachedImage.set(node, node.image());
   }
 }
 
-onBeforeUpdate(() => {
-  faviconRefs.clear();
-});
+// 同一个 key 返回同一个函数，避免每次渲染都生成新 ref 导致 Vue 反复卸载/重挂
+const faviconRef = (key: string) => {
+  let refFn = faviconRefCache.get(key);
+  if (!refFn) {
+    refFn = (el: unknown) => syncFaviconNode(key, el);
+    faviconRefCache.set(key, refFn);
+  }
+  return refFn;
+};
 
-function updateBlue() {
+function syncAllFaviconCaches() {
+  const prevAutoDrawEnabled = Konva.autoDrawEnabled;
   Konva.autoDrawEnabled = false;
-  // Map 已按 key 去重，同一 Konva 节点只会 cache / batchDraw 一次
-  for (const faviconRef of faviconRefs.values()) {
-    faviconRef.getNode()?.cache();
+  try {
+    for (const component of faviconNodes.values()) {
+      const node = component.getNode?.();
+      if (node && (!node.isCached() || faviconCachedImage.get(node) !== node.image())) {
+        node.cache();
+        faviconCachedImage.set(node, node.image());
+      }
+    }
+  } finally {
+    // 原来没有 try/finally：cache() 一旦抛错，autoDrawEnabled 会永久停在 false，
+    // 整个应用的 konva 自动重绘都会停摆。
+    Konva.autoDrawEnabled = prevAutoDrawEnabled;
   }
+
   canvasLayer.value?.getNode()?.batchDraw();
-  Konva.autoDrawEnabled = true;
 }
+
+async function updateBlue() {
+  // 等这一轮渲染把新的 filters 应用到节点上再重绘，否则会按旧滤镜画一次
+  await nextTick();
+  syncAllFaviconCaches();
+}
+
+// 稳定的 ref 函数不会在更新时再被调用，而底图会在更新中换掉（改背景色 → 新的合成画布；
+// 重新加载数据 → 同一位置换了站点）。vue-konva 用 pre-flush 的 watch 把 config 写进节点，
+// 到父组件 onUpdated 时 image 已是新值；这里只给「底图确实换了」的节点重新 cache，
+// 其余更新（例如拖动模糊滑块）不做任何 cache 工作。
+onUpdated(() => {
+  let changed = false;
+  for (const component of faviconNodes.values()) {
+    const node = component.getNode?.();
+    if (node?.isCached() && faviconCachedImage.get(node) !== node.image()) {
+      node.cache();
+      faviconCachedImage.set(node, node.image());
+      changed = true;
+    }
+  }
+  if (changed) canvasLayer.value?.getNode()?.batchDraw();
+});
 
 onMounted(async () => {
   isLoading.value = true;
@@ -354,7 +454,9 @@ function saveControl() {
 
           <!-- 使用 konva 来绘制 UserDataTimeLine -->
           <vk-stage v-else ref="canvasStage" :config="stageConfig">
-            <vk-layer ref="canvasLayer">
+            <!-- listening: false —— 这张图是静态的、不响应任何事件，关掉后 konva 不再绘制
+                 hit canvas（Node.shouldDrawHit 只看 isListening()），并顺带释放它的内存。 -->
+            <vk-layer ref="canvasLayer" :config="{ listening: false }">
               <!-- 1. 添加背景颜色，并填满整个画布 -->
               <vk-rect
                 :config="{
@@ -368,10 +470,16 @@ function saveControl() {
 
               <!-- 2. 绘制顶端概况 -->
               <vk-group :config="{ x: 0, y: 0 }">
-                <!-- 2.1 用户图标 -->
-                <vk-text :config="icon({ x: 20, y: 20, text: '󰀉' /* account-circle */ })" />
+                <!-- 2.1 用户图标（跟着「用户名颜色」走，而不是「其他文本颜色」） -->
+                <vk-text
+                  :config="icon({ x: 20, y: 20, text: '󰀉' /* account-circle */, fill: control.userNameColor })"
+                />
                 <!-- 2.2 用户名 -->
-                <vk-text :config="text({ x: 65, y: 26, text: configStore.userName, fontSize: 26 })" />
+                <vk-text
+                  :config="
+                    text({ x: 65, y: 26, text: configStore.userName, fontSize: 26, fill: control.userNameColor })
+                  "
+                />
                 <!-- 2.3 创建时间 -->
                 <vk-text
                   :config="
@@ -445,12 +553,7 @@ function saveControl() {
                           :config="{ x: 0, y: 30 * (index + 1) }"
                         >
                           <vk-image
-                            :ref="
-                              (el: any) => {
-                                setFaviconRef(`top-${type.valueKey}-${key.name}`, el);
-                                el?.getNode().cache();
-                              }
-                            "
+                            :ref="faviconRef(`top-${type.valueKey}-${key.name}`)"
                             :config="
                               favicon({
                                 site: timelineData.topInfo[key.name][type.siteKey].site,
@@ -505,12 +608,7 @@ function saveControl() {
                       <!-- 首先画出 favicon 并 clip -->
                       <vk-group :config="{ y: perSiteHeight / 2, clipFunc: siteFaviconClipFunc(24) }">
                         <vk-image
-                          :ref="
-                            (el: any) => {
-                              setFaviconRef(`site-${userInfo.site}`, el);
-                              el?.getNode().cache();
-                            }
-                          "
+                          :ref="faviconRef(`site-${userInfo.site}`)"
                           :config="
                             favicon({
                               site: userInfo.site,
@@ -536,7 +634,7 @@ function saveControl() {
                             text({
                               y: 0,
                               text: `${allAddedSiteMetadata[userInfo.site]?.isDead ? '󰖛' : ''}${allAddedSiteMetadata[userInfo.site]?.siteName ?? userInfo.site}`,
-                              fill: allAddedSiteMetadata[userInfo.site]?.isDead ? '#9E9E9E' : '#fff',
+                              fill: allAddedSiteMetadata[userInfo.site]?.isDead ? '#9E9E9E' : control.textColor,
                               fontFamily: allAddedSiteMetadata[userInfo.site]?.isDead
                                 ? 'Material Design Icons For PTD'
                                 : undefined,
@@ -726,6 +824,43 @@ function saveControl() {
                     :aria-label="t('common.dialog.reset')"
                     :title="t('common.dialog.reset')"
                     @click="control.backgroundColor = defaultTimelineBackgroundColor"
+                  >
+                    <HistoryOutlined />
+                  </a-button>
+                </div>
+              </div>
+              <!-- 上游 #1594：用户名颜色（含用户图标）与其他文本颜色，深色/浅色背景都能调出可读的对比度 -->
+              <div class="ptd-timeline-settings__color-row">
+                <span>{{ t("UserDataTimeline.controls.userNameColor") }}</span>
+                <div class="ptd-timeline-settings__color-control">
+                  <input
+                    v-model="control.userNameColor"
+                    type="color"
+                    :aria-label="t('UserDataTimeline.controls.userNameColor')"
+                  />
+                  <a-button
+                    type="text"
+                    :aria-label="t('common.dialog.reset')"
+                    :title="t('common.dialog.reset')"
+                    @click="control.userNameColor = defaultTimelineUserNameColor"
+                  >
+                    <HistoryOutlined />
+                  </a-button>
+                </div>
+              </div>
+              <div class="ptd-timeline-settings__color-row">
+                <span>{{ t("UserDataTimeline.controls.textColor") }}</span>
+                <div class="ptd-timeline-settings__color-control">
+                  <input
+                    v-model="control.textColor"
+                    type="color"
+                    :aria-label="t('UserDataTimeline.controls.textColor')"
+                  />
+                  <a-button
+                    type="text"
+                    :aria-label="t('common.dialog.reset')"
+                    :title="t('common.dialog.reset')"
+                    @click="control.textColor = defaultTimelineTextColor"
                   >
                     <HistoryOutlined />
                   </a-button>
