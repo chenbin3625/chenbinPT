@@ -30,7 +30,8 @@ const DIST = join(ROOT, `dist-${TARGET}`);
 
 /**
  * WXT 产物布局（src/entrypoints/* → dist-<target>/*）：
- * - background.js：chrome 是 service worker，firefox 是常驻 background script（含 offscreen 的处理函数）；
+ * - background.js：chrome 是 service worker（IIFE），firefox 是常驻 background script（ESM，含 offscreen 的处理函数，
+ *   与 options 页共享 chunks/）；
  * - content-scripts/content.js：manifest 注册、**每个页面**都会执行的轻量引导；
  * - content-scripts/cs-app.js：内容脚本 UI，由后台按需 `scripting.executeScript` 注入；
  * - options.html / offscreen.html（offscreen 仅 chrome）。
@@ -72,12 +73,13 @@ const BUDGETS_KB_BY_TARGET = {
     "largest-js-chunk": 3584, // 实测 ~3030（content-scripts/cs-app.js）
   },
   firefox: {
-    // Firefox 使用 background script，不能像 Chrome MV3 一样把下载/站点逻辑放到 offscreen 页面里分摊。
-    total: 12800, // 实测 ~11040（10.78 MB）
+    // Firefox 使用 background script（含 offscreen 的处理函数），以 ESM 输出并与 options 页共享 chunk
+    // （见 src/entrypoints/background.ts）；退回 IIFE 会让 offscreen 依赖图重复打包，total 回到 ~11.2MB。
+    total: 11264, // 实测 ~9440（9.22 MB）
     icons: 1536, // 实测 ~1114
     "lib/mdi": 24, // 实测 11（子集化 webfont，icons.css/fontface.css 已随 DOM 侧 MDI 图标退役删除）
     "content-bootstrap": 32, // 实测 ~15（content-scripts/content.js）
-    "largest-js-chunk": 3584, // 实测 ~3030（content-scripts/cs-app.js；background.js ~2080）
+    "largest-js-chunk": 3584, // 实测 ~3050（content-scripts/cs-app.js；background.js 入口 ~62）
   },
 };
 
