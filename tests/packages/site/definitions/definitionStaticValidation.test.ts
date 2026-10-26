@@ -46,6 +46,10 @@
  *   把整页列表解析带崩。这一项按源码 AST 扫描 definitions 与 schemas 全部文件（与上游一致），
  *   因此也覆盖 `listTorrentPageMetadata` 这类不挂在 siteMetadata 上的导出常量。
  *
+ * - 具名过滤器的源码级守卫（上游 a269aa8c）：按 AST 扫描 definitions 与 schemas 里所有 `filters` / `switchFilters`
+ *   的 `{ name: "xxx" }`，补上运行时用例走不到的位置（类方法里内联的查询、未挂到 metadata 的导出常量）。
+ *   第一层守卫是 filter.ts 的 `satisfies Record<string, TQueryFilterFn>` + vue-tsc（见 utils/filterNameTyping.test.ts）。
+ *
  * 上游的「id 合法/唯一」「schema 存在或有 default class」「category key 唯一」「timezoneOffset 格式」
  * 上面已有对应用例；「明文 http」与 version 口径只是上游的提示/警告，不在这里断言。
  */
@@ -239,6 +243,76 @@ function checkPatternLiterals(fileName: string, text: string): { errors: string[
           } catch (e) {
             const { line } = source.getLineAndCharacterOfPosition(literal.getStart(source));
             errors.push(`${fileName}:${line + 1} ${field} = ${JSON.stringify(literal.text)}：${(e as Error).message}`);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  return { errors, count };
+}
+
+/**
+ * 按源码 AST 检查 `filters` / `switchFilters` 里 `{ name: "xxx" }` 的名字是否存在于 definedFilters（上游 a269aa8c）。
+ *
+ * 运行时用例（「具名 filter 必须属于 definedFilters」）只能走到挂在 siteMetadata 上的查询；
+ * 这里补上类方法里内联的 getFieldData 查询、未挂到 metadata 的导出常量等运行时遍历不到的位置。
+ * 函数式过滤器、常量引用、非字面量名字静态看不出来，交给类型系统（filter.ts 的 satisfies）。
+ */
+function checkFilterNameLiterals(
+  fileName: string,
+  text: string,
+  names: Set<string>,
+): { errors: string[]; count: number } {
+  const errors: string[] = [];
+  let count = 0;
+  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+
+  const unwrap = (node: ts.Expression): ts.Expression => {
+    let current = node;
+    while (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  const checkOne = (node: ts.Expression) => {
+    const obj = unwrap(node);
+    if (!ts.isObjectLiteralExpression(obj)) return;
+    const nameProp = obj.properties.find(
+      (p): p is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "name",
+    );
+    if (!nameProp) return;
+    count++;
+    const nameNode = unwrap(nameProp.initializer);
+    if (!ts.isStringLiteralLike(nameNode)) return; // 动态拼接的名字静态查不了
+    if (!names.has(nameNode.text)) {
+      const { line } = source.getLineAndCharacterOfPosition(nameNode.getStart(source));
+      errors.push(`${fileName}:${line + 1} filters 里的 name "${nameNode.text}" 不在 definedFilters 中`);
+    }
+  };
+
+  const checkArray = (node: ts.Expression) => {
+    const arr = unwrap(node);
+    if (ts.isArrayLiteralExpression(arr)) arr.elements.forEach(checkOne);
+  };
+
+  const visit = (node: ts.Node) => {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name)) {
+      const field = node.name.text;
+      if (field === "filters" || field === "switchFilters") {
+        const init = unwrap(node.initializer);
+        if (ts.isArrayLiteralExpression(init)) {
+          init.elements.forEach(checkOne); // filters: TQueryFilter[]
+        } else if (ts.isObjectLiteralExpression(init)) {
+          if (field === "switchFilters") {
+            // switchFilters: Record<selector, TQueryFilter[]>
+            for (const p of init.properties) if (ts.isPropertyAssignment(p)) checkArray(p.initializer);
+          } else {
+            checkOne(init); // filters 也允许写成单个对象
           }
         }
       }
@@ -705,6 +779,43 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
 
     expect(count, "没有扫到 pattern 字面量，说明遍历坏了").toBeGreaterThan(200);
     expect(errors, "pattern 写坏时内容脚本里 new RegExp 会抛 SyntaxError，整页列表解析一起失败").toEqual([]);
+  });
+
+  it("源码里所有 filters / switchFilters 的具名过滤器都存在于 definedFilters（含 metadata 之外的位置）", () => {
+    // 自证：数组项、switchFilters 的分支、单对象写法、satisfies 包装都要扫到；函数与非字面量名字跳过
+    const synthetic = checkFilterNameLiterals(
+      "synthetic.ts",
+      `const a = { filters: [{ name: "parseSize" }, (q) => q, { name: "divide", args: [24] }] };
+       const b = { switchFilters: { "td": [{ name: "parseTime" }], "th": [{ name: "parseValidTimeString" }] } };
+       const c = { filters: { name: "nope" } satisfies object, other: { filters: [{ name: dynamicName }] } };`,
+      filterNames,
+    );
+    expect(synthetic.count).toBe(6);
+    expect(synthetic.errors).toEqual([
+      expect.stringContaining('"divide"'),
+      expect.stringContaining('"parseValidTimeString"'),
+      expect.stringContaining('"nope"'),
+    ]);
+
+    const errors: string[] = [];
+    let count = 0;
+    for (const dir of ["src/packages/site/definitions", "src/packages/site/schemas"]) {
+      for (const file of fs.readdirSync(path.join(repoRoot, dir)).filter((name) => name.endsWith(".ts"))) {
+        const relPath = `${dir}/${file}`;
+        const result = checkFilterNameLiterals(
+          relPath,
+          fs.readFileSync(path.join(repoRoot, relPath), "utf8"),
+          filterNames,
+        );
+        count += result.count;
+        errors.push(...result.errors);
+      }
+    }
+
+    expect(count, "没有扫到具名过滤器，说明遍历坏了").toBeGreaterThan(1000);
+    expect(errors, "过滤器名写错时 runQueryFilters 会静默跳过，只给出错值（broadcasthenet 曾因此偏高 24 倍）").toEqual(
+      [],
+    );
   });
 
   it("requestConfig 里的 $field$ 占位符必须出现在 assertion 声明的 pathKey 处（占位符名对、路径写错）", () => {
