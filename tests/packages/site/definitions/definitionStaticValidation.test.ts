@@ -1002,20 +1002,7 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
     expect(adultSites).toEqual(expect.arrayContaining(["pornbits", "pussytorrents", "ehentai"]));
     expect(adultSites.length, "没有扫到成人站点，说明 tags 结构变了").toBeGreaterThan(30);
 
-    // 已知条目：上游 22573d1c 已修好这两个站点（0dayfiles 改 rot13 并去掉明文 favicon，pussytorrents 用
-    // restoreSecureLink 派生 Origin / Referer），lane-b 移植该提交后这里应为空 —— lane-b 集成后删除。
-    const knownPlainAdultUrls = new Set([
-      "0dayfiles: urls[0] 是明文地址",
-      "0dayfiles: https://0dayfiles.net/favicon.ico",
-      "pussytorrents: https://pussytorrents.org",
-      "pussytorrents: https://pussytorrents.org/user/account/snatchlist",
-      "pussytorrents: https://pussytorrents.org/user/account/uploadedtorrents",
-    ]);
-    const unexpected = problems.filter((item) => !knownPlainAdultUrls.has(item));
-    if (problems.length) console.warn("[static] 已知的成人站点明文地址：", problems);
-    expect(unexpected, "成人站点的地址必须写成 rot13（types/base.ts 的 TSiteUrl），其它字段不得出现明文域名").toEqual(
-      [],
-    );
+    expect(problems, "成人站点的地址必须写成 rot13（types/base.ts 的 TSiteUrl），其它字段不得出现明文域名").toEqual([]);
   });
 
   it("favicon：显式 ./x 引用的本地文件必须存在；本地图标不超过 256x256（[ratchet]）；远端地址只提示", () => {
@@ -1061,17 +1048,7 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
     // 上游只把远端 / data URI 的 favicon 作为提示：本地资产优先，且不受站点改版、防盗链、CF 拦截影响
     if (remote.length) console.warn("[static] favicon 使用远端地址或 data URI，建议落成本地资产：", remote);
 
-    // [ratchet] 已知超限图标：上游 0f300197 已把它们压到 128x128，lane-b 移植该提交后应为空 —— lane-b 集成后删除。
-    const knownOversizeIcons = new Set([
-      "fsm.jpg 640x640",
-      "homiehelpdesk.png 512x512",
-      "rastastugan.png 500x500",
-      "tlzdigital.png 512x512",
-      "ydypt.jpg 320x320",
-    ]);
-    const unexpected = oversize.filter((item) => !knownOversizeIcons.has(item));
-    if (oversize.length) console.warn("[static] 已知的超限本地图标：", oversize);
-    expect(unexpected, "站点图标只显示 14~36px，超过 256x256 说明资产没压缩，会让扩展包体积变大").toEqual([]);
+    expect(oversize, "站点图标只显示 14~36px，超过 256x256 说明资产没压缩，会让扩展包体积变大").toEqual([]);
   });
 
   it("requestConfig 里的 $field$ 占位符必须出现在 assertion 声明的 pathKey 处（占位符名对、路径写错）", () => {
