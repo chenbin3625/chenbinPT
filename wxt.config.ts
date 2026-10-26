@@ -2,11 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import vue from "@vitejs/plugin-vue";
-import git from "git-rev-sync";
 import type { Plugin } from "vite";
 import { defineConfig } from "wxt";
 
 import pkg from "./package.json" with { type: "json" };
+import { getGitInfo } from "./vite/gitInfo.ts";
 import { generateWebextLocales } from "./vite/plugin/generateWebextLocales.ts";
 import { buildUserManifest, type TBuildTarget } from "./vite/manifest.ts";
 import { forbidContentScriptCssAssets } from "./vite/plugin/forbidContentScriptCssAssets.ts";
@@ -19,22 +19,9 @@ function base_path(_path = "") {
 
 /**
  * 读取 git 元数据时允许降级（缺陷清单 G19）：源码包（没有 `.git`）或 `git` 不在 PATH 时，
- * 构建元数据（commit/branch/date）只用于排查线上问题，不应成为构建的前置条件。
+ * 构建元数据（commit/branch/date）只用于排查线上问题，不应成为构建的前置条件 —— 降级逻辑在 getGitInfo 内。
  */
-function safeGit<T>(fallback: T, read: () => T): T {
-  try {
-    return read();
-  } catch {
-    return fallback;
-  }
-}
-
-// @ts-ignore git-rev-sync 的类型声明里 count() 没有参数说明
-const git_count = safeGit(0, () => git.count("HEAD"));
-const git_short = safeGit("unknown", () => git.short(root));
-const git_long = safeGit("unknown", () => git.long(root));
-const git_date = safeGit(0, () => +git.date());
-const git_branch = safeGit("unknown", () => git.branch(root));
+const gitInfo = getGitInfo(root);
 
 /**
  * manifest 的版本号 = `package.json` 的三位版本（如 `0.0.8`），**不拼接 git 提交计数**：
@@ -43,7 +30,7 @@ const git_branch = safeGit("unknown", () => git.branch(root));
  * 构建信息仍保留在 chrome 的 `version_name`、`__EXT_VERSION__` 与 `__GIT_VERSION__` 中。
  */
 const base_version = pkg.version;
-const commit_version = `${base_version}+${git_short}`;
+const commit_version = `${base_version}+${gitInfo.short}`;
 
 /**
  * 项目自己的路径别名：`~` → src、`@` → src/entries、`@ptd` → src/packages。
@@ -146,11 +133,11 @@ export default defineConfig({
         __BROWSER__: JSON.stringify(target),
         __EXT_VERSION__: JSON.stringify(`v${commit_version}`),
         __GIT_VERSION__: JSON.stringify({
-          short: git_short,
-          long: git_long,
-          date: git_date,
-          count: git_count,
-          branch: git_branch,
+          short: gitInfo.short,
+          long: gitInfo.long,
+          date: gitInfo.date,
+          count: gitInfo.count,
+          branch: gitInfo.branch,
         }),
         __BUILD_TIME__: JSON.stringify(+Date.now()),
         __RESOURCE_SITE_ICONS__: JSON.stringify(fs.readdirSync(base_path("./public/icons/site"))),

@@ -101,14 +101,12 @@
     "@eslint/js": "^10.0.1",
     "@intlify/unplugin-vue-i18n": "^11.2.5",
     "@types/chrome": "^0.3.0",
-    "@types/git-rev-sync": "^2.0.2",
     "@types/node": "^26.6.3",
     "@types/parse-torrent": "^11.0.1",
     "@vitejs/plugin-vue": "^6.0.9",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-vue": "^10.11.1",
-    "git-rev-sync": "^3.0.2",
     "globals": "^17.13.0",
     "happy-dom": "^20.14.5",
     "husky": "^9.1.7",
@@ -125,11 +123,6 @@
     "vitest": "^5.0.3",
     "vue-tsc": "^3.3.11",
     "wxt": "^0.21.4"
-  },
-  "overrides": {
-    "git-rev-sync": {
-      "shelljs": "0.10.0"
-    }
   },
   "allowScripts": {
     "@parcel/watcher": true,
