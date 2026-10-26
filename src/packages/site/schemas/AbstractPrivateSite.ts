@@ -9,14 +9,17 @@ import { classifySiteError, guessUserLevelId, logMessage, siteErrorLogData } fro
 import {
   EResultParseStatus,
   type IElementQuery,
-  type ISiteMetadata,
   type IUserInfo,
   type ITorrent,
   type TLevelId,
   type TPatterns,
+  type TSchemaMetadata,
 } from "../types";
 
-export const SchemaMetadata: Partial<ISiteMetadata> = {
+/** 本引擎一定会提供的键；列出来之后消费方读它们不必再写非空断言 */
+type TMetadataKeys = "version" | "search" | "userInfo";
+
+export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
   version: -1,
   search: {},
   userInfo: {},

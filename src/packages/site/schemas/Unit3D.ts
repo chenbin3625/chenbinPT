@@ -7,12 +7,12 @@ import {
   ETorrentStatus,
   EResultParseStatus,
   type IElementQuery,
-  type ISiteMetadata,
   type IUserInfo,
   type ITorrent,
   type ISearchInput,
   type ITorrentTag,
   type ISearchCategories,
+  type TSchemaMetadata,
 } from "../types";
 import { classifySiteError, logMessage, parseTimeToLiveToDate, siteErrorLogData } from "../utils";
 
@@ -93,7 +93,10 @@ export const CategoryFree: ISearchCategories = {
   },
 };
 
-export const SchemaMetadata: Partial<ISiteMetadata> = {
+/** 本引擎一定会提供的键；列出来之后消费方读它们不必再写非空断言 */
+type TMetadataKeys = "version" | "timezoneOffset" | "search" | "list" | "detail" | "userInfo";
+
+export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
   version: 0,
   timezoneOffset: "+0000",
   search: {

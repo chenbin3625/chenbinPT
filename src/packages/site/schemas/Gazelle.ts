@@ -12,6 +12,7 @@ import {
   type ITorrent,
   type ISearchInput,
   type IUserInfo,
+  type TSchemaMetadata,
 } from "../types";
 
 /**
@@ -220,7 +221,10 @@ function genStatBoxSelector(section: string | string[], itemSel: string | string
  * Gazelle 模板默认配置，对于大多数GZ站点都通用
  * 如果站点支持 JSON API 且数据完整，则应该使用 GazelleJSONAPI
  */
-export const SchemaMetadata: Partial<ISiteMetadata> = {
+/** 本引擎一定会提供的键；列出来之后消费方读它们不必再写非空断言 */
+type TMetadataKeys = "version" | "search" | "list" | "userInfo";
+
+export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
   version: 0,
   search: {
     keywordPath: "params.searchstr",
