@@ -133,7 +133,11 @@
     "searchPlaceholder": "搜索词",
     "embedded": "内封",
     "external": "外挂",
-    "versions": "{count} 个版本"
+    "versions": "{count} 个版本",
+    "serverFilter": {
+      "all": "全部服务器",
+      "allHidden": "已加载的内容都被服务器筛选隐藏了，请在上方选择要显示的服务器"
+    }
   },
   "MyClient": {
     "action": {

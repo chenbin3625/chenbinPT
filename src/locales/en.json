@@ -133,7 +133,11 @@
     "searchPlaceholder": "Search term",
     "embedded": "Embedded",
     "external": "External",
-    "versions": "{count} version(s)"
+    "versions": "{count} version(s)",
+    "serverFilter": {
+      "all": "All Servers",
+      "allHidden": "Loaded items are hidden by the server filter. Select servers above to show them again."
+    }
   },
   "MyClient": {
     "action": {

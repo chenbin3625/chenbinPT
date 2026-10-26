@@ -145,6 +145,9 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
     // noinspection ES6MissingAwait
     searchQueue.add(async () => {
       if (taskEpoch !== searchEpoch) return;
+      // 请求真正发出前再校验一次：排队期间筛选可能已经变化（取消勾选 / 被禁用），
+      // 只向当前筛选出的服务器发送请求（上游 #1599）
+      if (!searchMediaServerIds.value.includes(mediaServerId)) return;
       let searchOptions: IMediaServerSearchOptions = { limit: configStore.mediaServerEntity.searchLimit ?? 50 };
       if (loadMore) {
         searchOptions = { ...runtimeStore.mediaServerSearch.searchStatus[mediaServerId]?.options };

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import {
   ArrowsAltOutlined,
-  CloudServerOutlined,
   ExportOutlined,
   HeartFilled,
   HeartOutlined,
   InfoCircleOutlined,
+  SearchOutlined,
   SelectOutlined,
   StarFilled,
   VideoCameraOutlined,
@@ -26,6 +26,7 @@ import PageSkeleton from "@/options/components/PageSkeleton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import ItemInformationDialog from "./ItemInformationDialog.vue";
 import PlayedStateIcon from "./PlayedStateIcon.vue";
+import ServerFilterChips from "./ServerFilterChips.vue";
 
 import { doSearch, resetSearchingStateIfIdle, searchMediaServerIds } from "./utils.ts";
 import { seriesText, videoRangeBadge, videoSummary } from "./itemDisplay.ts";
@@ -38,16 +39,19 @@ const metadataStore = useMetadataStore();
 
 const search = ref<string>((route.query.search as string) || "");
 
-// V-21：全选复选框的真实状态（`checked` / `indeterminate` 都必须由选择情况推导）
 const enabledMediaServerIds = computed(() => metadataStore.getEnabledMediaServers.map((mediaServer) => mediaServer.id));
-const isAllMediaServerChecked = computed(
-  () =>
-    enabledMediaServerIds.value.length > 0 &&
-    enabledMediaServerIds.value.every((id) => searchMediaServerIds.value.includes(id)),
+
+/** 工具条上的服务器筛选 chip：只列已启用的服务器（禁用项已由 utils.ts 的 watcher 从选择中剪掉） */
+const filterMediaServers = computed(() =>
+  metadataStore.getEnabledMediaServers.map(({ id, name, type }) => ({ id, name, type })),
 );
-const isMediaServerSelectionIndeterminate = computed(
-  () =>
-    !isAllMediaServerChecked.value && enabledMediaServerIds.value.some((id) => searchMediaServerIds.value.includes(id)),
+
+/**
+ * 上游 #1599：已加载的结果保留在 store 中不丢弃，仅按当前筛选出的服务器决定显示哪些卡片
+ * （取消勾选一台服务器后它的卡片即时隐藏，重新勾选即时恢复，不必重新搜索）。
+ */
+const filteredSearchResult = computed(() =>
+  runtimeStore.mediaServerSearch.searchResult.filter((item) => searchMediaServerIds.value.includes(item.server)),
 );
 
 const showItem = ref<IMediaServerItem | null>(null);
@@ -60,11 +64,9 @@ const mediaServerVisiblePageSize = 40;
 const visibleResultCount = ref(mediaServerVisiblePageSize);
 const gridSentinel = ref<HTMLElement | null>(null);
 
-const visibleSearchResults = computed(() =>
-  runtimeStore.mediaServerSearch.searchResult.slice(0, visibleResultCount.value),
-);
+const visibleSearchResults = computed(() => filteredSearchResult.value.slice(0, visibleResultCount.value));
 
-const hasHiddenResults = computed(() => visibleResultCount.value < runtimeStore.mediaServerSearch.searchResult.length);
+const hasHiddenResults = computed(() => visibleResultCount.value < filteredSearchResult.value.length);
 
 useIntersectionObserver(gridSentinel, ([entry]) => {
   if (!entry?.isIntersecting || !hasHiddenResults.value) return;
@@ -124,16 +126,6 @@ const onScroll = useThrottleFn((event: Event) => {
   }
 }, 200);
 
-function updateAllSearchMediaServerIds(checked: unknown) {
-  searchMediaServerIds.value = checked ? [...enabledMediaServerIds.value] : [];
-}
-
-function updateSearchMediaServerId(id: string, checked: boolean) {
-  searchMediaServerIds.value = checked
-    ? Array.from(new Set([...searchMediaServerIds.value, id]))
-    : searchMediaServerIds.value.filter((x) => x !== id);
-}
-
 let mounted = false;
 onMounted(async () => {
   mounted = true;
@@ -155,6 +147,8 @@ onUnmounted(() => {
   <a-card v-scroll="onScroll">
     <a-typography-text strong>
       <a-flex class="page-toolbar" align="center" :gap="8">
+        <!-- 媒体服务器筛选器（上游 #1599：由搜索框前缀里的弹出层改为平铺的 chip，并即时过滤已加载卡片） -->
+        <ServerFilterChips v-model="searchMediaServerIds" :items="filterMediaServers" style="flex: 0 1 auto" />
         <div style="flex: 1 1 auto"></div>
         <a-input
           v-model:value="search"
@@ -163,50 +157,14 @@ onUnmounted(() => {
           @keyup.enter="() => doSearch({ searchKey: search, userInitiated: true })"
         >
           <template #prefix>
-            <a-popover placement="bottom" trigger="click">
-              <CloudServerOutlined />
-              <template #content>
-                <a-list size="small" style="padding: 0">
-                  <a-list-item>
-                    <!-- V-21：`:indeterminate="true"` 硬编码会让这个复选框无论选择情况如何都画半选横杠，
-                         用户无法判断「是否全选」。改为计算值（对照 SetSearchSolution/SiteCategoryPanel.vue 的写法）。 -->
-                    <a-checkbox
-                      :checked="isAllMediaServerChecked"
-                      :indeterminate="isMediaServerSelectionIndeterminate"
-                      @click.stop
-                      @update:checked="updateAllSearchMediaServerIds"
-                      >{{ t("common.checkbox.all") }}</a-checkbox
-                    >
-                  </a-list-item>
-                  <a-divider style="margin: 4px 0" />
-                  <a-list-item v-for="item in metadataStore.getMediaServers" :key="item.id">
-                    <!-- 单个复选框没有「部分选中」语义：禁用项已由 utils.ts 的 watcher 从选择中剪掉，
-                         原先的 `:indeterminate="item.enabled === false"` 会让禁用项显示为半选，容易误读。 -->
-                    <a-checkbox
-                      :checked="searchMediaServerIds.includes(item.id)"
-                      :disabled="item.enabled === false"
-                      @click.stop
-                      @update:checked="(checked: boolean) => updateSearchMediaServerId(item.id, checked)"
-                    >
-                      {{ item.name }}
-                      <a-avatar
-                        :alt="item.type"
-                        :src="getMediaServerIcon(item.type)"
-                        :size="20"
-                        style="margin-left: 8px"
-                      ></a-avatar>
-                    </a-checkbox>
-                  </a-list-item>
-                </a-list>
-              </template>
-            </a-popover>
+            <SearchOutlined />
           </template>
         </a-input>
       </a-flex>
     </a-typography-text>
 
     <!--  瀑布流形式展示媒体服务器搜索结果（只渲染前 visibleResultCount 条，触底自动追加） -->
-    <div v-if="runtimeStore.mediaServerSearch.searchResult.length > 0" class="masonry-grid">
+    <div v-if="filteredSearchResult.length > 0" class="masonry-grid">
       <div v-for="item in visibleSearchResults" :key="item.url" class="masonry-item">
         <a-card>
           <div style="position: relative; margin-bottom: 4px">
@@ -302,8 +260,15 @@ onUnmounted(() => {
     <!-- 首次搜索中（尚无任何结果）：用卡片骨架占位，避免整块内容区空白 -->
     <PageSkeleton v-else-if="runtimeStore.mediaServerSearch.isSearching" :count="8" :rows="3" variant="masonry" />
 
-    <!-- 其余情况（还没搜过 / 搜索完成但无结果）都要有明确占位，不能留空白 -->
-    <NoDataPlaceholder v-else :description="t('MediaServerEntity.noItems')" />
+    <!-- 其余情况（还没搜过 / 搜索完成但无结果 / 已加载的结果都被服务器筛选隐藏）都要有明确占位，不能留空白 -->
+    <NoDataPlaceholder
+      v-else
+      :description="
+        runtimeStore.mediaServerSearch.searchResult.length > 0
+          ? t('MediaServerEntity.serverFilter.allHidden')
+          : t('MediaServerEntity.noItems')
+      "
+    />
 
     <!-- 仍有未渲染结果时的触底哨兵：进入视口后追加下一页（DOM 上限由滚动进度决定） -->
     <div v-if="hasHiddenResults" ref="gridSentinel" style="height: 1px; width: 100%"></div>
