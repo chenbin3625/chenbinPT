@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import {
   ArrowsAltOutlined,
-  CheckOutlined,
   CloudServerOutlined,
+  ExportOutlined,
   HeartFilled,
   HeartOutlined,
   InfoCircleOutlined,
-  MinusCircleOutlined,
   SelectOutlined,
+  StarFilled,
   VideoCameraOutlined,
 } from "@ant-design/icons-vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
@@ -25,8 +25,10 @@ import { formatSize } from "@/options/utils.ts";
 import PageSkeleton from "@/options/components/PageSkeleton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import ItemInformationDialog from "./ItemInformationDialog.vue";
+import PlayedStateIcon from "./PlayedStateIcon.vue";
 
 import { doSearch, resetSearchingStateIfIdle, searchMediaServerIds } from "./utils.ts";
+import { seriesText, videoRangeBadge, videoSummary } from "./itemDisplay.ts";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -214,6 +216,18 @@ onUnmounted(() => {
                   {{ t("MediaServerEntity.detail") }}
                   <InfoCircleOutlined />
                 </a-button>
+                <!-- 外部链接（调研 A5：IMDb / TMDb …） -->
+                <a-button
+                  v-for="externalUrl in item.externalUrls ?? []"
+                  :key="externalUrl.url"
+                  :href="externalUrl.url"
+                  block
+                  rel="noopener noreferrer nofollow"
+                  target="_blank"
+                >
+                  {{ externalUrl.name }}
+                  <ExportOutlined />
+                </a-button>
                 <a-button :href="item.url" block rel="noopener noreferrer nofollow" target="_blank">
                   {{ t("common.visit") }}
                   <SelectOutlined />
@@ -221,33 +235,42 @@ onUnmounted(() => {
               </template>
               <div>
                 <div class="masonry-right-label">
-                  <!-- 用户状态（观看、喜欢） -->
+                  <!-- 用户状态（观看、喜欢、观看深度，调研 A6） -->
                   <a-tag v-if="item.user" color="#e0e0e0">
-                    <component
-                      :is="item.user?.IsPlayed ? CheckOutlined : MinusCircleOutlined"
-                      style="color: var(--ptd-success)"
-                    />
+                    <PlayedStateIcon :is-played="item.user?.IsPlayed" :percent="item.user?.playedPercentage" />
                     <component
                       :is="item.user?.IsFavorite ? HeartFilled : HeartOutlined"
-                      style="color: var(--ptd-danger)"
+                      style="color: var(--ptd-danger); margin-left: 4px"
                     />
                   </a-tag>
                 </div>
                 <div class="masonry-left-label">
-                  <!-- 封装格式 -->
+                  <!-- 封装格式 + 画质/码率（调研 A2） -->
                   <a-tag v-if="item.format" color="#03a9f4"
                     ><ArrowsAltOutlined style="margin-right: 4px" />
                     {{ item.format?.toUpperCase() }}
-                    <template v-if="item.streams && item.streams.filter((s) => s.type === 'Video')!.length > 0">
-                      / {{ item.streams.filter((s) => s.type === "Video")[0].title }}
-                    </template>
+                    <template v-if="videoSummary(item)"> / {{ videoSummary(item) }}</template>
                   </a-tag>
-                  <br />
+                  <br v-if="item.format" />
                   <!-- 大小 -->
                   <a-tag v-if="item.size"
                     ><VideoCameraOutlined style="margin-right: 4px" />
                     {{ formatSize(item.size ?? 0) }}
                   </a-tag>
+                  <!-- 评分（调研 A1） -->
+                  <a-tag v-if="typeof item.rating === 'number'" color="gold"
+                    ><StarFilled style="margin-right: 4px" />{{ item.rating.toFixed(1) }}</a-tag
+                  >
+                  <!-- 色域（调研 A2） -->
+                  <a-tag v-if="videoRangeBadge(item)" color="volcano">{{ videoRangeBadge(item) }}</a-tag>
+                  <!-- 年份（调研 B8） -->
+                  <a-tag v-if="item.productionYear" color="#607d8b">{{ item.productionYear }}</a-tag>
+                  <!-- 同片多版本（调研 B9） -->
+                  <a-tag v-if="(item.mediaSourceCount ?? 0) > 1" color="purple">
+                    {{ t("MediaServerEntity.versions", { count: item.mediaSourceCount }) }}
+                  </a-tag>
+                  <!-- 剧集编号（调研 B10） -->
+                  <a-tag v-if="seriesText(item)" color="geekblue">{{ seriesText(item) }}</a-tag>
                 </div>
                 <a-image :src="item.poster" :title="item.name" :preview="false"></a-image>
               </div>

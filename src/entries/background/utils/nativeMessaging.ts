@@ -40,6 +40,9 @@ export const ALLOWED_METHODS = new Set([
   "getSiteFavicon",
   "getSiteSearchResult",
   "getMediaServerSearchResult",
+  // 媒体库条目详情（只读，与搜索结果同类数据；海报/头像是 data URL，令牌不进入 URL）。
+  // 不开放 getMediaServerOverview：整库遍历有被服务器判定为滥用的风险，必须由用户在设置页显式确认后发起。
+  "getMediaServerItemDetail",
   // 下载器状态（只读；不含配置/密码）
   "getDownloaderList",
   "getDownloaderVersion",

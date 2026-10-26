@@ -204,6 +204,8 @@ describe("nativeMessaging 桥接权限面（A4）", () => {
       "deleteKeepUploadTask",
       "clearKeepUploadTasks",
       "clearSiteFaviconCache",
+      // 整库遍历需用户在设置页显式确认，不能经桥接静默触发
+      "getMediaServerOverview",
     ]) {
       expect(ALLOWED_METHODS.has(removed), `${removed} 不应再开放给原生宿主`).toBe(false);
     }
@@ -214,6 +216,7 @@ describe("nativeMessaging 桥接权限面（A4）", () => {
       "getSiteFavicon",
       "getSiteSearchResult",
       "getMediaServerSearchResult",
+      "getMediaServerItemDetail",
       "getDownloaderVersion",
       "getDownloaderStatus",
       "getDownloadHistory",

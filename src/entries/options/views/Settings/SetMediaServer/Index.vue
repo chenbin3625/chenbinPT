@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { ExportOutlined, DeleteOutlined, EditOutlined, MinusOutlined, PlusOutlined } from "@ant-design/icons-vue";
+import {
+  ApiOutlined,
+  BarChartOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ExportOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+} from "@ant-design/icons-vue";
 import { get } from "es-toolkit/compat";
-import { computed, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
-import { getMediaServerIcon } from "@ptd/mediaServer";
+import { getMediaServer, getMediaServerIcon, type IMediaServerBaseConfig } from "@ptd/mediaServer";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
-import type { TDownloaderKey, TMediaServerKey } from "@/shared/types.ts";
+import type { TMediaServerKey } from "@/shared/types.ts";
 
 import AddDialog from "./AddDialog.vue";
 import EditDialog from "./EditDialog.vue";
+import OverviewDialog from "./OverviewDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
@@ -33,10 +45,51 @@ const fullTableHeader = [
   { title: t("common.type"), key: "type", align: "center" },
   { title: t("SetDownloader.common.name"), key: "name", align: "start" },
   { title: t("SetDownloader.common.address"), key: "address", align: "start" },
+  { title: t("SetMediaServer.Index.status"), key: "status", align: "center", sortable: false },
   { title: t("SetDownloader.index.table.enabled"), key: "enabled", align: "center" },
   { title: t("common.action"), key: "action", sortable: false },
 ] as DataTableHeader[];
 const tableSelected = ref<TMediaServerKey[]>([]);
+
+/** 服务器状态列：逐台 ping 一次，记录是否可达与耗时（只在用户点击时检测，不随页面加载自动发请求） */
+interface IMediaServerStatus {
+  checking: boolean;
+  tested: boolean;
+  ok: boolean;
+  ms?: number;
+}
+
+const statuses = reactive<Record<string, IMediaServerStatus>>({});
+function statusOf(id: string): IMediaServerStatus {
+  return statuses[id] ?? { checking: false, tested: false, ok: false };
+}
+
+async function checkStatus(mediaServer: IMediaServerBaseConfig) {
+  const id = mediaServer.id!;
+  statuses[id] = { ...statusOf(id), checking: true };
+  const startedAt = Date.now();
+  let ok = false;
+  try {
+    const client = await getMediaServer(mediaServer);
+    ok = await client.ping();
+  } catch {
+    ok = false;
+  } finally {
+    statuses[id] = { checking: false, tested: true, ok, ms: Date.now() - startedAt };
+  }
+}
+
+async function checkAllStatus() {
+  await Promise.all(metadataStore.getMediaServers.map((mediaServer) => checkStatus(mediaServer)));
+}
+
+// 调研 C14 / C20：概览**按需生成** —— 只有在弹窗里确认风险后才去遍历整库并聚合
+const showOverviewDialog = ref<boolean>(false);
+const toOverviewMediaServerId = ref<TMediaServerKey | null>(null);
+function overviewMediaServer(mediaServerId: TMediaServerKey) {
+  toOverviewMediaServerId.value = mediaServerId;
+  showOverviewDialog.value = true;
+}
 
 const columns = computed(() => {
   const multiSort = configStore.enableTableMultiSort;
@@ -71,7 +124,7 @@ const rowSelection = computed(() => ({
   },
 }));
 
-const toEditMediaServerId = ref<TDownloaderKey | null>(null);
+const toEditMediaServerId = ref<TMediaServerKey | null>(null);
 function editMediaServer(mediaServerId: TMediaServerKey) {
   toEditMediaServerId.value = mediaServerId;
   showEditDialog.value = true;
@@ -105,6 +158,13 @@ function pruneTableSelected() {
           :icon="MinusOutlined"
           @click="deleteMediaServer(tableSelected)"
         />
+        <NavButton
+          :disabled="metadataStore.getMediaServers.length === 0"
+          :text="t('SetMediaServer.Index.refreshStatus')"
+          color="info"
+          :icon="ApiOutlined"
+          @click="checkAllStatus"
+        />
       </a-flex>
     </template>
 
@@ -131,6 +191,36 @@ function pruneTableSelected() {
           </span>
         </template>
 
+        <template v-else-if="column.key === 'status'">
+          <a-flex align="center" justify="center" :gap="4" style="white-space: nowrap">
+            <a-spin v-if="statusOf(record.id).checking" size="small" />
+            <template v-else-if="!statusOf(record.id).tested">
+              <ApiOutlined style="color: var(--ptd-text-tertiary)" />
+              <span class="info-label">{{ t("SetMediaServer.Index.statusUntested") }}</span>
+            </template>
+            <template v-else-if="statusOf(record.id).ok">
+              <CheckCircleOutlined style="color: var(--ptd-success)" />
+              <span class="info-label">{{ statusOf(record.id).ms }} ms</span>
+            </template>
+            <template v-else>
+              <CloseCircleOutlined style="color: var(--ptd-danger)" />
+              <span class="info-label">{{ t("SetMediaServer.Index.statusOffline") }}</span>
+            </template>
+            <a-tooltip :title="t('SetMediaServer.Index.refreshStatus')">
+              <a-button
+                :disabled="statusOf(record.id).checking"
+                size="small"
+                type="text"
+                @click="() => checkStatus(record as IMediaServerBaseConfig)"
+              >
+                <template #icon>
+                  <ReloadOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+          </a-flex>
+        </template>
+
         <template v-else-if="column.key === 'enabled'">
           <a-switch
             v-model:checked="record.enabled"
@@ -141,6 +231,13 @@ function pruneTableSelected() {
 
         <template v-else-if="column.key === 'action'">
           <a-space class="table-action">
+            <a-tooltip :title="t('SetMediaServer.Overview.title')">
+              <a-button size="small" @click="overviewMediaServer(record.id)">
+                <template #icon>
+                  <BarChartOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
             <a-tooltip :title="t('common.edit')">
               <a-button size="small" @click="editMediaServer(record.id)">
                 <template #icon>
@@ -167,6 +264,11 @@ function pruneTableSelected() {
 
     <AddDialog v-model="showAddDialog" />
     <EditDialog v-model="showEditDialog" :client-id="toEditMediaServerId!" />
+    <OverviewDialog
+      v-model="showOverviewDialog"
+      :media-server-id="toOverviewMediaServerId!"
+      :media-server-name="toOverviewMediaServerId ? metadataStore.mediaServers[toOverviewMediaServerId]?.name : ''"
+    />
 
     <DeleteDialog
       v-model="showDeleteDialog"

@@ -1,18 +1,8 @@
-import {
-  AbstractMediaServer,
-  IMediaServerBaseConfig,
-  IMediaServerItem,
-  IMediaServerMetadata,
-  IMediaServerSearchOptions,
-  IMediaServerSearchResult,
-} from "../types";
-import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
-import { IEmbyQueryItem, IEmbyQueryResult, IEmbySystemInfo as IJellyfinSystemInfo } from "./emby.ts";
-import { EResultParseStatus } from "@ptd/site";
+import { IMediaServerMetadata, IMediaServerSearchOptions } from "../types";
+import { AxiosRequestConfig } from "axios";
+import { IEmbyQueryItem, IMediaBrowserConfig, MediaBrowser } from "./emby.ts";
 import { toMerged } from "es-toolkit";
 import urlJoin from "url-join";
-import { mapWithConcurrency } from "@ptd/site/utils/helper.ts";
-import { blobToDataUrl } from "../utils.ts";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "Jellyfin 是一个由志愿者开发的开源媒体系统，可让用户自由管理和流式传输个人媒体内容，支持多平台多语言",
@@ -23,12 +13,8 @@ export const mediaServerMetaData: IMediaServerMetadata = {
   auth_field: ["apikey", { name: "userId", required: false, message: "可以额外获取用户喜欢、观看情况" }],
 } as const;
 
-interface IJellyfinConfig extends IMediaServerBaseConfig {
+interface IJellyfinConfig extends IMediaBrowserConfig {
   type: "jellyfin";
-  auth: {
-    apikey: string;
-    userId: string;
-  };
 }
 
 export const mediaServerConfig: IJellyfinConfig = {
@@ -45,14 +31,16 @@ export const mediaServerConfig: IJellyfinConfig = {
 interface IJellyfinQueryItem extends Omit<IEmbyQueryItem, "Size"> {}
 
 /**
- * Jellyfin 的多数 API 和 Emby 相同
+ * Jellyfin 的多数 API 和 Emby 相同（Jellyfin 是 Emby 3.5.2 的分支）—— 共同流程
+ * （`request` / `ping` / `getSearchResult` 骨架、条目映射、海报抓取、状态与错误处理）都在 `./emby.ts`
+ * 的 [`MediaBrowser`](./emby.ts) 基类里，这里只保留两家的差异：鉴权头、参数命名、Web UI 链接形状与体积字段。
  */
-export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
+export default class Jellyfin extends MediaBrowser<IJellyfinConfig, IJellyfinQueryItem> {
   /**
    * 修正baseUrl，如果用户传入的地址为 http://127.0.0.1:8096/web/#/home.html 或者 https://127.0.0.1:8096/
    * 则将其修正为入口 https://127.0.0.1:8096/
    */
-  get baseUrl() {
+  public get baseUrl() {
     // M-18：锚定到路径末尾整段去掉 /web 及其后的前端路由。旧正则 `web\/(#\/home.html.+)?` 里的 `.+`
     // 要求 home.html 后至少还有一个字符，于是 `…/web/#/home.html` 只被去掉 `web/`，baseUrl 成了 `…/#/home.html`。
     const serverAddress = this.config.address
@@ -63,61 +51,25 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
     return `${serverAddress}/`;
   }
 
-  protected async request<T = any, D = any>(
-    url: string,
-    config: AxiosRequestConfig<D> = {},
-  ): Promise<AxiosResponse<T, D>> {
-    config.baseURL = this.baseUrl;
-    config.timeout ??= this.config.timeout; // 未额外传入 timeout 时，使用默认的 timeout
+  /** Jellyfin 的 JSON API 与 Web UI 在同一个根地址下 */
+  public override get apiBaseUrl() {
+    return this.baseUrl;
+  }
 
-    config.headers = {
-      ...(config.headers ?? {}),
-      /**
-       * 这里我们混用 Authorize with API key 和 Authorize with access token （因为实测对 access token 来说，不一定需要传 Client 等 params）
-       * docs: https://gist.github.com/nielsvanvelzen/ea047d9028f676185832e51ffaf12a6f
-       */
+  protected override get authHeaders(): Record<string, string> {
+    /**
+     * 这里我们混用 Authorize with API key 和 Authorize with access token （因为实测对 access token 来说，不一定需要传 Client 等 params）
+     * docs: https://gist.github.com/nielsvanvelzen/ea047d9028f676185832e51ffaf12a6f
+     */
+    return {
       Authorization: `MediaBrowser Token="${this.config.auth.apikey}"`,
     };
-
-    // 处理请求url
-    config.url = url;
-
-    return axios.request<T>(config);
   }
 
-  private async getPoster(id: string): Promise<string> {
-    try {
-      const response = await this.request<Blob>(`/Items/${encodeURIComponent(id)}/Images/Primary`, {
-        responseType: "blob",
-      });
-      return await blobToDataUrl(response.data);
-    } catch {
-      return "";
-    }
-  }
-
-  public async ping(): Promise<boolean> {
-    try {
-      const response = await this.request<IJellyfinSystemInfo>("/System/Info", { responseType: "json" });
-      if (response.status === 200 && response.data?.Id) {
-        return true;
-      }
-    } catch (e) {
-      return false;
-    }
-    return false;
-  }
-
-  public async getSearchResult(
-    keywords: string = "",
-    config: IMediaServerSearchOptions = {},
-  ): Promise<IMediaServerSearchResult> {
-    // 预定义搜索结果
-    const result: IMediaServerSearchResult<{}> = {
-      status: EResultParseStatus.unknownError,
-      items: [],
-    };
-
+  protected override buildSearchRequest(
+    keywords: string,
+    config: IMediaServerSearchOptions,
+  ): { url: string; requestConfig: AxiosRequestConfig } {
     const hasUserId = this.config.auth.userId && this.config.auth.userId != "";
 
     let url = "/Items";
@@ -139,64 +91,77 @@ export default class Jellyfin extends AbstractMediaServer<IJellyfinConfig> {
     config.startIndex = requestConfig.params["startIndex"] = config.startIndex ?? 0;
     config.limit = requestConfig.params["limit"] = config.limit ?? 50;
     requestConfig.params["fields"] =
-      "Path,Status,ExternalUrls,CommunityRating,MediaSources,DisplayPreferences,Genres,DateCreated,Overview,ExtraIds";
+      "Path,Status,ExternalUrls,CommunityRating,MediaSources,DisplayPreferences,Genres,DateCreated,Overview,ExtraIds," +
+      this.listExtraFields.join(",");
 
     // 处理额外的请求配置
     requestConfig = toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {});
 
-    try {
-      const response = await this.request<IEmbyQueryResult<IJellyfinQueryItem>>(url, requestConfig);
-      if (response.status === 200) {
-        const {
-          data: { Items = [] },
-        } = response;
-        result.items = await mapWithConcurrency(Items, 5, async (item) => {
-          // 处理搜索结果
+    return { url, requestConfig };
+  }
 
-          const mediaItem: IMediaServerItem<IJellyfinQueryItem> = {
-            server: this.config.id!,
-            name: item.Name,
-            url: urlJoin(this.baseUrl, `/web/#/details?id=${item.Id}&serverId=${item.ServerId}`),
-            type: item.MediaType,
-            description: item.Overview ?? "",
-            format: item.Container,
-            size: item.MediaSources?.[0]?.Size,
-            duration: item.RunTimeTicks / 10000000, // 10000 ticks = 1 ms, 10000 ms = 1 s
-            poster: await this.getPoster(item.Id),
-            tags: item.GenreItems?.map((tag) => ({
-              name: tag.Name,
-              url: urlJoin(this.baseUrl, `/web/#/list.html?genreId=${tag.Id}&serverId=${item.ServerId}`),
-            })),
-            rating: item.CommunityRating ?? "-",
-            streams: item.MediaSources?.[0]?.MediaStreams?.map((stream) => ({
-              title: stream.Title ?? stream.DisplayTitle,
-              type: stream.Type,
-              format: stream.Codec,
-            })),
-            user: {
-              IsFavorite: item.UserData?.IsFavorite ?? false,
-              IsPlayed: item.UserData?.Played ?? false,
-            },
-            raw: item,
-          };
-          return mediaItem;
-        });
-        result.options = config;
-        result.status = EResultParseStatus.success;
-      }
-      // C2-M-7：axios 默认 validateStatus 只放行 2xx，非 2xx 会走下面的 catch；
-      // 这里不再保留不可达的 `else { needLogin }`，401→needLogin / 其它→parseError 的映射集中在 catch。
-    } catch (e) {
-      // 401 是认证问题（needLogin），其余（超时、网络不可达、解析异常等）不是认证问题，
-      // 需要把真实错误带回去，避免 UI 统一提示「请检查认证信息」误导排障（#1396）
-      if (e instanceof AxiosError && e.response?.status === 401) {
-        result.status = EResultParseStatus.needLogin;
-      } else {
-        result.status = EResultParseStatus.parseError;
-      }
-      result.errorMessage = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    }
+  protected override buildItemDetailRequest(
+    itemId: string,
+    fields: string[],
+  ): { url: string; requestConfig: AxiosRequestConfig } {
+    // 源码核对（Jellyfin.Api/Controllers/UserLibraryController.cs）：
+    // `/Items/{itemId}` 是 10.9+ 的现行接口，但**不接受 fields**；
+    // `/Users/{userId}/Items/{itemId}` 反而已标记 [Obsolete]，仅作向后兼容保留。
+    // 所以统一走集合接口按 ids 过滤：全版本可用、支持 fields、没有 userId 也行。
+    const hasUserId = this.config.auth.userId && this.config.auth.userId != "";
+    return {
+      url: "/Items",
+      requestConfig: {
+        params: {
+          ids: itemId,
+          recursive: true,
+          fields: fields.join(","),
+          // 带上 userId 才能拿到 UserData（观看进度 / 收藏），与搜索列表保持一致
+          ...(hasUserId ? { userId: this.config.auth.userId } : {}),
+        },
+      },
+    };
+  }
 
-    return result;
+  protected override buildOverviewRequest(
+    startIndex: number,
+    limit: number,
+    fields: string[],
+  ): { url: string; requestConfig: AxiosRequestConfig } {
+    const hasUserId = this.config.auth.userId && this.config.auth.userId != "";
+    const requestConfig: AxiosRequestConfig = {
+      params: {
+        userId: hasUserId ? this.config.auth.userId : undefined,
+        includeItemTypes: "Movie,Series",
+        recursive: true,
+        sortBy: "DateCreated",
+        sortOrder: "Descending",
+        startIndex,
+        limit,
+        fields: fields.join(","),
+      },
+    };
+
+    return {
+      url: "/Items",
+      requestConfig: toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {}),
+    };
+  }
+
+  protected override getPersonWebUrl(personId: string, serverId?: string): string {
+    return urlJoin(this.baseUrl, `/web/#/details?id=${personId}` + (serverId ? `&serverId=${serverId}` : ""));
+  }
+
+  protected override getItemWebUrl(item: IJellyfinQueryItem): string {
+    return urlJoin(this.baseUrl, `/web/#/details?id=${item.Id}&serverId=${item.ServerId}`);
+  }
+
+  protected override getTagWebUrl(tag: IEmbyQueryItem["GenreItems"][number], item: IJellyfinQueryItem): string {
+    // Jellyfin 10.9+ 的 Web 路由已去掉 `.html` 后缀（上游同步修正）
+    return urlJoin(this.baseUrl, `/web/#/list?genreId=${tag.Id}&serverId=${item.ServerId}`);
+  }
+
+  protected override getItemSize(item: IJellyfinQueryItem): number | undefined {
+    return item.MediaSources?.[0]?.Size;
   }
 }

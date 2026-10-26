@@ -3,14 +3,25 @@ import {
   IMediaServerBaseConfig,
   IMediaServerItem,
   IMediaServerMetadata,
+  IMediaServerOverview,
+  IMediaServerOverviewOptions,
   IMediaServerSearchOptions,
   IMediaServerSearchResult,
 } from "../types";
 import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import { EResultParseStatus } from "@ptd/site";
+import { mapWithConcurrency } from "@ptd/site/utils/helper.ts";
 import { toMerged } from "es-toolkit";
 import urlJoin from "url-join";
-import { blobToDataUrl } from "../utils.ts";
+import {
+  blobToDataUrl,
+  createOverviewAccumulator,
+  getPlayedPercentage,
+  getResolutionLabel,
+  normalizeLanguage,
+  normalizeProviderIds,
+  parseResolutionFromTitle,
+} from "../utils.ts";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "飞牛影视 / FNOS 媒体服务器，使用 FNOS 的 Emby-compatible API 搜索媒体库",
@@ -89,12 +100,31 @@ interface IFnOSMediaStream {
   Title?: string;
   DisplayTitle?: string;
   Type: "Video" | "Audio" | "Subtitle" | string;
+  IsDefault?: boolean;
+  Language?: string;
+  /** 语言的可读名称（如 "Chinese Simplified"），优先展示 */
+  DisplayLanguage?: string;
+  Width?: number;
+  Height?: number;
+  BitRate?: number;
+  AverageFrameRate?: number;
+  Profile?: string;
+  VideoRange?: string;
+  VideoRangeType?: string;
+  Channels?: number;
+  ChannelLayout?: string;
+  /** 是否外挂字幕 */
+  IsExternal?: boolean;
 }
 
 interface IFnOSMediaSource {
   Id?: string;
   Container?: string;
   Size?: number;
+  /** 文件路径（调研 A3） */
+  Path?: string;
+  /** 该媒体源总码率（bps） */
+  Bitrate?: number;
   MediaStreams?: IFnOSMediaStream[];
 }
 
@@ -120,7 +150,37 @@ interface IFnOSQueryItem {
   UserData?: {
     IsFavorite?: boolean;
     Played?: boolean;
+    /** 调研 A6：播放次数 / 已观看 ticks / 最近观看 */
+    PlayCount?: number;
+    PlaybackPositionTicks?: number;
+    LastPlayedDate?: string;
   };
+
+  // —— 调研 A3–A6 / B7–B12：fnOS 是 Emby 兼容 API，字段名与 Emby 同名 ——
+  Path?: string;
+  DateCreated?: string;
+  ExternalUrls?: Array<{ Name: string; Url: string }>;
+  ProviderIds?: Record<string, string>;
+  ProductionYear?: number;
+  PremiereDate?: string;
+  OfficialRating?: string;
+  CustomRating?: string;
+  CriticRating?: number;
+  Studios?: Array<{ Name: string; Id?: string }>;
+  MediaSourceCount?: number;
+  ChildCount?: number;
+  RecursiveItemCount?: number;
+  SeriesName?: string;
+  IndexNumber?: number;
+  ParentIndexNumber?: number;
+  IsHd?: boolean;
+  Width?: number;
+  Height?: number;
+  Tags?: string[];
+  Taglines?: string[];
+  /** 演职人员（只在详情接口要，列表不要） */
+  People?: Array<{ Name: string; Role?: string; Type?: string; Id?: string; PrimaryImageTag?: string }>;
+  TagItems?: Array<{ Name: string; Id?: string | number }>;
 }
 
 interface IFnOSSession {
@@ -149,7 +209,21 @@ const FNOS_SEARCH_FIELDS = [
   "PrimaryImageAspectRatio",
   "UserData",
   "ProviderIds",
-  "People",
+  // People 是重字段，只在详情接口按需拉取（调研 B12），列表里换成下面这些轻量字段
+  "Tags",
+  "Taglines",
+  "OfficialRating",
+  "CustomRating",
+  "CriticRating",
+  "Studios",
+  "MediaSourceCount",
+  "RecursiveItemCount",
+  "SeriesName",
+  "IndexNumber",
+  "ParentIndexNumber",
+  "IsHd",
+  "Width",
+  "Height",
   "Size",
 ].join(",");
 
@@ -357,6 +431,8 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     keywords: string,
     options: IMediaServerSearchOptions,
     multiViewMode: boolean,
+    /** 只要这些类型（服务端过滤）；概览遍历用它跳过剧集下成千上万的单集 */
+    includeItemTypes?: string,
   ): Promise<IFnOSQueryItem[]> {
     const session = await this.login();
     const requestConfig: AxiosRequestConfig = {
@@ -372,6 +448,9 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     if (keywords !== "") {
       requestConfig.params.SearchTerm = keywords;
       requestConfig.params.IncludeItemTypes = "Movie,Series";
+    }
+    if (includeItemTypes) {
+      requestConfig.params.IncludeItemTypes = includeItemTypes;
     }
 
     const mergedConfig = toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {});
@@ -437,11 +516,29 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     }
   }
 
+  /** 搜索结果：同步映射 + 带认证头拉取海报 */
   private async buildMediaItem(item: IFnOSQueryItem): Promise<IMediaServerItem<IFnOSQueryItem>> {
+    const mediaItem = this.mapMediaItem(item);
+    mediaItem.poster = await this.getPoster(item);
+    return mediaItem;
+  }
+
+  /**
+   * 纯同步映射（不发请求）：概览遍历只做统计、详情弹窗沿用列表海报，都不需要再拉海报。
+   * 海报 / 演职人员头像由调用方按需补上。
+   */
+  private mapMediaItem(item: IFnOSQueryItem): IMediaServerItem<IFnOSQueryItem> {
     const itemType = item.Type || item.MediaType || "";
     const primaryMediaSource = item.MediaSources?.[0];
+    const mediaStreams = primaryMediaSource?.MediaStreams ?? [];
+    const videoStream = mediaStreams.find((stream) => stream.Type === "Video");
+    const streamTitle = (stream: IFnOSMediaStream) =>
+      stream.Title || stream.DisplayTitle || stream.Codec || stream.Type;
+    const userData = item.UserData;
+
     return {
       server: this.config.id!,
+      id: item.Id,
       name: item.Name,
       url: this.getItemUrl(item),
       type: itemType,
@@ -449,20 +546,92 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       format: item.Container ?? primaryMediaSource?.Container ?? "",
       size: primaryMediaSource?.Size ?? item.Size,
       duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : undefined,
-      poster: await this.getPoster(item),
+      poster: "",
       tags: item.GenreItems?.map((tag) => ({
         name: tag.Name,
         url: "",
       })),
       rating: item.CommunityRating ?? "-",
-      streams: primaryMediaSource?.MediaStreams?.map((stream) => ({
-        title: stream.Title || stream.DisplayTitle || stream.Codec || stream.Type,
+      streams: mediaStreams.map((stream) => ({
+        title: streamTitle(stream),
         type: stream.Type,
         format: stream.Codec ?? "",
       })),
+      // 调研 A2：媒体详情结构化透出
+      mediaInfo: mediaStreams.length
+        ? {
+            video: videoStream
+              ? {
+                  width: videoStream.Width,
+                  height: videoStream.Height,
+                  resolution:
+                    parseResolutionFromTitle(videoStream.DisplayTitle) ??
+                    getResolutionLabel(videoStream.Width, videoStream.Height),
+                  codec: videoStream.Codec,
+                  profile: videoStream.Profile,
+                  videoRange: videoStream.VideoRangeType ?? videoStream.VideoRange,
+                  bitrate: videoStream.BitRate ?? primaryMediaSource?.Bitrate,
+                  frameRate: videoStream.AverageFrameRate,
+                }
+              : undefined,
+            audio: mediaStreams
+              .filter((stream) => stream.Type === "Audio")
+              .map((stream) => ({
+                title: streamTitle(stream),
+                codec: stream.Codec,
+                language: normalizeLanguage(stream.DisplayLanguage ?? stream.Language),
+                channels: stream.Channels,
+                channelLayout: stream.ChannelLayout,
+                isDefault: stream.IsDefault,
+              })),
+            subtitle: mediaStreams
+              .filter((stream) => stream.Type === "Subtitle")
+              .map((stream) => ({
+                title: streamTitle(stream),
+                codec: stream.Codec,
+                language: normalizeLanguage(stream.DisplayLanguage ?? stream.Language),
+                isExternal: stream.IsExternal,
+                isDefault: stream.IsDefault,
+              })),
+          }
+        : undefined,
+      // 调研 A3 / A4 / A5
+      path: primaryMediaSource?.Path ?? item.Path,
+      dateCreated: item.DateCreated,
+      externalUrls: item.ExternalUrls?.map((externalUrl) => ({ name: externalUrl.Name, url: externalUrl.Url })),
+      // 调研 B7–B12
+      providerIds: normalizeProviderIds(item.ProviderIds),
+      productionYear: item.ProductionYear,
+      premiereDate: item.PremiereDate,
+      officialRating: item.OfficialRating,
+      criticRating: item.CriticRating,
+      studios: item.Studios?.map((studio) => studio.Name),
+      mediaSourceCount: item.MediaSourceCount ?? item.MediaSources?.length,
+      childCount: item.ChildCount,
+      recursiveItemCount: item.RecursiveItemCount,
+      seriesName: item.SeriesName,
+      indexNumber: item.IndexNumber,
+      parentIndexNumber: item.ParentIndexNumber,
+      isHd: item.IsHd,
+      width: item.Width,
+      height: item.Height,
+      labels: item.TagItems?.length ? item.TagItems.map((tag) => tag.Name) : item.Tags,
+      taglines: item.Taglines,
+      // 头像由 getItemDetail 补上；fnOS 的 Web 端是自有应用，没有稳定的演员页路径 → 不给链接
+      people: item.People?.slice(0, 12).map((person) => ({
+        name: person.Name,
+        role: person.Role,
+        type: person.Type,
+        id: person.Id,
+      })),
       user: {
-        IsFavorite: item.UserData?.IsFavorite ?? false,
-        IsPlayed: item.UserData?.Played ?? false,
+        IsFavorite: userData?.IsFavorite ?? false,
+        IsPlayed: userData?.Played ?? false,
+        // 调研 A6：观看深度
+        playCount: userData?.PlayCount,
+        playbackPosition: userData?.PlaybackPositionTicks ? userData.PlaybackPositionTicks / 10000000 : undefined,
+        playedPercentage: getPlayedPercentage(userData?.PlaybackPositionTicks, item.RunTimeTicks, userData?.Played),
+        lastPlayedDate: userData?.LastPlayedDate,
       },
       raw: item,
     };
@@ -481,6 +650,95 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     }
 
     return this.webBaseUrl;
+  }
+
+  /** 详情接口额外要的重字段（列表刻意不含，调研 B12） */
+  private static readonly DETAIL_FIELDS = [FNOS_SEARCH_FIELDS, "People", "MediaStreams", "MediaSources"].join(",");
+
+  /**
+   * 调研 B12：详情弹窗按需拉取单条目，复用同一套映射。
+   * 与 Emby 同理：没有 /Items/{id}，走用户维度的单条目接口。
+   * 不支持的服务器（或 404）返回 undefined，UI 静默降级。
+   */
+  public override async getItemDetail(itemId: string): Promise<IMediaServerItem<IFnOSQueryItem> | undefined> {
+    try {
+      const session = await this.login();
+      const response = await this.request<IFnOSQueryItem>(
+        `/Users/${session.userId}/Items/${encodeURIComponent(itemId)}`,
+        { params: { Fields: FnOS.DETAIL_FIELDS } },
+      );
+      const item = response.data;
+      if (response.status === 200 && item?.Id) {
+        const mediaItem = this.mapMediaItem(item);
+        // 演职人员头像与海报同一个图片端点，同样带认证头拉成 data URL（令牌不进入 URL）
+        const rawPeople = item.People ?? [];
+        if (mediaItem.people?.length) {
+          mediaItem.people = await mapWithConcurrency(mediaItem.people, 4, async (person, index) => {
+            const tag = rawPeople[index]?.PrimaryImageTag;
+            if (!person.id || !tag) return person;
+            const imageUrl = await this.getPoster({ Id: person.id, ImageTags: { Primary: tag } } as IFnOSQueryItem);
+            return imageUrl ? { ...person, imageUrl } : person;
+          });
+        }
+        return mediaItem;
+      }
+    } catch (e) {
+      // 忽略：详情拿不到就只展示列表已有的信息
+    }
+    return undefined;
+  }
+
+  /**
+   * 调研 C14 / C20：**按需**生成媒体库概览。
+   * 复用本类已有的「按媒体库视图分页」机制（{@link getViewIds} + {@link queryItems}），
+   * 就地聚合后只返回 {@link IMediaServerOverview} 统计结果；只做统计，所以不抓海报。
+   */
+  public override async getLibraryOverview(
+    options: IMediaServerOverviewOptions = {},
+  ): Promise<IMediaServerOverview | undefined> {
+    const pageSize = Math.max(1, Math.min(options.pageSize ?? 200, 500));
+    const maxItems = Math.max(pageSize, options.maxItems ?? 20000);
+    const accumulator = createOverviewAccumulator();
+
+    const viewIds = await this.getViewIds();
+    const dedupedItems = new Map<string, IFnOSQueryItem>();
+
+    let truncated = false;
+    const collect = (items: IFnOSQueryItem[]) => {
+      for (const item of items) {
+        if (dedupedItems.size >= maxItems) {
+          truncated = true;
+          return;
+        }
+        if ((item.Type === "Movie" || item.Type === "Series") && !dedupedItems.has(item.Id)) {
+          dedupedItems.set(item.Id, item);
+        }
+      }
+    };
+
+    for (const viewId of viewIds) {
+      // 每个视图都按页拉取（multiViewMode=false 让后端正常分页）。上游在多视图时改为一次请求
+      // 「0 → maxItems」的大窗口，单个响应可能有上万条，这里统一分页，避免一次请求过大；
+      // 并在服务端只取 Movie/Series（空关键词时 queryItems 默认不过滤类型，会把所有单集也翻一遍）。
+      let startIndex = 0;
+      while (dedupedItems.size < maxItems) {
+        const items = await this.queryItems(viewId, "", { startIndex, limit: pageSize }, false, "Movie,Series");
+        if (items.length === 0) break;
+
+        collect(items);
+        startIndex += items.length;
+        if (items.length < pageSize) break;
+      }
+
+      if (dedupedItems.size >= maxItems) truncated = true;
+      if (truncated) break;
+    }
+
+    for (const item of dedupedItems.values()) {
+      accumulator.add(this.mapMediaItem(item));
+    }
+
+    return accumulator.build(this.config.id!, truncated);
   }
 
   public override async getSearchResult(

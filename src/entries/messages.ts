@@ -14,7 +14,13 @@ import type {
   ISocialRecommendationsResult,
   TSupportSocialSite$1,
 } from "@ptd/social";
-import type { IMediaServerId, IMediaServerSearchOptions, IMediaServerSearchResult } from "@ptd/mediaServer";
+import type {
+  IMediaServerId,
+  IMediaServerItem,
+  IMediaServerOverview,
+  IMediaServerSearchOptions,
+  IMediaServerSearchResult,
+} from "@ptd/mediaServer";
 import type { IBackupData, IBackupFileInfo } from "@ptd/backupServer";
 import type {
   CTorrent,
@@ -168,6 +174,10 @@ interface ProtocolMap {
     keywords?: string;
     options?: IMediaServerSearchOptions;
   }): IMediaServerSearchResult;
+  /** 调研 B12：详情弹窗按需拉取单条目的完整信息（含 People 等重字段） */
+  getMediaServerItemDetail(data: { mediaServerId: IMediaServerId; itemId: string }): IMediaServerItem | null;
+  /** 调研 C14 / C20：按需生成媒体库概览（整库遍历与聚合都在 offscreen 里完成，只回传统计结果） */
+  getMediaServerOverview(data: { mediaServerId: IMediaServerId; maxItems?: number }): IMediaServerOverview | null;
   getSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): ISearchData;
   saveSearchResultSnapshotData(data: { snapshotId: TSearchSnapshotKey; data: ISearchData }): void;
   removeSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): void;
@@ -291,6 +301,8 @@ export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "clearSiteFaviconCache",
   "getSiteSearchResult",
   "getMediaServerSearchResult",
+  "getMediaServerItemDetail",
+  "getMediaServerOverview",
   "getSearchResultSnapshotData",
   "saveSearchResultSnapshotData",
   "removeSearchResultSnapshotData",
@@ -544,6 +556,9 @@ export const retryableOffscreenMessageTypes = new Set<keyof ProtocolMap>([
   // removeSearchResultSnapshotData 会改持久化数据，不在白名单内
   "getSiteSearchResult",
   "getMediaServerSearchResult",
+  // 媒体库条目详情是只读查询；媒体库概览（getMediaServerOverview）虽然也只读，但它是用户显式确认后
+  // 才发起的整库遍历（有被服务器判定为滥用的风险），静默重发会让遍历再跑一遍，因此不在白名单内
+  "getMediaServerItemDetail",
   "getSearchResultSnapshotData",
   // 2.3 下载器 / 下载历史的只读查询（所有 set/pause/resume/recheck/move/delete/add/remove 都不在此列）
   "getDownloaderConfig",
