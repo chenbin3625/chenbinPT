@@ -36,7 +36,9 @@ export const siteMetadata: ISiteMetadata = {
         attr: "href",
         filters: [
           (href: string) => {
-            const parsed = URL.parse(href, "https://e-hentai.org");
+            // base 只用于解析相对链接，这里只读 searchParams，与主机无关；用中性地址，
+            // 避免在 rot13 保护的成人站点定义里写出明文域名（上游 22573d1c 的静态校验）
+            const parsed = URL.parse(href, "https://localhost/");
             return (
               parsed?.searchParams.get("gtid") ??
               parsed?.searchParams.get("t") ??

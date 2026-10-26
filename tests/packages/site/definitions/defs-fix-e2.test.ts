@@ -510,6 +510,9 @@ describe("E2-09：ehentai 的 id 取自 gallerytorrents 链接里的种子唯一
     expect(filter("https://e-hentai.org/gallerytorrents.php?gid=4271402&t=abc123&gtid=9001")).toBe("9001");
     expect(filter("https://e-hentai.org/gallerytorrents.php?gid=4271402&t=abc123")).toBe("abc123");
     expect(filter("https://e-hentai.org/gallerytorrents.php?gid=4271402")).toBe("4271402");
+    // 页面上的相对链接同样能取到（解析 base 与站点主机无关）
+    expect(filter("/gallerytorrents.php?gid=4271402&t=abc123&gtid=9001")).toBe("9001");
+    expect(filter("gallerytorrents.php?gid=4271402&t=abc123")).toBe("abc123");
   });
 });
 
