@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import {
-  ArrowsAltOutlined,
   ExportOutlined,
   HeartFilled,
-  HeartOutlined,
   InfoCircleOutlined,
   SearchOutlined,
-  SelectOutlined,
   StarFilled,
   VideoCameraOutlined,
 } from "@ant-design/icons-vue";
@@ -16,6 +13,7 @@ import { useRoute } from "vue-router";
 import { useIntersectionObserver, useThrottleFn } from "@vueuse/core";
 import { isEmpty } from "es-toolkit/compat";
 import { getMediaServerIcon, type IMediaServerItem } from "@ptd/mediaServer";
+import { EResultParseStatus } from "@ptd/site";
 
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -37,7 +35,10 @@ const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 
-const search = ref<string>((route.query.search as string) || "");
+const search = ref<string>((route.query.search as string) ?? runtimeStore.mediaServerSearch.searchKey);
+const isComposing = ref(false);
+const failedPosters = ref(new Set<string>());
+const hoverItemUrl = ref<string | null>(null);
 
 const enabledMediaServerIds = computed(() => metadataStore.getEnabledMediaServers.map((mediaServer) => mediaServer.id));
 
@@ -68,6 +69,19 @@ const visibleSearchResults = computed(() => filteredSearchResult.value.slice(0, 
 
 const hasHiddenResults = computed(() => visibleResultCount.value < filteredSearchResult.value.length);
 
+const failedServerNames = computed(() =>
+  filterMediaServers.value
+    .filter(({ id }) => {
+      const status = runtimeStore.mediaServerSearch.searchStatus[id];
+      return (
+        searchMediaServerIds.value.includes(id) &&
+        status?.status != null &&
+        status.status !== EResultParseStatus.success
+      );
+    })
+    .map(({ name }) => name),
+);
+
 useIntersectionObserver(gridSentinel, ([entry]) => {
   if (!entry?.isIntersecting || !hasHiddenResults.value) return;
   visibleResultCount.value += mediaServerVisiblePageSize;
@@ -75,9 +89,19 @@ useIntersectionObserver(gridSentinel, ([entry]) => {
 
 // 新的搜索（searchKey 变化，doSearch 会重置结果）时回到第一页
 watch(
-  () => runtimeStore.mediaServerSearch.searchKey,
+  () => runtimeStore.mediaServerSearch.searchResult,
   () => {
     visibleResultCount.value = mediaServerVisiblePageSize;
+    failedPosters.value.clear();
+  },
+);
+
+watch(
+  () => route.query.search,
+  (value) => {
+    if (typeof value !== "string") return;
+    search.value = value;
+    submitSearch();
   },
 );
 
@@ -96,11 +120,23 @@ const hasMore = computed<boolean>(() => {
 });
 
 function showItemInformation(item: IMediaServerItem) {
+  hoverItemUrl.value = null;
   showItem.value = item;
   showItemInformationDialog.value = true;
 }
 
-const isFetchingMore = ref(false);
+function submitSearch() {
+  if (isComposing.value) return;
+  void doSearch({ searchKey: search.value.trim(), userInitiated: true });
+}
+
+function loadMore() {
+  if (hasHiddenResults.value) {
+    visibleResultCount.value += mediaServerVisiblePageSize;
+    return;
+  }
+  void doSearch({ searchKey: runtimeStore.mediaServerSearch.searchKey, loadMore: true, userInitiated: true });
+}
 
 const onScroll = useThrottleFn((event: Event) => {
   const target = event.currentTarget;
@@ -113,16 +149,12 @@ const onScroll = useThrottleFn((event: Event) => {
     configStore.mediaServerEntity.autoSearchMoreWhenScroll &&
     atBottom &&
     !runtimeStore.mediaServerSearch.isSearching &&
-    !isFetchingMore.value &&
-    hasMore.value
+    failedServerNames.value.length === 0 &&
+    (hasHiddenResults.value || hasMore.value)
   ) {
-    isFetchingMore.value = true;
     // N15：「加载更多」必须沿用当前结果对应的搜索词（store 里的 searchKey），
     // 否则用户改了输入框但没回车时，滚动会带着新词重新搜第一页（清空已看的结果、位置丢失）。
-    doSearch({ searchKey: runtimeStore.mediaServerSearch.searchKey, loadMore: true, userInitiated: true });
-    setTimeout(() => {
-      isFetchingMore.value = false;
-    }, 100);
+    loadMore();
   }
 }, 200);
 
@@ -144,153 +176,485 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <a-card v-scroll="onScroll">
-    <a-typography-text strong>
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <!-- 媒体服务器筛选器（上游 #1599：由搜索框前缀里的弹出层改为平铺的 chip，并即时过滤已加载卡片） -->
-        <ServerFilterChips v-model="searchMediaServerIds" :items="filterMediaServers" style="flex: 0 1 auto" />
-        <div style="flex: 1 1 auto"></div>
+  <section v-scroll="onScroll" class="media-library" :aria-busy="runtimeStore.mediaServerSearch.isSearching">
+    <div class="page-toolbar media-library-toolbar">
+      <ServerFilterChips v-model="searchMediaServerIds" :items="filterMediaServers" />
+      <form class="media-library-search" role="search" @submit.prevent="submitSearch">
         <a-input
           v-model:value="search"
           :placeholder="t('MediaServerEntity.searchPlaceholder')"
+          :aria-label="t('MediaServerEntity.searchPlaceholder')"
           allow-clear
-          @keyup.enter="() => doSearch({ searchKey: search, userInitiated: true })"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
+          @keydown.enter="(isComposing || $event.isComposing) && $event.preventDefault()"
         >
-          <template #prefix>
-            <SearchOutlined />
-          </template>
+          <template #prefix><SearchOutlined /></template>
         </a-input>
-      </a-flex>
-    </a-typography-text>
+        <a-button
+          html-type="submit"
+          type="primary"
+          :disabled="searchMediaServerIds.length === 0"
+          :loading="
+            runtimeStore.mediaServerSearch.isSearching && search.trim() === runtimeStore.mediaServerSearch.searchKey
+          "
+        >
+          <template #icon><SearchOutlined /></template>
+          {{ t("common.search") }}
+        </a-button>
+      </form>
+    </div>
 
-    <!--  瀑布流形式展示媒体服务器搜索结果（只渲染前 visibleResultCount 条，触底自动追加） -->
-    <div v-if="filteredSearchResult.length > 0" class="masonry-grid">
-      <div v-for="item in visibleSearchResults" :key="item.url" class="masonry-item">
-        <a-card>
-          <div style="position: relative; margin-bottom: 4px">
-            <a-popover placement="leftTop" trigger="hover" overlay-class-name="masonry-img-overlay">
-              <template #content>
-                <a-button block @click="() => showItemInformation(item)">
-                  {{ t("MediaServerEntity.detail") }}
-                  <InfoCircleOutlined />
-                </a-button>
-                <!-- 外部链接（调研 A5：IMDb / TMDb …） -->
+    <div class="media-library-status" role="status" aria-live="polite">
+      <span>{{ t("MediaServerEntity.loadedItems", { count: filteredSearchResult.length }) }}</span>
+      <a-typography-text v-if="runtimeStore.mediaServerSearch.isSearching" type="secondary">
+        <a-spin size="small" /> {{ t("common.loading") }}
+      </a-typography-text>
+    </div>
+    <a-alert
+      v-if="failedServerNames.length"
+      class="media-library-error"
+      type="error"
+      show-icon
+      :message="t('MediaServerEntity.failedServers', { servers: failedServerNames.join(', ') })"
+    />
+
+    <div v-if="filteredSearchResult.length > 0" class="media-library-grid">
+      <article v-for="item in visibleSearchResults" :key="item.url" class="masonry-item media-card">
+        <a-popover
+          :trigger="['hover', 'focus']"
+          placement="rightTop"
+          :mouse-enter-delay="0.3"
+          :destroy-tooltip-on-hide="true"
+          :open="hoverItemUrl === item.url && !showItemInformationDialog"
+          @open-change="
+            (open: boolean) => (hoverItemUrl = open ? item.url : hoverItemUrl === item.url ? null : hoverItemUrl)
+          "
+        >
+          <template #content>
+            <div class="media-hover-preview">
+              <strong>{{ item.name }}</strong>
+              <div class="media-hover-summary">{{ item.description || t("MediaServerEntity.noDescription") }}</div>
+              <div class="media-hover-links">
                 <a-button
                   v-for="externalUrl in item.externalUrls ?? []"
                   :key="externalUrl.url"
                   :href="externalUrl.url"
-                  block
-                  rel="noopener noreferrer nofollow"
+                  size="small"
                   target="_blank"
+                  rel="noopener noreferrer nofollow"
                 >
                   {{ externalUrl.name }}
                   <ExportOutlined />
                 </a-button>
-                <a-button :href="item.url" block rel="noopener noreferrer nofollow" target="_blank">
-                  {{ t("common.visit") }}
-                  <SelectOutlined />
-                </a-button>
-              </template>
-              <div>
-                <div class="masonry-right-label">
-                  <!-- 用户状态（观看、喜欢、观看深度，调研 A6） -->
-                  <a-tag v-if="item.user" color="#e0e0e0">
-                    <PlayedStateIcon :is-played="item.user?.IsPlayed" :percent="item.user?.playedPercentage" />
-                    <component
-                      :is="item.user?.IsFavorite ? HeartFilled : HeartOutlined"
-                      style="color: var(--ptd-danger); margin-left: 4px"
-                    />
-                  </a-tag>
-                </div>
-                <div class="masonry-left-label">
-                  <!-- 封装格式 + 画质/码率（调研 A2） -->
-                  <a-tag v-if="item.format" color="#03a9f4"
-                    ><ArrowsAltOutlined style="margin-right: 4px" />
-                    {{ item.format?.toUpperCase() }}
-                    <template v-if="videoSummary(item)"> / {{ videoSummary(item) }}</template>
-                  </a-tag>
-                  <br v-if="item.format" />
-                  <!-- 大小 -->
-                  <a-tag v-if="item.size"
-                    ><VideoCameraOutlined style="margin-right: 4px" />
-                    {{ formatSize(item.size ?? 0) }}
-                  </a-tag>
-                  <!-- 评分（调研 A1） -->
-                  <a-tag v-if="typeof item.rating === 'number'" color="gold"
-                    ><StarFilled style="margin-right: 4px" />{{ item.rating.toFixed(1) }}</a-tag
-                  >
-                  <!-- 色域（调研 A2） -->
-                  <a-tag v-if="videoRangeBadge(item)" color="volcano">{{ videoRangeBadge(item) }}</a-tag>
-                  <!-- 年份（调研 B8） -->
-                  <a-tag v-if="item.productionYear" color="#607d8b">{{ item.productionYear }}</a-tag>
-                  <!-- 同片多版本（调研 B9） -->
-                  <a-tag v-if="(item.mediaSourceCount ?? 0) > 1" color="purple">
-                    {{ t("MediaServerEntity.versions", { count: item.mediaSourceCount }) }}
-                  </a-tag>
-                  <!-- 剧集编号（调研 B10） -->
-                  <a-tag v-if="seriesText(item)" color="geekblue">{{ seriesText(item) }}</a-tag>
-                </div>
-                <a-image :src="item.poster" :title="item.name" :preview="false"></a-image>
               </div>
-            </a-popover>
-          </div>
-
-          <a-typography-text style="white-space: normal; margin: 4px 0; text-align: center" type="secondary">
-            <a-typography-link :href="item.url" :title="item.name" strong style="margin: 8px 0" target="_blank">
-              {{ item.name }}
-            </a-typography-link>
-
-            <a-flex
-              v-if="metadataStore.mediaServers[item.server]"
-              align="center"
-              justify="center"
-              style="margin-top: 4px"
+              <a-flex :gap="8">
+                <a-button type="primary" @click="showItemInformation(item)">
+                  <template #icon><InfoCircleOutlined /></template>
+                  {{ t("MediaServerEntity.detail") }}
+                </a-button>
+                <a-button :href="item.url" target="_blank" rel="noopener noreferrer nofollow">
+                  <template #icon><ExportOutlined /></template>
+                  {{ t("common.visit") }}
+                </a-button>
+              </a-flex>
+            </div>
+          </template>
+          <button
+            type="button"
+            class="media-poster-button"
+            :aria-label="`${t('MediaServerEntity.detail')}: ${item.name}`"
+            @click="showItemInformation(item)"
+          >
+            <img
+              v-if="item.poster && !failedPosters.has(item.url)"
+              :src="item.poster"
+              alt=""
+              loading="lazy"
+              decoding="async"
+              @error="failedPosters.add(item.url)"
+            />
+            <span v-else class="media-poster-fallback">
+              <VideoCameraOutlined />
+              <span>{{ t("MediaServerEntity.noPoster") }}</span>
+            </span>
+            <span
+              v-if="item.user?.IsPlayed || item.user?.playedPercentage || item.user?.IsFavorite"
+              class="media-card-user"
             >
-              <a-avatar
-                :alt="metadataStore.mediaServers[item.server].name"
-                :src="getMediaServerIcon(metadataStore.mediaServers[item.server].type)"
-                :size="20"
-              ></a-avatar>
-              &nbsp; {{ metadataStore.mediaServers[item.server].name }}
-            </a-flex>
-          </a-typography-text>
-        </a-card>
-      </div>
+              <PlayedStateIcon
+                v-if="item.user?.IsPlayed || item.user?.playedPercentage"
+                :is-played="item.user?.IsPlayed"
+                :percent="item.user?.playedPercentage"
+              />
+              <HeartFilled v-if="item.user?.IsFavorite" style="color: var(--ptd-danger)" />
+            </span>
+            <span v-if="typeof item.rating === 'number'" class="media-card-rating">
+              <StarFilled /> {{ item.rating.toFixed(1) }}
+            </span>
+          </button>
+        </a-popover>
+        <div class="media-card-body">
+          <button type="button" class="media-card-title" :title="item.name" @click="showItemInformation(item)">
+            {{ item.name }}
+          </button>
+          <div class="media-card-meta">
+            <span v-if="item.productionYear">{{ item.productionYear }}</span>
+            <span v-if="seriesText(item)">{{ seriesText(item) }}</span>
+            <span v-if="(item.mediaSourceCount ?? 0) > 1">{{
+              t("MediaServerEntity.versions", { count: item.mediaSourceCount })
+            }}</span>
+          </div>
+          <div
+            class="media-card-technical"
+            :title="
+              [
+                item.format?.toUpperCase(),
+                videoSummary(item),
+                videoRangeBadge(item),
+                item.size ? formatSize(item.size) : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            "
+          >
+            {{
+              [
+                item.format?.toUpperCase(),
+                videoSummary(item),
+                videoRangeBadge(item),
+                item.size ? formatSize(item.size) : undefined,
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            }}
+          </div>
+          <div class="media-card-footer">
+            <span
+              v-if="metadataStore.mediaServers[item.server]"
+              class="media-card-server"
+              :title="metadataStore.mediaServers[item.server].name"
+            >
+              <a-avatar :src="getMediaServerIcon(metadataStore.mediaServers[item.server].type)" :size="16" />
+              <span>{{ metadataStore.mediaServers[item.server].name }}</span>
+            </span>
+            <a-tooltip :title="t('MediaServerEntity.detail')">
+              <a-button
+                type="text"
+                :aria-label="`${t('MediaServerEntity.detail')}: ${item.name}`"
+                @click="showItemInformation(item)"
+              >
+                <template #icon><InfoCircleOutlined /></template>
+              </a-button>
+            </a-tooltip>
+            <a-tooltip :title="t('common.visit')">
+              <a-button
+                type="text"
+                :href="item.url"
+                :aria-label="`${t('common.visit')}: ${item.name}`"
+                rel="noopener noreferrer nofollow"
+                target="_blank"
+              >
+                <template #icon><ExportOutlined /></template>
+              </a-button>
+            </a-tooltip>
+          </div>
+        </div>
+      </article>
     </div>
-    <!-- 首次搜索中（尚无任何结果）：用卡片骨架占位，避免整块内容区空白 -->
     <PageSkeleton v-else-if="runtimeStore.mediaServerSearch.isSearching" :count="8" :rows="3" variant="masonry" />
-
-    <!-- 其余情况（还没搜过 / 搜索完成但无结果 / 已加载的结果都被服务器筛选隐藏）都要有明确占位，不能留空白 -->
     <NoDataPlaceholder
       v-else
       :description="
-        runtimeStore.mediaServerSearch.searchResult.length > 0
-          ? t('MediaServerEntity.serverFilter.allHidden')
-          : t('MediaServerEntity.noItems')
+        enabledMediaServerIds.length === 0
+          ? t('MediaServerEntity.noServers')
+          : runtimeStore.mediaServerSearch.searchResult.length > 0
+            ? t('MediaServerEntity.serverFilter.allHidden')
+            : searchMediaServerIds.length === 0
+              ? t('MediaServerEntity.noServerSelected')
+              : failedServerNames.length > 0
+                ? t('MediaServerEntity.loadFailed')
+                : t('MediaServerEntity.noItems')
       "
     />
-
-    <!-- 仍有未渲染结果时的触底哨兵：进入视口后追加下一页（DOM 上限由滚动进度决定） -->
     <div v-if="hasHiddenResults" ref="gridSentinel" style="height: 1px; width: 100%"></div>
-
-    <!-- TODO 点击加载更多 -->
-    <div v-if="!isEmpty(runtimeStore.mediaServerSearch.searchStatus)">
-      <a-row :gutter="8">
-        <a-col flex="1 1 0" style="display: flex; justify-content: center">
-          <a-button
-            :disabled="!hasMore"
-            :loading="runtimeStore.mediaServerSearch.isSearching"
-            @click="
-              () =>
-                doSearch({ searchKey: runtimeStore.mediaServerSearch.searchKey, loadMore: true, userInitiated: true })
-            "
-          >
-            {{ t("MediaServerEntity.loadMore") }}
-          </a-button>
-        </a-col>
-      </a-row>
+    <div
+      v-if="
+        hasHiddenResults || (!isEmpty(runtimeStore.mediaServerSearch.searchStatus) && searchMediaServerIds.length > 0)
+      "
+      class="media-library-pagination"
+    >
+      <a-button
+        v-if="hasHiddenResults || hasMore"
+        :loading="runtimeStore.mediaServerSearch.isSearching"
+        @click="loadMore"
+      >
+        {{
+          failedServerNames.length && !hasHiddenResults ? t("MediaServerEntity.retry") : t("MediaServerEntity.loadMore")
+        }}
+      </a-button>
+      <a-typography-text v-else type="secondary">{{ t("MediaServerEntity.allLoaded") }}</a-typography-text>
     </div>
-  </a-card>
+  </section>
 
-  <ItemInformationDialog v-model="showItemInformationDialog" :item="showItem as IMediaServerItem" />
+  <ItemInformationDialog v-if="showItem" v-model="showItemInformationDialog" :item="showItem" />
 </template>
+
+<style scoped>
+.media-library {
+  min-width: 0;
+}
+
+.media-library-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.media-library-search {
+  display: flex;
+  gap: 8px;
+  flex: 0 1 400px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.media-library-search > .ant-input-affix-wrapper {
+  min-width: 0;
+}
+
+.media-library-search > .ant-btn {
+  flex: 0 0 auto;
+}
+
+.media-library-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  color: var(--ptd-text-secondary);
+  font-size: 12px;
+}
+
+.media-library-error {
+  margin-bottom: 12px;
+}
+
+.media-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
+  gap: 16px;
+}
+
+.media-card {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--ptd-border);
+  border-radius: 6px;
+  background: var(--ptd-surface);
+}
+
+.media-poster-button {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  padding: 0;
+  border: 0;
+  background: var(--ptd-bg);
+  color: var(--ptd-text-secondary);
+  cursor: pointer;
+}
+
+.media-poster-button > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.media-poster-button:focus-visible,
+.media-card-title:focus-visible {
+  outline: 2px solid var(--ptd-primary);
+  outline-offset: -2px;
+}
+
+.media-poster-fallback {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.media-poster-fallback > .anticon {
+  font-size: 32px;
+}
+
+.media-card-user,
+.media-card-rating {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.76);
+  color: #fff;
+  font-size: 12px;
+}
+
+.media-card-user {
+  top: 8px;
+  right: 8px;
+}
+
+.media-card-rating {
+  bottom: 8px;
+  left: 8px;
+}
+
+.media-card-rating > .anticon {
+  color: #ffc53d;
+}
+
+.media-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.media-card-title {
+  display: -webkit-box;
+  height: 40px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--ptd-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  cursor: pointer;
+}
+
+.media-card-title:hover {
+  color: var(--ptd-primary);
+}
+
+.media-card-meta,
+.media-card-technical {
+  overflow: hidden;
+  color: var(--ptd-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.media-card-meta {
+  display: flex;
+  gap: 8px;
+  height: 18px;
+  white-space: nowrap;
+}
+
+.media-card-technical {
+  display: -webkit-box;
+  height: 36px;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.media-card-footer {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.media-card-server {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ptd-text-secondary);
+  font-size: 12px;
+}
+
+.media-card-server > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-card-footer > .ant-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.media-library-pagination {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.media-hover-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(300px, calc(100vw - 64px));
+  overflow-wrap: anywhere;
+}
+
+.media-hover-preview > strong {
+  font-size: 14px;
+}
+
+.media-hover-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ptd-text-secondary);
+  line-height: 1.6;
+  white-space: pre-line;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.media-hover-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.media-hover-links > .ant-btn {
+  max-width: 100%;
+  height: auto;
+  min-height: 24px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .media-library-search {
+    flex: 1 1 100%;
+  }
+
+  .media-library-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+</style>

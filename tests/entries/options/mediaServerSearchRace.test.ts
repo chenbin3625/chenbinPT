@@ -200,3 +200,133 @@ describe("N15：加载更多沿用结果对应的搜索词", () => {
     }
   });
 });
+
+describe("媒体库刷新与分页交互", () => {
+  async function setup() {
+    vi.resetModules();
+    reactiveState.mediaServerSearch = { searchKey: "", searchResult: [], searchStatus: {}, isSearching: false };
+    state.resetMediaServerSearchData.mockImplementation(() => {
+      reactiveState.mediaServerSearch = { searchKey: "", searchResult: [], searchStatus: {}, isSearching: false };
+    });
+    reactiveMetadata.mediaServers = {
+      m1: { id: "m1", enabled: true, name: "M1", address: "local" },
+      m2: { id: "m2", enabled: true, name: "M2", address: "local" },
+    };
+    reactiveMetadata.getEnabledMediaServers = Object.values(reactiveMetadata.mediaServers);
+    sendMessageMock.mockReset();
+    const utils = await import("@/options/views/Overview/MediaServerEntity/utils.ts");
+    utils.searchMediaServerIds.value = ["m1"];
+    return utils;
+  }
+
+  it("连续提交相同词只请求一次，搜索完成后同词提交刷新旧内容", async () => {
+    const utils = await setup();
+    const first = deferred<any>();
+    sendMessageMock.mockReturnValueOnce(first.promise).mockResolvedValue({
+      status: EResultParseStatus.success,
+      items: [{ url: "same-url", name: "Updated" }],
+    });
+    await utils.doSearch({ searchKey: "same" });
+    await utils.doSearch({ searchKey: "same" });
+    first.resolve({ status: EResultParseStatus.success, items: [{ url: "same-url", name: "Original" }] });
+    await utils.searchQueue.onIdle();
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+    await utils.doSearch({ searchKey: "same", userInitiated: true });
+    await utils.searchQueue.onIdle();
+    expect(reactiveState.mediaServerSearch.searchResult).toEqual([{ url: "same-url", name: "Updated" }]);
+  });
+
+  it("分页失败后保留已加载内容和成功游标，重试仍请求失败的那一页", async () => {
+    const utils = await setup();
+    reactiveState.mediaServerSearch = {
+      searchKey: "same",
+      searchResult: [{ url: "first" }],
+      searchStatus: {
+        m1: { status: EResultParseStatus.success, canLoadMore: true, options: { startIndex: 0, limit: 50 } },
+      },
+      isSearching: false,
+    };
+    sendMessageMock.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({
+      status: EResultParseStatus.success,
+      items: [{ url: "second" }],
+      options: { startIndex: 50, limit: 50 },
+    });
+    await utils.doSearch({ searchKey: "same", loadMore: true });
+    await utils.searchQueue.onIdle();
+    expect(reactiveState.mediaServerSearch.searchStatus.m1.canLoadMore).toBe(true);
+    expect(reactiveState.mediaServerSearch.searchResult).toEqual([{ url: "first" }]);
+    await utils.doSearch({ searchKey: "same", loadMore: true });
+    await utils.searchQueue.onIdle();
+    expect(sendMessageMock.mock.calls.map(([, data]) => data.options.startIndex)).toEqual([50, 50]);
+    expect(reactiveState.mediaServerSearch.searchResult.map((item) => item.url)).toEqual(["first", "second"]);
+  });
+
+  it("筛选变更后同词提交会搜索新选择，并在旧请求结束前保持加载状态", async () => {
+    const utils = await setup();
+    const old = deferred<any>();
+    sendMessageMock
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValue({ status: EResultParseStatus.success, items: [] });
+    await utils.doSearch({ searchKey: "same" });
+    utils.searchMediaServerIds.value = ["m1", "m2"];
+    await utils.doSearch({ searchKey: "same", userInitiated: true });
+    const searching = reactiveState.mediaServerSearch.isSearching;
+    old.resolve({ status: EResultParseStatus.success, items: [] });
+    await utils.searchQueue.onIdle();
+    expect(sendMessageMock.mock.calls.map(([, data]) => data.mediaServerId)).toEqual(["m1", "m1", "m2"]);
+    expect(searching).toBe(true);
+  });
+
+  it("加载更多跳过已结束的服务器，连续点击不重复推进分页", async () => {
+    const utils = await setup();
+    utils.searchMediaServerIds.value = ["m1", "m2"];
+    reactiveState.mediaServerSearch = {
+      searchKey: "same",
+      searchResult: [],
+      searchStatus: {
+        m1: { canLoadMore: false, options: { startIndex: 0, limit: 50 } },
+        m2: { canLoadMore: true, options: { startIndex: 0, limit: 50 } },
+      },
+      isSearching: false,
+    };
+    const page = deferred<any>();
+    sendMessageMock.mockReturnValue(page.promise);
+    await utils.doSearch({ searchKey: "same", loadMore: true });
+    await utils.doSearch({ searchKey: "same", loadMore: true });
+    page.resolve({ status: EResultParseStatus.success, items: [], options: { startIndex: 50, limit: 50 } });
+    await utils.searchQueue.onIdle();
+    expect(sendMessageMock.mock.calls.map(([, data]) => data.mediaServerId)).toEqual(["m2"]);
+  });
+
+  it("仅包含重复条目的非空页仍可继续翻页", async () => {
+    const utils = await setup();
+    reactiveState.mediaServerSearch = {
+      searchKey: "same",
+      searchResult: [{ url: "first" }],
+      searchStatus: { m1: { canLoadMore: true, options: { startIndex: 0, limit: 50 } } },
+      isSearching: false,
+    };
+    sendMessageMock.mockResolvedValue({
+      status: EResultParseStatus.success,
+      items: [{ url: "first" }],
+      options: { startIndex: 50, limit: 50 },
+    });
+    await utils.doSearch({ searchKey: "same", loadMore: true });
+    await utils.searchQueue.onIdle();
+    expect(reactiveState.mediaServerSearch.searchResult).toHaveLength(1);
+    expect(reactiveState.mediaServerSearch.searchStatus.m1.canLoadMore).toBe(true);
+  });
+
+  it("取消选中后丢弃该服务器的在途响应", async () => {
+    const utils = await setup();
+    const response = deferred<any>();
+    sendMessageMock.mockReturnValue(response.promise);
+    await utils.doSearch({ searchKey: "same" });
+    utils.searchMediaServerIds.value = [];
+    response.resolve({ status: EResultParseStatus.success, items: [{ url: "late" }] });
+    await utils.searchQueue.onIdle();
+    expect(reactiveState.mediaServerSearch.searchStatus).toEqual({});
+    expect(reactiveState.mediaServerSearch.searchResult).toEqual([]);
+  });
+});

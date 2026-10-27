@@ -40,12 +40,16 @@ const { item } = defineProps<{
  */
 const detail = ref<IMediaServerItem | null>(null);
 const isLoadingDetail = ref<boolean>(false);
+const detailFailed = ref(false);
+const posterFailed = ref(false);
+const detailHeading = ref<HTMLElement | null>(null);
 /** 关闭后快速打开另一条时，丢弃上一条迟到的详情响应 */
 let detailToken = 0;
 
 async function loadDetail() {
   const token = ++detailToken;
   detail.value = null;
+  detailFailed.value = false;
   if (!item?.id) {
     isLoadingDetail.value = false;
     return;
@@ -56,7 +60,7 @@ async function loadDetail() {
     const result = await sendMessage("getMediaServerItemDetail", { mediaServerId: item.server, itemId: item.id });
     if (token === detailToken) detail.value = result;
   } catch {
-    if (token === detailToken) detail.value = null;
+    if (token === detailToken) detailFailed.value = true;
   } finally {
     if (token === detailToken) isLoadingDetail.value = false;
   }
@@ -81,7 +85,22 @@ watch(
  * 详情接口不再搬一份海报（data URL 很大），沿用列表条目的海报。
  */
 const richItem = computed<IMediaServerItem>(() =>
-  detail.value ? { ...detail.value, poster: detail.value.poster || item.poster } : item,
+  detail.value ? { ...item, ...detail.value, poster: detail.value.poster || item.poster } : item,
+);
+
+watch(
+  () => item.poster,
+  () => {
+    posterFailed.value = false;
+  },
+);
+
+watch(
+  [showDialog, detailHeading, () => item.url],
+  ([opened, heading]) => {
+    if (opened && heading?.parentElement) heading.parentElement.scrollTop = 0;
+  },
+  { flush: "post" },
 );
 
 /** 调研 B7：用外部标识（imdb / tmdb）一键跳到站点搜索页 */
@@ -147,50 +166,59 @@ const seriesInfoText = computed(() =>
     .join(" · "),
 );
 
-function secondsToISO8601(seconds: number) {
-  seconds = Math.abs(seconds);
-
-  let hours = Math.floor(seconds / 3600);
-  seconds %= 3600;
-
-  let minutes = Math.floor(seconds / 60);
-  seconds = Math.floor(seconds % 60); // 取整秒数
-
-  let duration = "P";
-
-  // 仅在有天数时添加
-  if (hours >= 24) {
-    let days = Math.floor(hours / 24);
-    duration += `${days}D`;
-    hours %= 24;
-  }
-
-  // 如果有小时、分钟或秒，添加T分隔符
-  if (hours > 0 || minutes > 0 || seconds > 0) {
-    duration += "T";
-
-    if (hours > 0) duration += `${hours}H`;
-    if (minutes > 0) duration += `${minutes}M`;
-    if (seconds > 0) duration += `${seconds}S`;
-  }
-
-  return duration;
+function formatDuration(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(total / 3600)}:${String(Math.floor(total / 60) % 60).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 </script>
 
 <template>
   <a-modal
+    :key="item.url"
     v-model:open="showDialog"
+    :destroy-on-close="true"
     :footer="null"
     :title="t('MediaServerEntity.ItemInformationDialog.title')"
-    :width="800"
+    :width="920"
+    wrap-class-name="media-detail-dialog"
+    :body-style="{ maxHeight: 'calc(100dvh - 160px)', overflowY: 'auto', overflowX: 'hidden', overflowAnchor: 'none' }"
   >
-    <a-row align="middle" :gutter="8">
-      <a-col :span="16" :offset="4" :sm="{ span: 8, offset: 0 }">
-        <a-image :src="richItem.poster" :title="richItem.name" :preview="false"></a-image>
+    <div ref="detailHeading" class="media-detail-heading">
+      <a-typography-link :href="richItem.url" rel="noopener noreferrer nofollow" target="_blank">
+        {{ richItem.name }}
+      </a-typography-link>
+      <p v-if="richItem.description" class="media-detail-description">{{ richItem.description }}</p>
+    </div>
+    <a-alert
+      v-if="detailFailed"
+      type="warning"
+      show-icon
+      class="media-detail-error"
+      :message="t('MediaServerEntity.ItemInformationDialog.loadFailed')"
+    >
+      <template #action>
+        <a-button class="media-detail-retry" size="small" @click="loadDetail">{{
+          t("MediaServerEntity.retry")
+        }}</a-button>
+      </template>
+    </a-alert>
+    <div v-if="isLoadingDetail" class="media-detail-loading" role="status">
+      <a-spin size="small" /> {{ t("MediaServerEntity.ItemInformationDialog.loadingDetail") }}
+    </div>
+    <div class="media-detail-layout">
+      <aside class="media-detail-sidebar">
+        <div class="media-detail-poster">
+          <img
+            v-if="richItem.poster && !posterFailed"
+            :src="richItem.poster"
+            :alt="richItem.name"
+            @error="posterFailed = true"
+          />
+          <span v-else><VideoCameraOutlined /> {{ t("MediaServerEntity.noPoster") }}</span>
+        </div>
 
         <!-- 站点搜索（拿外部标识去站点搜索页）与外部链接（打开服务器给出的页面）都是「动作」，放在海报下方更容易识别 -->
-        <div style="margin-top: 12px; text-align: center">
+        <div class="media-detail-links">
           <template v-if="richItem.providerIds?.imdb || richItem.providerIds?.tmdb">
             <div class="info-label" style="margin-bottom: 4px">
               {{ t("MediaServerEntity.ItemInformationDialog.searchOnSite") }}
@@ -235,18 +263,8 @@ function secondsToISO8601(seconds: number) {
             </a-flex>
           </template>
         </div>
-      </a-col>
-      <a-col :span="24" :sm="16">
-        <a-typography-link
-          :href="richItem.url"
-          :title="richItem.name"
-          rel="noopener noreferrer nofollow"
-          target="_blank"
-          style="display: inline-block; width: 100%; font-size: 24px"
-        >
-          {{ richItem.name }}
-        </a-typography-link>
-        <p style="font-size: 12px">{{ richItem.description ?? "" }}</p>
+      </aside>
+      <div class="media-detail-content">
         <div v-if="richItem.tags && richItem.tags.length > 0" class="info-label">
           <a-typography-text style="padding-right: 12px">{{
             t("MediaServerEntity.ItemInformationDialog.type")
@@ -272,7 +290,7 @@ function secondsToISO8601(seconds: number) {
           }}</a-typography-text>
           <a-tag style="margin-right: 4px" color="#4caf50"
             ><ClockCircleOutlined style="margin-right: 4px" />
-            {{ secondsToISO8601(richItem.duration ?? 0) }}
+            {{ formatDuration(richItem.duration ?? 0) }}
           </a-tag>
         </div>
         <div v-if="richItem.size" class="info-label">
@@ -431,13 +449,7 @@ function secondsToISO8601(seconds: number) {
           <a-typography-text italic type="secondary">{{ richItem.taglines.join(" / ") }}</a-typography-text>
         </div>
         <!-- 演职人员（调研 B12，二次拉取才有） -->
-        <div v-if="isLoadingDetail" class="info-label">
-          <a-spin size="small" />
-          <a-typography-text type="secondary" style="margin-left: 8px">
-            {{ t("MediaServerEntity.ItemInformationDialog.loadingDetail") }}
-          </a-typography-text>
-        </div>
-        <div v-else-if="richItem.people?.length" class="info-label">
+        <div v-if="richItem.people?.length" class="info-label">
           <a-typography-text style="padding-right: 12px">{{
             t("MediaServerEntity.ItemInformationDialog.people")
           }}</a-typography-text>
@@ -501,7 +513,133 @@ function secondsToISO8601(seconds: number) {
             {{ t("common.visit") }}
           </a-button>
         </a-flex>
-      </a-col>
-    </a-row>
+      </div>
+    </div>
   </a-modal>
 </template>
+
+<style scoped>
+.media-detail-heading {
+  padding-right: 8px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+
+.media-detail-heading > a {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.media-detail-description {
+  max-height: 160px;
+  margin: 12px 0 0;
+  overflow-y: auto;
+  color: var(--ptd-text-secondary);
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.media-detail-error,
+.media-detail-loading {
+  margin-bottom: 16px;
+}
+
+.media-detail-retry {
+  white-space: nowrap;
+}
+
+.media-detail-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ptd-text-secondary);
+}
+
+.media-detail-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.media-detail-sidebar,
+.media-detail-content {
+  min-width: 0;
+}
+
+.media-detail-poster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--ptd-bg);
+  color: var(--ptd-text-secondary);
+}
+
+.media-detail-poster > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.media-detail-links {
+  margin-top: 12px;
+}
+
+.media-detail-sidebar :deep(.ant-btn) {
+  height: auto;
+  min-height: 30px;
+  padding: 4px 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.media-detail-content .info-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 0;
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+
+.media-detail-content :deep(.ant-space),
+.media-detail-content :deep(.ant-space-item) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.media-detail-content :deep(.ant-tag) {
+  max-width: 100%;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+:global(.media-detail-dialog .ant-modal) {
+  top: 24px;
+  padding-bottom: 24px;
+}
+
+@media (max-width: 640px) {
+  .media-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .media-detail-sidebar {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr);
+    align-items: start;
+    gap: 16px;
+  }
+
+  .media-detail-links {
+    margin-top: 0;
+  }
+}
+</style>

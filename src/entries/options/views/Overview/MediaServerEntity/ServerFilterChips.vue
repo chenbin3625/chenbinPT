@@ -34,10 +34,11 @@ function toggle(id: TMediaServerKey) {
 </script>
 
 <template>
-  <a-flex align="center" :gap="4" wrap="wrap" style="min-width: 0">
+  <a-flex class="media-server-filters" align="center" :gap="4" wrap="wrap" style="min-width: 0">
     <a-tooltip :title="display.smAndDown.value ? t('MediaServerEntity.serverFilter.all') : undefined">
       <a-button
         :aria-pressed="isAllSelected"
+        :aria-label="t('MediaServerEntity.serverFilter.all')"
         :ghost="isAllSelected"
         :type="isAllSelected ? 'primary' : 'default'"
         size="small"
@@ -51,13 +52,31 @@ function toggle(id: TMediaServerKey) {
       v-for="item in items"
       :key="item.id"
       :aria-pressed="model.includes(item.id)"
+      :aria-label="item.name"
+      :title="item.name"
       :ghost="model.includes(item.id)"
       :type="model.includes(item.id) ? 'primary' : 'default'"
       size="small"
       @click="toggle(item.id)"
     >
       <a-avatar :alt="item.type" :size="16" :src="getMediaServerIcon(item.type)" style="margin-right: 4px" />
-      {{ item.name }}
+      <span class="media-server-filter-name">{{ item.name }}</span>
     </a-button>
   </a-flex>
 </template>
+
+<style scoped>
+.media-server-filters {
+  max-width: 100%;
+}
+
+.media-server-filters > .ant-btn {
+  max-width: min(100%, 240px);
+}
+
+.media-server-filter-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

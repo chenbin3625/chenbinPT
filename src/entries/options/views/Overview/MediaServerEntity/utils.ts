@@ -47,6 +47,7 @@ export const searchQueue = new PQueue({ concurrency: 1 }); // 默认设置为 1�
 // 模块级别的 Set，用于跟踪已存在的搜索结果 ID，避免并发时的重复
 const globalExistingIds = new Set<string>();
 let searchEpoch = 0;
+let activeSearchSelection = "";
 
 searchQueue.on("active", () => {
   runtimeStore.mediaServerSearch.isSearching = true;
@@ -130,27 +131,38 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
     return;
   }
 
-  if (searchKey != runtimeStore.mediaServerSearch.searchKey) {
+  const sameSearch = searchKey === runtimeStore.mediaServerSearch.searchKey;
+  const selection = JSON.stringify([...searchableIds].sort());
+  const queueBusy = searchQueue.pending > 0 || searchQueue.size > 0;
+  if (sameSearch && queueBusy && (loadMore || selection === activeSearchSelection)) return;
+
+  if (!loadMore || !sameSearch) {
     searchEpoch++;
     searchQueue.clear();
     globalExistingIds.clear();
     runtimeStore.resetMediaServerSearchData();
+    runtimeStore.mediaServerSearch.isSearching = queueBusy;
   }
 
+  activeSearchSelection = selection;
   runtimeStore.mediaServerSearch.searchKey = searchKey;
   pruneSearchStatus();
   const taskEpoch = searchEpoch;
 
   for (const mediaServerId of searchableIds) {
+    if (loadMore && runtimeStore.mediaServerSearch.searchStatus[mediaServerId]?.canLoadMore === false) continue;
     // noinspection ES6MissingAwait
     searchQueue.add(async () => {
       if (taskEpoch !== searchEpoch) return;
       // 请求真正发出前再校验一次：排队期间筛选可能已经变化（取消勾选 / 被禁用），
       // 只向当前筛选出的服务器发送请求（上游 #1599）
       if (!searchMediaServerIds.value.includes(mediaServerId)) return;
+      if (!metadataStore.getEnabledMediaServers.some((server) => server.id === mediaServerId)) return;
+      const previousStatus = runtimeStore.mediaServerSearch.searchStatus[mediaServerId];
+      if (loadMore && previousStatus?.canLoadMore === false) return;
       let searchOptions: IMediaServerSearchOptions = { limit: configStore.mediaServerEntity.searchLimit ?? 50 };
-      if (loadMore) {
-        searchOptions = { ...runtimeStore.mediaServerSearch.searchStatus[mediaServerId]?.options };
+      if (loadMore && previousStatus?.options) {
+        searchOptions = { ...searchOptions, ...previousStatus.options };
         searchOptions.startIndex = (searchOptions.startIndex ?? 0) + (searchOptions.limit ?? 0);
       }
 
@@ -167,9 +179,16 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
       }));
 
       if (taskEpoch !== searchEpoch) return;
+      if (!searchMediaServerIds.value.includes(mediaServerId)) return;
+      if (!metadataStore.getEnabledMediaServers.some((server) => server.id === mediaServerId)) return;
       runtimeStore.mediaServerSearch.searchStatus[mediaServerId] = {
         ...omit(searchResult, ["items"]),
-        canLoadMore: false,
+        // 失败不能推进游标；下一次重试仍请求同一页。
+        options:
+          searchResult.status === EResultParseStatus.success
+            ? (searchResult.options ?? searchOptions)
+            : previousStatus?.options,
+        canLoadMore: searchResult.status !== EResultParseStatus.success || searchResult.items.length > 0,
       };
 
       if (searchResult.status !== EResultParseStatus.success) {
@@ -205,8 +224,6 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
 
       if (newItems.length > 0) {
         runtimeStore.mediaServerSearch.searchResult.push(...newItems);
-        // 如果本次有成功添加的，则认为可以加载更多
-        runtimeStore.mediaServerSearch.searchStatus[mediaServerId].canLoadMore = true;
       }
     });
   }

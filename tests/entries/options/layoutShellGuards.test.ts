@@ -179,7 +179,7 @@ describe("页面工具条：所有列表页复用同一个类", () => {
 
     for (const view of toolbarViews) {
       const source = readSource(resolve("src/entries/options", view));
-      expect(source, `${view} 的工具条应使用 .page-toolbar`).toContain('class="page-toolbar"');
+      expect(source, `${view} 的工具条应使用 .page-toolbar`).toMatch(/class="page-toolbar(\s[\w-]+)*"/);
     }
   });
 });

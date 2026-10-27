@@ -113,7 +113,7 @@
   },
   "src/entries/options/views/Overview/MediaServerEntity/Index.vue": {
     "@typescript-eslint/no-floating-promises": {
-      "count": 2
+      "count": 1
     }
   },
   "src/entries/options/views/Overview/MediaServerEntity/utils.ts": {
