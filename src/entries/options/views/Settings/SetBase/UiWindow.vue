@@ -28,6 +28,11 @@ const socialSiteSearchOptions = computed(() =>
     value: item,
   })),
 );
+/** 操作列位置（移植自上游 #1598）：值语义与 config 的 tableActionColumnPosition 一致 */
+const tableActionColumnPositionOptions = computed(() => [
+  { label: t("SetBase.ui.tableActionColumnPositionStart"), value: "start" as const },
+  { label: t("SetBase.ui.tableActionColumnPositionEnd"), value: "end" as const },
+]);
 
 async function initContentScriptExceptionSites() {
   Object.keys(metadataStore.sites).forEach((site) => {
@@ -71,6 +76,24 @@ defineExpose({
       </div>
 
       <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChange") }}</a-typography-text>
+        <a-flex align="center" :gap="8">
+          <a-tooltip placement="bottom" :overlay-style="{ maxWidth: '400px' }">
+            <template #title>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChangeNote") }}</template>
+            <QuestionCircleOutlined :style="{ color: infoIconColor }" />
+          </a-tooltip>
+          <a-switch v-model:checked="config.autoToggleNavBarOnDisplayChange" />
+        </a-flex>
+      </div>
+    </section>
+
+    <!-- 数据表格（移植自上游 #1598）：原「记忆表格行为 / 多列排序」搬入本分区，并新增操作列位置与固定 -->
+    <section class="ptd-settings-section">
+      <div class="ptd-settings-row ptd-settings-row--title">
+        <a-typography-text strong>{{ t("SetBase.ui.dataTable") }}</a-typography-text>
+      </div>
+
+      <div class="ptd-settings-row">
         <a-typography-text>{{ t("SetBase.ui.saveTableBehavior") }}</a-typography-text>
         <a-switch v-model:checked="config.saveTableBehavior" />
       </div>
@@ -87,13 +110,22 @@ defineExpose({
       </div>
 
       <div class="ptd-settings-row">
-        <a-typography-text>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChange") }}</a-typography-text>
+        <a-typography-text>{{ t("SetBase.ui.tableActionColumnPosition") }}</a-typography-text>
+        <a-select
+          v-model:value="config.tableActionColumnPosition"
+          :options="tableActionColumnPositionOptions"
+          style="width: min(100%, 420px)"
+        />
+      </div>
+
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.tableActionColumnFixed") }}</a-typography-text>
         <a-flex align="center" :gap="8">
           <a-tooltip placement="bottom" :overlay-style="{ maxWidth: '400px' }">
-            <template #title>{{ t("SetBase.ui.autoToggleNavBarOnDisplayChangeNote") }}</template>
+            <template #title>{{ t("SetBase.ui.tableActionColumnFixedNote") }}</template>
             <QuestionCircleOutlined :style="{ color: infoIconColor }" />
           </a-tooltip>
-          <a-switch v-model:checked="config.autoToggleNavBarOnDisplayChange" />
+          <a-switch v-model:checked="config.tableActionColumnFixed" />
         </a-flex>
       </div>
     </section>
