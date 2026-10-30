@@ -37,6 +37,11 @@ function getSearchSolution(planKey: string, entryName: string) {
 
 const statusFilterRef = ref<EResultParseStatus[]>([]);
 
+// costTime 以毫秒存储，展示时换算为秒并统一保留 1~2 位小数（如 3.5s / 12.34s）
+function formatCostTime(costTime?: number) {
+  return ((costTime ?? 0) / 1000).toFixed(2).replace(/0$/, "");
+}
+
 // A-22：这份表里的颜色名是 Vuetify 的调色板写法（"yellow-darken-2"/"indigo"…）。antd 的 a-tag 只认
 // 预设色名，其余值会被原样写进 `style.backgroundColor` —— 非法 CSS 会被浏览器直接丢弃，标签就没有任何样式。
 // 因此消费时必须经 resolveColor() 转成真实色值（见 src/entries/shared/colors.ts）。
@@ -134,7 +139,7 @@ const filteredSearchPlan = computed(() => {
             <br />
             <span>
               {{
-                t("SearchEntity.SearchStatusDialog.successMsg", [searchPlan.count, (searchPlan.costTime ?? 0) / 1000])
+                t("SearchEntity.SearchStatusDialog.successMsg", [searchPlan.count, formatCostTime(searchPlan.costTime)])
               }}
             </span>
           </template>
