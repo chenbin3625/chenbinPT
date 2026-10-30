@@ -10,10 +10,12 @@ import {
 import { useI18n } from "vue-i18n";
 import { onMounted, onUnmounted, ref, shallowRef, computed } from "vue";
 import {
+  applyTableActionColumn,
   titleColumnMaxWidth as titleColumnMaxWidthFor,
   toAntdColumns,
   toPagination,
   toSortBy,
+  useTableActionColumnLayout,
 } from "../utils/antdTable.ts";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
@@ -89,11 +91,16 @@ const tableHeader = computed(
     ] as DataTableHeader[],
 );
 const tableColumns = computed(() =>
-  toAntdColumns(tableHeader.value, {
-    sortBy: configStore.tableBehavior.DownloadHistory.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-  }),
+  // 操作列位置 / 固定（#1598）：先按可见列过滤 → toAntdColumns，最后再调整操作列位置
+  applyTableActionColumn(
+    toAntdColumns(tableHeader.value, {
+      sortBy: configStore.tableBehavior.DownloadHistory.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+    }),
+  ),
 );
+// 操作列固定在行首时，行首的选择列要一起固定；否则横向滚动会被操作列盖住
+const { rowSelectionFixed } = useTableActionColumnLayout();
 const filteredTableData = computed(() =>
   downloadHistoryList.value.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
 );
@@ -236,6 +243,8 @@ onUnmounted(() => {
         onChange: onSelectionChange,
         // 保留数据源之外的选中行（真正参与批量操作的是 visibleSelectedIds = 选中 ∩ 可见）
         preserveSelectedRowKeys: true,
+        // 操作列固定在行首时选择列也必须固定，否则固定列不连续（横向滚动会被操作列盖住）
+        fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"

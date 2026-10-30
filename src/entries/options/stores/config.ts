@@ -121,6 +121,9 @@ export const useConfigStore = defineStore("config", {
 
     saveTableBehavior: true,
     enableTableMultiSort: false,
+    // 操作列位置 / 固定（移植自上游 #1598）：全局配置，所有列表页统一生效
+    tableActionColumnPosition: "end",
+    tableActionColumnFixed: false,
 
     contextMenus: {
       enabled: true,

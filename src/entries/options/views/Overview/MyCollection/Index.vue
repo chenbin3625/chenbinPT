@@ -19,7 +19,14 @@ import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import SiteName from "@/options/components/SiteName.vue";
 import TorrentTitleTd from "@/options/components/TorrentTitleTd.vue";
 import { confirmModal } from "../utils/antdConfirm.ts";
-import { matchesHeaders, toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  matchesHeaders,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+  useTableActionColumnLayout,
+} from "../utils/antdTable.ts";
 
 const { t } = useI18n();
 const configStore = useConfigStore();
@@ -49,11 +56,16 @@ const tableHeader = computed<DataTableHeader[]>(() => [
 const filterHeaders: DataTableHeader[] = [{ key: "site" }, { key: "title" }, { key: "subTitle" }, { key: "comment" }];
 
 const columns = computed(() =>
-  toAntdColumns(tableHeader.value, {
-    sortBy: configStore.tableBehavior.MyCollection?.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-  }),
+  // 操作列位置 / 固定（#1598）：本页是 fork 独有页面，与其它列表页共用同一套全局配置
+  applyTableActionColumn(
+    toAntdColumns(tableHeader.value, {
+      sortBy: configStore.tableBehavior.MyCollection?.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+    }),
+  ),
 );
+// 操作列固定在行首时，行首的选择列要一起固定
+const { rowSelectionFixed } = useTableActionColumnLayout();
 
 const tablePagination = computed(() =>
   toPagination(
@@ -246,6 +258,8 @@ async function clearAll() {
         onChange: onSelectionChange,
         // 筛选改变 dataSource 时保留已选收藏（真正参与批量操作的是 selectedFavorites = 选中 ∩ 可见）
         preserveSelectedRowKeys: true,
+        // 操作列固定在行首时选择列也必须固定，保持固定列连续
+        fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe table-header-no-wrap"

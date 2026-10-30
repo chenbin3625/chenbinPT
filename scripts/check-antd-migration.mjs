@@ -191,13 +191,16 @@ check("no-css-ascendancy", "style.css 无 !important / body 前缀 / :where() �
 // 预算沿革（改动此值时请一并更新）：
 //   24 = 迁移初期的基线 20 + 小余量；
 //   30 = 迁移推进后实测为 27（新增集中在 .ant-table-* 表格骨架、.ant-menu-*、
-//        .ant-tabs-* 与 .ant-btn 的图标/加载态），故上调为「实测 27 + 小余量」。
+//        .ant-tabs-* 与 .ant-btn 的图标/加载态），故上调为「实测 27 + 小余量」；
+//   32 = 移植上游 #1598「固定操作列」时实测为 32：新增的 2 条是 .ant-table-cell-fix-left /
+//        -right（固定列不跟随 .table-stripe 隔行底色，只能用 CSS 覆盖）。逐条核对过没有公开
+//        API/token 可用，属于表格骨架的必要覆写面，故上调为「实测 32」。
 // 这个数字是**棘轮**：它的作用是不让「依赖 antd 私有 DOM 结构」的规模继续无声增长。
 // 真正降低它需要逐条确认对应组件能改用 antd 的公开 API（语义化 token / 组件 props），
 // 属于后续独立任务，不要在迁移期间顺手删规则。
 const antOverrideClasses = new Set(css.match(/\.ant-[a-z-]+/g) ?? []);
 const antRuleCount = antOverrideClasses.size;
-const antRuleLimit = 30;
+const antRuleLimit = 32;
 const antHits =
   antRuleCount > antRuleLimit
     ? [

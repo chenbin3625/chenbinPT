@@ -41,10 +41,12 @@ import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 import ColumnSelector from "../components/ColumnSelector.vue";
 import {
+  applyTableActionColumn,
   titleColumnMaxWidth as titleColumnMaxWidthFor,
   toAntdColumns,
   toPagination,
   toSortBy,
+  useTableActionColumnLayout,
 } from "../utils/antdTable.ts";
 
 import ActionTd from "./ActionTd.vue";
@@ -130,12 +132,17 @@ const activeTagFilterNames = computed(() => getActiveTagFilterNames());
 
 // 使用 shallowRef 优化：种子对象数组不需要深度响应式，提升性能
 const tableColumns = computed(() =>
-  toAntdColumns(fullTableHeader.value, {
-    sortBy: configStore.tableBehavior.SearchEntity.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-    visibleKeys: configStore.tableBehavior.SearchEntity.columns,
-  }),
+  // 操作列位置 / 固定（#1598）：先按可见列过滤 → toAntdColumns，最后再调整操作列位置
+  applyTableActionColumn(
+    toAntdColumns(fullTableHeader.value, {
+      sortBy: configStore.tableBehavior.SearchEntity.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+      visibleKeys: configStore.tableBehavior.SearchEntity.columns,
+    }),
+  ),
 );
+// 操作列固定在行首时，行首的选择列要一起固定
+const { rowSelectionFixed } = useTableActionColumnLayout();
 const filteredTableData = computed(() =>
   runtimeStore.search.searchResult.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
 );
@@ -629,6 +636,8 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
           // 已选 key 丢弃（甚至在下一次勾选时静默取消之前的选中项）。这里保留选择集，
           // 由上面的 watch 在「结果集真正被替换」时裁剪。
           preserveSelectedRowKeys: true,
+          // 操作列固定在行首时选择列也必须固定，保持固定列连续
+          fixed: rowSelectionFixed,
         }"
         :custom-row="(record: any) => sizeGroupRowProps({ item: record })"
         :scroll="{ x: 'max-content' }"

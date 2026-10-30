@@ -712,6 +712,19 @@ body {
 }
 
 /*
+ * 固定列隔行底色（移植自上游 58be52e883 / #1598 的 common.scss 修法）。
+ * antd 给固定单元格写死了 surface 背景（`tableBg`，见 es/table/style/fixed.js），
+ * 不跟随上面画在 <tr> 上的隔行底色 —— 开启「固定操作列」后，固定列会出现一条不随行变色的「白柱」。
+ * 这里让 tbody 里的固定单元格跟随所在行的背景（inherit 自动适配暗黑模式）；
+ * 只作用于 td（表头 th 保持 antd 的表头底色），且权重低于 antd 的行 hover / 选中规则，
+ * 因此悬停高亮仍然生效。
+ */
+.table-stripe tbody > tr > td.ant-table-cell-fix-left,
+.table-stripe tbody > tr > td.ant-table-cell-fix-right {
+  background-color: inherit;
+}
+
+/*
  * 搜索页分组色条：选中列之后紧邻的单元格画一条竖色条（颜色由组件内联 --ptd-size-group-color 提供）。
  * antd Table 没有「给某列画左侧色条」的能力。
  */

@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { nextTick, ref, shallowRef, watch } from "vue";
+import { nextTick, computed, ref, shallowRef, watch } from "vue";
 import { CloudDownloadOutlined, DeleteOutlined } from "@ant-design/icons-vue";
 import type { IBackupFileInfo } from "@ptd/backupServer";
 
 import { sendMessage } from "@/messages.ts";
 import { formatDate, formatDateTimeForTable, formatSize } from "@/options/utils.ts";
-import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  useTableActionColumnLayout,
+  withEllipsisCell,
+} from "@/options/views/Overview/utils/antdTable.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
@@ -28,34 +32,39 @@ const runtimeStore = useRuntimeStore();
 const isLoading = ref<boolean>(false);
 const backupHistory = shallowRef<IBackupFileInfo[]>([]);
 
-const columns = [
-  withEllipsisCell(
+// 上游 #1598 里本表是静态数组；fork 的 helper 读取全局配置，必须包成 computed 才能响应配置变化
+const columns = computed(() =>
+  applyTableActionColumn([
+    withEllipsisCell(
+      {
+        title: t("SetBackup.HistoryDialog.table.filename"),
+        dataIndex: "filename",
+        key: "filename",
+        sorter: (a: IBackupFileInfo, b: IBackupFileInfo) => a.filename.localeCompare(b.filename),
+      },
+      // 备份文件名 = 服务器前缀 + 时间戳 + 类型，比较长；限宽省略 + 悬停看全文
+      "24rem",
+    ),
     {
-      title: t("SetBackup.HistoryDialog.table.filename"),
-      dataIndex: "filename",
-      key: "filename",
-      sorter: (a: IBackupFileInfo, b: IBackupFileInfo) => a.filename.localeCompare(b.filename),
+      title: t("SetBackup.HistoryDialog.table.size"),
+      dataIndex: "size",
+      key: "size",
+      align: "right" as const,
+      sorter: (a: IBackupFileInfo, b: IBackupFileInfo) =>
+        (typeof a.size === "number" ? a.size : -1) - (typeof b.size === "number" ? b.size : -1),
     },
-    // 备份文件名 = 服务器前缀 + 时间戳 + 类型，比较长；限宽省略 + 悬停看全文
-    "24rem",
-  ),
-  {
-    title: t("SetBackup.HistoryDialog.table.size"),
-    dataIndex: "size",
-    key: "size",
-    align: "right" as const,
-    sorter: (a: IBackupFileInfo, b: IBackupFileInfo) =>
-      (typeof a.size === "number" ? a.size : -1) - (typeof b.size === "number" ? b.size : -1),
-  },
-  {
-    title: t("SetBackup.HistoryDialog.table.time"),
-    dataIndex: "time",
-    key: "time",
-    defaultSortOrder: "descend" as const,
-    sorter: (a: IBackupFileInfo, b: IBackupFileInfo) => a.time - b.time,
-  },
-  { title: t("common.action"), key: "action", align: "right" as const },
-];
+    {
+      title: t("SetBackup.HistoryDialog.table.time"),
+      dataIndex: "time",
+      key: "time",
+      defaultSortOrder: "descend" as const,
+      sorter: (a: IBackupFileInfo, b: IBackupFileInfo) => a.time - b.time,
+    },
+    { title: t("common.action"), key: "action", align: "right" as const },
+  ]),
+);
+/** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 const tableSelected = ref<string[]>([]);
 
 function onSelectionChange(keys: (string | number)[]) {
@@ -147,7 +156,8 @@ watch(showDialog, (open) => {
       :loading="isLoading"
       :pagination="{ pageSize: 25, pageSizeOptions: ['5', '10', '25', '50', '100'], showSizeChanger: true }"
       :row-key="'path'"
-      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange, fixed: rowSelectionFixed }"
+      :scroll="scroll"
       class="table-header-no-wrap table-stripe"
       size="small"
       style="margin-top: 8px"

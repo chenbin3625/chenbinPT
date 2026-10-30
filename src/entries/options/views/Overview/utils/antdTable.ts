@@ -1,6 +1,7 @@
-import { h, type VNode } from "vue";
+import { computed, h, type VNode } from "vue";
 import { Tooltip } from "ant-design-vue";
 
+import { useConfigStore } from "@/options/stores/config.ts";
 import type { DataTableHeader, DataTableSortItem } from "@/options/types/dataTable.ts";
 
 type AnyRecord = Record<string, any>;
@@ -142,6 +143,74 @@ export function toAntdColumns(
       }
       return column;
     });
+}
+
+/**
+ * 把 `key === "action"` 的操作列移到行首/行尾（移植自上游 58be52e883 / #1598）。
+ *
+ * 上游在 Vuetify 的 `DataTableHeader[]` 层做同样的事；fork 的列表页把「可见列过滤 + 列渲染」
+ * 收敛在 `toAntdColumns`，设置页则是手写 antd columns，所以这里改在**antd column 层**实现，
+ * 两族页面都能复用：调用顺序固定为「先过滤 / 先 `toAntdColumns`，最后 `applyTableActionColumn`」。
+ *
+ * - `tableActionColumnPosition`：操作列位于行首（start）还是行尾（end，默认）；
+ * - `tableActionColumnFixed`：表格横向滚动时固定操作列，antd 的固定方向与所在位置一致：
+ *   行首 → `fixed: "left"`，行尾 → `fixed: "right"`。
+ *
+ * 注意两点 antd 语义差异（与上游 Vuetify 实现不同，不要照抄）：
+ * 1. `fixed` 只有在表格设置了 `scroll.x` 时才生效，无 `scroll` 的表格由调用方按需补
+ *    `{ x: "max-content" }`（见 `useTableActionColumnLayout`）；
+ * 2. antd 的展开列/选择列插在**行首**，因此固定到行首时还需把这两列一起固定，否则横向滚动时
+ *    操作列会盖住它们（固定列必须是从边缘开始连续的一段）。
+ *
+ * 函数会读取 configStore，**必须在 computed 中调用**，配置变更后操作列才会重新排序 / 固定。
+ */
+export function applyTableActionColumn<T extends AnyRecord>(columns: T[]): T[] {
+  const index = columns.findIndex((column) => column.key === "action");
+  if (index === -1) {
+    // 没有操作列的表格保持原样（例如弹窗内的小表）
+    return columns;
+  }
+
+  const configStore = useConfigStore();
+  const position = configStore.tableActionColumnPosition;
+  const fixed = configStore.tableActionColumnFixed;
+
+  // 复制一份，避免修改调用方传入的列定义
+  const actionColumn: AnyRecord = { ...columns[index] };
+  if (fixed) {
+    actionColumn.fixed = position === "start" ? "left" : "right";
+  }
+
+  const otherColumns = columns.filter((_, i) => i !== index);
+  return (position === "start" ? [actionColumn, ...otherColumns] : [...otherColumns, actionColumn]) as T[];
+}
+
+/**
+ * 操作列位置 / 固定对 antd 表格的**布局**要求（与 {@link applyTableActionColumn} 配套使用）。
+ *
+ * 同样是响应式 helper，在 setup / computed 中调用即可：
+ * - `scroll`：给**没有** `:scroll` 的表格用。只在 fixed 打开时返回 `{ x: "max-content" }`，
+ *   避免默认态把表格切成 `table-layout: auto` + 横向滚动容器（7 张设置表的列宽是按无滚动调过的）；
+ * - `rowSelectionFixed`：`fixed` + 行首时给 `row-selection` 传 `fixed: "left"`。antd 其实会自动
+ *   从相邻列继承 `fixed`，这里显式传是为了不依赖内部实现（选择列必须与操作列一起固定才连续）；
+ * - `expandFixed`：`fixed` + 行首且该页有展开行时给 `a-table` 传 `expand-fixed="left"`，
+ *   展开列同样要固定在左侧。
+ */
+export function useTableActionColumnLayout() {
+  const configStore = useConfigStore();
+  const fixed = computed(() => configStore.tableActionColumnFixed);
+  const atStart = computed(() => configStore.tableActionColumnPosition === "start");
+  /** 操作列固定在行首：此时行首的展开列 / 选择列必须一起固定在左侧 */
+  const leadingFixed = computed(() => fixed.value && atStart.value);
+
+  return {
+    /** 给无 `:scroll` 的表格用：只在 fixed 打开时补 `scroll.x` */
+    scroll: computed(() => (fixed.value ? { x: "max-content" as const } : undefined)),
+    /** 给 `row-selection` 用：`position === "start" && fixed` 时选择列固定到左侧 */
+    rowSelectionFixed: computed(() => (leadingFixed.value ? ("left" as const) : undefined)),
+    /** 给 `a-table` 用：`position === "start" && fixed` 且有展开行时展开列固定到左侧 */
+    expandFixed: computed(() => (leadingFixed.value ? ("left" as const) : undefined)),
+  };
 }
 
 /** 等价于兼容层的 isRequiredHeader：props.disabled 的列不参与显隐过滤 */

@@ -16,7 +16,14 @@ import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import EditNameDialog from "./EditNameDialog.vue";
-import { matchesHeaders, toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  matchesHeaders,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+  useTableActionColumnLayout,
+} from "../utils/antdTable.ts";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -62,11 +69,19 @@ const tableWaitFilter = ref("");
 const tableFilter = refDebounced(tableWaitFilter, 500); // 延迟搜索过滤词的生成
 
 const columns = computed(() =>
-  toAntdColumns(tableHeader.value, {
-    sortBy: configStore.tableBehavior.SearchResultSnapshot.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-  }),
+  // 操作列位置 / 固定（#1598）：先 toAntdColumns，最后再调整操作列位置
+  applyTableActionColumn(
+    toAntdColumns(tableHeader.value, {
+      sortBy: configStore.tableBehavior.SearchResultSnapshot.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+    }),
+  ),
 );
+/**
+ * 本表原先没有 `:scroll`（列宽按无横向滚动调过）。antd 的 `fixed` 只有设置 `scroll.x` 才生效，
+ * 因此只在「固定操作列」打开时动态补 `{ x: "max-content" }`，默认态布局完全不变。
+ */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 const tableData = computed(() =>
   metadataStore.getSearchSnapshotList.filter((item) => matchesHeaders(item, tableFilter.value, tableHeader.value)),
 );
@@ -162,7 +177,10 @@ async function confirmDeleteSearchSnapshot(searchSnapshotId: TSearchSnapshotKey)
         onChange: onSelectionChange,
         // F4：筛选改变 dataSource 后，antd 默认会丢弃「不在当前 dataSource 里」的已选 key
         preserveSelectedRowKeys: true,
+        // 操作列固定在行首时选择列也必须固定，保持固定列连续
+        fixed: rowSelectionFixed,
       }"
+      :scroll="scroll"
       class="table-stripe table-header-no-wrap"
       @change="onTableChange"
     >

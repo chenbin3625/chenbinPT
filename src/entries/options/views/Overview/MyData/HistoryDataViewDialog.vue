@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { DeleteOutlined, DownOutlined, ExportOutlined, EyeOutlined, UpOutlined } from "@ant-design/icons-vue";
-import { toAntdColumns, toPagination } from "../utils/antdTable.ts";
+import { applyTableActionColumn, toAntdColumns, toPagination, useTableActionColumnLayout } from "../utils/antdTable.ts";
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { saveAs } from "@/options/utils/saveAs.ts";
@@ -57,7 +57,12 @@ const tableHeader = computed<DataTableHeader[]>(() => [
   { title: t("levelRequirement.bonus"), key: "bonus", align: "end", sortable: false },
   { title: t("common.action"), key: "action", align: "center", width: 90, sortable: false },
 ]);
-const tableColumns = computed(() => toAntdColumns(tableHeader.value, { sortBy: [{ key: "date", order: "desc" }] }));
+const tableColumns = computed(() =>
+  // 操作列位置 / 固定（#1598）：历史数据弹窗与主表共用同一套全局配置
+  applyTableActionColumn(toAntdColumns(tableHeader.value, { sortBy: [{ key: "date", order: "desc" }] })),
+);
+// 操作列固定在行首时，行首的选择列要一起固定
+const { rowSelectionFixed } = useTableActionColumnLayout();
 const tablePagination = computed(() =>
   toPagination(10, () => {
     /* 固定每页 10 条 */
@@ -160,6 +165,8 @@ watch(showDialog, (open) => {
         // 于是「勾选当天 → 删除」等于什么都没发生且无提示。当天数据本就不允许删除，
         // 这里按与行内删除按钮一致的判据禁用复选框。
         getCheckboxProps: (record: any) => ({ disabled: record.date == currentDate() }),
+        // 操作列固定在行首时选择列也必须固定，保持固定列连续
+        fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"
