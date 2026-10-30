@@ -18,3 +18,15 @@ declare const __RESOURCE_SITE_ICONS__: string[];
 // background 入口的按目标别名（wxt.config.ts 的 projectAliasPlugin）：
 // chrome → src/entries/background/main.ts，firefox → src/entries/background/ff_main.ts，只做副作用 import
 declare module "#ptd/background-main";
+
+/**
+ * 构建期生成的站点定义轻量索引（vite/plugin/generateSiteIndex.ts）。
+ * 实际内容由插件在 `load()` 里产出（JSON），这里只声明类型，让 vue-tsc / IDE 能解析。
+ *
+ * 单测环境（vitest.config.ts）用同一个插件注册了这个虚拟模块，所以测试里也能直接 import。
+ */
+declare module "virtual:site-metadata-index" {
+  import type { TSiteMetadataIndex } from "@ptd/site/types/metadataIndex";
+
+  export const siteMetadataIndex: TSiteMetadataIndex;
+}

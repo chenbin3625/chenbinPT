@@ -3,6 +3,9 @@ import { fileURLToPath } from "node:url";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
+// @ts-expect-error TS6305：vite/** 属于 tsconfig.node 的 composite project，主项目引用其源文件时要求先构建。
+import { vitePluginGenerateSiteIndex } from "./vite/plugin/generateSiteIndex.ts";
+
 /**
  * 与 wxt.config.ts 的项目别名（projectAliases）保持一致：
  * `~` → src、`@` → src/entries、`@ptd` → src/packages。
@@ -20,7 +23,11 @@ export default defineConfig({
   // 让测试能直接 import `src/**/*.vue`（模板级断言改为真实渲染断言的前提）。
   // 之前 tests/ 只用 `createApp + h` 渲染 antd 组件，无法验证我们自己的 SFC 模板；
   // 有了这个插件，`<a-xxx>` 的 class / prop / 结构类断言可以改成「挂载后查 DOM」的行为断言。
-  plugins: [vue()],
+  // `virtual:site-metadata-index`（站点定义轻量索引，见 vite/plugin/generateSiteIndex.ts）是构建期
+  // 虚拟模块：单测里如果 import 真实 `@/options/stores/metadata.ts` / 各页面，也会走到它，
+  // 所以必须在 vitest 里注册同一个插件，否则解析失败。生成结果与 wxt 构建共用
+  // `node_modules/.cache/ptd-depiler/` 的磁盘缓存，首次生成约 1~2 s、之后命中缓存。
+  plugins: [vue(), vitePluginGenerateSiteIndex()],
   resolve: { alias },
   test: {
     // 站点解析大量依赖 DOM（DOMParser / Element.matches / innerHTML），
