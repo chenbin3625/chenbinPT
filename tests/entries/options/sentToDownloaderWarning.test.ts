@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const sendMessageMock = vi.hoisted(() => vi.fn());
 const runtimeStore = vi.hoisted(() => ({
   search: { searchKey: "", searchPlanKey: "" },
-  showSnakebar: vi.fn(),
+  showSnackbar: vi.fn(),
 }));
 const metadataStore = vi.hoisted(() => ({
   getSearchSolutionName: vi.fn(() => "default"),
@@ -41,8 +41,8 @@ async function sendOne(result: Record<string, any>) {
     vi.fn(),
   );
 
-  expect(runtimeStore.showSnakebar).toHaveBeenCalledTimes(1);
-  return runtimeStore.showSnakebar.mock.calls[0] as [string, { color: string }];
+  expect(runtimeStore.showSnackbar).toHaveBeenCalledTimes(1);
+  return runtimeStore.showSnackbar.mock.calls[0] as [string, { color: string }];
 }
 
 /** 当前 locale（默认 zh_CN）下 `sendSummaryWarning` 的实际文案，避免测试里硬编码译文 */
@@ -53,7 +53,7 @@ async function warningText(count: number) {
 
 beforeEach(() => {
   sendMessageMock.mockReset();
-  runtimeStore.showSnakebar.mockReset();
+  runtimeStore.showSnackbar.mockReset();
 });
 
 describe("DOWNLOADER-8：搜索页推送汇总必须暴露「成功但设置未生效」", () => {

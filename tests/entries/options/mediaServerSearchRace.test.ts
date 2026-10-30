@@ -12,7 +12,7 @@ const { sendMessageMock, state, metadata } = vi.hoisted(() => ({
       isSearching: false,
     },
     resetMediaServerSearchData: vi.fn(),
-    showSnakebar: vi.fn(),
+    showSnackbar: vi.fn(),
   },
   metadata: {
     mediaServers: {} as Record<string, any>,
@@ -70,7 +70,7 @@ describe("N1/N16：恢复态收尾与「未选服务器」路径", () => {
   async function loadFresh() {
     vi.resetModules();
     state.mediaServerSearch = { searchKey: "", searchResult: [], searchStatus: {}, isSearching: false };
-    state.showSnakebar = vi.fn();
+    state.showSnackbar = vi.fn();
     metadata.mediaServers = { m1: { id: "m1", enabled: true, name: "M1", address: "local" } };
     metadata.getEnabledMediaServers = [metadata.mediaServers["m1"]];
     return await import("@/options/views/Overview/MediaServerEntity/utils.ts");
@@ -125,7 +125,7 @@ describe("N1/N16：恢复态收尾与「未选服务器」路径", () => {
       reactiveState.mediaServerSearch.searchResult.map((item: any) => item.url),
       "不应先清空已有结果",
     ).toEqual(["keep-me"]);
-    expect(reactiveState.showSnakebar, "应提示用户先选择媒体服务器").toHaveBeenCalled();
+    expect(reactiveState.showSnackbar, "应提示用户先选择媒体服务器").toHaveBeenCalled();
   });
 
   it("N16：searchStatus 只保留当前仍被勾选（且启用）的服务器", async () => {

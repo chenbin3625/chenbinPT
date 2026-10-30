@@ -86,9 +86,9 @@ async function copyTorrentDownloadLink() {
         .join("\n")
         .trim(),
     );
-    runtimeStore.showSnakebar(t("SearchEntity.ActionTd.copyLinkSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkSuccess"), { color: "success" });
   } catch (e) {
-    runtimeStore.showSnakebar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
   } finally {
     copyTorrentDownloadLinkBtnStatus.value = false;
   }
@@ -128,12 +128,12 @@ async function localDlTorrentDownloadLink() {
       const succeeded = results.length - failedCount;
       const errorDetail = firstError ? ` (${t("DownloadHistory.detail.errorMessage")}: ${firstError})` : "";
       const message = `${t("contentScript.localDownloadFailed")} (${succeeded}/${results.length})${errorDetail}`;
-      runtimeStore.showSnakebar(message, { color: succeeded > 0 ? "warning" : "error" });
+      runtimeStore.showSnackbar(message, { color: succeeded > 0 ? "warning" : "error" });
     } else if (warningCount > 0) {
       // DOWNLOADER-8：全部成功但有降级告警时也必须提示（此时不会有失败提示，告警否则完全不可见）
       const warningDetail = firstWarning ? ` (${t("DownloadHistory.detail.warningMessage")}: ${firstWarning})` : "";
       const message = `${t("DownloadHistory.warningSummary", { count: warningCount })} (${results.length}/${results.length})${warningDetail}`;
-      runtimeStore.showSnakebar(message, { color: "warning" });
+      runtimeStore.showSnackbar(message, { color: "warning" });
     }
   } finally {
     // V-16 同类：取链接/下载中途抛错时也必须复位 loading，否则按钮永久转圈

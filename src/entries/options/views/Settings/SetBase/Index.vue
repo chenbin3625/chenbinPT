@@ -108,9 +108,9 @@ async function save() {
 
     await configStore.$save();
     await runAllTabHooks("afterSave");
-    runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("common.saveSuccess"), { color: "success" });
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

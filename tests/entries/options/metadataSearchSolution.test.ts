@@ -7,7 +7,7 @@
  *   `getDefinedSiteMetadata`），后者对「不在构建产物里的站点 id」抛 TypeError —— 与真实实现一致，
  *   这样才能证明 B-13 的守卫确实拦住了抛错路径；
  * - `@/messages.ts` 被 mock（siteIndex 同步、快照读写都会用到它）；
- * - `ant-design-vue` 的 message 只需占位（runtime store 的 showSnakebar 会调用）。
+ * - `ant-design-vue` 的 message 只需占位（runtime store 的 showSnackbar 会调用）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
@@ -294,7 +294,7 @@ describe("B-13 方案/站点缺失时的守卫", () => {
 describe("V-6 simplePatch 目标存在性守卫", () => {
   it("目标不存在时不落盘并提示用户", async () => {
     const store = await createMetadataStore();
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
     const saveSpy = vi.spyOn(store, "$save").mockResolvedValue(undefined);
 
     await store.simplePatch("downloaders", "ghost", "enabled", true);

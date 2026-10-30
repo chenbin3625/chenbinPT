@@ -49,7 +49,7 @@ onMounted(() => {
     .slice(0, 3)
     .map((notice) => `${notice.solutionId ?? "?"}: ${notice.droppedCategories.join(", ")}`)
     .join("; ");
-  runtimeStore.showSnakebar(t("SetSearchSolution.categoryDropped", { detail }), { color: "warning" });
+  runtimeStore.showSnackbar(t("SetSearchSolution.categoryDropped", { detail }), { color: "warning" });
 });
 
 const showEditDialog = ref(false);
@@ -253,7 +253,7 @@ const IMPORT_FAILURE_REPORT_LIMIT = 3;
 async function handleImportFileText(text: string) {
   const parsed = JSON.parse(text) as unknown;
   if (!Array.isArray(parsed)) {
-    runtimeStore.showSnakebar(t("SetSearchSolution.import.invalidFile"), { color: "error" });
+    runtimeStore.showSnackbar(t("SetSearchSolution.import.invalidFile"), { color: "error" });
     return;
   }
 
@@ -304,7 +304,7 @@ async function handleImportFileText(text: string) {
   }
 
   if (importedCount > 0) {
-    runtimeStore.showSnakebar(t("SetSearchSolution.import.success", { count: importedCount }), { color: "success" });
+    runtimeStore.showSnackbar(t("SetSearchSolution.import.success", { count: importedCount }), { color: "success" });
   }
 
   if (failures.length > 0) {
@@ -313,14 +313,14 @@ async function handleImportFileText(text: string) {
       failures.length > IMPORT_FAILURE_REPORT_LIMIT
         ? t("SetSearchSolution.import.moreFailures", { count: failures.length - IMPORT_FAILURE_REPORT_LIMIT })
         : "";
-    runtimeStore.showSnakebar(t("SetSearchSolution.import.skipped", { count: failures.length, detail, rest }), {
+    runtimeStore.showSnackbar(t("SetSearchSolution.import.skipped", { count: failures.length, detail, rest }), {
       color: importedCount > 0 ? "warning" : "error",
     });
   }
 
   if (sanitizedRequestConfigKeys.size > 0) {
     // 明确告知：导入文件里有试图改写请求目标/请求头的字段，已被剥离
-    runtimeStore.showSnakebar(
+    runtimeStore.showSnackbar(
       tWithFallback(
         "SetSearchSolution.import.sanitizedRequestConfig",
         "Removed unsafe request config fields from imported solutions: {fields}",
@@ -331,7 +331,7 @@ async function handleImportFileText(text: string) {
   }
 
   if (missingSiteIds.size > 0) {
-    runtimeStore.showSnakebar(t("SetSearchSolution.import.missingSites", { count: missingSiteIds.size }), {
+    runtimeStore.showSnackbar(t("SetSearchSolution.import.missingSites", { count: missingSiteIds.size }), {
       color: "warning",
     });
   }
@@ -342,11 +342,11 @@ function beforeImportUpload(file: any) {
   const r = new FileReader();
   r.onload = (e: any) => {
     handleImportFileText(e.target.result).catch(() => {
-      runtimeStore.showSnakebar(t("SetSearchSolution.import.invalidJson"), { color: "error" });
+      runtimeStore.showSnackbar(t("SetSearchSolution.import.invalidJson"), { color: "error" });
     });
   };
   r.onerror = () => {
-    runtimeStore.showSnakebar(t("SetSearchSolution.import.readFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("SetSearchSolution.import.readFailed"), { color: "error" });
   };
   r.readAsText(file as Blob);
 
@@ -368,7 +368,7 @@ function exportSearchSolutions(solutionIds: TSolutionKey[]) {
     const exportedSolutionBlob = new Blob([JSON.stringify(exportedSolutions)], { type: "application/json" });
     saveAs(exportedSolutionBlob, `search-solutions-export-${formatDate(new Date(), "yyyyMMdd'T'HHmm")}.json`);
   } else {
-    runtimeStore.showSnakebar(t("SetSearchSolution.import.noSolutions"), { color: "error" });
+    runtimeStore.showSnackbar(t("SetSearchSolution.import.noSolutions"), { color: "error" });
   }
 }
 

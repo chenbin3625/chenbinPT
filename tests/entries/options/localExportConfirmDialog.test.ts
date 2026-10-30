@@ -67,7 +67,7 @@ describe("SetBackup 本地导出确认弹窗（L-11）", () => {
     const pinia = prepareOptionsPinia();
     const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => undefined);
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => undefined);
     sendMessageMock.mockRejectedValue(new Error("download rejected by browser"));
 
     const { view } = mountDialog(pinia);

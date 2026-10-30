@@ -82,7 +82,7 @@ export async function loadAllAddedSiteMetadata(sites?: string[]): Promise<TOptio
     newFailedSiteIds.forEach((siteId) => reportedFailedSiteIds.add(siteId));
     const showSites = newFailedSiteIds.slice(0, 5).join("、");
     const moreText = newFailedSiteIds.length > 5 ? i18n.t("common.moreSites", { count: newFailedSiteIds.length }) : "";
-    useRuntimeStore().showSnakebar(i18n.t("MyData.siteMetadataLoadFailed", { sites: showSites, more: moreText }), {
+    useRuntimeStore().showSnackbar(i18n.t("MyData.siteMetadataLoadFailed", { sites: showSites, more: moreText }), {
       color: "error",
     });
   }

@@ -71,7 +71,7 @@ function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey, epoch: num
       clearPollTimer(downloadHistoryId);
       if (!hasWarnedPollFailure) {
         hasWarnedPollFailure = true;
-        useRuntimeStore().showSnakebar(i18n.t("DownloadHistory.pollingError"), { color: "error" });
+        useRuntimeStore().showSnackbar(i18n.t("DownloadHistory.pollingError"), { color: "error" });
       }
       return;
     }
@@ -162,7 +162,7 @@ async function loadDownloadHistory() {
     // N4：整表加载失败原先没有 catch —— 浏览器里是 unhandled rejection，列表保持空/旧数据，
     // 用户以为历史被清空。这里保留旧数据并明确提示（与轮询失败的处理对齐）。
     // L2（F1）：改用 DownloadHistory 专用 key，不再借用备份恢复的文案。
-    useRuntimeStore().showSnakebar(i18n.t("DownloadHistory.loadError"), { color: "error" });
+    useRuntimeStore().showSnackbar(i18n.t("DownloadHistory.loadError"), { color: "error" });
   } finally {
     // 无论成功与否都要复位 loading（throttleLoadDownloadHistory 也复用本函数）；
     // 只有「最新一轮」才允许复位，避免上一轮迟到的 finally 关掉新一轮的 loading

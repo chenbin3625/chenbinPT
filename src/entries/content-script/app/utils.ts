@@ -406,7 +406,7 @@ export async function doKeywordSearch(keywords: string, plan = "default"): Promi
     });
   } else {
     const runtimeStore = useRuntimeStore();
-    runtimeStore.showSnakebar(i18n.t("contentScript.emptySearchKeyword"), { color: "error" });
+    runtimeStore.showSnackbar(i18n.t("contentScript.emptySearchKeyword"), { color: "error" });
   }
 }
 
@@ -623,7 +623,7 @@ export function sanitizeParsedTorrents(torrents: ITorrent[], trustedHosts: Itera
   const rejectedCount = torrents.length - allowed.length;
 
   if (rejectedCount > 0) {
-    useRuntimeStore().showSnakebar(i18n.t("contentScript.ignoredForeignLinks", { count: rejectedCount }), {
+    useRuntimeStore().showSnackbar(i18n.t("contentScript.ignoredForeignLinks", { count: rejectedCount }), {
       color: "warning",
     });
   }
@@ -637,7 +637,7 @@ export function sanitizeParsedTorrents(torrents: ITorrent[], trustedHosts: Itera
 export async function ensureTrustedTorrentLink(torrent: ITorrent | undefined, siteId?: string): Promise<boolean> {
   if (isTrustedTorrent(torrent, await getTrustedLinkHosts(siteId))) return true;
 
-  useRuntimeStore().showSnakebar(i18n.t("contentScript.untrustedTorrentLink"), { color: "error" });
+  useRuntimeStore().showSnackbar(i18n.t("contentScript.untrustedTorrentLink"), { color: "error" });
   return false;
 }
 
@@ -825,9 +825,9 @@ export function resolveDroppedTorrents(
   if (result.torrents.length === 0) {
     const runtimeStore = useRuntimeStore();
     if (result.payloadInvalid) {
-      runtimeStore.showSnakebar(i18n.t("contentScript.invalidDropData"), { color: "error" });
+      runtimeStore.showSnackbar(i18n.t("contentScript.invalidDropData"), { color: "error" });
     } else if (result.rejectedCount > 0) {
-      runtimeStore.showSnakebar(i18n.t("contentScript.unsupportedDropLinks"), { color: "error" });
+      runtimeStore.showSnackbar(i18n.t("contentScript.unsupportedDropLinks"), { color: "error" });
     }
   }
 

@@ -98,7 +98,7 @@ async function deleteSiteUserInfo(date: string[]) {
   // 界面既不提示也没有任何变化。这里显式中止并给出可见反馈。
   const removable = date.filter((d) => d != currentDate());
   if (removable.length === 0) {
-    runtimeStore.showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+    runtimeStore.showSnackbar(t("MyClient.detail.operatorFailed"), { color: "warning" });
     return;
   }
 
@@ -107,9 +107,9 @@ async function deleteSiteUserInfo(date: string[]) {
     // （未处理的 rejection 只进控制台，用户无从判断是否删成功）。成功与失败都要提示。
     await sendMessage("removeSiteUserInfo", { siteId: siteId!, date: removable });
     await loadHistoryData();
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
   } catch {
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.deleteError"), { color: "error" });
   }
 }
 

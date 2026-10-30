@@ -18,7 +18,7 @@ const { sendMessageMock, state, metadata } = vi.hoisted(() => ({
       isSearching: false,
     },
     resetMediaServerSearchData: vi.fn(),
-    showSnakebar: vi.fn(),
+    showSnackbar: vi.fn(),
   },
   metadata: {
     mediaServers: {} as Record<string, any>,

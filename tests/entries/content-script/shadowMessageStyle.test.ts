@@ -6,7 +6,7 @@
  * 宿主 document.head ⇒ shadow root 内的通知条没有定位/背景（内容脚本唯一的用户反馈通道失效）。
  *
  * 这里按 init.ts 的真实层次搭 closed shadow root + StyleProvider(container=shadowRoot) +
- * ConfigProvider(getPopupContainer→popupHost)，然后**调用静态 API**（runtimeStore.showSnakebar
+ * ConfigProvider(getPopupContainer→popupHost)，然后**调用静态 API**（runtimeStore.showSnackbar
  * 最终就是这一次调用），断言节点落在 popup host，且 antd 生成的组件样式注入 shadow root 而**不**落到
  * 宿主 document.head（只断言「shadow 里含 .ant-message」会被 app.css 自身选择器掩盖，见用例内注释）。
  *
@@ -68,7 +68,7 @@ describe("shadow root 内的通知条（CONTENTSCRIPT-1）", () => {
       await nextTick();
       await nextTick();
 
-      // runtimeStore.showSnakebar 的实现就是这一次静态调用
+      // runtimeStore.showSnackbar 的实现就是这一次静态调用
       staticMessage.open({ type: "success", content: "ptd-shadow-message-probe", duration: 0 });
       await nextTick();
       await nextTick();

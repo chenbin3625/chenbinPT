@@ -38,7 +38,7 @@ async function mountSetBase(initialRoute = "SetBaseUi", configSetup?: (configSto
   const runtimeStore = useRuntimeStore(pinia);
   const configSave = vi.fn(async () => undefined);
   (configStore as any).$save = configSave;
-  const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => undefined);
+  const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => undefined);
 
   const router = createRouter({
     history: createMemoryHistory(),

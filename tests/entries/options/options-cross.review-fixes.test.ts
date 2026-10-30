@@ -140,7 +140,7 @@ describe("DOWNLOADER-3：删除失败必须由返回值可见，且全都失败�
     const confirmDelete = vi.fn(async () => false);
     const pinia = prepareOptionsPinia();
     const runtime = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtime, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtime, "showSnackbar").mockImplementation(() => {});
 
     const view = mountOptionsView(
       defineComponent({
@@ -180,7 +180,7 @@ describe("DOWNLOADER-3：删除失败必须由返回值可见，且全都失败�
     const confirmDelete = vi.fn(async (toDeleteId: string) => (toDeleteId === "bad" ? false : undefined));
     const pinia = prepareOptionsPinia();
     const runtime = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtime, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtime, "showSnackbar").mockImplementation(() => {});
 
     const view = mountOptionsView(
       defineComponent({
@@ -247,7 +247,7 @@ describe("DOWNLOADER-3：删除失败必须由返回值可见，且全都失败�
     });
 
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
     const view = mountOptionsView(MyClientView, { pinia, router: true });
 
     try {
@@ -318,7 +318,7 @@ describe("OPTIONSOVERVIEW-3 孪生：批量本地下载失败不再静默", () =
     });
     const pinia = prepareOptionsPinia();
     const runtime = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtime, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtime, "showSnackbar").mockImplementation(() => {});
     const view = mountOptionsView(ActionTd, { pinia, props: { torrentItems: [{ site: "x", id: "1" }] } });
     await view.settle();
     return { view, snackbar };

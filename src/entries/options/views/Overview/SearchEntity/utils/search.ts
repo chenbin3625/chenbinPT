@@ -516,7 +516,7 @@ export async function doSearch(search?: string | null, plan?: string | null, flu
   if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return;
 
   if (!searchSolution) {
-    runtimeStore.showSnakebar(i18n.t("SearchEntity.searchSolutionNotFound", [searchPlanKey]), { color: "error" });
+    runtimeStore.showSnackbar(i18n.t("SearchEntity.searchSolutionNotFound", [searchPlanKey]), { color: "error" });
     return;
   }
 
@@ -524,7 +524,7 @@ export async function doSearch(search?: string | null, plan?: string | null, flu
   console.log(`Expanded Search Plan for ${searchPlanKey}: `, searchSolution);
 
   if (searchSolution.solutions.length === 0) {
-    runtimeStore.showSnakebar(i18n.t("SearchEntity.noSiteToSearch"), { color: "error" });
+    runtimeStore.showSnackbar(i18n.t("SearchEntity.noSiteToSearch"), { color: "error" });
     return;
   }
 
@@ -549,7 +549,7 @@ export async function retrySearch(retryStatus: EResultParseStatus[] = defaultErr
     retryStatus.includes(plan.status),
   );
   if (shouldRetrySearchPlan.length === 0) {
-    runtimeStore.showSnakebar(i18n.t("SearchEntity.noSearchPlanToRetry"), { color: "info" });
+    runtimeStore.showSnackbar(i18n.t("SearchEntity.noSearchPlanToRetry"), { color: "info" });
     return;
   }
   console.log("Retrying search plans: ", shouldRetrySearchPlan);

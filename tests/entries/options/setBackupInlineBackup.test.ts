@@ -45,7 +45,7 @@ describe("SetBackup 行内立即备份（M-25）", () => {
     const configStore = useConfigStore(pinia);
     configStore.backup.encryptionKey = encryptionKey;
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 
     const { default: SetBackup } = await import("@/options/views/Settings/SetBackup/Index.vue");

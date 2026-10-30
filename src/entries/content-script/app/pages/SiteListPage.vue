@@ -54,7 +54,7 @@ async function parseListPage(showNoTorrentError = true) {
   }
 
   if (showNoTorrentError && errorMessage) {
-    runtimeStore.showSnakebar(errorMessage, { color: "error" });
+    runtimeStore.showSnackbar(errorMessage, { color: "error" });
   }
 
   // 更新搜索状态，方便 SentToDownloaderDialog 中替换
@@ -75,7 +75,7 @@ async function handleLocalDownloadMulti() {
     // 失败也没有任何提示。offscreen 侧有 DOWNLOAD_CONCURRENCY 队列与下载间隔预留，并发投递是设计内行为。
     await Promise.all(torrents.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })));
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.localDownloadFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.localDownloadFailed"), { color: "error" });
   } finally {
     localDownloadMultiStatus.value = false;
   }
@@ -90,11 +90,11 @@ async function handleLinkCopyMulti() {
     const downloadUrls = await Promise.all(torrents.map((torrent) => sendMessage("getTorrentDownloadLink", torrent)));
 
     const copied = await copyTextToClipboard(downloadUrls.join("\n").trim());
-    runtimeStore.showSnakebar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
+    runtimeStore.showSnackbar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
       color: copied ? "success" : "error",
     });
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.copyLinkFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
   } finally {
     linkCopyMultiStatus.value = false;
   }
@@ -114,7 +114,7 @@ async function handleRemoteDownloadMulti(isDefaultSend = false) {
       remoteDownloadDialogData.show = true;
     }
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" });
   }
 }
 
@@ -129,7 +129,7 @@ async function handleAdvanceListModule() {
       showAdvanceListModuleDialog.value = true;
     }
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" });
   }
 }
 
@@ -151,7 +151,7 @@ async function handleFavoriteMulti() {
     const { torrents } = await parseListPage();
     openFavoriteDialog(torrents);
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" });
   }
 }
 
@@ -167,7 +167,7 @@ async function handleSearch() {
 
     await doKeywordSearch(keywords);
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" });
   }
 }
 </script>

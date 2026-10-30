@@ -41,7 +41,7 @@ async function editClientConfig() {
     await metadataStore.addBackupServer(clientConfig.value as IBackupServerMetadata);
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

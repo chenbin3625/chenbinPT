@@ -159,7 +159,7 @@ async function updateFilePriority(file: CTorrentFile, priority: TorrentFilePrior
     });
     // N8：接口用 false 表达失败；原先什么都不做（无提示、下拉显示值与实际不一致）
     if (ok === false) {
-      runtimeStore.showSnakebar(t("MyClient.detail.updateFilePriorityFailure"), { color: "error" });
+      runtimeStore.showSnackbar(t("MyClient.detail.updateFilePriorityFailure"), { color: "error" });
       return;
     }
     // 弹窗已关闭 / 已换成别的种子时不改本地展示，避免用陈旧的 record.index 污染下一个种子的文件列表
@@ -171,10 +171,10 @@ async function updateFilePriority(file: CTorrentFile, priority: TorrentFilePrior
       },
       false,
     );
-    runtimeStore.showSnakebar(t("MyClient.detail.updateFilePrioritySuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("MyClient.detail.updateFilePrioritySuccess"), { color: "success" });
   } catch {
     // N8：异常同样要有反馈（原先完全静默）
-    runtimeStore.showSnakebar(t("MyClient.detail.updateFilePriorityFailure"), { color: "error" });
+    runtimeStore.showSnackbar(t("MyClient.detail.updateFilePriorityFailure"), { color: "error" });
   } finally {
     filePriorityLoading.value = false;
   }
@@ -220,7 +220,7 @@ async function addTracker() {
     const ok = await sendMessage("addClientTorrentTracker", { downloaderId: torrent.clientId, torrent, url });
     // N8：`ok === false` 是「客户端拒绝」（URL 非法、已存在等），原先直接 return，点按钮毫无反应
     if (ok === false) {
-      runtimeStore.showSnakebar(t("MyClient.detail.addTrackerFailure"), { color: "error" });
+      runtimeStore.showSnackbar(t("MyClient.detail.addTrackerFailure"), { color: "error" });
       return;
     }
     const trackerList = await sendMessage("getClientTorrentTrackersDetail", {
@@ -230,9 +230,9 @@ async function addTracker() {
     if (trackersGuard.commit(requestKey, () => (trackers.value = trackerList))) {
       trackerInput.value = "";
     }
-    runtimeStore.showSnakebar(t("MyClient.detail.addTrackerSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("MyClient.detail.addTrackerSuccess"), { color: "success" });
   } catch {
-    runtimeStore.showSnakebar(t("MyClient.detail.addTrackerFailure"), { color: "error" });
+    runtimeStore.showSnackbar(t("MyClient.detail.addTrackerFailure"), { color: "error" });
   } finally {
     trackerOpLoading.value = false;
   }
@@ -249,7 +249,7 @@ async function removeTracker(tracker: CTorrentTracker) {
       url: tracker.url,
     });
     if (ok === false) {
-      runtimeStore.showSnakebar(t("MyClient.detail.removeTrackerFailure"), { color: "error" });
+      runtimeStore.showSnackbar(t("MyClient.detail.removeTrackerFailure"), { color: "error" });
       return;
     }
     const trackerList = await sendMessage("getClientTorrentTrackersDetail", {
@@ -257,9 +257,9 @@ async function removeTracker(tracker: CTorrentTracker) {
       torrent,
     });
     trackersGuard.commit(requestKey, () => (trackers.value = trackerList));
-    runtimeStore.showSnakebar(t("MyClient.detail.removeTrackerSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("MyClient.detail.removeTrackerSuccess"), { color: "success" });
   } catch {
-    runtimeStore.showSnakebar(t("MyClient.detail.removeTrackerFailure"), { color: "error" });
+    runtimeStore.showSnackbar(t("MyClient.detail.removeTrackerFailure"), { color: "error" });
   } finally {
     trackerOpLoading.value = false;
   }
@@ -308,9 +308,9 @@ function onTabChange(value: string | null | undefined) {
 async function copyToClipboard(text: string, successKey: string) {
   try {
     await navigator.clipboard.writeText(text);
-    runtimeStore.showSnakebar(t(successKey), { color: "success" });
+    runtimeStore.showSnackbar(t(successKey), { color: "success" });
   } catch {
-    runtimeStore.showSnakebar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
   }
 }
 

@@ -47,7 +47,7 @@ async function editClientConfig() {
     await metadataStore.addDownloader(clientConfig.value as IDownloaderMetadata);
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

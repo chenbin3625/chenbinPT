@@ -125,7 +125,7 @@ async function doExport() {
       // 与 MyData/utils/siteMetadata.ts 的失败提示保持同一口径：最多列 5 个站点名，其余折叠为数量
       const showSites = failedSiteIds.map((siteId) => metadataStore.siteNameMap[siteId] ?? siteId);
       const moreText = showSites.length > 5 ? t("common.moreSites", { count: showSites.length }) : "";
-      runtimeStore.showSnakebar(
+      runtimeStore.showSnackbar(
         t("MyData.index.flushSiteFailed", { site: `${showSites.slice(0, 5).join("、")}${moreText}` }),
         { color: "warning" },
       );
@@ -134,7 +134,7 @@ async function doExport() {
     if (merged.length === 0) {
       // 全部站点失败时上面的提示已说明原因，不再重复弹「暂无数据」
       if (failedSiteIds.length === 0) {
-        runtimeStore.showSnakebar(t("common.noData"), { color: "warning" });
+        runtimeStore.showSnackbar(t("common.noData"), { color: "warning" });
       }
       return;
     }

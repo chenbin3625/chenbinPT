@@ -47,14 +47,14 @@ async function parseDetailPage(options: { requireLink?: boolean } = {}) {
   const parsedResult = await siteInstance.value?.transformDetailPage(document);
 
   if (!parsedResult) {
-    runtimeStore.showSnakebar(t("contentScript.parsePageFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.parsePageFailed"), { color: "error" });
     throw new Error("无法解析当前页面种子信息");
   }
 
   // 真值判定：fixLink 对危险 scheme（javascript:/data:/file: 等）返回空串，
   // 空串与 undefined 都是「没解析到链接」，必须走同一条提示，而不是把空串当成可用下载链接往下传。
   if (requireLink && !parsedResult.link) {
-    runtimeStore.showSnakebar(t("contentScript.cannotParseDetailLink"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.cannotParseDetailLink"), { color: "error" });
     throw new Error("无法解析当前页面种子链接");
   }
 
@@ -91,11 +91,11 @@ async function handleLinkCopy() {
     const downloadUrl = await sendMessage("getTorrentDownloadLink", torrent);
 
     const copied = await copyTextToClipboard(downloadUrl);
-    runtimeStore.showSnakebar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
+    runtimeStore.showSnackbar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
       color: copied ? "success" : "error",
     });
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.copyLinkFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
   }
 }
 

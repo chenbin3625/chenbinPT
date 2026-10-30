@@ -105,7 +105,7 @@ describe("F1-02：ContextMenuLinkPush 在 metadata 水合完成后再解析站�
     const pinia = prepareOptionsPinia();
     const metadataStore = useMetadataStore(pinia);
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
 
     // 水合尚未完成：$onReady 挂起，siteHostMap 为空
     metadataStore.siteHostMap = {};
@@ -139,7 +139,7 @@ describe("F1-02：ContextMenuLinkPush 在 metadata 水合完成后再解析站�
     routeLink.value = "";
     const pinia = prepareOptionsPinia();
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
 
     const view = mountOptionsView(ContextMenuLinkPush, { pinia });
     await view.settle(30);
@@ -189,7 +189,7 @@ describe("Info-I7：confirmDelete 同步抛错不会逃逸成 unhandled rejectio
     const allDelete = vi.fn();
     const pinia = prepareOptionsPinia();
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
 
     const confirmDelete = vi.fn((id: string) => {
       throw new Error(`sync boom ${id}`);

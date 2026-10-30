@@ -76,7 +76,7 @@ const filteredSite = computed(() => {
 function addSolution(addSolution: ISearchSolution) {
   // 基于 siteId 和 selectedCategories / name 判断是否已存在，如果存在则不添加
   if (find(solution.value.solutions, (item) => isDuplicateSearchSolution(item, addSolution))) {
-    runtimeStore.showSnakebar(t("SetSearchSolution.edit.cantAddByDuplicateNote"), { color: "error" });
+    runtimeStore.showSnackbar(t("SetSearchSolution.edit.cantAddByDuplicateNote"), { color: "error" });
     return;
   }
 

@@ -96,11 +96,11 @@ function contentScriptSources(): string[] {
   return sources;
 }
 
-let showSnakebar: ReturnType<typeof vi.spyOn>;
+let showSnackbar: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   setActivePinia(createPinia());
-  showSnakebar = vi.spyOn(useRuntimeStore(), "showSnakebar").mockImplementation(() => {});
+  showSnackbar = vi.spyOn(useRuntimeStore(), "showSnackbar").mockImplementation(() => {});
 
   siteInstance.value = makeSiteInstance();
   mocks.siteHostMap = {
@@ -118,7 +118,7 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
       "data:text/html,<script>x</script>",
       "file:///etc/passwd",
     ]) {
-      showSnakebar.mockClear();
+      showSnackbar.mockClear();
       const dataTransfer = makeDataTransfer(CUSTOM_DRAG_MIME, JSON.stringify([{ link, site: "evil", id: "1" }]));
 
       const result = resolveDroppedTorrents(dataTransfer, SITE_ID);
@@ -127,20 +127,20 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
       expect(result.rejectedCount, link).toBe(1);
       expect(result.payloadInvalid, link).toBe(false);
       // 不静默丢弃：必须让用户看到「拖拽失灵」之外的原因
-      expect(showSnakebar, link).toHaveBeenCalledTimes(1);
-      expect(String(showSnakebar.mock.calls[0][0])).toContain("不受支持");
+      expect(showSnackbar, link).toHaveBeenCalledTimes(1);
+      expect(String(showSnackbar.mock.calls[0][0])).toContain("不受支持");
     }
   });
 
   it("载荷不是数组 / 不是合法 JSON 时整体拒绝并提示", () => {
     for (const payload of ['{"link":"https://evil.tld/x"}', "{oops", '"https://pt.example.com/a.torrent"', "123"]) {
-      showSnakebar.mockClear();
+      showSnackbar.mockClear();
       const result = resolveDroppedTorrents(makeDataTransfer(CUSTOM_DRAG_MIME, payload), SITE_ID);
 
       expect(result.torrents, payload).toEqual([]);
       expect(result.payloadInvalid, payload).toBe(true);
-      expect(showSnakebar, payload).toHaveBeenCalledTimes(1);
-      expect(String(showSnakebar.mock.calls[0][0])).toContain("不是有效的种子数据");
+      expect(showSnackbar, payload).toHaveBeenCalledTimes(1);
+      expect(String(showSnackbar.mock.calls[0][0])).toContain("不是有效的种子数据");
     }
   });
 
@@ -189,7 +189,7 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
     expect(result.rejectedCount).toBe(0);
     expect(result.torrents[0]).toEqual({ link: siteLink, site: SITE_ID, id: "7", title: "A" });
     expect(result.torrents[1]).toEqual({ link: magnet, site: SITE_ID, id: "", title: "B" });
-    expect(showSnakebar).not.toHaveBeenCalled();
+    expect(showSnackbar).not.toHaveBeenCalled();
   });
 
   it("非自定义 MIME 分支：原有的协议校验保留（http/https/magnet 通过）", async () => {
@@ -249,7 +249,7 @@ describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd�
   it("没有 dataTransfer 时返回空结果且不弹提示", () => {
     const result = resolveDroppedTorrents(null, SITE_ID);
     expect(result).toEqual({ torrents: [], rejectedCount: 0, payloadInvalid: false });
-    expect(showSnakebar).not.toHaveBeenCalled();
+    expect(showSnackbar).not.toHaveBeenCalled();
   });
 
   it("载荷里的 title 只作为纯文本保留（渲染侧转义：content-script 内没有任何 v-html）", () => {
@@ -345,8 +345,8 @@ describe("S-2 · 页面解析出的链接（下载列里可以是异站 <a href>
       "magnet:?xt=urn:btih:abc",
       "",
     ]);
-    expect(showSnakebar).toHaveBeenCalledTimes(1);
-    expect(String(showSnakebar.mock.calls[0][0])).toContain("已忽略 1 条");
+    expect(showSnackbar).toHaveBeenCalledTimes(1);
+    expect(String(showSnackbar.mock.calls[0][0])).toContain("已忽略 1 条");
   });
 
   it("url（详情页）被注入异站时同样拒绝：getTorrentDownloadLink 会带着扩展权限去抓它", async () => {
@@ -361,21 +361,21 @@ describe("S-2 · 页面解析出的链接（下载列里可以是异站 <a href>
     ];
 
     expect(sanitizeParsedTorrents(torrents, trustedHosts)).toEqual([]);
-    expect(String(showSnakebar.mock.calls[0][0])).toContain("已忽略 3 条");
+    expect(String(showSnackbar.mock.calls[0][0])).toContain("已忽略 3 条");
   });
 
   it("ensureTrustedTorrentLink 是详情页三个动作的闸门：异站拒绝 + 提示，可信链接放行", async () => {
     const evil = makeTorrent({ link: "https://evil.tld/x", url: "https://evil.tld/t/1" });
     await expect(ensureTrustedTorrentLink(evil, SITE_ID)).resolves.toBe(false);
-    expect(String(showSnakebar.mock.calls.at(-1)?.[0])).toContain("不属于该站点");
+    expect(String(showSnackbar.mock.calls.at(-1)?.[0])).toContain("不属于该站点");
 
-    showSnakebar.mockClear();
+    showSnackbar.mockClear();
     const ok = makeTorrent({ link: "https://pt.example.com/download.php?id=1", url: SITE_URL });
     await expect(ensureTrustedTorrentLink(ok, SITE_ID)).resolves.toBe(true);
     await expect(ensureTrustedTorrentLink(makeTorrent({ link: "magnet:?xt=urn:btih:abc" }), SITE_ID)).resolves.toBe(
       true,
     );
-    expect(showSnakebar).not.toHaveBeenCalled();
+    expect(showSnackbar).not.toHaveBeenCalled();
   });
 
   it("详情页链接被 fixLink 拒为空串（危险 scheme）时，空串不会被当成可信下载地址放行", async () => {

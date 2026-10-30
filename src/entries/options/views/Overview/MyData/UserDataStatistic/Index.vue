@@ -387,7 +387,7 @@ async function exportStatisticImg() {
   // F15：首帧布局前 containerWidth 为 0、全部图表被关闭（或在骨架屏阶段）时 canvas 为空，
   // 修复前会导出一张 0 宽/空白图片。这里先校验再导出，失败时给出提示。
   if (containerWidth.value <= 0 || chartsCanvas.length === 0) {
-    runtimeStore.showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+    runtimeStore.showSnackbar(t("MyClient.detail.operatorFailed"), { color: "warning" });
     return;
   }
 
@@ -420,7 +420,7 @@ async function exportStatisticImg() {
   mainCanvas.toBlob((blob) => {
     // toBlob 在极端情况下会回传 null（内存不足等），旧实现 `saveAs(blob!)` 会抛错且无提示
     if (!blob) {
-      runtimeStore.showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+      runtimeStore.showSnackbar(t("MyClient.detail.operatorFailed"), { color: "warning" });
       return;
     }
     saveAs(blob, t("UserDataStatistic.chart.exportFilename", { name: configStore.userName, date: createdAt }) + ".png");
@@ -430,7 +430,7 @@ async function exportStatisticImg() {
 function saveControl() {
   configStore.userStatisticControl.selectedSites = selectedSites.value;
   configStore.$save();
-  runtimeStore.showSnakebar(t("common.saveSuccess"), { color: "success" });
+  runtimeStore.showSnackbar(t("common.saveSuccess"), { color: "success" });
 }
 </script>
 

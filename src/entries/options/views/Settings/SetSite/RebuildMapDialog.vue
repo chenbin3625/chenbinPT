@@ -27,7 +27,7 @@ async function doReBuild() {
     await metadataStore.$save();
     showDialog.value = false;
   } catch {
-    useRuntimeStore().showSnakebar(t("common.saveFailed"), { color: "error" });
+    useRuntimeStore().showSnackbar(t("common.saveFailed"), { color: "error" });
   }
 }
 

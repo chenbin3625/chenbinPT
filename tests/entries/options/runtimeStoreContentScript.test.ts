@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
 import { nextTick } from "vue";
 
-// runtime.ts 只在 showSnakebar 里用到 antd 的 message
+// runtime.ts 只在 showSnackbar 里用到 antd 的 message
 vi.mock("ant-design-vue", () => ({ message: { open: vi.fn() } }));
 
 const RUNTIME_KEY = "__ptd_runtime_store";

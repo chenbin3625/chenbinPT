@@ -117,7 +117,7 @@ function reDownload(reDownloadType: TReDownloadType) {
             (firstWarning ? ` (${t("DownloadHistory.detail.warningMessage")}: ${firstWarning})` : "")
           : "";
 
-      runtimeStore.showSnakebar(
+      runtimeStore.showSnackbar(
         t("SentToDownloaderDialog.sendSummary", { success: succeeded, pending: "", failed: failedText }) + warningText,
         {
           color: failedCount === 0 ? (warningCount > 0 ? "warning" : "success") : succeeded > 0 ? "warning" : "error",

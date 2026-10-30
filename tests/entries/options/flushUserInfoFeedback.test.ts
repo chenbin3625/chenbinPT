@@ -3,7 +3,7 @@
  *
  * 原实现（修复前）：
  *   sendMessage("getSiteUserInfoResult", site).catch((e) => {
- *     if (!runtimeStore.userInfo.flushPlan[site]) { showSnakebar(...失败) }
+ *     if (!runtimeStore.userInfo.flushPlan[site]) { showSnackbar(...失败) }
  *   })
  * 条件取反 —— 正常失败时 `flushPlan[site]` 仍为 true（置 false 是在 `.finally` 里），
  * 于是**真实失败被静默吞掉**：用户点了「刷新数据」，站点请求失败却没有任何提示，
@@ -19,7 +19,7 @@ const { openMock, sendMessageMock } = vi.hoisted(() => ({
   sendMessageMock: vi.fn(),
 }));
 
-// runtime store 的 showSnakebar 走 antd message
+// runtime store 的 showSnackbar 走 antd message
 vi.mock("ant-design-vue", () => ({ message: { open: openMock } }));
 // 只替换跨上下文消息通道，避免真实 chrome API
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));

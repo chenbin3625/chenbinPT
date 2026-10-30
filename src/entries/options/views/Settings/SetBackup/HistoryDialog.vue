@@ -80,9 +80,9 @@ async function confirmDeleteBackupHistory(toDeleteId: string) {
   const toDeleteName = backupHistory.value.find((item) => item.path === toDeleteId)?.filename ?? toDeleteId;
   const deleteStatus = await sendMessage("deleteBackupHistory", { path: toDeleteId, backupServerId });
   if (!deleteStatus) {
-    runtimeStore.showSnakebar(t("SetBackup.HistoryDialog.deleteFailure", { name: toDeleteName }), { color: "error" });
+    runtimeStore.showSnackbar(t("SetBackup.HistoryDialog.deleteFailure", { name: toDeleteName }), { color: "error" });
   } else {
-    runtimeStore.showSnakebar(t("SetBackup.HistoryDialog.deleteSuccess", { name: toDeleteName }), { color: "success" });
+    runtimeStore.showSnackbar(t("SetBackup.HistoryDialog.deleteSuccess", { name: toDeleteName }), { color: "success" });
     backupHistory.value = backupHistory.value.filter((item) => item.path !== toDeleteId);
   }
 }
@@ -93,7 +93,7 @@ async function loadBackupHistory() {
     backupHistory.value = await sendMessage("getBackupHistory", backupServerId);
   } catch (e) {
     backupHistory.value = [];
-    runtimeStore.showSnakebar(t("SetBackup.HistoryDialog.loadFailure", { error: getBackupHistoryErrorReason(e) }), {
+    runtimeStore.showSnackbar(t("SetBackup.HistoryDialog.loadFailure", { error: getBackupHistoryErrorReason(e) }), {
       color: "error",
     });
     console.error("获取备份历史失败", e);

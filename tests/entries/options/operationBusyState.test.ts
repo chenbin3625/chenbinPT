@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, ref, type Component } from "vue";
 import { mountOptionsView } from "../../helpers/optionsView.ts";
 
-const state = vi.hoisted(() => ({ send: vi.fn(), showSnakebar: vi.fn() }));
+const state = vi.hoisted(() => ({ send: vi.fn(), showSnackbar: vi.fn() }));
 vi.mock("@/options/stores/runtime.ts", () => ({ useRuntimeStore: () => state }));
 vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => ({ download: { saveLastDownloader: false, useQuickSendToClient: false } }),

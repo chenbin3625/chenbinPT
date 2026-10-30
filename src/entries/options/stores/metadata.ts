@@ -437,7 +437,7 @@ function reportUnavailableSiteIds(store: object, failedSiteIds: TSiteID[]): void
   const showSites = newFailedSiteIds.slice(0, 5).join("、");
   const moreText = newFailedSiteIds.length > 5 ? i18n.t("common.moreSites", { count: newFailedSiteIds.length }) : "";
   // 复用 MyData 侧已有的同一句「站点定义不可用」文案，不为这一条提示去改不属于本包的 locale 文件
-  useRuntimeStore().showSnakebar(i18n.t("MyData.siteMetadataLoadFailed", { sites: showSites, more: moreText }), {
+  useRuntimeStore().showSnackbar(i18n.t("MyData.siteMetadataLoadFailed", { sites: showSites, more: moreText }), {
     color: "error",
   });
 }
@@ -713,7 +713,7 @@ export const useMetadataStore = defineStore("metadata", {
           return await sendMessage("getSearchResultSnapshotData", id);
         } else {
           const runtimeStorage = useRuntimeStore();
-          runtimeStorage.showSnakebar(i18n.t("SearchResultSnapshot.notFound"), { color: "error" });
+          runtimeStorage.showSnackbar(i18n.t("SearchResultSnapshot.notFound"), { color: "error" });
           return;
         }
       };
@@ -788,7 +788,7 @@ export const useMetadataStore = defineStore("metadata", {
       // 这里提前判断并告知用户，不再落盘。
       const target = this[schemaKey][id];
       if (!target) {
-        useRuntimeStore().showSnakebar(
+        useRuntimeStore().showSnackbar(
           i18n.t("SearchResultSnapshot.updateNotSaved", {
             schema: String(schemaKey),
             id: String(id),
@@ -1107,7 +1107,7 @@ export const useMetadataStore = defineStore("metadata", {
       const searchSnapshotData = runtimeStorage.search;
 
       if (searchSnapshotData.isSearching) {
-        runtimeStorage.showSnakebar(i18n.t("SearchResultSnapshot.cannotSaveWhileSearching"), { color: "error" });
+        runtimeStorage.showSnackbar(i18n.t("SearchResultSnapshot.cannotSaveWhileSearching"), { color: "error" });
         return;
       }
 
@@ -1121,7 +1121,7 @@ export const useMetadataStore = defineStore("metadata", {
         // 保存搜索快照数据
         await sendMessage("saveSearchResultSnapshotData", { snapshotId, data: searchSnapshotData });
       } catch {
-        runtimeStorage.showSnakebar(i18n.t("common.saveFailed"), { color: "error" });
+        runtimeStorage.showSnackbar(i18n.t("common.saveFailed"), { color: "error" });
         return;
       }
 
@@ -1141,7 +1141,7 @@ export const useMetadataStore = defineStore("metadata", {
       // 会抛 TypeError：改名静默丢失 + unhandled rejection。这里提示用户并放弃这次修改。
       const snapshot = this.snapshots[id];
       if (!snapshot) {
-        useRuntimeStore().showSnakebar(
+        useRuntimeStore().showSnackbar(
           i18n.t("SearchResultSnapshot.updateNotSaved", { schema: "snapshots", id: String(id) }),
           { color: "error" },
         );
@@ -1162,7 +1162,7 @@ export const useMetadataStore = defineStore("metadata", {
       try {
         await sendMessage("removeSearchResultSnapshotData", id); // 删除搜索快照数据
       } catch {
-        runtimeStorage.showSnakebar(i18n.t("KeepUploadTask.deleteError"), { color: "error" });
+        runtimeStorage.showSnackbar(i18n.t("KeepUploadTask.deleteError"), { color: "error" });
         return;
       }
 

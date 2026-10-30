@@ -78,18 +78,18 @@ async function handleSearch() {
           return doKeywordSearch(parseResult.titles[0] ?? "");
         }
       } else {
-        runtimeStore.showSnakebar(t("contentScript.parseResultEmpty"), { color: "error" });
+        runtimeStore.showSnackbar(t("contentScript.parseResultEmpty"), { color: "error" });
       }
     }
 
     // 引导期按 origin+pathname 匹配到了本站点，但这里没有任何页面解析器命中：
     // 静默无反应会让用户以为按钮失灵，明确提示一次（例如引导期匹配到了页面、解析器只认另一种页面形态）。
     if (!anyPatternMatched) {
-      runtimeStore.showSnakebar(t("contentScript.parsePageFailed"), { color: "error" });
+      runtimeStore.showSnackbar(t("contentScript.parsePageFailed"), { color: "error" });
     }
   } catch (e) {
     console.error("页面解析失败", e);
-    runtimeStore.showSnakebar(t("contentScript.parsePageFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.parsePageFailed"), { color: "error" });
     return;
   }
 }

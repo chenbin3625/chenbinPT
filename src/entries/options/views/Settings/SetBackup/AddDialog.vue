@@ -54,7 +54,7 @@ async function saveStoredBackupServerConfig() {
     await metadataStore.addBackupServer(storedBackupServerConfig.value as IBackupServerMetadata);
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

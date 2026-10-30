@@ -266,9 +266,9 @@ async function flushSiteFavicon(siteId: TSiteID | TSiteID[]) {
 
   // V-20：按实际成功数提示（原实现无论是否失败都报成功，且按钮因 loading 从未置位而可反复点击）
   if (failedCount === 0) {
-    runtimeStore.showSnakebar(t("SetSite.index.flushFaviconFinish"), { color: "success" });
+    runtimeStore.showSnackbar(t("SetSite.index.flushFaviconFinish"), { color: "success" });
   } else {
-    runtimeStore.showSnakebar(t("SetSite.index.flushFaviconPartial", { success: successCount, failed: failedCount }), {
+    runtimeStore.showSnackbar(t("SetSite.index.flushFaviconPartial", { success: successCount, failed: failedCount }), {
       color: successCount > 0 ? "warning" : "error",
     });
   }
@@ -314,7 +314,7 @@ function sortIndexMoveTitle(direction: "up" | "down") {
 async function moveSiteSortIndex(siteId: TSiteID, position: TSortIndexPosition) {
   const isRedistributed = await metadataStore.moveSiteSortIndex(siteId, resolveSortIndexPosition(position));
   if (isRedistributed) {
-    runtimeStore.showSnakebar(t("SetSite.index.sortIndexRedistributed"), { color: "info" });
+    runtimeStore.showSnackbar(t("SetSite.index.sortIndexRedistributed"), { color: "info" });
   }
 }
 

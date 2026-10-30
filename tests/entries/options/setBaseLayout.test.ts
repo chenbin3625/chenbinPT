@@ -118,7 +118,7 @@ describe("SetBase 页面布局钩子", () => {
     const runtime = useRuntimeStore(pinia);
     const save = vi.fn().mockRejectedValue(new Error("quota exceeded"));
     config.$save = save;
-    const notice = vi.spyOn(runtime, "showSnakebar").mockImplementation(() => undefined);
+    const notice = vi.spyOn(runtime, "showSnackbar").mockImplementation(() => undefined);
     const { default: SetBaseIndex } = await import("@/options/views/Settings/SetBase/Index.vue");
     const view = mountOptionsView(SetBaseIndex, { pinia, router: "SetBaseUi" });
     await view.settle();

@@ -21,7 +21,7 @@ import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView
 
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
-  showSnakebar: vi.fn(),
+  showSnackbar: vi.fn(),
   historyState: {} as Record<string, any>,
 }));
 
@@ -29,7 +29,7 @@ vi.mock("@/messages.ts", () => ({ sendMessage: mocks.sendMessage, onMessage: vi.
 
 // 三个组件（下载历史 / 重新下载 / ActionTd）都只消费这两个 store 的少量字段，用替身即可
 vi.mock("@/options/stores/runtime.ts", () => ({
-  useRuntimeStore: () => ({ showSnakebar: mocks.showSnakebar }),
+  useRuntimeStore: () => ({ showSnackbar: mocks.showSnackbar }),
 }));
 vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => ({
@@ -143,7 +143,7 @@ const inDocument = (selector: string) => Array.from(document.querySelectorAll<HT
 
 beforeEach(() => {
   mocks.sendMessage.mockReset();
-  mocks.showSnakebar.mockReset();
+  mocks.showSnackbar.mockReset();
 });
 
 describe("DOWNLOADER-8：下载历史列表 / 详情必须把「成功但降级」渲染成告警而不是失败", () => {
@@ -238,8 +238,8 @@ describe("DOWNLOADER-8：重新下载弹窗的结果汇总必须带上告警", (
     buttons[1]!.click();
     await view.settle(80);
 
-    expect(mocks.showSnakebar).toHaveBeenCalledTimes(1);
-    const [content, options] = mocks.showSnakebar.mock.calls[0] as [string, { color: string }];
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+    const [content, options] = mocks.showSnackbar.mock.calls[0] as [string, { color: string }];
     expect(options.color, "推送成功但有降级时不能用 success 色").toBe("warning");
     expect(content).toContain(WARNING);
 
@@ -269,8 +269,8 @@ describe("DOWNLOADER-8：搜索页推送汇总不能把「成功但降级」吞�
     buttons[2]!.click();
     await view.settle(80);
 
-    expect(mocks.showSnakebar).toHaveBeenCalledTimes(1);
-    const [content, options] = mocks.showSnakebar.mock.calls[0] as [string, { color: string }];
+    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+    const [content, options] = mocks.showSnackbar.mock.calls[0] as [string, { color: string }];
     expect(options.color).toBe("warning");
     expect(content).toContain(WARNING);
 

@@ -108,9 +108,9 @@ async function deleteTask(task: IKeepUploadTask) {
     tasks.value = tasks.value.filter((t) => t.id !== task.id);
     // N13：删掉的任务必须从选中集合里移除，否则「删除所选」仍高亮、还会对不存在的 id 再发删除消息
     selectedTasks.value = selectedTasks.value.filter((id) => id !== task.id);
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
   } catch (e) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.deleteError"), { color: "error" });
   }
 }
 
@@ -133,9 +133,9 @@ async function deleteSelectedTasks() {
   selectedTasks.value = failedIds;
 
   if (failedIds.length === 0) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
   } else {
-    runtimeStore.showSnakebar(t("KeepUploadTask.deleteError"), { color: deletedIds.length > 0 ? "warning" : "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.deleteError"), { color: deletedIds.length > 0 ? "warning" : "error" });
   }
 }
 
@@ -148,9 +148,9 @@ async function clearAllTasks() {
     // N13：清空后选中集合与展开态也要复位，否则「删除所选」按钮仍可点、指向已不存在的任务
     selectedTasks.value = [];
     expanded.value = [];
-    runtimeStore.showSnakebar(t("KeepUploadTask.clearSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.clearSuccess"), { color: "success" });
   } catch (e) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.clearError"), { color: "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.clearError"), { color: "error" });
   }
 }
 
@@ -160,7 +160,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
 
   const downloader = metadataStore.downloaders[task.downloadOptions.downloaderId];
   if (!downloader) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.downloaderNotFound"), { color: "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.downloaderNotFound"), { color: "error" });
     return;
   }
 
@@ -237,7 +237,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
     // D（REVIEW-FINDINGS options-2）：单条发送与批量路径对齐 —— pending（站点下载间隔未到）不是
     // 成功；warned（下载器降级、部分设置未生效）也必须提示，否则用户只看到绿色的「发送成功」。
     if (failed > 0) {
-      runtimeStore.showSnakebar(t("KeepUploadTask.sendSingleErrorWithReason", { reason: firstFailureReason ?? "" }), {
+      runtimeStore.showSnackbar(t("KeepUploadTask.sendSingleErrorWithReason", { reason: firstFailureReason ?? "" }), {
         color: "error",
       });
     } else {
@@ -251,7 +251,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
           singleMessage += ` (${t("DownloadHistory.detail.warningMessage")}: ${firstWarningMessage})`;
         }
       }
-      runtimeStore.showSnakebar(singleMessage, {
+      runtimeStore.showSnackbar(singleMessage, {
         color: pending > 0 || warned > 0 ? "warning" : "success",
       });
     }
@@ -261,7 +261,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
   // L2（F1）：全部成功时用 KeepUploadTask 专用文案，不再借用「发送到下载器」的汇总 key；
   // 有 pending / warned / failed 时仍用带计数的汇总，便于用户判断下一步操作。
   if (failed === 0 && pending === 0 && warned === 0) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.sendSummary"), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.sendSummary"), { color: "success" });
     return;
   }
 
@@ -281,7 +281,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
   if (firstFailureReason) {
     summary += ` (${t("DownloadHistory.detail.errorMessage")}: ${firstFailureReason})`;
   }
-  runtimeStore.showSnakebar(summary, {
+  runtimeStore.showSnackbar(summary, {
     color:
       failed === 0
         ? pending > 0 || warned > 0
@@ -310,9 +310,9 @@ async function setAsBaseTorrent(task: IKeepUploadTask, itemIndex: number) {
     // 持久化成功后再更新内存；表格按 row-key 复用行，不需要 tableKey 整表重挂载
     // （重挂载会丢失展开行 / 滚动位置）。
     task.items = nextItems;
-    runtimeStore.showSnakebar(t("KeepUploadTask.setBaseSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.setBaseSuccess"), { color: "success" });
   } catch (e) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.setBaseError"), { color: "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.setBaseError"), { color: "error" });
   }
 }
 
@@ -342,9 +342,9 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
   const urls = task.items.map((item) => item.url).join("\n");
   try {
     await navigator.clipboard.writeText(urls);
-    runtimeStore.showSnakebar(t("KeepUploadTask.copySuccess", { count: task.items.length }), { color: "success" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.copySuccess", { count: task.items.length }), { color: "success" });
   } catch (e) {
-    runtimeStore.showSnakebar(t("KeepUploadTask.copyError"), { color: "error" });
+    runtimeStore.showSnackbar(t("KeepUploadTask.copyError"), { color: "error" });
   }
 }
 </script>

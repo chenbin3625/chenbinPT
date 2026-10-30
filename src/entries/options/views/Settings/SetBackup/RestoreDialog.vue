@@ -98,7 +98,7 @@ function loadLocalBackupFile() {
       console.error(err);
       restoreData.value = undefined;
       isDecryptKeyValid.value = false;
-      runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.loadFailure", { error: err }), { color: "error" });
+      runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.loadFailure", { error: err }), { color: "error" });
     });
 }
 
@@ -128,7 +128,7 @@ function loadRemoteBackupFile() {
       })
       .catch((err) => {
         if (loadToken !== backupLoadToken || !showDialog.value) return;
-        runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.loadFailure", { error: err }), { color: "error" });
+        runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.loadFailure", { error: err }), { color: "error" });
         console.error(err);
         isDecryptKeyValid.value = false;
       })
@@ -159,18 +159,18 @@ function reportRestoreResult(result: unknown) {
   const { success, notices } = summarizeRestoreResult(result);
 
   if (!success) {
-    runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.partialFailure"), { color: "error" });
+    runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.partialFailure"), { color: "error" });
     return;
   }
 
   if (notices.length > 0) {
-    runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.successWithNotice", { detail: notices.join("; ") }), {
+    runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.successWithNotice", { detail: notices.join("; ") }), {
       color: "warning",
     });
     return;
   }
 
-  runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.success"), { color: "success" });
+  runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.success"), { color: "success" });
 }
 
 const isDoingRestore = ref<boolean>(false);
@@ -181,7 +181,7 @@ async function doRestore() {
 
   // 检查 version 字段
   if (!restoreData.value?.manifest?.version) {
-    runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.missingVersion"), { color: "error" });
+    runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.missingVersion"), { color: "error" });
     isDoingRestore.value = false;
     return;
   }
@@ -194,7 +194,7 @@ async function doRestore() {
         showDialog.value = false;
       })
       .catch((err) => {
-        runtimeStore.showSnakebar(t("SetBackup.RestoreDialog.failure", { error: err }), { color: "error" });
+        runtimeStore.showSnackbar(t("SetBackup.RestoreDialog.failure", { error: err }), { color: "error" });
         console.error(err);
       })
       .finally(() => {

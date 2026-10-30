@@ -13,10 +13,10 @@ import { computed, shallowRef, triggerRef } from "vue";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
-const { sendMessageMock, buildAdvanceItemPropsFn, showSnakebarMock, messageOpenMock } = vi.hoisted(() => ({
+const { sendMessageMock, buildAdvanceItemPropsFn, showSnackbarMock, messageOpenMock } = vi.hoisted(() => ({
   sendMessageMock: vi.fn(),
   buildAdvanceItemPropsFn: vi.fn(),
-  showSnakebarMock: vi.fn(),
+  showSnackbarMock: vi.fn(),
   messageOpenMock: vi.fn(),
 }));
 
@@ -31,7 +31,7 @@ async function loadModule() {
   vi.resetModules();
   setActivePinia(createPinia());
   const runtime = await import("@/options/stores/runtime.ts");
-  vi.spyOn(runtime.useRuntimeStore(), "showSnakebar").mockImplementation(showSnakebarMock);
+  vi.spyOn(runtime.useRuntimeStore(), "showSnackbar").mockImplementation(showSnackbarMock);
   return await import("@/options/views/Overview/DownloadHistory/utils.ts");
 }
 
@@ -45,7 +45,7 @@ describe("V-14：下载状态轮询必须刷新列表", () => {
     vi.useFakeTimers();
     sendMessageMock.mockReset();
     buildAdvanceItemPropsFn.mockReset();
-    showSnakebarMock.mockClear();
+    showSnackbarMock.mockClear();
     messageOpenMock.mockClear();
   });
 
@@ -124,7 +124,7 @@ describe("V-14：下载状态轮询必须刷新列表", () => {
     await tick(1000);
     expect(pollCount).toBe(1);
     expect(downloadHistoryList.value).toHaveLength(0); // undefined 不再残留在列表里（修复前是 [undefined]）
-    expect(showSnakebarMock).not.toHaveBeenCalled(); // 「记录已被删除」不是错误，不打扰用户
+    expect(showSnackbarMock).not.toHaveBeenCalled(); // 「记录已被删除」不是错误，不打扰用户
 
     await tick(5000);
     expect(pollCount).toBe(1); // 轮询链已干净停止
@@ -151,9 +151,9 @@ describe("V-14：下载状态轮询必须刷新列表", () => {
 
     await tick(1000);
     // 只提示一次（多行同时失败时不刷屏），且行仍留在表格里（下载可能仍在进行）
-    expect(showSnakebarMock).toHaveBeenCalledTimes(1);
-    expect(showSnakebarMock.mock.calls[0]![0]).toContain("刷新下载状态失败");
-    expect(showSnakebarMock.mock.calls[0]![1]).toEqual({ color: "error" });
+    expect(showSnackbarMock).toHaveBeenCalledTimes(1);
+    expect(showSnackbarMock.mock.calls[0]![0]).toContain("刷新下载状态失败");
+    expect(showSnackbarMock.mock.calls[0]![1]).toEqual({ color: "error" });
     expect(downloadHistoryList.value.map((x) => x.downloadStatus)).toEqual(["pending", "pending"]);
 
     const pollCalls = sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length;
@@ -167,7 +167,7 @@ describe("N2：并发/重叠加载不能产生重复或孤儿轮询链", () => {
     vi.useFakeTimers();
     sendMessageMock.mockReset();
     buildAdvanceItemPropsFn.mockReset();
-    showSnakebarMock.mockClear();
+    showSnackbarMock.mockClear();
     messageOpenMock.mockClear();
   });
 
@@ -247,7 +247,7 @@ describe("N3/N4：批量操作求交与整表加载失败提示", () => {
     vi.useFakeTimers();
     sendMessageMock.mockReset();
     buildAdvanceItemPropsFn.mockReset();
-    showSnakebarMock.mockClear();
+    showSnackbarMock.mockClear();
   });
 
   afterEach(() => {
@@ -287,9 +287,9 @@ describe("N3/N4：批量操作求交与整表加载失败提示", () => {
       downloadHistoryList.value.map((x) => x.id),
       "失败不应清空旧数据",
     ).toEqual(["task-1"]);
-    expect(showSnakebarMock).toHaveBeenCalledTimes(1);
-    expect(showSnakebarMock.mock.calls[0]![0]).toMatch(/加载.*失败/);
-    expect(showSnakebarMock.mock.calls[0]![1]).toEqual({ color: "error" });
+    expect(showSnackbarMock).toHaveBeenCalledTimes(1);
+    expect(showSnackbarMock.mock.calls[0]![0]).toMatch(/加载.*失败/);
+    expect(showSnackbarMock.mock.calls[0]![1]).toEqual({ color: "error" });
   });
 });
 

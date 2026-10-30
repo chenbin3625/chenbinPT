@@ -91,7 +91,7 @@ describe("OPTIONSSHELL-1：DeleteDialog 不再吞掉删除失败", () => {
           }),
       }),
     );
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
 
     try {
       await view.settle();
@@ -126,7 +126,7 @@ describe("OPTIONSSHELL-1：DeleteDialog 不再吞掉删除失败", () => {
           }),
       }),
     );
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
 
     try {
       await view.settle();
@@ -191,7 +191,7 @@ describe("metadata store 修复（OPTIONSSHELL-2/4/5/7）", () => {
     store.sites.siteA = { url: "https://sitea.example/" } as any;
     // 用户配置仍在、但站点定义已从构建产物移除的「毒」站点
     store.sites.ghost = { url: "https://ghost.example/" } as any;
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
 
     await store.buildSiteMapCache();
 
@@ -214,7 +214,7 @@ describe("metadata store 修复（OPTIONSSHELL-2/4/5/7）", () => {
     defineSite("siteA");
     store.sites.siteA = { url: "https://sitea.example/" } as any;
     store.sites.ghost = { url: "https://ghost.example/" } as any;
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
 
     await store.buildSiteNameMap();
     await store.buildSiteNameMap();
@@ -225,7 +225,7 @@ describe("metadata store 修复（OPTIONSSHELL-2/4/5/7）", () => {
 
   it("OPTIONSSHELL-5：快照已被别处删除时改名不抛错、不落盘、给出提示", async () => {
     const store = await createMetadataStore();
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
     const saveSpy = vi.spyOn(store, "$save").mockResolvedValue(undefined);
 
     await expect(store.editSearchSnapshotDataName("ghost-snapshot", "新名字")).resolves.toBeUndefined();
@@ -250,7 +250,7 @@ describe("metadata store 修复（OPTIONSSHELL-2/4/5/7）", () => {
   it("OPTIONSSHELL-7：外部快照写入失败时不登记内存元数据并提示失败", async () => {
     const store = await createMetadataStore();
     const runtime = useRuntimeStore();
-    const snackbarSpy = vi.spyOn(runtime, "showSnakebar");
+    const snackbarSpy = vi.spyOn(runtime, "showSnackbar");
     runtime.search.isSearching = false;
     runtime.search.searchResult = [{ title: "t" }] as any;
     sendMessageMock.mockRejectedValueOnce(new Error("quota exceeded"));

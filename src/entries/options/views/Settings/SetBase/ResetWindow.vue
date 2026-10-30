@@ -146,11 +146,11 @@ async function confirmReset() {
   isResetting.value = true;
   try {
     await pendingItem.value.action();
-    runtimeStore.showSnakebar(t("SetBase.reset.resetSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("SetBase.reset.resetSuccess"), { color: "success" });
     showConfirm.value = false;
     pendingItem.value = null;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isResetting.value = false;
   }

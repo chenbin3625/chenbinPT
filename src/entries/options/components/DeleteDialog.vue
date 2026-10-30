@@ -63,8 +63,8 @@ async function confirmDelete() {
       ...new Set(failedIds.map((toDeleteId) => failureHints?.[String(toDeleteId)]).filter((hint) => !!hint)),
     ];
     // 首参用字符串拼接而不是模板字符串：tests/entries/options/tooltipI18n.test.ts 的硬编码文案守卫
-    // 明确禁止源码里出现 `showSnakebar(\``（这里当初正因模板字符串而让该门禁变红）。
-    useRuntimeStore().showSnakebar(
+    // 明确禁止源码里出现 `showSnackbar(\``（这里当初正因模板字符串而让该门禁变红）。
+    useRuntimeStore().showSnackbar(
       t("KeepUploadTask.deleteError") + ": " + failedIds.join(", ") + (hints.length ? `（${hints.join("；")}）` : ""),
       { color: "error" },
     );

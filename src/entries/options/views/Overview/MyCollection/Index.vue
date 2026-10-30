@@ -132,7 +132,7 @@ async function loadFavorites() {
   try {
     favorites.value = await sendMessage("getTorrentFavorites", undefined);
   } catch {
-    runtimeStore.showSnakebar(t("MyCollection.loadError"), { color: "error" });
+    runtimeStore.showSnackbar(t("MyCollection.loadError"), { color: "error" });
     favorites.value = [];
   } finally {
     loading.value = false;
@@ -161,7 +161,7 @@ async function confirmDelete(key: TTorrentFavoriteKey) {
 
 function afterDelete() {
   selectedKeys.value = selectedKeys.value.filter((key) => favorites.value.some((x) => x.key === key));
-  runtimeStore.showSnakebar(t("MyCollection.deleteSuccess"), { color: "success" });
+  runtimeStore.showSnackbar(t("MyCollection.deleteSuccess"), { color: "success" });
 }
 
 async function clearAll() {
@@ -176,7 +176,7 @@ async function clearAll() {
     );
     favorites.value = [];
     selectedKeys.value = [];
-    runtimeStore.showSnakebar(t("MyCollection.deleteSuccess"), { color: "success" });
+    runtimeStore.showSnackbar(t("MyCollection.deleteSuccess"), { color: "success" });
   } catch {
     // 删除失败时以存储为准重新加载，避免界面显示「已清空」而实际仍在
     await loadFavorites();

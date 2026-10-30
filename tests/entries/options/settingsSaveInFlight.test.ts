@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({
   addDownloader: vi.fn(),
   addMediaServer: vi.fn(),
   addBackupServer: vi.fn(),
-  showSnakebar: vi.fn(),
+  showSnackbar: vi.fn(),
 }));
 vi.mock("@/options/stores/metadata.ts", () => ({
   useMetadataStore: () => ({
@@ -155,7 +155,7 @@ describe.each(cases)("$name 的保存反馈", ({ component, save, add }) => {
     footerButton("完成").click();
     await view.settle();
     expect(open.value).toBe(true);
-    expect(state.showSnakebar).toHaveBeenCalledWith(expect.any(String), { color: "error" });
+    expect(state.showSnackbar).toHaveBeenCalledWith(expect.any(String), { color: "error" });
     expect(footerButton("取消").disabled).toBe(false);
     footerButton("完成").click();
     await view.settle();

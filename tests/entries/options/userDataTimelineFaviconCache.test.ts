@@ -10,7 +10,7 @@ import { nextTick, shallowRef } from "vue";
 
 import { mountOptionsView } from "../../helpers/optionsView.ts";
 
-const { initialControl, nodes, canvasCount, saveAsMock, showSnakebar, fakeStage } = vi.hoisted(() => ({
+const { initialControl, nodes, canvasCount, saveAsMock, showSnackbar, fakeStage } = vi.hoisted(() => ({
   initialControl: {
     title: "",
     backgroundColor: "#101010",
@@ -28,13 +28,13 @@ const { initialControl, nodes, canvasCount, saveAsMock, showSnakebar, fakeStage 
   nodes: [] as Array<{ cacheCalls: number; image: unknown; cached: boolean }>,
   canvasCount: { value: 0 },
   saveAsMock: vi.fn(),
-  showSnakebar: vi.fn(),
+  showSnackbar: vi.fn(),
   /** Stage 替身：上游 #1623 的导出走 stage.toBlob() */
   fakeStage: { toBlob: vi.fn(async () => new Blob(["png"], { type: "image/png" })) },
 }));
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
-vi.mock("@/options/stores/runtime.ts", () => ({ useRuntimeStore: () => ({ showSnakebar }) }));
+vi.mock("@/options/stores/runtime.ts", () => ({ useRuntimeStore: () => ({ showSnackbar }) }));
 vi.mock("@/options/stores/metadata.ts", () => ({
   useMetadataStore: () => ({
     sites: {},
@@ -228,12 +228,12 @@ describe("时间轴导出图片（上游 #1623）", () => {
 
       // 编码失败：不调用 saveAs，按钮退出 loading
       saveAsMock.mockReset();
-      showSnakebar.mockReset();
+      showSnackbar.mockReset();
       fakeStage.toBlob.mockRejectedValueOnce(new Error("Konva: toBlob() failed"));
       exportButton.click();
       await view.settle(20);
       expect(saveAsMock).not.toHaveBeenCalled();
-      expect(showSnakebar).toHaveBeenCalledWith(expect.any(String), { color: "warning" });
+      expect(showSnackbar).toHaveBeenCalledWith(expect.any(String), { color: "warning" });
       expect(exportButton.classList.contains("ant-btn-loading")).toBe(false);
     } finally {
       view.unmount();

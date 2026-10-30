@@ -68,7 +68,7 @@ async function saveStoredMediaServerConfig() {
     await metadataStore.addMediaServer(storedMediaServerConfig.value as IMediaServerUserConfig);
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

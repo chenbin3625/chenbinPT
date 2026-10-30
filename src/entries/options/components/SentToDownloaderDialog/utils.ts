@@ -140,7 +140,7 @@ export async function sendTorrentToDownloader(
         allowSiteLessLink: options.allowSiteLessLink === true,
         addTorrentOptions: realAddTorrentOptions as CAddTorrentOptions,
       }).catch((x) => {
-        runtimeStore.showSnakebar(
+        runtimeStore.showSnackbar(
           i18n.t("SentToDownloaderDialog.sendFailed", {
             title: torrent.title,
             error: String(x),
@@ -173,7 +173,7 @@ export async function sendTorrentToDownloader(
     const warningSummary =
       warningCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryWarning", { count: warningCount }) : "";
 
-    runtimeStore.showSnakebar(
+    runtimeStore.showSnackbar(
       successCount > 0
         ? i18n.t("SentToDownloaderDialog.sendSummary", {
             success: successCount,
@@ -185,6 +185,6 @@ export async function sendTorrentToDownloader(
       { color },
     );
   } else {
-    runtimeStore.showSnakebar(i18n.t("SentToDownloaderDialog.noTasks"), { color: "warning" });
+    runtimeStore.showSnackbar(i18n.t("SentToDownloaderDialog.noTasks"), { color: "warning" });
   }
 }

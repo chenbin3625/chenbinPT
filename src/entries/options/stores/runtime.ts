@@ -405,7 +405,7 @@ export const useRuntimeStore = defineStore("runtime", {
       this.mediaServerSearch = initialMediaServerSearchData();
     },
 
-    showSnakebar(text: string, options: SnackbarMessageOptions = {}) {
+    showSnackbar(text: string, options: SnackbarMessageOptions = {}) {
       const { color = "info", timeout = 5000 } = options;
       const type = (["success", "error", "warning", "info"] as const).find((x) => x === color) ?? "info";
       message.open({ type, content: text, duration: timeout / 1000 });

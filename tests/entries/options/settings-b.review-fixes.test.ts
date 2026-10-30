@@ -165,7 +165,7 @@ describe("OPTIONSSETTINGS-3：本地导出失败不再静默", () => {
   const mountLocalExport = async () => {
     const pinia = prepareOptionsPiniaWithSave();
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar");
 
     const { default: Dialog } = await import("@/options/views/Settings/SetBackup/LocalExportConfirmDialog.vue");
     const open = ref(false);
@@ -346,7 +346,7 @@ describe("OPTIONSSETTINGS-9：导出不再混入空对象", () => {
     (metadataStore as any).$ready = true;
     metadataStore.solutions = { s1: JSON.parse(JSON.stringify(solution)) } as any;
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar");
 
     const { default: SetSearchSolution } = await import("@/options/views/Settings/SetSearchSolution/Index.vue");
     const view = mountOptionsView(SetSearchSolution, { pinia, router: true });
@@ -638,7 +638,7 @@ describe("F2-N3 / N9 / Medium-13：备份列表", () => {
     const configStore = useConfigStore(pinia);
     configStore.backup.encryptionKey = encryptionKey;
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar");
 
     const { default: SetBackup } = await import("@/options/views/Settings/SetBackup/Index.vue");
     const view = mountOptionsView(SetBackup, { pinia, router: true });

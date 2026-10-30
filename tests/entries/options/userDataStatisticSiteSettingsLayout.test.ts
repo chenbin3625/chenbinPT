@@ -154,7 +154,7 @@ describe("F15：统计页导出图片的兜底", () => {
 
     const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
     const runtimeStore = useRuntimeStore();
-    const showSnakebar = vi.spyOn(runtimeStore, "showSnakebar");
+    const showSnackbar = vi.spyOn(runtimeStore, "showSnackbar");
 
     // 本用例把图表组件替换成无 canvas 的空壳，正好覆盖「所有图表被关闭」这一分支
     const exportButton = view
@@ -166,9 +166,9 @@ describe("F15：统计页导出图片的兜底", () => {
     await view.settle();
 
     expect(saveAsMock, "不应把 0 宽/空白图片交给 saveAs").not.toHaveBeenCalled();
-    expect(showSnakebar, "应提示用户当前没有可导出的图表").toHaveBeenCalled();
+    expect(showSnackbar, "应提示用户当前没有可导出的图表").toHaveBeenCalled();
 
-    showSnakebar.mockRestore();
+    showSnackbar.mockRestore();
     view.unmount();
   });
 });

@@ -33,7 +33,7 @@ async function patchSite() {
     await metadataStore.addSite(props.siteId, storedSiteUserConfig.value);
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

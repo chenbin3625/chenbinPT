@@ -50,7 +50,7 @@ async function saveDefaultDownloader() {
     await metadataStore.$save();
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   }
 }
 

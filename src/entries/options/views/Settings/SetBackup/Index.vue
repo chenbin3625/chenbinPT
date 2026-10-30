@@ -161,7 +161,7 @@ function showBackupFailure(error: unknown, fields: readonly string[] = []): void
   const reason = getBackupFailureReason(error);
   const base = reason ? t("SetBackup.snackbar.failureWithReason", { reason }) : t("SetBackup.snackbar.failure");
   const needKeyHint = needsBackupEncryptionKeyHint(fields as TBackupFields[], configStore.backup.encryptionKey);
-  runtimeStore.showSnakebar(needKeyHint ? `${base} ${t("SetBackup.snackbar.encryptionKeyRequiredHint")}` : base, {
+  runtimeStore.showSnackbar(needKeyHint ? `${base} ${t("SetBackup.snackbar.encryptionKeyRequiredHint")}` : base, {
     color: "error",
   });
 }
@@ -180,7 +180,7 @@ async function doBackup(backupServerId: TBackupServerKey | symbol) {
       // 这里单独提示「已不存在」并清掉选中态，让列表回到真实状态。
       if (!serverConfig) {
         pruneTableSelected();
-        runtimeStore.showSnakebar(
+        runtimeStore.showSnackbar(
           tWithFallback("SetBackup.snackbar.serverNotFound", "This backup server no longer exists."),
           { color: "error" },
         );
@@ -190,7 +190,7 @@ async function doBackup(backupServerId: TBackupServerKey | symbol) {
       attemptedBackupFields = backupFields;
       // F2-N3：一项备份内容都没勾选时不上传只含 manifest 的空 zip（否则会提示成功并参与保留策略清理）
       if (backupFields.length === 0) {
-        runtimeStore.showSnakebar(
+        runtimeStore.showSnackbar(
           tWithFallback("SetBackup.snackbar.noBackupFields", "No backup content selected; nothing was uploaded."),
           { color: "error" },
         );
@@ -200,7 +200,7 @@ async function doBackup(backupServerId: TBackupServerKey | symbol) {
       if (backupStatus) {
         // 备份成功后的保留策略清理由 exportBackupData 内部完成，此处仅对启用了保留策略的服务器加以提示
         const hasRetention = hasBackupRetentionToApply(serverConfig?.retention);
-        runtimeStore.showSnakebar(
+        runtimeStore.showSnackbar(
           t(hasRetention ? "SetBackup.snackbar.successWithRetention" : "SetBackup.snackbar.success"),
           {
             color: "success",

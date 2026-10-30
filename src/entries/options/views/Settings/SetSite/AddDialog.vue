@@ -72,7 +72,7 @@ async function saveSite() {
     await metadataStore.addSite(selectedSiteId.value!, storedSiteUserConfig.value!);
     showDialog.value = false;
   } catch {
-    runtimeStore.showSnakebar(t("common.saveFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   } finally {
     isSaving.value = false;
   }

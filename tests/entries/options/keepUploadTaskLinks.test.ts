@@ -43,7 +43,7 @@ describe("KeepUploadTask 页面链接", () => {
 
 // ── F4（N11 / N12 / N13）：辅种批量发送、基准种子与选中集 ───────────────────
 
-const { showSnakebarMock } = vi.hoisted(() => ({ showSnakebarMock: vi.fn() }));
+const { showSnackbarMock } = vi.hoisted(() => ({ showSnackbarMock: vi.fn() }));
 
 function makeTask(overrides: Record<string, any> = {}) {
   const items: Array<{
@@ -89,7 +89,7 @@ async function mountKeepUpload(sendImpl: (type: string, data: any) => any, task 
   });
 
   const runtimeStore = useRuntimeStore(pinia);
-  vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(showSnakebarMock);
+  vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(showSnackbarMock);
 
   const { default: KeepUploadTask } = await import("@/options/views/Overview/KeepUploadTask/Index.vue");
   const view = mountOptionsView(KeepUploadTask, { pinia });
@@ -145,7 +145,7 @@ describe("N11：辅种批量发送不中途中止，并汇总成功/失败/待�
       const downloadCalls = sendMessageMock.mock.calls.filter(([type]) => type === "downloadTorrent");
       expect(downloadCalls, "第 2 项失败后不应中止后续项").toHaveLength(3);
 
-      const [message, options] = showSnakebarMock.mock.calls.at(-1)!;
+      const [message, options] = showSnackbarMock.mock.calls.at(-1)!;
       expect(message).toContain("2"); // 成功 2
       expect(message).toContain("1"); // 失败 1
       expect(message).toContain("站点下载间隔未到");
@@ -180,7 +180,7 @@ describe("N12：设为基准种子持久化失败时回滚", () => {
 
       const firstItemTitle = view.$(".ant-table-expanded-row .ant-list-item a")?.textContent?.trim();
       expect(firstItemTitle, "持久化失败时不应改动内存顺序").toBe("item-1");
-      expect(showSnakebarMock).toHaveBeenCalledWith(t("KeepUploadTask.setBaseError"), { color: "error" });
+      expect(showSnackbarMock).toHaveBeenCalledWith(t("KeepUploadTask.setBaseError"), { color: "error" });
     } finally {
       view.unmount();
     }
@@ -300,7 +300,7 @@ describe("D / L2：KeepUploadTask 发送汇总文案与真实结果对齐", () =
       await view.settle(60);
       await clickConfirm();
       // 单条任务（items.length === 1）会走 sendTorrentsToDownloader 的单条汇总分支
-      const [message, options] = showSnakebarMock.mock.calls.at(-1)!;
+      const [message, options] = showSnackbarMock.mock.calls.at(-1)!;
       expect(message).toContain(t("KeepUploadTask.sendSingleSuccess"));
       expect(message).toContain(t("SentToDownloaderDialog.sendSummaryPending", { count: 1 }));
       expect(options).toMatchObject({ color: "warning" });
@@ -320,7 +320,7 @@ describe("D / L2：KeepUploadTask 发送汇总文案与真实结果对齐", () =
       view.$<HTMLButtonElement>(`.ant-table button[title="${t("KeepUploadTask.sendAllTorrents")}"]`)!.click();
       await view.settle(60);
       await clickConfirm();
-      const [message, options] = showSnakebarMock.mock.calls.at(-1)!;
+      const [message, options] = showSnackbarMock.mock.calls.at(-1)!;
       expect(message).toContain("label skipped");
       expect(options).toMatchObject({ color: "warning" });
     } finally {
@@ -345,7 +345,7 @@ describe("D / L2：KeepUploadTask 发送汇总文案与真实结果对齐", () =
         await view.settle(80);
       })();
 
-      expect(showSnakebarMock).toHaveBeenLastCalledWith(t("KeepUploadTask.sendSummary"), { color: "success" });
+      expect(showSnackbarMock).toHaveBeenLastCalledWith(t("KeepUploadTask.sendSummary"), { color: "success" });
     } finally {
       view.unmount();
     }

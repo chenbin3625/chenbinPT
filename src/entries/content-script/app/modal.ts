@@ -89,7 +89,7 @@ export function promptModal(title: string, defaultValue = ""): Promise<string | 
  * **之外**新建一份 app 来渲染并生成 `.ant-message` 的 cssinjs 规则；`message.config({ getContainer })`
  * 只改 DOM 挂载点，不改 cssinjs 的注入目标 ⇒ 规则留在宿主 `document.head`，节点却挂在 closed
  * shadow root 里，于是「复制成功/失败」「未解析到种子」等提示既没有定位也没有背景。
- * 而内容脚本唯一的用户反馈通道 `runtimeStore.showSnakebar` 用的正是这个静态 API。
+ * 而内容脚本唯一的用户反馈通道 `runtimeStore.showSnackbar` 用的正是这个静态 API。
  *
  * 因此把静态 API 的出口重定向到 `message.useMessage()` 的实例：它的 holder 由 `App.vue` 渲染在
  * `ConfigProvider` 之下，样式经 `StyleProvider(container=shadowRoot)` 注入 shadow root。

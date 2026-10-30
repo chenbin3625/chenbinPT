@@ -43,7 +43,7 @@ async function doLocalExport() {
       backupServerId: "local",
     });
     if (exportStatus === false) {
-      runtimeStore.showSnakebar(t("SetBackup.snackbar.failure"), { color: "error" });
+      runtimeStore.showSnackbar(t("SetBackup.snackbar.failure"), { color: "error" });
       return;
     }
     showDialog.value = false;
@@ -51,7 +51,7 @@ async function doLocalExport() {
     // H-2：透出库侧 message（本地导出失败时通常是文件系统/下载被拒，用户需要看到原因）
     const reason = getBackupFailureReason(e);
     const message = reason ? t("SetBackup.snackbar.failureWithReason", { reason }) : t("SetBackup.snackbar.failure");
-    runtimeStore.showSnakebar(message, { color: "error" });
+    runtimeStore.showSnackbar(message, { color: "error" });
   } finally {
     isExporting.value = false;
   }

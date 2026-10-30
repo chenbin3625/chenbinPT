@@ -380,7 +380,7 @@ onUnmounted(() => {
 /** D2-09：批量操作统一提示「成功 N / 失败 M（首个原因）」，不再只报成功数。 */
 function showBatchResult(results: readonly PromiseSettledResult<unknown>[], successKey: string) {
   const summary = summarizeBatchResults(results);
-  runtimeStore.showSnakebar(formatBatchOpMessage(t, successKey, summary), { color: batchOpColor(summary) });
+  runtimeStore.showSnackbar(formatBatchOpMessage(t, successKey, summary), { color: batchOpColor(summary) });
   return summary;
 }
 

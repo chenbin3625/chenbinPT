@@ -41,7 +41,7 @@ async function confirmSetLabel() {
 
   const label = labelInput.value.trim();
   if (!label) {
-    runtimeStore.showSnakebar(t("MyClient.label.emptyLabel"), { color: "warning" });
+    runtimeStore.showSnackbar(t("MyClient.label.emptyLabel"), { color: "warning" });
     return;
   }
 
@@ -57,7 +57,7 @@ async function confirmSetLabel() {
       ),
     );
     const summary = summarizeBatchResults(results);
-    runtimeStore.showSnakebar(formatBatchOpMessage(t, "MyClient.label.success", summary), {
+    runtimeStore.showSnackbar(formatBatchOpMessage(t, "MyClient.label.success", summary), {
       color: batchOpColor(summary),
     });
     showDialog.value = false;

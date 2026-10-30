@@ -187,7 +187,7 @@ function removeFlushFromRoute() {
 
 function showSearchError(error: unknown) {
   // F13：doSearch 的失败（方案展开抛错等）原先无人观察，只剩一条 unhandled rejection。
-  runtimeStore.showSnakebar(error instanceof Error ? error.message : String(error), { color: "error" });
+  runtimeStore.showSnackbar(error instanceof Error ? error.message : String(error), { color: "error" });
 }
 
 /**
@@ -228,7 +228,7 @@ reconcileRestoredSearchState();
   const restoredInterrupted = consumeRuntimeRestoreInterruption("search");
   const reconciledInterrupted = reconcileRuntimeInFlightState(runtimeStore).search;
   if (restoredInterrupted || reconciledInterrupted) {
-    runtimeStore.showSnakebar(t("SearchEntity.index.alert.searchInterrupted"), { color: "warning" });
+    runtimeStore.showSnackbar(t("SearchEntity.index.alert.searchInterrupted"), { color: "warning" });
   }
 }
 
@@ -270,7 +270,7 @@ watch(
           // 页面停在旧数据上一声不响。这里清空并明确提示。
           if (loadToken !== snapshotLoadToken) return;
           runtimeStore.resetSearchData();
-          runtimeStore.showSnakebar(t("SearchResultSnapshot.notFound"), { color: "error" });
+          runtimeStore.showSnackbar(t("SearchResultSnapshot.notFound"), { color: "error" });
           clearSnapshotRoute();
         })
         .finally(() => {

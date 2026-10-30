@@ -130,7 +130,7 @@ watch(selectedDownloader, (value) => {
 async function sendToDownloader() {
   if (isSending.value) return;
   if (!selectedDownloader.value?.id) {
-    runtimeStore.showSnakebar(t("SentToDownloaderDialog.selectDownloaderFirst"), { color: "error" });
+    runtimeStore.showSnackbar(t("SentToDownloaderDialog.selectDownloaderFirst"), { color: "error" });
     return;
   }
 
@@ -160,7 +160,7 @@ async function sendToDownloader() {
     // 取消与成功在 UI 上完全一样（弹窗照样关闭、isSending 照样复位、还照样 emit("done")），
     // 并且产生 unhandled rejection。现在明确区分：提示取消原因、不 emit("done")，
     // 关闭弹窗后仍由 `after-close → dialogLeave` 统一 emit("cancel")。
-    runtimeStore.showSnakebar(String(e), { color: "info" });
+    runtimeStore.showSnackbar(String(e), { color: "info" });
     showDialog.value = false;
   } finally {
     isSending.value = false;

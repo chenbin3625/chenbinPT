@@ -126,7 +126,7 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
   if (searchableIds.length === 0) {
     if (userInitiated) {
       // L2（F1）：媒体服务器专用 key，不再借用「添加站点」的文案
-      runtimeStore.showSnakebar(i18n.t("MediaServerEntity.noServerSelected"), { color: "warning" });
+      runtimeStore.showSnackbar(i18n.t("MediaServerEntity.noServerSelected"), { color: "warning" });
     }
     return;
   }
@@ -199,7 +199,7 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
           searchResult.status === EResultParseStatus.needLogin
             ? i18n.t("MediaServerEntity.error.checkAuth")
             : (searchResult.errorMessage ?? i18n.t("MediaServerEntity.error.unknown"));
-        runtimeStore.showSnakebar(
+        runtimeStore.showSnackbar(
           i18n.t("MediaServerEntity.error.updateFailed", {
             name: mediaServerDetail.name,
             address: mediaServerDetail.address,

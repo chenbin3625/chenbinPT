@@ -46,7 +46,7 @@ const { t } = useI18n();
 const [modal, modalContextHolder] = Modal.useModal();
 registerModalApi(modal);
 
-// CONTENTSCRIPT-1：runtimeStore.showSnakebar 走的是 antd 静态 message，它的 cssinjs 规则注入宿主
+// CONTENTSCRIPT-1：runtimeStore.showSnackbar 走的是 antd 静态 message，它的 cssinjs 规则注入宿主
 // document.head，节点却在 closed shadow root 内 ⇒ 通知条是无样式块。这里改用 useMessage() 的实例
 // 并交给 modal.ts 重定向静态 API（contextHolder 必须渲染在 ConfigProvider 之下）。详见 ./modal.ts。
 const [shadowMessage, messageContextHolder] = staticMessage.useMessage();
@@ -102,7 +102,7 @@ void configStore
 
     if (openSpeedDial.value) {
       void updatePageType(ptdData).catch(() =>
-        runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }),
+        runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }),
       );
     }
 
@@ -120,7 +120,7 @@ void configStore
     rightX.value = clientWidth - x.value;
     bottomY.value = clientHeight - y.value;
   })
-  .catch(() => runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }));
+  .catch(() => runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }));
 
 const remoteDownloadDialogData = shallowReactive<IRemoteDownloadDialogData>({
   show: false,
@@ -187,7 +187,7 @@ async function onDrop(event: DragEvent) {
       remoteDownloadDialogData.show = true;
     }
   } catch {
-    runtimeStore.showSnakebar(t("contentScript.noTorrentParsed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.noTorrentParsed"), { color: "error" });
   } finally {
     isDragging.value = false; // 重置拖拽状态
   }
@@ -207,7 +207,7 @@ const dropAction = computed(() => {
 
 function openOptions() {
   void sendMessage("openOptionsPage", "/").catch(() =>
-    runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }),
+    runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }),
   );
 }
 
@@ -216,7 +216,7 @@ function handleSpeedDialClick(event: MouseEvent) {
   openSpeedDial.value = !openSpeedDial.value;
   if (openSpeedDial.value) {
     void updatePageType(ptdData).catch(() =>
-      runtimeStore.showSnakebar(t("contentScript.operationFailed"), { color: "error" }),
+      runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }),
     );
   }
 }

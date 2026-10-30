@@ -92,7 +92,7 @@ async function loadInterruptedSearchPage() {
   const pinia = prepareOptionsPinia();
   const runtimeModule = await import("@/options/stores/runtime.ts");
   const runtimeStore = runtimeModule.useRuntimeStore(pinia);
-  const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+  const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
 
   const { default: SearchEntityView } = await import("@/options/views/Overview/SearchEntity/Index.vue");
   const mount = () => mountOptionsView(SearchEntityView, { pinia, router: true });

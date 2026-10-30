@@ -18,7 +18,7 @@ import { mountOptionsView } from "../../helpers/optionsView.ts";
 const { sendMessageMock, runtimeStoreStub, metadataStoreStub, configStoreStub, saveAsMock, filterState } = vi.hoisted(
   () => ({
     sendMessageMock: vi.fn(),
-    runtimeStoreStub: { showSnakebar: vi.fn() },
+    runtimeStoreStub: { showSnackbar: vi.fn() },
     metadataStoreStub: {
       sites: {} as Record<string, unknown>,
       siteNameMap: {} as Record<string, string>,
@@ -269,7 +269,7 @@ async function mountDialogOpened(Component: any, props: Record<string, unknown> 
 
 beforeEach(() => {
   sendMessageMock.mockReset();
-  runtimeStoreStub.showSnakebar.mockReset();
+  runtimeStoreStub.showSnackbar.mockReset();
   metadataStoreStub.getSiteName.mockClear();
   saveAsMock.mockReset();
   confirmModalMock.mockReset();
@@ -394,8 +394,8 @@ describe("OPTIONSOVERVIEW-3：重新下载必须按 downloadTorrent 的返回值
       localButton().click();
       await view.settle();
 
-      expect(runtimeStoreStub.showSnakebar).toHaveBeenCalledTimes(1);
-      const [content, options] = runtimeStoreStub.showSnakebar.mock.calls[0] as [string, { color: string }];
+      expect(runtimeStoreStub.showSnackbar).toHaveBeenCalledTimes(1);
+      const [content, options] = runtimeStoreStub.showSnackbar.mock.calls[0] as [string, { color: string }];
       expect(options.color).toBe("error");
       expect(content).toContain("site not allowed");
     } finally {
@@ -420,7 +420,7 @@ describe("OPTIONSOVERVIEW-3：重新下载必须按 downloadTorrent 的返回值
       localButton().click();
       await view.settle();
 
-      const [, options] = runtimeStoreStub.showSnakebar.mock.calls[0] as [string, { color: string }];
+      const [, options] = runtimeStoreStub.showSnackbar.mock.calls[0] as [string, { color: string }];
       expect(options.color).toBe("warning");
     } finally {
       view.unmount();
@@ -495,8 +495,8 @@ describe("OPTIONSOVERVIEW-4：历史数据删除的失败/当天保护", () => {
       await flush();
 
       expect(confirmModalMock).toHaveBeenCalled();
-      expect(runtimeStoreStub.showSnakebar).toHaveBeenCalledTimes(1);
-      const [, options] = runtimeStoreStub.showSnakebar.mock.calls[0] as [string, { color: string }];
+      expect(runtimeStoreStub.showSnackbar).toHaveBeenCalledTimes(1);
+      const [, options] = runtimeStoreStub.showSnackbar.mock.calls[0] as [string, { color: string }];
       expect(options.color).toBe("error");
       expect(sendMessageMock).toHaveBeenCalledWith(
         "removeSiteUserInfo",
@@ -518,7 +518,7 @@ describe("OPTIONSOVERVIEW-4：历史数据删除的失败/当天保护", () => {
       await view.settle();
       await flush();
 
-      const [, options] = runtimeStoreStub.showSnakebar.mock.calls[0] as [string, { color: string }];
+      const [, options] = runtimeStoreStub.showSnackbar.mock.calls[0] as [string, { color: string }];
       expect(options.color).toBe("success");
       // 打开时 1 次 + 删除成功后 1 次
       expect(loadSiteHistoryDataMock).toHaveBeenCalledTimes(2);
@@ -551,8 +551,8 @@ describe("OPTIONSOVERVIEW-5：导出用户信息时部分站点失败必须提�
       await flush();
 
       expect(saveAsMock, "成功站点仍应导出文件").toHaveBeenCalledTimes(1);
-      expect(runtimeStoreStub.showSnakebar).toHaveBeenCalledTimes(1);
-      const [content, options] = runtimeStoreStub.showSnakebar.mock.calls[0] as [string, { color: string }];
+      expect(runtimeStoreStub.showSnackbar).toHaveBeenCalledTimes(1);
+      const [content, options] = runtimeStoreStub.showSnackbar.mock.calls[0] as [string, { color: string }];
       expect(options.color).toBe("warning");
       expect(content).toContain("Bad Site");
     } finally {
@@ -571,8 +571,8 @@ describe("OPTIONSOVERVIEW-5：导出用户信息时部分站点失败必须提�
       await flush();
 
       expect(saveAsMock).not.toHaveBeenCalled();
-      expect(runtimeStoreStub.showSnakebar).toHaveBeenCalledTimes(1);
-      const [content, options] = runtimeStoreStub.showSnakebar.mock.calls[0] as [string, { color: string }];
+      expect(runtimeStoreStub.showSnackbar).toHaveBeenCalledTimes(1);
+      const [content, options] = runtimeStoreStub.showSnackbar.mock.calls[0] as [string, { color: string }];
       expect(options.color).toBe("warning");
       expect(content).toContain("Bad Site");
       expect(content).not.toContain("暂无数据");

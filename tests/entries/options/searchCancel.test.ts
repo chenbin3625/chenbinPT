@@ -4,7 +4,7 @@ import { sendMessage } from "@/messages.ts";
 
 const runtimeState = {
   resetSearchData: vi.fn(),
-  showSnakebar: vi.fn(),
+  showSnackbar: vi.fn(),
   search: {
     isSearching: true,
     snapshot: undefined as string | undefined,

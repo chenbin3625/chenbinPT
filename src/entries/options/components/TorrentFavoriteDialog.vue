@@ -108,11 +108,11 @@ async function save() {
       favCategories: normalizeFavCategories(favCategories.value),
       comment: comment.value.trim(),
     });
-    runtimeStore.showSnakebar(successMessage(count), { color: "success" });
+    runtimeStore.showSnackbar(successMessage(count), { color: "success" });
     emits("saved");
     showDialog.value = false;
   } catch (e) {
-    runtimeStore.showSnakebar(t("MyCollection.dialog.saveError"), { color: "error" });
+    runtimeStore.showSnackbar(t("MyCollection.dialog.saveError"), { color: "error" });
   } finally {
     saving.value = false;
   }

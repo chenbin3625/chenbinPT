@@ -66,7 +66,7 @@ describe("F2-High-14：导入搜索方案时剥离可改写请求目标的 reque
     const metadataStore = useMetadataStore(pinia);
     (metadataStore as any).$ready = true;
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar");
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar");
 
     const { default: SetSearchSolution } = await import("@/options/views/Settings/SetSearchSolution/Index.vue");
     const view = mountOptionsView(SetSearchSolution, { pinia, router: true });

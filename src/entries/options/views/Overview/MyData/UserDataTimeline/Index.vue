@@ -415,7 +415,7 @@ async function exportTimelineImg() {
     saveAs(blob, filename);
   } catch {
     // toBlob 编码失败（内存不足等）时 konva 会 reject，给出提示而不是静默无反应
-    useRuntimeStore().showSnakebar(t("MyClient.detail.operatorFailed"), { color: "warning" });
+    useRuntimeStore().showSnackbar(t("MyClient.detail.operatorFailed"), { color: "warning" });
   } finally {
     isExporting.value = false;
   }
@@ -424,7 +424,7 @@ async function exportTimelineImg() {
 function saveControl() {
   configStore.userDataTimelineControl.selectedSites = selectedSites.value;
   configStore.$save();
-  useRuntimeStore().showSnakebar(t("common.saveSuccess"), { color: "success" });
+  useRuntimeStore().showSnackbar(t("common.saveSuccess"), { color: "success" });
 }
 </script>
 

@@ -330,15 +330,15 @@ describe("OPTIONSOVERVIEW-9：暂停/继续全部失败时用 error 色提示", 
     });
 
     const runtimeStore = useRuntimeStore(pinia);
-    const showSnakebar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const showSnackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
 
     const view = mountOptionsView(MyClientView, { pinia, router: true });
     await view.settle(150);
-    return { view, showSnakebar };
+    return { view, showSnackbar };
   }
 
   it("0 个成功时 color 为 error，全部成功时为 success", async () => {
-    const { view, showSnakebar } = await mountMyClient();
+    const { view, showSnackbar } = await mountMyClient();
 
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
     const t = i18nInstance.global.t;
@@ -351,8 +351,8 @@ describe("OPTIONSOVERVIEW-9：暂停/继续全部失败时用 error 色提示", 
     pauseBtn!.click();
     await view.settle(60);
 
-    expect(showSnakebar).toHaveBeenCalledTimes(1);
-    expect(showSnakebar.mock.calls[0]![1]).toMatchObject({ color: "error" });
+    expect(showSnackbar).toHaveBeenCalledTimes(1);
+    expect(showSnackbar.mock.calls[0]![1]).toMatchObject({ color: "error" });
 
     // 下载器拒绝继续
     const resumeBtn = view.$<HTMLButtonElement>(`.ant-table button[title="${t("MyClient.action.resume")}"]`);
@@ -360,16 +360,16 @@ describe("OPTIONSOVERVIEW-9：暂停/继续全部失败时用 error 色提示", 
     resumeBtn!.click();
     await view.settle(60);
 
-    expect(showSnakebar).toHaveBeenCalledTimes(2);
-    expect(showSnakebar.mock.calls[1]![1]).toMatchObject({ color: "error" });
+    expect(showSnackbar).toHaveBeenCalledTimes(2);
+    expect(showSnackbar.mock.calls[1]![1]).toMatchObject({ color: "error" });
 
     // 成功路径仍然是 success
     pauseResult = true;
     pauseBtn!.click();
     await view.settle(60);
 
-    expect(showSnakebar).toHaveBeenCalledTimes(3);
-    expect(showSnakebar.mock.calls[2]![1]).toMatchObject({ color: "success" });
+    expect(showSnackbar).toHaveBeenCalledTimes(3);
+    expect(showSnackbar.mock.calls[2]![1]).toMatchObject({ color: "success" });
 
     view.unmount();
   });
@@ -449,7 +449,7 @@ async function mountMyClientForBatch(pauseImpl?: (data: any) => boolean | Promis
   });
 
   const runtimeStore = useRuntimeStore(pinia);
-  const showSnakebar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+  const showSnackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
 
   const view = mountOptionsView(MyClientView, { pinia, router: true });
   await view.settle(200);
@@ -463,7 +463,7 @@ async function mountMyClientForBatch(pauseImpl?: (data: any) => boolean | Promis
     await view.settle(80);
   };
 
-  return { view, utils, showSnakebar, t, selectAllRows };
+  return { view, utils, showSnackbar, t, selectAllRows };
 }
 
 describe("D2-07：批量操作只作用于当前可见（筛选后）的选中行", () => {
@@ -568,7 +568,7 @@ it("批量暂停在请求完成前只提交一次，并显示忙碌状态", asyn
 
 describe("D2-09：批量操作的部分失败计数与原因", () => {
   it("一个成功一个失败时，提示包含失败数与 warning 色", async () => {
-    const { view, showSnakebar, t, selectAllRows } = await mountMyClientForBatch((data) => data.id === "hash-1");
+    const { view, showSnackbar, t, selectAllRows } = await mountMyClientForBatch((data) => data.id === "hash-1");
 
     try {
       await selectAllRows();
@@ -579,8 +579,8 @@ describe("D2-09：批量操作的部分失败计数与原因", () => {
       pauseBtn!.click();
       await view.settle(120);
 
-      expect(showSnakebar).toHaveBeenCalled();
-      const [message, options] = showSnakebar.mock.calls.at(-1)!;
+      expect(showSnackbar).toHaveBeenCalled();
+      const [message, options] = showSnackbar.mock.calls.at(-1)!;
       expect(message, "应报成功数").toContain("1");
       expect(message, "应报失败数").toContain("1");
       expect(message, "部分失败应为 warning 色").toBeTruthy();
@@ -633,7 +633,7 @@ describe("D2-08/D2-09：批量限速弹窗的预填、防重复提交与成功�
   async function mountSpeedLimitDialog(torrents: any[], setLimitImpl: (data: any) => Promise<boolean> | boolean) {
     const pinia = prepareOptionsPinia();
     const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
-    vi.spyOn(useRuntimeStore(pinia), "showSnakebar").mockImplementation(() => {});
+    vi.spyOn(useRuntimeStore(pinia), "showSnackbar").mockImplementation(() => {});
 
     sendMessageMock.mockReset();
     sendMessageMock.mockImplementation(async (type: string, data: any) => {

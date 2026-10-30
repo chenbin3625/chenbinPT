@@ -131,7 +131,7 @@ describe("DOWNLOADER-3：删除失败的原因可解释", () => {
     const open = ref(true);
     const pinia = prepareOptionsPinia();
     const runtime = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtime, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtime, "showSnackbar").mockImplementation(() => {});
 
     const view = mountOptionsView(
       defineComponent({
@@ -210,7 +210,7 @@ describe("DOWNLOADER-3：删除失败的原因可解释", () => {
     });
 
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
     const view = mountOptionsView(MyClientView, { pinia, router: true });
 
     try {
@@ -272,7 +272,7 @@ describe("DOWNLOADER-3：删除失败的原因可解释", () => {
     });
 
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => {});
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
     const view = mountOptionsView(MyClientView, { pinia, router: true });
 
     try {
@@ -320,7 +320,7 @@ describe("OPTIONSSHELL-7 孪生：removeSearchSnapshotData 先外部删除成功
   it("外部删除失败时保留内存记录、给出提示，且不落盘", async () => {
     const store = await createMetadataStore();
     store.snapshots["snap1"] = { id: "snap1", name: "快照", createdAt: 0, recordCount: 3 } as any;
-    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnakebar");
+    const snackbarSpy = vi.spyOn(useRuntimeStore(), "showSnackbar");
     const saveSpy = vi.spyOn(store, "$save").mockResolvedValue(undefined);
 
     sendMessageMock.mockRejectedValueOnce(new Error("IndexedDB 上下文失效"));

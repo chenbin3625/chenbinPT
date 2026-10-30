@@ -46,7 +46,7 @@ async function confirmSetLimit() {
   if (uploadLimit.value !== null) limits.upload = uploadLimit.value;
   if (downloadLimit.value !== null) limits.download = downloadLimit.value;
   if (Object.keys(limits).length === 0) {
-    runtimeStore.showSnakebar(t("MyClient.speedLimit.emptyLimit"), { color: "warning" });
+    runtimeStore.showSnackbar(t("MyClient.speedLimit.emptyLimit"), { color: "warning" });
     return;
   }
 
@@ -62,7 +62,7 @@ async function confirmSetLimit() {
       ),
     );
     const summary = summarizeBatchResults(results);
-    runtimeStore.showSnakebar(formatBatchOpMessage(t, "MyClient.speedLimit.success", summary), {
+    runtimeStore.showSnackbar(formatBatchOpMessage(t, "MyClient.speedLimit.success", summary), {
       color: batchOpColor(summary),
     });
     showDialog.value = false;

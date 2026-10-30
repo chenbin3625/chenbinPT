@@ -155,7 +155,7 @@ async function handleLocalDownloadMulti() {
       selectedTorrents.value.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
     );
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.localDownloadFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.localDownloadFailed"), { color: "error" });
   } finally {
     localDownloadMultiStatus.value = false;
   }
@@ -173,11 +173,11 @@ async function handleLinkCopyMulti() {
     // A-9：走已有的 copyTextToClipboard（clipboard API 不可用 / 文档失焦时回退 execCommand），
     // 并且只有真的复制成功才提示成功
     const copied = await copyTextToClipboard(downloadUrls.join("\n").trim());
-    runtimeStore.showSnakebar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
+    runtimeStore.showSnackbar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
       color: copied ? "success" : "error",
     });
   } catch (e) {
-    runtimeStore.showSnakebar(t("contentScript.copyLinkFailed"), { color: "error" });
+    runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
   } finally {
     linkCopyMultiStatus.value = false;
   }

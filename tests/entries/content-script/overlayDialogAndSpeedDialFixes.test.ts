@@ -137,7 +137,7 @@ describe("CONTENTSCRIPT-3 · SiteListPage 解析失败反馈", () => {
     metadataStore.downloaders = { d1: { id: "d1", name: "d1", enabled: true } } as any;
 
     const runtimeStore = useRuntimeStore(pinia);
-    const snackbar = vi.spyOn(runtimeStore, "showSnakebar").mockImplementation(() => undefined);
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => undefined);
 
     // 让引擎解析稳定失败：parseListPage 会 await transformListPage
     siteInstance.value = {

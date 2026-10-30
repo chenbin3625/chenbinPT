@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const sendMessageMock = vi.hoisted(() => vi.fn());
-const runtimeStore = vi.hoisted(() => ({ search: { searchKey: "", searchPlanKey: "" }, showSnakebar: vi.fn() }));
+const runtimeStore = vi.hoisted(() => ({ search: { searchKey: "", searchPlanKey: "" }, showSnackbar: vi.fn() }));
 const metadataStore = vi.hoisted(() => ({
   getSearchSolutionName: vi.fn(() => "default"),
   getSiteName: vi.fn(),
