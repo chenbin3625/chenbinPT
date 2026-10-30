@@ -118,6 +118,7 @@ const userLevelGroupIcon = computed(() => {
 
 <template>
   <span v-if="userInfo.levelName" style="white-space: nowrap">
+    <!-- 对应上游 #1580：浮层内容可滚动，把默认 0.1s 的离开延迟放宽（与 TorrentTitleTd 的约定一致） -->
     <a-popover
       v-if="
         configStore.myDataTableControl.showLevelRequirement && userLevelRequirements && userLevelRequirements.length > 0
@@ -125,6 +126,7 @@ const userLevelGroupIcon = computed(() => {
       placement="rightBottom"
       :overlay-style="{ maxWidth: '800px' }"
       :trigger="display.mobile.value ? ['click', 'hover', 'focus'] : ['hover', 'focus']"
+      :mouse-leave-delay="0.3"
     >
       <template #content>
         <div style="max-height: 500px; max-width: 800px; overflow-y: auto">
