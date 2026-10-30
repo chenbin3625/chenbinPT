@@ -24,6 +24,10 @@ export const SET_BASE_CONFIG_DRAFT_KEYS = [
   "autoToggleNavBarOnDisplayChange",
   "saveTableBehavior",
   "enableTableMultiSort",
+  // fork 特有必做项（上游 #1598 没有草稿机制）：操作列位置 / 固定由 SetBase 的「数据表格」分区编辑，
+  // 不加进白名单的话草稿里这两个键是 undefined，控件读不到也存不回。
+  "tableActionColumnPosition",
+  "tableActionColumnFixed",
   "contextMenus",
   "contentScript",
   "searchEntifyControl",
