@@ -100,6 +100,14 @@ export const useConfigStore = defineStore("config", {
           }
         }
 
+        // 优惠信息展示形式只允许 tags / factor / both / none（防止旧版本或手工改动写入非法值）。
+        // 非法值回落到 "tags"：这是引入本选项之前的等行为，用户不会看到界面突然变化。
+        const promotionDisplay = state.searchEntifyControl?.promotionDisplay;
+        if (promotionDisplay !== undefined && !["tags", "factor", "both", "none"].includes(promotionDisplay)) {
+          state.searchEntifyControl.promotionDisplay = "tags";
+          needsSave = true;
+        }
+
         if (needsSave) {
           // `$save()` 自己已经记录失败并返回 rejected Promise；这里再兜一次，避免 afterRestore 产生 unhandled rejection
           void context.store.$save().catch(() => undefined);
@@ -308,6 +316,7 @@ export const useConfigStore = defineStore("config", {
     searchEntifyControl: {
       showSiteName: true,
       showTorrentTag: true,
+      promotionDisplay: "tags",
       showTorrentSubtitle: true,
       showSocialInformation: true,
       socialInformationSearchOnNewTab: true,

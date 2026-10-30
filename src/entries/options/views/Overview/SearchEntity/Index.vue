@@ -16,7 +16,13 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
-import { EResultParseStatus, ETorrentStatus } from "@ptd/site";
+import {
+  EResultParseStatus,
+  ETorrentStatus,
+  getTorrentVolumeFactors,
+  normalizeTorrentPromotion,
+  promotionToTags,
+} from "@ptd/site";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -95,6 +101,66 @@ const showSaveSnapshotDialog = ref<boolean>(false);
  */
 const titleColumnMaxWidth = computed(() => titleColumnMaxWidthFor(display.smAndDown.value));
 
+/**
+ * 优惠信息的展示形式（见 `SetBase` → 搜索 → 优惠信息展示）：`tags`（默认，仅标签）/ `factor`（仅数值）/
+ * `both`（标签 + 数值）/ `none`（不显示）。非法值一律按 `tags` 处理，与 config store 的 afterRestore 兜底同口径。
+ */
+const promotionDisplay = computed<"tags" | "factor" | "both" | "none">(() => {
+  const value = configStore.searchEntifyControl.promotionDisplay;
+  return value === "factor" || value === "both" || value === "none" ? value : "tags";
+});
+/** 是否显示「优惠」列（仅数值 / 标签 + 数值两种模式） */
+const showPromoColumn = computed(() => promotionDisplay.value === "factor" || promotionDisplay.value === "both");
+
+/**
+ * 缓存每个种子的量系数：`promoSortRaw` 在排序时会被调用 O(n log n) 次，
+ * 若每次都从 tags 反推（每条标签要跑一遍预定义正则），上万条结果时会直接把界面卡死。
+ */
+const volumeFactorCache = new WeakMap<ISearchResultTorrent, ReturnType<typeof getTorrentVolumeFactors>>();
+
+function getCachedVolumeFactors(item: ISearchResultTorrent) {
+  let factors = volumeFactorCache.get(item);
+  if (!factors) {
+    factors = getTorrentVolumeFactors(item);
+    volumeFactorCache.set(item, factors);
+  }
+  return factors;
+}
+
+/**
+ * 优惠列的排序：下载系数升序（免费在前），同系数时上传倍数高的在前。
+ * 只有上传倍率、没有下载折扣的种子按「正常下载」参与排序（不能当成未知排到最后）。
+ */
+function promoSortRaw(a: ISearchResultTorrent, b: ISearchResultTorrent): number {
+  const factorsA = getCachedVolumeFactors(a);
+  const factorsB = getCachedVolumeFactors(b);
+
+  const downloadA =
+    factorsA.downloadVolumeFactor ??
+    (factorsA.uploadVolumeFactor !== undefined && factorsA.uploadVolumeFactor !== 1 ? 1 : Number.POSITIVE_INFINITY);
+  const downloadB =
+    factorsB.downloadVolumeFactor ??
+    (factorsB.uploadVolumeFactor !== undefined && factorsB.uploadVolumeFactor !== 1 ? 1 : Number.POSITIVE_INFINITY);
+
+  if (downloadA !== downloadB) return downloadA - downloadB;
+
+  return (factorsB.uploadVolumeFactor ?? 1) - (factorsA.uploadVolumeFactor ?? 1);
+}
+
+/**
+ * 优惠列展示：与标签使用同一套「系数 → 标签」规则（`promotionToTags`），
+ * 这样只有上传倍率的种子（如 `2xUp`）也会显示出来，而不是被当成「无优惠」显示 `-`。
+ */
+function promoCellText(item: ISearchResultTorrent): string {
+  const { downloadVolumeFactor, uploadVolumeFactor } = getCachedVolumeFactors(item);
+  if (downloadVolumeFactor === undefined && uploadVolumeFactor === undefined) return "-";
+
+  const text = promotionToTags(downloadVolumeFactor, uploadVolumeFactor)
+    .map((tag) => tag.name)
+    .join(" · ");
+  return text || "-";
+}
+
 const fullTableHeader = computed(
   () =>
     [
@@ -108,6 +174,10 @@ const fullTableHeader = computed(
         props: { disabled: true },
       },
       { title: t("SearchEntity.index.table.category"), key: "category", align: "center" },
+      // 「优惠」列默认隐藏（`tags` 模式），勾选后可按优惠排序；由下方 watch 与 promotionDisplay 联动
+      ...(showPromoColumn.value
+        ? [{ title: t("SearchEntity.index.table.downloadVolumeFactor"), key: "downloadVolumeFactor", align: "center" }]
+        : []),
       { title: t("SearchEntity.index.table.size"), key: "size", align: "end" },
       { title: t("SearchEntity.index.table.seeders"), key: "seeders", align: "end" },
       { title: t("SearchEntity.index.table.leechers"), key: "leechers", align: "end" },
@@ -131,18 +201,63 @@ const { tableFilterRef, tableFilterFn, buildAdvanceItemPropsFn } = tableCustomFi
 const activeTagFilterNames = computed(() => getActiveTagFilterNames());
 
 // 使用 shallowRef 优化：种子对象数组不需要深度响应式，提升性能
-const tableColumns = computed(() =>
-  // 操作列位置 / 固定（#1598）：先按可见列过滤 → toAntdColumns，最后再调整操作列位置
-  applyTableActionColumn(
-    toAntdColumns(fullTableHeader.value, {
-      sortBy: configStore.tableBehavior.SearchEntity.sortBy,
-      multiSort: configStore.enableTableMultiSort,
-      visibleKeys: configStore.tableBehavior.SearchEntity.columns,
-    }),
-  ),
-);
+const tableColumns = computed(() => {
+  const columns = toAntdColumns(fullTableHeader.value, {
+    sortBy: configStore.tableBehavior.SearchEntity.sortBy,
+    multiSort: configStore.enableTableMultiSort,
+    visibleKeys: configStore.tableBehavior.SearchEntity.columns,
+  });
+
+  // 优惠列要按「下载系数升序 + 上传倍数降序」排序，`toAntdColumns` 的通用单值比较做不到，
+  // 这里只给这一列覆写 sorter.compare（其余列仍走通用实现）。
+  const promoColumn = columns.find((column) => column.key === "downloadVolumeFactor");
+  if (promoColumn) {
+    promoColumn.sorter = { compare: promoSortRaw, multiple: configStore.enableTableMultiSort ? 4 : undefined };
+  }
+
+  // 操作列位置 / 固定（#1598）：先按可见列过滤 → toAntdColumns → 优惠列排序，最后再调整操作列位置
+  return applyTableActionColumn(columns);
+});
 // 操作列固定在行首时，行首的选择列要一起固定
 const { rowSelectionFixed } = useTableActionColumnLayout();
+
+/**
+ * 优惠展示形式与列配置同步：切到 factor / both 时自动勾选「优惠」列，切回 tags / none 时取消
+ * （顺带清理旧版本残留在列配置里的 key）。只监听模式变化，这样用户在 factor 模式下仍可在列选择器里手动取消该列。
+ */
+watch(
+  showPromoColumn,
+  (enabled, oldEnabled) => {
+    if (enabled === oldEnabled) return;
+
+    // 列配置为空 = 「全部可见」，此时无需增删（也不能用只有 promo 一项的数组把其它列全隐藏掉）
+    const columns = configStore.tableBehavior.SearchEntity.columns;
+    if (!Array.isArray(columns) || columns.length === 0) return;
+
+    const hasPromoColumn = columns.includes("downloadVolumeFactor");
+    if (enabled && !hasPromoColumn) {
+      configStore.updateTableBehavior("SearchEntity", "columns", [...columns, "downloadVolumeFactor"]);
+    } else if (!enabled && hasPromoColumn) {
+      configStore.updateTableBehavior(
+        "SearchEntity",
+        "columns",
+        columns.filter((key) => key !== "downloadVolumeFactor"),
+      );
+    }
+  },
+  { immediate: true },
+);
+
+/**
+ * 只对「搜索快照」在加载时做一次归一（数据是 sendMessage 回来的普通对象，尚未进入 Pinia store）。
+ *
+ * 不要在 setup 里对 `runtimeStore.search.searchResult` 做实时归一 —— runtime store 用 sessionStorage 持久化，
+ * 且每次 mutation 都会触发整份 state 的序列化；逐条改种子会引发 N 次全量写入。
+ * 实时搜索结果在 offscreen（`getSiteSearchResult`）阶段已经归一过了，无需重复计算。
+ */
+function normalizeSnapshotPromotions(items: ISearchResultTorrent[] = []) {
+  items.forEach((item) => normalizeTorrentPromotion(item));
+}
 const filteredTableData = computed(() =>
   runtimeStore.search.searchResult.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
 );
@@ -269,6 +384,8 @@ watch(
             return;
           }
 
+          // 在进入 Pinia store 之前对普通对象做一次归一，避免逐条 mutation 触发 sessionStorage 全量写入
+          normalizeSnapshotPromotions(data.searchResult);
           runtimeStore.search = { ...data, snapshot: snapshotId };
           buildAdvanceItemPropsFn();
         })
@@ -370,7 +487,7 @@ function getSearchSolutionName(planKey: string) {
   return getSearchSolutionDisplayName(planKey, (key) => metadataStore.getSearchSolutionName(key));
 }
 
-const tableNonBooleanControlKey = ["maxTagCountBeforeGroup", "hiddenTagNames"];
+const tableNonBooleanControlKey = ["maxTagCountBeforeGroup", "hiddenTagNames", "promotionDisplay"];
 
 // 过滤出表格控制中非布尔类型的键
 const filteredTableBooleanControlKeys = computed(() => {
@@ -666,6 +783,16 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
               :tag-filterable="configStore.searchEntifyControl.tagClickToFilter"
               @filter-tag="toggleTagFilter"
             />
+          </template>
+
+          <!-- 优惠（下载量系数），默认隐藏；勾选该列后可按优惠排序 -->
+          <template v-else-if="column.key === 'downloadVolumeFactor'">
+            <span
+              style="white-space: nowrap"
+              :style="promoCellText(record) === '-' ? { color: 'var(--ptd-text-secondary)' } : undefined"
+            >
+              {{ promoCellText(record) }}
+            </span>
           </template>
 
           <!-- 种子大小，下载情况 -->

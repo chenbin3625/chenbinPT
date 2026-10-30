@@ -13,7 +13,9 @@ const metadataStore = useMetadataStore();
 export const tableCustomFilter = useTableCustomFilter({
   parseOptions: {
     keywords: ["site", "tags", "status"],
-    ranges: ["time", "size", "seeders", "leechers", "completed"],
+    // downloadVolumeFactor / uploadVolumeFactor 由 utils/promotion.ts 归一后一定存在于种子上（未知时为 undefined，
+    // 此时 checkRangeValue 会判为不匹配），因此可以像其它数值字段一样参与范围筛选。
+    ranges: ["time", "size", "seeders", "leechers", "completed", "downloadVolumeFactor", "uploadVolumeFactor"],
   },
   titleFields: ["title", "subTitle"],
   // V-5：initialSearchValue 必须是「store 恢复完成之后」的值，因此这里不再在模块求值期读取
@@ -26,6 +28,15 @@ export const tableCustomFilter = useTableCustomFilter({
     },
     time: "date",
     size: "size",
+    // 滑块步进会产出 0.35000000000000003 这类浮点噪声，生成过滤词时统一保留两位小数
+    downloadVolumeFactor: {
+      parse: (value: number | string) => Number(value),
+      build: (value: number | string) => String(Math.round(Number(value) * 100) / 100),
+    },
+    uploadVolumeFactor: {
+      parse: (value: number | string) => Number(value),
+      build: (value: number | string) => String(Math.round(Number(value) * 100) / 100),
+    },
   },
 });
 

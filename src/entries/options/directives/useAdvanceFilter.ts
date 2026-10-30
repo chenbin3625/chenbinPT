@@ -199,12 +199,42 @@ export function getThisDateUnitRange(
   return [Math.max(minDate, start.getTime()), Math.min(maxDate, now.getTime())];
 }
 
+/** 允许出现在滑块刻度上的最大值；再多就没有可读性，而且会让 antd 渲染出成百上千个 mark */
+const MAX_RANGE_TICKS = 80;
+
 export function generateRangeField(data: (number | undefined)[]): IRangedField {
-  const numData = data.filter((x) => !isNaN(x as unknown as number)) as number[];
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  const uniqueValues = new Set<number>();
+
+  // 不要用 Math.min(...data)：种子数上万时参数栈会被打爆，而且明显更慢。
+  // 同时只接受有限数字（`undefined` / `N/A` / NaN 这类未知值不参与求范围）。
+  for (const raw of data) {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+    uniqueValues.add(value);
+  }
+
+  // 刻度数过多会让滑块渲染出成百上千个 mark（且没有可读性），这里最多保留 MAX_RANGE_TICKS 个（均匀采样）
+  let ticks: number[] = [];
+  if (uniqueValues.size > 0) {
+    const sorted = [...uniqueValues].sort((a, b) => a - b);
+    if (sorted.length <= MAX_RANGE_TICKS) {
+      ticks = sorted;
+    } else {
+      const stepSize = (sorted.length - 1) / (MAX_RANGE_TICKS - 1);
+      for (let i = 0; i < MAX_RANGE_TICKS; i++) {
+        const value = sorted[Math.round(i * stepSize)];
+        if (ticks[ticks.length - 1] !== value) ticks.push(value);
+      }
+    }
+  }
 
   return {
-    range: numData.length > 0 ? [Math.min(...numData), Math.max(...numData)] : [-Infinity, Infinity],
-    ticks: Array.from(new Set(data)) as number[],
+    range: uniqueValues.size > 0 ? [min, max] : [-Infinity, Infinity],
+    ticks,
   };
 }
 
@@ -279,15 +309,23 @@ export function checkRangeValue(
   keyword: string,
   format: TFormat = {},
 ): boolean | undefined {
-  const itemValue = get(rawItem, keyword);
-  if (filter[keyword] && typeof itemValue !== "undefined") {
-    const valueFormat = getValueFormat(keyword, format);
-    const value = valueFormat.parse(itemValue) as number;
-    const { from, to } = getParsedRangeBounds(filter, keyword, format);
+  const range = filter[keyword] as { from?: unknown; to?: unknown } | undefined;
+  if (!range) return undefined; // 该 range 未参与筛选：调用方据 undefined 跳过
 
-    return value >= from && value <= to;
-  }
-  return undefined; // 同上
+  const itemValue = get(rawItem, keyword);
+  // 与 checkKeywordValue 保持一致：字段缺失视为不匹配。
+  // 否则「按优惠筛选（downloadVolumeFactor ≤ 0.5）」会把系数未知（旧快照 / 站点没给促销信息）的种子也列进来。
+  if (typeof itemValue === "undefined") return false;
+
+  const valueFormat = getValueFormat(keyword, format);
+  const value = Number(valueFormat.parse(itemValue));
+  if (!Number.isFinite(value)) return false;
+
+  const { from, to } = getParsedRangeBounds(filter, keyword, format);
+
+  // 注意不能用 `from || -Infinity` / `Boolean(from && ...)`：边界为 0 时会被当成「未设置」，
+  // 而 `downloadVolumeFactor` 的 0（免费）正是最有意义的筛选下界。
+  return value >= from && value <= to;
 }
 
 interface TableCustomFilterOptions<ItemType> {

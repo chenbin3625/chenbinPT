@@ -4,7 +4,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 
+import { getTorrentVolumeFactors } from "@ptd/site";
+
 import { formatSize } from "@/options/utils.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
 import type { ISearchResultTorrent } from "@/shared/types/storages/runtime.ts";
 
 import ActionTd from "./ActionTd.vue";
@@ -19,8 +22,25 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const display = useDisplay();
+const configStore = useConfigStore();
 
 const totalSize = computed(() => selectedTorrents.reduce((sum, torrent) => sum + (torrent.size || 0), 0));
+
+/**
+ * 计费体积：按下载量系数折算后的实际下载流量（系数未知时按 1 计，即与总大小一致）。
+ *
+ * 与上游 QuickFilterNotice 的「计费体积」等价：选片时用户真正关心的是「这一批会记多少下载」，
+ * 而 `totalSize` 在 50%/免费种子占比高时会明显高估。
+ */
+const billableSize = computed(() =>
+  selectedTorrents.reduce((sum, torrent) => {
+    const { downloadVolumeFactor } = getTorrentVolumeFactors(torrent);
+    return sum + (torrent.size || 0) * (downloadVolumeFactor ?? 1);
+  }, 0),
+);
+
+/** 「不显示」模式下连计费体积也一起隐藏（它同样是优惠系数的折算结果） */
+const showBillableSize = computed(() => configStore.searchEntifyControl.promotionDisplay !== "none");
 
 // 操作条固定在视口底部（页面滚动时始终可见），因此不能用 sticky：
 // #ptd-main 带 overflow: auto，是 sticky 的滚动容器且自身从不滚动（高度由内容撑开）。
@@ -83,6 +103,13 @@ onBeforeUnmount(() => {
       <HddOutlined />
       {{ t("SearchEntity.index.totalSize", [formatSize(totalSize)]) }}
     </span>
+
+    <template v-if="showBillableSize && billableSize !== totalSize">
+      <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
+      <span class="ptd-selection-bar__info ptd-secondary-text" :title="t('SearchEntity.index.billableSizeHint')">
+        {{ t("SearchEntity.index.billableSize", [formatSize(billableSize)]) }}
+      </span>
+    </template>
 
     <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
 

@@ -11,10 +11,11 @@ import { computed, nextTick, ref, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import dayjs from "dayjs";
 import { addDays, startOfDay } from "date-fns";
-import { ETorrentStatus, preDefinedTorrentTagNameSet, sortTorrentTags } from "@ptd/site";
+import { ETorrentStatus, getTorrentVolumeFactors, preDefinedTorrentTagNameSet, sortTorrentTags } from "@ptd/site";
 
 import { formatDate, formatSize } from "@/options/utils.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { tableCustomFilter } from "@/options/views/Overview/SearchEntity/utils/filter.ts";
 import { setDateRangeByDatePicker, getThisDateUnitRange } from "@/options/directives/useAdvanceFilter.ts";
 
@@ -25,6 +26,7 @@ const showDialog = defineModel<boolean>();
 
 const { t } = useI18n();
 const configStore = useConfigStore();
+const runtimeStore = useRuntimeStore();
 
 const {
   advanceItemPropsRef,
@@ -62,6 +64,34 @@ const filteredTorrentTags = computed(() => {
   return torrentTags.value.filter((tag) => showHiddenTags.value || !hiddenNames.includes(tag.name));
 });
 
+/**
+ * 列表渲染上限：种子/标签数量很大时，一次性挂载成百上千个 a-checkbox（还有 favicon / SiteName 组件）
+ * 会让弹窗打开卡住数秒。首屏只渲染一部分，其余用「显示全部」展开。
+ */
+const MAX_SITE_OPTIONS = 60;
+const MAX_TAG_OPTIONS = 80;
+
+const showAllSites = ref(false);
+const showAllTags = ref(false);
+
+const siteOptions = computed<string[]>(() => advanceItemPropsRef.value.site ?? []);
+const displayedSites = computed(() =>
+  showAllSites.value ? siteOptions.value : siteOptions.value.slice(0, MAX_SITE_OPTIONS),
+);
+const displayedTorrentTags = computed(() =>
+  showAllTags.value ? filteredTorrentTags.value : filteredTorrentTags.value.slice(0, MAX_TAG_OPTIONS),
+);
+
+/** 结果里确实存在优惠（免费/折扣）或非正常上传倍率时，才显示对应的滑块 */
+const hasPromoData = ref(false);
+const hasUploadData = ref(false);
+
+/** 「仅标签」与「不显示」模式下都不显示优惠相关的滑块 */
+const showPromoFilters = computed(() => ["factor", "both"].includes(configStore.searchEntifyControl.promotionDisplay));
+
+const promoDownloadMarks = tickMarks([0, 0.25, 0.5, 0.75, 1]);
+const promoUploadMarks = tickMarks([0, 1, 2, 3]);
+
 function updateTableFilter() {
   updateTableFilterValueFn();
   showDialog.value = false;
@@ -69,6 +99,23 @@ function updateTableFilter() {
 
 function enterDialog() {
   reBuildAdvanceFilter();
+  // 每次打开都从「收合」状态开始
+  showAllSites.value = false;
+  showAllTags.value = false;
+
+  // 单次线性扫描结果集判断是否需要优惠/上传倍率筛选，成本远低于直接构建 props。
+  // 旧快照可能只有 tags 而没有 factor，用 getTorrentVolumeFactors 兜底反推。
+  let hasDownloadPromo = false;
+  let hasUploadPromo = false;
+  for (const item of runtimeStore.search.searchResult) {
+    const { downloadVolumeFactor: download, uploadVolumeFactor: upload } = getTorrentVolumeFactors(item);
+    if (download !== undefined && download < 1) hasDownloadPromo = true;
+    if (upload !== undefined && upload !== 1) hasUploadPromo = true;
+    if (hasDownloadPromo && hasUploadPromo) break;
+  }
+
+  hasPromoData.value = hasDownloadPromo;
+  hasUploadData.value = hasUploadPromo;
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
@@ -104,20 +151,27 @@ watch(showDialog, (open) => {
         </a-col>
       </a-row>
 
-      <a-row :gutter="0"
-        ><a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.site") }}</a-typography-text></a-row
-      >
+      <a-row :gutter="0" style="align-items: center">
+        <a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.site") }}</a-typography-text>
+        <div style="flex: 1 1 auto"></div>
+        <a-button
+          v-if="siteOptions.length > MAX_SITE_OPTIONS"
+          size="small"
+          type="text"
+          @click="showAllSites = !showAllSites"
+        >
+          {{
+            showAllSites
+              ? t("common.AdvanceFilterGenerateDialog.collapse")
+              : t("common.AdvanceFilterGenerateDialog.showAll", [siteOptions.length])
+          }}
+        </a-button>
+      </a-row>
       <!-- V-21：`:indeterminate` 必须是计算值。硬编码的 `true` 会让每个复选框永远显示半选横杠，
            用户无法判断哪些筛选已生效。真实三态：checked = required（只保留）、
            indeterminate = exclude（排除）、未勾选 = 不参与筛选。 -->
       <a-row :gutter="0">
-        <a-col
-          v-for="site in advanceItemPropsRef.site"
-          :key="`${reBuildFilterCountRef}_${site}`"
-          :span="12"
-          :sm="8"
-          :md="6"
-        >
+        <a-col v-for="site in displayedSites" :key="`${reBuildFilterCountRef}_${site}`" :span="12" :sm="8" :md="6">
           <a-checkbox
             :checked="advanceFilterDictRef.site.required.includes(site)"
             :indeterminate="advanceFilterDictRef.site.exclude.includes(site)"
@@ -142,6 +196,18 @@ watch(showDialog, (open) => {
           <a-typography-text>{{ t("SearchEntity.AdvanceFilterGenerateDialog.tags") }}</a-typography-text>
           <div style="flex: 1 1 auto"></div>
           <a-button
+            v-if="filteredTorrentTags.length > MAX_TAG_OPTIONS"
+            size="small"
+            type="text"
+            @click="showAllTags = !showAllTags"
+          >
+            {{
+              showAllTags
+                ? t("common.AdvanceFilterGenerateDialog.collapse")
+                : t("common.AdvanceFilterGenerateDialog.showAll", [filteredTorrentTags.length])
+            }}
+          </a-button>
+          <a-button
             v-if="configStore.searchEntifyControl.hiddenTagNames?.length"
             @click="showHiddenTags = !showHiddenTags"
             type="text"
@@ -156,7 +222,7 @@ watch(showDialog, (open) => {
         </a-row>
         <a-row :gutter="0">
           <a-col
-            v-for="tag in filteredTorrentTags"
+            v-for="tag in displayedTorrentTags"
             :key="`${reBuildFilterCountRef}_${tag.name}`"
             :span="8"
             :sm="6"
@@ -216,7 +282,7 @@ watch(showDialog, (open) => {
         </a-col>
       </a-row>
       <a-row :gutter="0">
-        <a-col :span="12">
+        <a-col :xs="24" :md="12">
           <a-row :gutter="0" style="padding-right: 16px">
             <a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.date") }}</a-typography-text>
             <div style="flex: 1 1 auto"></div>
@@ -268,7 +334,7 @@ watch(showDialog, (open) => {
             />
           </a-row>
         </a-col>
-        <a-col :span="12">
+        <a-col :xs="24" :md="12">
           <a-row :gutter="0"
             ><a-typography-text>{{ t("SearchEntity.AdvanceFilterGenerateDialog.size") }}</a-typography-text></a-row
           >
@@ -287,7 +353,7 @@ watch(showDialog, (open) => {
         </a-col>
       </a-row>
       <a-row :gutter="0">
-        <a-col :span="8">
+        <a-col :xs="24" :md="8">
           <a-row :gutter="8"
             ><a-typography-text>{{ t("SearchEntity.AdvanceFilterGenerateDialog.seeders") }}</a-typography-text></a-row
           >
@@ -303,7 +369,7 @@ watch(showDialog, (open) => {
             />
           </a-row>
         </a-col>
-        <a-col :span="8">
+        <a-col :xs="24" :md="8">
           <a-row :gutter="8"
             ><a-typography-text>{{ t("SearchEntity.AdvanceFilterGenerateDialog.leechers") }}</a-typography-text></a-row
           >
@@ -319,7 +385,7 @@ watch(showDialog, (open) => {
             />
           </a-row>
         </a-col>
-        <a-col :span="8">
+        <a-col :xs="24" :md="8">
           <a-row :gutter="8"
             ><a-typography-text>{{ t("SearchEntity.AdvanceFilterGenerateDialog.completed") }}</a-typography-text></a-row
           >
@@ -331,6 +397,44 @@ watch(showDialog, (open) => {
               :max="advanceItemPropsRef.completed.range[1]"
               :min="advanceItemPropsRef.completed.range[0]"
               :step="1"
+              style="padding: 0 24px"
+            />
+          </a-row>
+        </a-col>
+      </a-row>
+
+      <!-- 优惠筛选：上传计费比例（倍率） + 下载计费比例（0% = 免费，100% = 正常） -->
+      <a-row v-if="showPromoFilters && (hasPromoData || hasUploadData)" :gutter="0">
+        <a-col v-if="hasUploadData" :xs="24" :md="hasPromoData ? 12 : 24">
+          <a-row :gutter="0"
+            ><a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.promoUpload") }}</a-typography-text></a-row
+          >
+          <a-row :gutter="0">
+            <a-slider
+              v-model:value="advanceFilterDictRef.uploadVolumeFactor"
+              :marks="promoUploadMarks"
+              :max="3"
+              :min="0"
+              :step="0.5"
+              :tip-formatter="(value: number) => `×${value ?? 0}`"
+              range
+              style="padding: 0 24px"
+            />
+          </a-row>
+        </a-col>
+        <a-col v-if="hasPromoData" :xs="24" :md="hasUploadData ? 12 : 24">
+          <a-row :gutter="0"
+            ><a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.promo") }}</a-typography-text></a-row
+          >
+          <a-row :gutter="0">
+            <a-slider
+              v-model:value="advanceFilterDictRef.downloadVolumeFactor"
+              :marks="promoDownloadMarks"
+              :max="1"
+              :min="0"
+              :step="0.05"
+              :tip-formatter="(value: number) => `${Math.round((value ?? 0) * 100)}%`"
+              range
               style="padding: 0 24px"
             />
           </a-row>
