@@ -8,9 +8,10 @@ import { type IUserInfo, type TSiteID } from "@ptd/site";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
-import { formatNumber, formatSize, formatDate } from "@/options/utils.ts";
+import { formatSize, formatDate } from "@/options/utils.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formatRatio } from "./utils/format.ts";
+import BonusFormatSpan from "./BonusFormatSpan.vue";
 import { loadSiteHistoryData } from "./utils/lastUserData.ts";
 
 import SiteName from "@/options/components/SiteName.vue";
@@ -230,12 +231,12 @@ watch(showDialog, (open) => {
         <template v-else-if="column.key === 'bonus'">
           <div>
             <a-row :gutter="8" style="align-items: center; justify-content: flex-end">
-              <span style="white-space: nowrap">{{ record.bonus ? formatNumber(record.bonus) : "-" }}</span>
+              <BonusFormatSpan v-if="record.bonus" :num="record.bonus" />
+              <span v-else style="white-space: nowrap">-</span>
             </a-row>
             <a-row :gutter="8" style="align-items: center; justify-content: flex-end">
-              <span style="white-space: nowrap">{{
-                record.seedingBonus ? formatNumber(record.seedingBonus) : "-"
-              }}</span>
+              <BonusFormatSpan v-if="record.seedingBonus" :num="record.seedingBonus" />
+              <span v-else style="white-space: nowrap">-</span>
             </a-row>
           </div>
         </template>
