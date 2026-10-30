@@ -21,7 +21,13 @@ import {
 } from "@ant-design/icons-vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import ColumnSelector from "../components/ColumnSelector.vue";
-import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+  useTableActionColumnLayout,
+} from "../utils/antdTable.ts";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { refDebounced } from "@vueuse/core";
@@ -140,12 +146,17 @@ const totalDlSpeed = computed(() => allTorrents.value.reduce((acc, t) => acc + (
 const allTorrents = computed(() => activeDownloaderIds.value.flatMap((id) => torrents.value[id] ?? []));
 
 const tableColumns = computed(() =>
-  toAntdColumns(fullTableHeader.value, {
-    sortBy: configStore.tableBehavior["MyClient"]?.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-    visibleKeys: (configStore.tableBehavior["MyClient"] as any)?.columns,
-  }),
+  // 操作列位置 / 固定（#1598）：先按可见列过滤 → toAntdColumns，最后再调整操作列位置
+  applyTableActionColumn(
+    toAntdColumns(fullTableHeader.value, {
+      sortBy: configStore.tableBehavior["MyClient"]?.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+      visibleKeys: (configStore.tableBehavior["MyClient"] as any)?.columns,
+    }),
+  ),
 );
+// 操作列固定在行首时，行首的选择列要一起固定
+const { rowSelectionFixed } = useTableActionColumnLayout();
 const tablePagination = computed(() =>
   toPagination(configStore.tableBehavior["MyClient"]?.itemsPerPage ?? 25, (v) =>
     configStore.updateTableBehavior("MyClient", "itemsPerPage", v),
@@ -742,6 +753,8 @@ function clearDownloaderFilter() {
         // D2-07：保留数据源之外的选中行，避免「筛选后再勾选」把隐藏行静默丢弃
         // （真正参与批量操作的是 selectedTorrents = 选中集合 ∩ 可见集合）
         preserveSelectedRowKeys: true,
+        // 操作列固定在行首时选择列也必须固定，保持固定列连续
+        fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"

@@ -22,7 +22,11 @@ import { consumeDroppedSearchSolutionCategoryNotices, useMetadataStore } from "@
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formatDate } from "@/options/utils.ts";
-import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  useTableActionColumnLayout,
+  withEllipsisCell,
+} from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import type { ISearchSolutionMetadata, TSolutionKey } from "@/shared/types.ts";
 
@@ -69,7 +73,9 @@ function isBuiltInDefaultRow(record: SearchSolutionTableRow) {
 
 const columns = computed(() => {
   const multiple = configStore.enableTableMultiSort ? 4 : undefined;
-  return [
+  // 操作列位置 / 固定（#1598）：本页「默认搜索方案」预设行是 tableRows 里的普通一行，
+  // 单元格按 column.key 分支渲染（不存在上游 body.prepend 手写 <td> 的问题），列顺序变化自动生效
+  return applyTableActionColumn([
     withEllipsisCell(
       {
         title: "№",
@@ -118,8 +124,10 @@ const columns = computed(() => {
       width: 120,
     },
     { title: t("common.action"), key: "action", width: 200 },
-  ];
+  ] as Record<string, any>[]);
 });
+/** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 
 // 与迁移前的默认排序一致（启用优先、sort 降序），且不把用户的临时排序写回配置
 const tableData = computed<SearchSolutionTableRow[]>(() =>
@@ -171,6 +179,8 @@ const rowSelection = computed(() => ({
   getCheckboxProps: (record: SearchSolutionTableRow) => ({
     disabled: isBuiltInDefaultRow(record),
   }),
+  // 操作列固定在行首时选择列也必须固定，保持固定列连续
+  fixed: rowSelectionFixed.value,
 }));
 
 function addSearchSolution() {
@@ -517,6 +527,7 @@ async function copySearchSolution(solutionId: TSolutionKey) {
       :pagination="pagination"
       :row-key="'id'"
       :row-selection="rowSelection"
+      :scroll="scroll"
       class="table-stripe table-header-no-wrap"
       size="small"
     >

@@ -19,7 +19,11 @@ import { getMediaServer, getMediaServerIcon, type IMediaServerBaseConfig } from 
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
-import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  useTableActionColumnLayout,
+  withEllipsisCell,
+} from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import type { TMediaServerKey } from "@/shared/types.ts";
 
@@ -95,33 +99,40 @@ const columns = computed(() => {
   const multiSort = configStore.enableTableMultiSort;
   // 名称列走 antd 默认文本渲染，这里补上最大宽度限制（type/address/action 列由 #bodyCell 接管）
   const ellipsisMaxWidth: Record<string, string> = { name: "14rem", type: "6rem", enabled: "6rem" };
-  return fullTableHeader.map((header) => {
-    const key = String(header.key);
-    const compare = (a: Record<string, any>, b: Record<string, any>) => {
-      const left = get(a, key);
-      const right = get(b, key);
-      if (typeof left === "number" && typeof right === "number") return left - right;
-      return String(left ?? "").localeCompare(String(right ?? ""));
-    };
-    return withEllipsisCell(
-      {
-        align: header.align === "end" ? "right" : header.align === "start" ? "left" : (header.align as "center"),
-        dataIndex: key,
-        key,
-        sorter: header.sortable === false ? false : multiSort ? { compare, multiple: 1 } : compare,
-        title: header.title,
-        width: header.width,
-      },
-      ellipsisMaxWidth[key] ?? header.maxWidth,
-    );
-  });
+  // 操作列位置 / 固定（#1598）：手写 antd columns 的页面也走同一 helper，最后统一调整操作列
+  return applyTableActionColumn(
+    fullTableHeader.map((header) => {
+      const key = String(header.key);
+      const compare = (a: Record<string, any>, b: Record<string, any>) => {
+        const left = get(a, key);
+        const right = get(b, key);
+        if (typeof left === "number" && typeof right === "number") return left - right;
+        return String(left ?? "").localeCompare(String(right ?? ""));
+      };
+      return withEllipsisCell(
+        {
+          align: header.align === "end" ? "right" : header.align === "start" ? "left" : (header.align as "center"),
+          dataIndex: key,
+          key,
+          sorter: header.sortable === false ? false : multiSort ? { compare, multiple: 1 } : compare,
+          title: header.title,
+          width: header.width,
+        },
+        ellipsisMaxWidth[key] ?? header.maxWidth,
+      );
+    }),
+  );
 });
+/** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 
 const rowSelection = computed(() => ({
   selectedRowKeys: tableSelected.value,
   onChange: (keys: (string | number)[]) => {
     tableSelected.value = keys as TMediaServerKey[];
   },
+  // 操作列固定在行首时选择列也必须固定，保持固定列连续
+  fixed: rowSelectionFixed.value,
 }));
 
 const toEditMediaServerId = ref<TMediaServerKey | null>(null);
@@ -176,6 +187,7 @@ function pruneTableSelected() {
       :pagination="{ pageSize: 25, showSizeChanger: true }"
       :row-key="(record: any) => record.id"
       :row-selection="rowSelection"
+      :scroll="scroll"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'type'">

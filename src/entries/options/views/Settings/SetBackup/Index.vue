@@ -21,7 +21,11 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { formatDate, formatDateTimeForTable } from "@/options/utils.ts";
-import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  useTableActionColumnLayout,
+  withEllipsisCell,
+} from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import { BackupFields, type IBackupServerMetadata, type TBackupFields, type TBackupServerKey } from "@/shared/types.ts";
 import { resolveColor } from "@/shared/colors.ts";
@@ -63,7 +67,8 @@ const showDeleteDialog = ref<boolean>(false);
 
 const columns = computed(() => {
   const multiple = configStore.enableTableMultiSort ? 4 : undefined;
-  return [
+  // 操作列位置 / 固定（#1598）：手写 antd columns 的页面也走同一 helper，最后统一调整操作列
+  return applyTableActionColumn([
     { title: t("common.type"), dataIndex: "type", key: "type", align: "center" as const, width: 90 },
     withEllipsisCell(
       {
@@ -113,8 +118,10 @@ const columns = computed(() => {
       },
     },
     { title: t("common.action"), key: "action" },
-  ];
+  ] as Record<string, any>[]);
 });
+/** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 const tableSelected = ref<TBackupServerKey[]>([]);
 /** 工具条搜索词：按名称 / 类型过滤备份服务器列表 */
 const tableFilter = ref("");
@@ -303,7 +310,8 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
       :loading="isStoreHydrating"
       :pagination="{ pageSize: 25, pageSizeOptions: ['5', '10', '25', '50', '100'], showSizeChanger: true }"
       :row-key="'id'"
-      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange, fixed: rowSelectionFixed }"
+      :scroll="scroll"
       class="table-stripe table-header-no-wrap"
       size="small"
     >

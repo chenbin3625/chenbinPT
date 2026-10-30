@@ -24,7 +24,11 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type { TDownloaderKey } from "@/shared/types.ts";
 import { getDownloaderIcon, getDownloaderMetaData, type TorrentClientMetaData } from "@ptd/downloader";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
-import { withEllipsisCell } from "@/options/views/Overview/utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  useTableActionColumnLayout,
+  withEllipsisCell,
+} from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 
 import AddDialog from "./AddDialog.vue";
@@ -102,7 +106,8 @@ function sortOrderOf(key: string): "ascend" | "descend" | undefined {
 
 const columns = computed(() => {
   const multiple = configStore.enableTableMultiSort ? 4 : undefined;
-  return [
+  // 操作列位置 / 固定（#1598）：手写 antd columns 的页面也走同一 helper，最后统一调整操作列
+  return applyTableActionColumn([
     {
       title: "№",
       dataIndex: "sortIndex",
@@ -146,8 +151,10 @@ const columns = computed(() => {
     { title: t("SetDownloader.index.table.enabled"), dataIndex: "enabled", key: "enabled", align: "center" as const },
     { title: t("SetDownloader.index.table.autodl"), key: "feature.DefaultAutoStart", align: "center" as const },
     { title: t("common.action"), key: "action" },
-  ];
+  ] as Record<string, any>[]);
 });
+/** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 
 const pagination = computed(() => {
   const pageSize = configStore.tableBehavior.SetDownloader.itemsPerPage;
@@ -320,7 +327,8 @@ function pruneTableSelected() {
       :loading="isStoreHydrating"
       :pagination="pagination"
       :row-key="'id'"
-      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange }"
+      :row-selection="{ selectedRowKeys: tableSelected, onChange: onSelectionChange, fixed: rowSelectionFixed }"
+      :scroll="scroll"
       class="table-stripe table-header-no-wrap"
       size="small"
       @change="onTableChange"

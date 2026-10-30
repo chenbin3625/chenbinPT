@@ -23,7 +23,13 @@ import type { DataTableHeader } from "@/options/types/dataTable.ts";
 import NavButton from "@/options/components/NavButton.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import { confirmModal } from "../utils/antdConfirm.ts";
-import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+  useTableActionColumnLayout,
+} from "../utils/antdTable.ts";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import { summarizeKeepUploadSendOutcomes, type TKeepUploadSendOutcome } from "./utils.ts";
 
@@ -49,22 +55,28 @@ const tableHeader: DataTableHeader[] = [
 ];
 
 const columns = computed(() =>
-  toAntdColumns(tableHeader, {
-    sortBy: configStore.tableBehavior.KeepUploadTask?.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-  }).map((column) =>
-    // 「种子数」不是任务上的字段（由 items.length 得出），按它排序需要单独的比较函数
-    column.key === "count" && column.sorter
-      ? {
-          ...column,
-          sorter: {
-            ...column.sorter,
-            compare: (a: IKeepUploadTask, b: IKeepUploadTask) => a.items.length - b.items.length,
-          },
-        }
-      : column,
+  // 操作列位置 / 固定（#1598）：antd 的展开列固定插在行首，所以这里不需要像上游那样把展开列
+  // push 到表头末尾；反过来，操作列固定到行首时展开列要一起固定（模板里 expand-fixed）。
+  applyTableActionColumn(
+    toAntdColumns(tableHeader, {
+      sortBy: configStore.tableBehavior.KeepUploadTask?.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+    }).map((column) =>
+      // 「种子数」不是任务上的字段（由 items.length 得出），按它排序需要单独的比较函数
+      column.key === "count" && column.sorter
+        ? {
+            ...column,
+            sorter: {
+              ...column.sorter,
+              compare: (a: IKeepUploadTask, b: IKeepUploadTask) => a.items.length - b.items.length,
+            },
+          }
+        : column,
+    ),
   ),
 );
+// 操作列固定在行首时，展开列 / 选择列要一起固定在左侧，保持固定列连续
+const { rowSelectionFixed, expandFixed } = useTableActionColumnLayout();
 
 const tablePagination = computed(() =>
   toPagination(configStore.tableBehavior.KeepUploadTask?.itemsPerPage ?? 10, (v) =>
@@ -378,8 +390,9 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
       :loading="loading"
       :pagination="tablePagination"
       :row-key="'id'"
-      :row-selection="{ selectedRowKeys: selectedTasks, onChange: onSelectionChange }"
+      :row-selection="{ selectedRowKeys: selectedTasks, onChange: onSelectionChange, fixed: rowSelectionFixed }"
       :expanded-row-keys="expanded"
+      :expand-fixed="expandFixed"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"
       @change="onTableChange"

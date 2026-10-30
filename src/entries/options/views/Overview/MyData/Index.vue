@@ -50,7 +50,13 @@ import ExportUserInfoDialog from "./ExportUserInfoDialog.vue";
 
 import { formatRatio } from "./utils/format.ts";
 import ColumnSelector from "../components/ColumnSelector.vue";
-import { toAntdColumns, toPagination, toSortBy } from "../utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+  useTableActionColumnLayout,
+} from "../utils/antdTable.ts";
 import {
   tableData,
   initTableData,
@@ -170,12 +176,18 @@ const lastUpdateErrorStatusValues = [
 ].map((item) => String(item));
 
 const tableColumns = computed(() =>
-  toAntdColumns(fullTableHeader, {
-    sortBy: configStore.tableBehavior.MyData.sortBy,
-    multiSort: configStore.enableTableMultiSort,
-    visibleKeys: configStore.tableBehavior.MyData.columns,
-  }),
+  // 操作列位置 / 固定（#1598）：先按可见列过滤（props.disabled 的列常显）→ toAntdColumns，
+  // 最后再调整操作列位置，避免操作列被可见列过滤逻辑影响
+  applyTableActionColumn(
+    toAntdColumns(fullTableHeader, {
+      sortBy: configStore.tableBehavior.MyData.sortBy,
+      multiSort: configStore.enableTableMultiSort,
+      visibleKeys: configStore.tableBehavior.MyData.columns,
+    }),
+  ),
 );
+// 操作列固定在行首时，行首的选择列要一起固定
+const { rowSelectionFixed } = useTableActionColumnLayout();
 const filteredTableData = computed(() =>
   tableData.value.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
 );
@@ -491,6 +503,8 @@ const showExportDialog = ref(false);
         getCheckboxProps: (record: any) => ({ disabled: record.selectable === false }),
         // 表格筛选/分页改变 dataSource 时保留已选站点，避免下一次勾选时静默丢掉先前的选择
         preserveSelectedRowKeys: true,
+        // 操作列固定在行首时选择列也必须固定，保持固定列连续
+        fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"

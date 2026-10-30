@@ -24,6 +24,7 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
+import { applyTableActionColumn, useTableActionColumnLayout } from "@/options/views/Overview/utils/antdTable.ts";
 
 import AddDialog from "./AddDialog.vue";
 import EditDialog from "./EditDialog.vue";
@@ -88,8 +89,14 @@ const tableHeader = computed(() => {
     });
   }
 
-  return [...baseHeaders, { title: t("common.action"), key: "action", sortable: false }] as DataTableHeader[];
+  // 操作列位置 / 固定（#1598）：先拼好基础列再交给 helper 调整操作列位置
+  return applyTableActionColumn([
+    ...baseHeaders,
+    { title: t("common.action"), key: "action", sortable: false },
+  ] as DataTableHeader[]);
 });
+/** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
+const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 
 const booleanUserConfigKeywords = ["isOffline", "allowSearch", "allowQueryUserInfo"];
 
@@ -151,6 +158,8 @@ const rowSelection = computed(() => ({
   onChange: (keys: (string | number)[]) => {
     tableSelected.value = keys as TSiteID[];
   },
+  // 操作列固定在行首时选择列也必须固定，保持固定列连续
+  fixed: rowSelectionFixed.value,
 }));
 
 /**
@@ -426,6 +435,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
       :pagination="pagination"
       :row-key="(record: ISiteTableItem) => record.id"
       :row-selection="rowSelection"
+      :scroll="scroll"
       @change="onTableChange"
     >
       <template #bodyCell="{ column, record }">
