@@ -577,12 +577,21 @@
       "table": {
         "category": "Category",
         "comments": "Comments",
+        "downloadVolumeFactor": "Promotion",
         "completed": "Completed",
         "leechers": "Leechers",
         "seeders": "Seeders",
         "size": "Size",
         "time": "Published(≈)",
         "title": "Title"
+      },
+      "billableSize": "Billable size {0}",
+      "billableSizeHint": "Actual billable size of the selected torrents (scaled by the download volume factor; unknown factors count as 1)",
+      "tagTooltip": {
+        "downloadPercent": "Download counted at {0}%",
+        "freeDownload": "Downloads are not counted",
+        "noUpload": "Uploads are not counted",
+        "uploadTimes": "Upload ×{0}"
       },
       "totalSize": "Total size {0}",
       "uploadAtFormatAsAlive": "Display Upload Time as Relative Time"
@@ -829,6 +838,14 @@
       "mediaSearchLimit": "Number of search results per request",
       "mediaSearchLimitMessage": "Please do not load too many search results at once. It's not optimized with virtual-scroll, which may cause the browser to freeze and affect the performance of the media server.",
       "mediaServerSearchConfig": "Media Server Search Configuration",
+      "promotionDisplay": "Promotion display",
+      "promotionDisplayMessage": "\"Hide\" hides all promotion info; \"Tags only\" keeps the original behavior; \"Factor only\" hides promotion tags and uses the Promotion column and advanced filter sliders instead; \"Tags + factor\" shows both",
+      "promotionDisplayOptions": {
+        "both": "Tags + factor",
+        "factor": "Factor only",
+        "none": "Hide",
+        "tags": "Tags only"
+      },
       "saveLastSearchFilter": "Save last used search filter",
       "searchPlanLabel": "Search Plan",
       "showHotRecommendations": "Show hot recommendations button in the search box",
@@ -1329,11 +1346,15 @@
         "week": "This Week",
         "year": "This Year"
       },
+      "collapse": "Collapse",
       "exclude": "Exclude",
       "generate": "Generate",
       "keywords": "Keywords",
+      "promo": "Promotion (download factor)",
+      "promoUpload": "Upload factor",
       "required": "Required",
       "reset": "Reset Filter",
+      "showAll": "Show all ({0})",
       "site": "@:common.site",
       "title": "Generate Advanced Filter"
     },

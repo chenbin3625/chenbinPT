@@ -5,7 +5,7 @@ import { useRouter } from "vue-router";
 import { ArrowRightOutlined, SearchOutlined, SelectOutlined } from "@ant-design/icons-vue";
 
 import { socialBuildUrlMap } from "@ptd/social";
-import type { ITorrent } from "@ptd/site";
+import { isPromotionTagName, tagsToPromotion, type ITorrent, type ITorrentTag } from "@ptd/site";
 import type { ISocialInformation, TSupportSocialSite } from "@ptd/social/types.ts";
 
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -60,7 +60,49 @@ const visibleTags = computed(() => {
   const tags = item.tags;
   if (!tags || !tags.length) return [];
   const hiddenNames = configStore.searchEntifyControl.hiddenTagNames || [];
-  return tags.filter((tag) => !hiddenNames.includes(tag.name));
+  // 「仅数值」（factor）与「不显示」（none）模式下不再展示优惠标签：优惠信息由「优惠」列 / 高级筛选承担，
+  // 再叠一遍标签只会让同一信息出现两次。其他标签（H&R / 官方 / 可退款 / 分辨率和编码等）照常展示。
+  const hidePromotionTags = ["factor", "none"].includes(configStore.searchEntifyControl.promotionDisplay);
+  return tags.filter((tag) => !hiddenNames.includes(tag.name) && !(hidePromotionTags && isPromotionTagName(tag.name)));
+});
+
+/**
+ * 优惠标签的数值释义：由 `tagsToPromotion` 反推该标签确定了哪一维系数，非优惠标签返回 undefined。
+ *
+ * 标签名本身是「计费比例」口径（`25%` = 按 25% 计费），对用户不够直观，悬停时给出「下载量按 x% 计算 /
+ * 上传量 ×2 / 不计流量」这类解释。注意**不要**把它塞进 `tagFilterBindings()` 的 title：
+ * 那个 title 是「点击筛选」的操作提示，两者不能互相覆盖。
+ */
+function tagTooltip(tag: ITorrentTag): string | undefined {
+  const { downloadVolumeFactor, uploadVolumeFactor } = tagsToPromotion([tag]);
+  const parts: string[] = [];
+
+  if (downloadVolumeFactor !== undefined) {
+    parts.push(
+      downloadVolumeFactor === 0
+        ? t("SearchEntity.index.tagTooltip.freeDownload")
+        : t("SearchEntity.index.tagTooltip.downloadPercent", [Math.round(downloadVolumeFactor * 100)]),
+    );
+  }
+
+  if (uploadVolumeFactor !== undefined && uploadVolumeFactor !== 1) {
+    parts.push(
+      uploadVolumeFactor === 0
+        ? t("SearchEntity.index.tagTooltip.noUpload")
+        : t("SearchEntity.index.tagTooltip.uploadTimes", [uploadVolumeFactor]),
+    );
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+/** 预先算好每个标签的释义，避免模板里 v-if / :title 各算一次、每行每标签跑一遍正则 */
+const tagTooltips = computed<Record<string, string | undefined>>(() => {
+  const map: Record<string, string | undefined> = {};
+  for (const tag of item.tags ?? []) {
+    map[tag.name] = tagTooltip(tag);
+  }
+  return map;
 });
 
 const maxTagCount = computed(() => configStore.searchEntifyControl.maxTagCountBeforeGroup || 0);
@@ -296,15 +338,26 @@ function canAdvanceSearch(site: TSupportSocialSite) {
         <template v-if="configStore.searchEntifyControl.showTorrentTag && item.tags && item.tags.length > 0">
           <!-- M-30：按标签自带颜色渲染（tags.ts 的 31 个预定义标签 + 站点页面抓到的真实底色），
                统一中性色会让免费/2x/H&R/官方等标签无法一眼区分 -->
-          <a-tag
-            v-for="tag in displayedTags"
-            :key="tag.name"
-            v-bind="tagFilterBindings(tag.name)"
-            :color="resolveColor(tag.color) ?? 'default'"
-            style="margin-right: 4px"
-          >
-            {{ tag.name }}
-          </a-tag>
+          <!-- 优惠标签：悬停给出「按 x% 计费 / 上传 ×2」的释义（非优惠标签没有释义，不额外挂 Tooltip 组件） -->
+          <template v-for="tag in displayedTags" :key="tag.name">
+            <a-tooltip v-if="tagTooltips[tag.name]" :title="tagTooltips[tag.name]" placement="top">
+              <a-tag
+                v-bind="tagFilterBindings(tag.name)"
+                :color="resolveColor(tag.color) ?? 'default'"
+                style="margin-right: 4px"
+              >
+                {{ tag.name }}
+              </a-tag>
+            </a-tooltip>
+            <a-tag
+              v-else
+              v-bind="tagFilterBindings(tag.name)"
+              :color="resolveColor(tag.color) ?? 'default'"
+              style="margin-right: 4px"
+            >
+              {{ tag.name }}
+            </a-tag>
+          </template>
           <a-tag v-if="hasMoreTags" color="default" style="margin-right: 4px" @click="tagsExpanded = true">
             <template #icon><ArrowRightOutlined /></template>
             {{ hiddenTagCount }}

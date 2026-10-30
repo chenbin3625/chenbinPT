@@ -28,6 +28,14 @@ defineExpose({
   beforeSave,
 });
 
+/** 优惠信息的展示形式（与搜索结果页的「优惠」列、标签显隐联动） */
+const promotionDisplayOptions = computed(() => [
+  { label: t("SetBase.searchEntity.promotionDisplayOptions.tags"), value: "tags" },
+  { label: t("SetBase.searchEntity.promotionDisplayOptions.factor"), value: "factor" },
+  { label: t("SetBase.searchEntity.promotionDisplayOptions.both"), value: "both" },
+  { label: t("SetBase.searchEntity.promotionDisplayOptions.none"), value: "none" },
+]);
+
 const hiddenTagNamesText = computed({
   get: () => config.value.searchEntifyControl.hiddenTagNames.join("\n"),
   set: (val: string) => {
@@ -113,6 +121,20 @@ const hiddenTagNamesText = computed({
             :min="0"
             style="width: min(100%, 420px)"
           />
+        </div>
+
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.searchEntity.promotionDisplay") }}</a-typography-text>
+          <a-select
+            v-model:value="config.searchEntifyControl.promotionDisplay"
+            :options="promotionDisplayOptions"
+            style="width: min(100%, 420px)"
+          />
+        </div>
+        <div style="text-align: end">
+          <a-typography-text type="secondary">{{
+            t("SetBase.searchEntity.promotionDisplayMessage")
+          }}</a-typography-text>
         </div>
 
         <div class="ptd-settings-row">

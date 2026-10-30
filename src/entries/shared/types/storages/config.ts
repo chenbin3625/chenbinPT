@@ -151,6 +151,9 @@ export interface IConfigPiniaStorageSchema {
     showSiteName: boolean;
     // 是否展示种子的Tags信息
     showTorrentTag: boolean;
+    // 优惠信息的展示形式：tags 仅标签（默认，与原行为一致）、factor 仅数值（隐藏优惠标签，改用「优惠」列与高级筛选）、
+    // both 标签 + 数值、none 完全不显示优惠信息（含「计费体积」）。语义见 packages/site/utils/promotion.ts
+    promotionDisplay: "tags" | "factor" | "both" | "none";
     // 是否展示种子的副标题信息
     showTorrentSubtitle: boolean;
     // 是否展示种子额外的媒体评分信息（需要该种子提供 ext_{imdb, douban} 信息）
