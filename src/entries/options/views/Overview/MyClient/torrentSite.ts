@@ -1,6 +1,7 @@
 import { shallowReactive } from "vue";
 
 import type { TSiteHost, TSiteID } from "@ptd/site";
+import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 import type { CTorrent } from "@ptd/downloader";
 
 import { sendMessage } from "@/messages.ts";
@@ -123,12 +124,8 @@ async function getSiteType(siteId: TSiteID): Promise<"private" | "public"> {
     return cached;
   }
 
-  let siteType: "private" | "public" = "public";
-  try {
-    siteType = (await useMetadataStore().getSiteMetadata(siteId))?.type ?? "public";
-  } catch {
-    siteType = "public";
-  }
+  // 只要 type：查构建期轻量索引即可（索引里没有的一律当 public，与原来的兜底一致）
+  const siteType = siteMetadataIndex[siteId]?.type ?? "public";
   siteTypeCache.set(siteId, siteType);
   return siteType;
 }

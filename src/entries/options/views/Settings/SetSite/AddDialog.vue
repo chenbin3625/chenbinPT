@@ -2,12 +2,13 @@
 import { QuestionCircleOutlined } from "@ant-design/icons-vue";
 import { computed, nextTick, provide, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ISiteMetadata, type ISiteUserConfig, type TSiteID } from "@ptd/site";
+import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
+import type { TSiteMetadataIndexEntryWithId } from "@ptd/site/metadataIndex";
 
 import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
-import { getCanAddedSiteMetadata } from "./utils.ts";
+import { getCanAddedSiteIndexEntries } from "./utils.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import Editor from "./Editor.vue";
@@ -35,7 +36,9 @@ function resetDialog() {
 }
 
 const showDeadSite = ref<boolean>(false);
-const allUnAddedSites = shallowRef<ISiteMetadata[]>([]);
+// 只读固定属性（name/urls/aka/description/tags/version…），所以直接来自构建期轻量索引；
+// 真正需要完整定义的是下一步的 Editor，它自己按 id 去取
+const allUnAddedSites = shallowRef<TSiteMetadataIndexEntryWithId[]>([]);
 const canAddSites = computed(() =>
   allUnAddedSites.value.filter((site) => (showDeadSite.value && site.isDead) || !site.isDead),
 );
@@ -43,7 +46,7 @@ const canAddSites = computed(() =>
 const siteOptions = computed(() => canAddSites.value.map((site) => ({ label: site.name ?? "", site, value: site.id })));
 
 /** a-select 的 #option / #filter-option / #optionLabel 回调拿到的对象形态不同（原始 option 或 vc-select 的扁平记录） */
-function optionSite(option: any): ISiteMetadata | undefined {
+function optionSite(option: any): TSiteMetadataIndexEntryWithId | undefined {
   return option?.site ?? option?.data?.site;
 }
 
@@ -54,10 +57,9 @@ function filterSite(input: string, option: any) {
   return haystack.includes(String(input).toLowerCase());
 }
 
-async function loadCanAddSites() {
+function loadCanAddSites() {
   // Load the sites that can be added
-  const sites = await getCanAddedSiteMetadata();
-  allUnAddedSites.value = Object.values(sites);
+  allUnAddedSites.value = getCanAddedSiteIndexEntries();
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。

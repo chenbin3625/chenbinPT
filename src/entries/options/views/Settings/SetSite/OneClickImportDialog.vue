@@ -11,7 +11,8 @@ import {
 } from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
 import { type Component, computed, nextTick, ref, shallowRef, watch } from "vue";
-import { EResultParseStatus, ISiteMetadata, ISiteUserConfig, TSiteID } from "@ptd/site";
+import { EResultParseStatus, ISiteUserConfig, TSiteID } from "@ptd/site";
+import type { TSiteMetadataIndexEntryWithId } from "@ptd/site/metadataIndex";
 
 import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
@@ -22,10 +23,9 @@ import { useResetableRef } from "@/options/directives/useResetableRef.ts";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import CheckSwitchButton from "@/options/components/CheckSwitchButton.vue";
 import LazyMount from "@/options/components/LazyMount.vue";
-import PageSkeleton from "@/options/components/PageSkeleton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
-import { iterateCanAddedSiteMetadata } from "./utils.ts";
+import { getCanAddedSiteIndexEntries } from "./utils.ts";
 
 const showDialog = defineModel<boolean>();
 
@@ -49,19 +49,14 @@ const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 
-// 待添加的站点列表：站点定义是一个站点一个 chunk 的动态 import，读满一批就先渲染一批（见 utils.ts）
-const canAddSites = shallowRef<ISiteMetadata[]>([]);
-// 加载期间：一条都还没读到时用骨架屏占位，读到一部分后在标题栏显示进度
-const isLoadingCanAddSites = ref<boolean>(false);
-
-// 每读满这么多条刷新一次列表，避免 300+ 条时触发 300+ 次全量重渲染
-const SITE_LIST_FLUSH_STEP = 16;
+// 待添加的站点列表：数据来自构建期轻量索引（见 utils.ts），一次同步取全，不需要渐进加载
+const canAddSites = shallowRef<TSiteMetadataIndexEntryWithId[]>([]);
 
 // 卡片高度（ptd-list-item 两行 + 内边距），供 LazyMount 占位使用，避免懒加载过程中滚动条来回抖动
 const SITE_CARD_MIN_HEIGHT = 72;
 
 const siteMetadataById = computed(
-  () => new Map<TSiteID, ISiteMetadata>(canAddSites.value.map((site) => [site.id, site])),
+  () => new Map<TSiteID, TSiteMetadataIndexEntryWithId>(canAddSites.value.map((site) => [site.id, site])),
 );
 
 // 是否把 public 站点也列出来（public 站点不经过搜索校验就会被直接添加，所以默认不列）
@@ -83,9 +78,6 @@ watch(includePublicSite, (include) => {
   );
 });
 
-// 每次打开 dialog 递增，用来丢弃上一次尚未读完的加载
-let siteListLoadToken = 0;
-
 // 模板里每张卡片都要查「是否已选中/已成功/已失败」，用 Set 代替 Array.includes 的 O(n) 扫描
 const toWorkSiteIds = computed(() => new Set(importStatus.value.toWork));
 const successSiteIds = computed(() => new Set(importStatus.value.success));
@@ -94,14 +86,14 @@ const failedSiteIds = computed(() => new Set(importStatus.value.failed));
 // 「全选」的可选范围：当前列出的站点里，不需要手动录入、也还没导入成功的那些
 const selectableSiteIds = computed(() =>
   displayedSites.value
-    .filter((site) => !site.userInputSettingMeta && !successSiteIds.value.has(site.id))
+    .filter((site) => !site.hasUserInputSettingMeta && !successSiteIds.value.has(site.id))
     .map((site) => site.id),
 );
 
 type TStatusIconProp = { icon: Component; color?: string; title: string };
 
 const statusIconProp = (site: TSiteID): TStatusIconProp => {
-  if (siteMetadataById.value.get(site)?.userInputSettingMeta) {
+  if (siteMetadataById.value.get(site)?.hasUserInputSettingMeta) {
     // 需要手动添加
     return {
       icon: CloseCircleOutlined,
@@ -151,8 +143,8 @@ async function doAutoImport() {
     try {
       let isThisSiteSuccess = false;
 
-      // 拿到 siteMetadata, siteUserConfig
-      const siteMetadata = siteMetadataById.value.get(site) as ISiteMetadata;
+      // 索引条目里已经有 type 与 urls（导入本身由 offscreen 用完整定义去做）
+      const siteMetadata = siteMetadataById.value.get(site) as TSiteMetadataIndexEntryWithId;
       const siteUserConfig = (await metadataStore.getSiteUserConfig(site, true)) as ISiteUserConfig;
 
       // 对于 public 站点，不需要额外测试是否能够搜索
@@ -206,34 +198,11 @@ async function doAutoImport() {
   );
 }
 
-async function dialogEnter() {
+function dialogEnter() {
   resetImportStatus(); // 重置状态
-  canAddSites.value = [];
   includePublicSite.value = false;
-
-  const token = ++siteListLoadToken;
-  isLoadingCanAddSites.value = true;
-
-  const loadedSites: ISiteMetadata[] = [];
-  try {
-    for await (const siteMetadata of iterateCanAddedSiteMetadata()) {
-      if (token !== siteListLoadToken) return; // 已经被下一次打开接管，放弃这一轮追加
-      if (siteMetadata.isDead) continue; // 已离线的站点不参与导入
-
-      loadedSites.push(siteMetadata);
-      if (loadedSites.length % SITE_LIST_FLUSH_STEP === 0) {
-        canAddSites.value = [...loadedSites];
-      }
-    }
-
-    if (token === siteListLoadToken) {
-      canAddSites.value = [...loadedSites];
-    }
-  } finally {
-    if (token === siteListLoadToken) {
-      isLoadingCanAddSites.value = false;
-    }
-  }
+  // 轻量索引是一次同步取全的，所以这里不再需要「边读边渲染」那套（分批刷入 / token 作废）
+  canAddSites.value = getCanAddedSiteIndexEntries().filter((site) => !site.isDead); // 已离线的站点不参与导入
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
@@ -272,10 +241,6 @@ watch(showDialog, (open) => {
           <span v-if="importStatus.isWorking">
             {{ t("SetSite.oneClickImportDialog.trying", { name: siteMetadataById.get(importStatus.working)?.name }) }}
           </span>
-          <span v-else-if="isLoadingCanAddSites" class="one-click-import__loading">
-            <a-spin size="small" />
-            {{ t("SetSite.oneClickImportDialog.loading", { loaded: displayedSites.length }) }}
-          </span>
         </a-typography-text>
       </span>
       <a-flex align="center" :gap="8" wrap="wrap">
@@ -290,9 +255,7 @@ watch(showDialog, (open) => {
       </a-flex>
     </div>
 
-    <!-- 一条都还没读到时用卡片骨架占位，避免把「尚未加载完」误显示为「无数据」；读到后边读边渲染 -->
-    <PageSkeleton v-if="isLoadingCanAddSites && !displayedSites.length" :count="6" :rows="2" variant="masonry" />
-    <NoDataPlaceholder v-else-if="!displayedSites.length" />
+    <NoDataPlaceholder v-if="!displayedSites.length" />
     <a-list v-else style="overflow: hidden; padding: 12px 12px 0 12px">
       <!-- 站点卡片间距由列上的 pa-1 控制，行容器保持零间距 -->
       <a-row :gutter="0">
@@ -312,12 +275,14 @@ watch(showDialog, (open) => {
                   <a-flex align="center" :gap="8">
                     <a-checkbox
                       :checked="toWorkSiteIds.has(site.id)"
-                      :disabled="!!site.userInputSettingMeta || importStatus.isWorking || successSiteIds.has(site.id)"
-                      :indeterminate="!!site.userInputSettingMeta || successSiteIds.has(site.id)"
+                      :disabled="
+                        !!site.hasUserInputSettingMeta || importStatus.isWorking || successSiteIds.has(site.id)
+                      "
+                      :indeterminate="!!site.hasUserInputSettingMeta || successSiteIds.has(site.id)"
                       @update:checked="(checked: boolean) => toggleToWork(site.id, checked)"
                     >
                       <CheckOutlined v-if="successSiteIds.has(site.id)" />
-                      <CloseOutlined v-else-if="site.userInputSettingMeta" />
+                      <CloseOutlined v-else-if="site.hasUserInputSettingMeta" />
                     </a-checkbox>
                     <SiteFavicon :site-id="site.id" flush-on-click style="margin-right: 8px" />
                   </a-flex>
@@ -354,13 +319,6 @@ watch(showDialog, (open) => {
 </template>
 
 <style scoped>
-.one-click-import__loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 8px;
-}
-
 .one-click-import__public-switch {
   display: inline-flex;
   align-items: center;
