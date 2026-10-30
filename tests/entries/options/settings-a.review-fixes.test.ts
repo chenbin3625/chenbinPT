@@ -40,11 +40,8 @@ const canAddSites = vi.hoisted(() => ({ value: {} as Record<string, any> }));
 vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => meta }));
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
 vi.mock("@/options/views/Settings/SetSite/utils.ts", () => ({
-  getCanAddedSiteMetadata: vi.fn(async () => canAddSites.value),
-  // 一键导入 dialog 改为边读边渲染（移植上游 7f8cb48a），读的是这个异步生成器
-  iterateCanAddedSiteMetadata: async function* () {
-    yield* Object.values(canAddSites.value);
-  },
+  // 站点列表改由构建期轻量索引同步提供（上游 8c6022c98c / #1611）
+  getCanAddedSiteIndexEntries: () => Object.values(canAddSites.value),
 }));
 
 const SITE_A_METADATA = {

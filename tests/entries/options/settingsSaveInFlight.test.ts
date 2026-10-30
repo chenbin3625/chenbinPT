@@ -39,7 +39,7 @@ vi.mock("@ptd/backupServer", () => ({
   getBackupServerIcon: () => "",
 }));
 vi.mock("@/options/views/Settings/SetSite/utils.ts", () => ({
-  getCanAddedSiteMetadata: async () => ({ test: { id: "test", name: "Test Site", type: "private" } }),
+  getCanAddedSiteIndexEntries: () => [{ id: "test", name: "Test Site", type: "private", urls: [] }],
 }));
 vi.mock("@/options/components/SiteFavicon/Index.vue", () => ({ default: { render: () => null } }));
 
