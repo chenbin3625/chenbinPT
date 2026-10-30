@@ -250,7 +250,15 @@ describe("E17 同型：无尾斜杠的站点地址不再拼坏 torrents.php 链�
 describe("REVIEW-FINDINGS site-defs #6：momentpt / haidan / dubhe 不再依赖死站 kunlun", () => {
   const definitionFile = (name: string) => join(process.cwd(), "src/packages/site/definitions", `${name}.ts`);
 
-  for (const name of ["momentpt", "haidan", "dubhe"])
+  // momentpt 已按上游 #1653（c644f69db3）标记为死站，userInfo 等配置按上游留档方式注释掉，
+  // 因此不再做 invites 断言；haidan / dubhe 仍是活站，继续验证 kunlun 解耦。
+  it("momentpt 已标记 isDead（配置留档注释，不再依赖 kunlun）", async () => {
+    expect(readFileSync(definitionFile("momentpt"), "utf8")).not.toMatch(/^import[^\n]*["']\.\/kunlun(\.ts)?["']/m);
+    const mod: any = await import(`@ptd/site/definitions/momentpt.ts`);
+    expect(mod.siteMetadata.isDead).toBe(true);
+  });
+
+  for (const name of ["haidan", "dubhe"])
     it(`${name} 不再 import ./kunlun 且内联了等价 invites 定义`, async () => {
       expect(readFileSync(definitionFile(name), "utf8"), `${name} 仍从死站 kunlun 导入共享对象`).not.toMatch(
         /^import[^\n]*["']\.\/kunlun(\.ts)?["']/m,
