@@ -6,7 +6,7 @@
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/momentpt.json
  */
 import { type ISiteMetadata } from "../types";
-import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
+// import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
 
 /**
  * REVIEW-FINDINGS site-defs #6：与 kunlun（已死亡站点）解耦。原先直接
@@ -15,6 +15,7 @@ import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetada
  * 这里内联一份等价定义（基于 NexusPHP SchemaMetadata，只在 userdetails 页追加 invites 字段），
  * 与 52pt / yinguskg 的处理方式一致；选择器逐字取自 kunlun 原导出，未做猜测。
  */
+/*
 const userInfoWithInvitesInUserDetailsPage = {
   ...SchemaMetadata.userInfo,
   selectors: {
@@ -60,9 +61,10 @@ const userInfoWithInvitesInUserDetailsPage = {
     }),
   ],
 };
+*/
 
 export const siteMetadata: ISiteMetadata = {
-  ...SchemaMetadata,
+  // ...SchemaMetadata,
   version: 1,
 
   id: "momentpt",
@@ -79,6 +81,10 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["uggcf://jjj.zbzragcg.gbc/"],
 
+  // dead at 2026.10.29 from savept.icu
+  isDead: true,
+
+  /**
   category: [
     {
       name: "搜索入口",
@@ -113,6 +119,7 @@ export const siteMetadata: ISiteMetadata = {
   },
 
   userInfo: userInfoWithInvitesInUserDetailsPage,
+   */
 
   levelRequirements: [
     {
