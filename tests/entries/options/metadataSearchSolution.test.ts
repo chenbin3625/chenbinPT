@@ -13,9 +13,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { createApp, h } from "vue";
 
-const { sendMessageMock, getDefinedSiteMetadataMock } = vi.hoisted(() => ({
+const { sendMessageMock, getDefinedSiteMetadataMock, siteIndexState } = vi.hoisted(() => ({
   sendMessageMock: vi.fn(async () => undefined),
   getDefinedSiteMetadataMock: vi.fn(),
+  /** 可控的站点轻量索引：`getSiteDefaultSearchSolution` 的 isDead / searchEntries 从这里读 */
+  siteIndexState: { index: {} as Record<string, any> },
 }));
 
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock }));
@@ -28,6 +30,11 @@ vi.mock("@ptd/site", () => ({
     }
   },
   getDefinedSiteMetadata: getDefinedSiteMetadataMock,
+}));
+vi.mock("@ptd/site/metadataIndex", () => ({
+  get siteMetadataIndex() {
+    return siteIndexState.index;
+  },
 }));
 vi.mock("ant-design-vue", () => ({ message: { open: vi.fn() } }));
 
@@ -70,6 +77,7 @@ async function createMetadataStore() {
 beforeEach(() => {
   vi.useFakeTimers();
   knownSites = new Set();
+  siteIndexState.index = {};
   sendMessageMock.mockClear();
   getDefinedSiteMetadataMock.mockReset();
   getDefinedSiteMetadataMock.mockImplementation(async (siteId: string) => {
@@ -175,13 +183,11 @@ describe("B-8 getSearchSolution 不得改写 state", () => {
     const store = await createMetadataStore();
     defineSite("siteA");
     defineSite("siteB");
-    getDefinedSiteMetadataMock.mockImplementation(async (siteId: string) => ({
-      id: siteId,
-      name: `站点 ${siteId}`,
-      urls: [`https://${siteId}.example/`],
-      isDead: siteId === "siteA",
-      searchEntry: { default: {} },
-    }));
+    // isDead 现在直接取自构建期轻量索引（不再解析完整定义看 isDead）
+    siteIndexState.index = {
+      siteA: { name: "站点 siteA", type: "private", urls: ["https://siteA.example/"], isDead: true },
+      siteB: { name: "站点 siteB", type: "private", urls: ["https://siteB.example/"] },
+    };
 
     await store.addSite("siteA", {}, { reBuildMap: false });
     await store.addSite("siteB", {}, { reBuildMap: false });

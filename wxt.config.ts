@@ -10,6 +10,7 @@ import { getGitInfo } from "./vite/gitInfo.ts";
 import { generateWebextLocales } from "./vite/plugin/generateWebextLocales.ts";
 import { buildUserManifest, type TBuildTarget } from "./vite/manifest.ts";
 import { forbidContentScriptCssAssets } from "./vite/plugin/forbidContentScriptCssAssets.ts";
+import { vitePluginGenerateSiteIndex } from "./vite/plugin/generateSiteIndex.ts";
 
 const root = import.meta.dirname;
 
@@ -128,7 +129,14 @@ export default defineConfig({
       //   · `global`：见下方 define（`global` → `globalThis`）。
       // ⚠️ 将来若新增的依赖 import 了 Node 内建：`path` 认 projectAliasPlugin 里那条 alias；其余需要像
       // `src/extends/shims/` 那样补一个等价实现（**不要**重新引入多模块垫片 —— 它们会把用不到的成员一起打进产物）。
-      plugins: [vue(), projectAliasPlugin(target)],
+      plugins: [
+        vue(),
+        projectAliasPlugin(target),
+        // 站点定义轻量索引（虚拟模块 `virtual:site-metadata-index`，见 vite/plugin/generateSiteIndex.ts）。
+        // 它用 `configResolved` 拿最终 define / alias 去跑嵌套 SSR 构建，所以放在 projectAliasPlugin 之后；
+        // wxt 会为 background / content-script / html 各跑一次构建，插件内部用模块级 memo 保证只生成一次。
+        vitePluginGenerateSiteIndex(),
+      ],
       define: {
         __BROWSER__: JSON.stringify(target),
         __EXT_VERSION__: JSON.stringify(`v${commit_version}`),

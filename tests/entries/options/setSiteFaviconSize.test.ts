@@ -12,8 +12,7 @@ vi.mock("@/options/views/Settings/SetSite/utils.ts", async () => {
         userConfig: { sortIndex: 1, groups: [], url: "https://example.com" },
       },
     ]),
-    isLoadingAddedSiteInfo: ref(false),
-    getCanAddedSiteMetadata: vi.fn().mockResolvedValue({}),
+    getCanAddedSiteIndexEntries: vi.fn().mockReturnValue([]),
   };
 });
 vi.mock("@/options/components/SiteFavicon/utils.ts", () => ({

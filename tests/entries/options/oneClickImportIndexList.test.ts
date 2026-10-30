@@ -1,11 +1,12 @@
 /**
- * 设置 → 站点 → 一键导入（移植自上游 7f8cb48a）。
+ * 设置 → 站点 → 一键导入（站点列表改由构建期轻量索引同步提供，移植自上游 8c6022c98c / #1611）。
  *
- * - 边读边渲染：生成器还没读完时已读到的站点就出现在列表里，标题栏显示加载进度；
+ * - 列表一次同步取全：`dialogEnter()` 直接同步 `getCanAddedSiteIndexEntries()`，
+ *   不再有「边读边渲染」的分批刷入 / 加载进度条；
  * - 卡片懒挂载：只有进入视口（IntersectionObserver 报告可见）的卡片才挂载内容（含 SiteFavicon）；
  * - 「包含公开站点（N）」开关：默认不列出 public 站点，打开后列出并参与「全选」；
  *   关闭时已选中的 public 站点被移出「已选择」；已离线站点始终不列出；
- * - utils：`iterateCanAddedSiteMetadata` 按 definitionList 顺序产出、跳过已添加站点。
+ * - utils：`getCanAddedSiteIndexEntries` 按 definitionList 顺序产出、跳过已添加站点，并用 key 补上 id。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, ref } from "vue";
@@ -23,20 +24,10 @@ const meta = vi.hoisted(() => ({
 vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => meta }));
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(async () => undefined), onMessage: vi.fn() }));
 
-/** 可控的站点定义来源：测试按需放行，模拟「读到一半」 */
-const feed = vi.hoisted(() => ({
-  sites: [] as any[],
-  gate: null as null | Promise<void>,
-  gateAfter: Infinity,
-}));
+/** 可控的站点列表来源：整张列表同步给出（与真实 `getCanAddedSiteIndexEntries()` 一致） */
+const feed = vi.hoisted(() => ({ sites: [] as any[] }));
 vi.mock("@/options/views/Settings/SetSite/utils.ts", () => ({
-  getCanAddedSiteMetadata: vi.fn(async () => ({})),
-  iterateCanAddedSiteMetadata: async function* () {
-    for (const [index, site] of feed.sites.entries()) {
-      if (index === feed.gateAfter && feed.gate) await feed.gate;
-      yield site;
-    }
-  },
+  getCanAddedSiteIndexEntries: () => feed.sites,
 }));
 
 const faviconMounts = vi.hoisted(() => ({ siteIds: [] as string[] }));
@@ -108,8 +99,6 @@ beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", ControlledIntersectionObserver);
   observed.entries = [];
   faviconMounts.siteIds = [];
-  feed.gate = null;
-  feed.gateAfter = Infinity;
   feed.sites = [];
 });
 
@@ -134,18 +123,11 @@ describe("一键导入 dialog", () => {
     view.unmount();
   });
 
-  it("边读边渲染：读到第 16 条就先刷入列表并显示加载进度，读完后进度消失", async () => {
+  it("打开即拿到全量列表（同步索引，没有「正在加载站点定义」的中间态）", async () => {
     feed.sites = Array.from({ length: 20 }, (_, index) => site(`s${index}`));
-    let release!: () => void;
-    feed.gate = new Promise<void>((resolve) => (release = resolve));
-    feed.gateAfter = 16;
-
     const { view, instance } = await openDialog();
-    expect(instance().displayedSites.length).toBe(16);
-    expect(document.body.textContent).toContain("正在加载站点定义…（已加载 16 个）");
 
-    release();
-    await view.settle(40);
+    // dialogEnter 是同步的：打开后的第一帧列表就已经是全量，不再分批刷入
     expect(instance().displayedSites.length).toBe(20);
     expect(document.body.textContent).not.toContain("正在加载站点定义");
     view.unmount();
@@ -155,7 +137,7 @@ describe("一键导入 dialog", () => {
     feed.sites = [
       site("priv"),
       site("pub", { type: "public" }),
-      site("manual", { userInputSettingMeta: [{ name: "passkey" }] }),
+      site("manual", { hasUserInputSettingMeta: true }),
       site("dead", { isDead: true }),
     ];
     const { view, instance } = await openDialog();
@@ -191,23 +173,28 @@ describe("一键导入 dialog", () => {
   });
 });
 
-describe("iterateCanAddedSiteMetadata", () => {
-  it("按 definitionList 顺序产出，跳过已添加的站点", async () => {
+describe("getCanAddedSiteIndexEntries", () => {
+  it("按 definitionList 顺序产出，跳过已添加的站点，并用 key 补上 id", async () => {
     vi.resetModules();
     vi.doUnmock("@/options/views/Settings/SetSite/utils.ts");
     vi.doMock("@ptd/site", async (importOriginal) => ({
       ...(await importOriginal<Record<string, unknown>>()),
       definitionList: ["a", "b", "c", "d"],
     }));
-    vi.doMock("@/options/views/Overview/MyData/utils/siteMetadataCache.ts", () => ({
-      getCachedSiteMetadata: async (siteId: string) => ({ id: siteId }),
+    vi.doMock("@ptd/site/metadataIndex", () => ({
+      siteMetadataIndex: {
+        a: { name: "A", type: "public", urls: ["https://a.example/"] },
+        b: { name: "B", type: "private", urls: ["https://b.example/"] },
+        c: { name: "C", type: "private", urls: ["https://c.example/"] },
+        d: { name: "D", type: "private", urls: ["https://d.example/"] },
+      },
     }));
     meta.getAddedSiteIds = ["b"];
 
-    const { iterateCanAddedSiteMetadata } = await import("@/options/views/Settings/SetSite/utils.ts");
-    const ids: string[] = [];
-    for await (const siteMetadata of iterateCanAddedSiteMetadata()) ids.push(siteMetadata.id);
-    expect(ids).toEqual(["a", "c", "d"]);
+    const { getCanAddedSiteIndexEntries } = await import("@/options/views/Settings/SetSite/utils.ts");
+    const entries = getCanAddedSiteIndexEntries();
+    expect(entries.map((entry) => entry.id)).toEqual(["a", "c", "d"]);
+    expect(entries[0]).toEqual({ id: "a", name: "A", type: "public", urls: ["https://a.example/"] });
     meta.getAddedSiteIds = [];
   });
 });

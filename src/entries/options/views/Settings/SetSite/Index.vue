@@ -38,7 +38,7 @@ import NavButton from "@/options/components/NavButton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 // 数据来源
-import { allAddedSiteInfo, isLoadingAddedSiteInfo, type ISiteTableItem } from "./utils.ts";
+import { allAddedSiteInfo, type ISiteTableItem } from "./utils.ts";
 
 const { t } = useI18n();
 
@@ -431,7 +431,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
       class="table-stripe table-header-no-wrap"
       :columns="columns"
       :data-source="dataSource"
-      :loading="isStoreHydrating || isLoadingAddedSiteInfo"
+      :loading="isStoreHydrating"
       :pagination="pagination"
       :row-key="(record: ISiteTableItem) => record.id"
       :row-selection="rowSelection"
@@ -497,9 +497,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
           <a-switch
             v-model:checked="record.userConfig.allowSearch"
             class="table-switch-btn"
-            :disabled="
-              record.metadata.isDead || record.userConfig.isOffline || !Object.hasOwn(record.metadata, 'search')
-            "
+            :disabled="record.metadata.isDead || record.userConfig.isOffline || !record.metadata.hasSearch"
             @change="(v: boolean) => metadataStore.simplePatch('sites', record.id, 'allowSearch', v)"
           />
         </template>
@@ -508,9 +506,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
           <a-switch
             v-model:checked="record.userConfig.allowQueryUserInfo"
             class="table-switch-btn"
-            :disabled="
-              record.metadata.isDead || record.userConfig.isOffline || !Object.hasOwn(record.metadata, 'userInfo')
-            "
+            :disabled="record.metadata.isDead || record.userConfig.isOffline || !record.metadata.hasUserInfo"
             @change="(v: boolean) => metadataStore.simplePatch('sites', record.id, 'allowQueryUserInfo', v)"
           />
         </template>
@@ -541,7 +537,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                 <EditSearchEntryList :item="record" />
               </template>
               <a-button
-                :disabled="record.metadata.isDead || !record.metadata.searchEntry"
+                :disabled="record.metadata.isDead || !record.metadata.searchEntries"
                 :title="t('SetSite.index.table.searchEntries')"
                 size="small"
               >

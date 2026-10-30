@@ -10,3 +10,4 @@ export * from "./utils/level";
 export * from "./utils/tags";
 export * from "./utils/promotion";
 export * from "./utils/trustedHost";
+export * from "./utils/metadataIndex";

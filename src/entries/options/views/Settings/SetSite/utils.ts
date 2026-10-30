@@ -1,89 +1,67 @@
-import { computedAsync } from "@vueuse/core";
-import { ref } from "vue";
-import { definitionList, ISiteMetadata, type ISiteUserConfig, TSiteID } from "@ptd/site";
+import { computed } from "vue";
+import { definitionList, type ISiteUserConfig, type TSiteID } from "@ptd/site";
+import {
+  siteMetadataIndex,
+  type ISiteMetadataIndexEntry,
+  type TSiteMetadataIndexEntryWithId,
+} from "@ptd/site/metadataIndex";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
-import { getCachedSiteMetadata } from "@/options/views/Overview/MyData/utils/siteMetadataCache.ts";
 
 /**
- * P1-21/P2-16：站点定义加载改为「memo + 分批并发」。
- * 原来 341 个站点串行 await（每个都要动态 import + cloneDeep 整份定义），打开「添加站点」要等很久；
- * 现在每批 20 个并发，且同一个站点的定义在整个 options 生命周期内只加载一次。
- */
-const SITE_METADATA_CONCURRENCY = 20;
-
-async function loadSiteMetadataInBatches<T>(
-  items: T[],
-  loader: (item: T) => Promise<ISiteMetadata>,
-): Promise<ISiteMetadata[]> {
-  const results: ISiteMetadata[] = [];
-  for (let i = 0; i < items.length; i += SITE_METADATA_CONCURRENCY) {
-    const batch = items.slice(i, i + SITE_METADATA_CONCURRENCY);
-    results.push(...(await Promise.all(batch.map((item) => loader(item)))));
-  }
-  return results;
-}
-
-/**
- * 按 definitionList 的顺序逐批产出「尚未添加」的站点定义。
+ * 尚未添加的站点（按 definitionList 顺序）。
  *
- * 站点定义是一个站点一个 chunk 的动态 import，全部加载完再渲染会让调用方空白较久；
- * 这里沿用上面的「memo + 每批并发」读取，每读完一批就把这一批按顺序产出，调用方可以边拿边渲染
- * （一键导入 dialog 据此渐进刷新列表）。
+ * 这里原来是逐个 `getSiteMetadata()` 解析完整站点定义：409 个独立 chunk / 约 1.4 MB，
+ * 实测顺序加载 828~884 ms，而并发加载实测 934 ms **没有收益**（瓶颈是解析这些 chunk 的 CPU，
+ * 不是 I/O）。改用构建期轻量索引后只有约 117 KB，一次 import 即可同步得到整张列表，
+ * 「一键导入」与「添加站点」两个对话框因此都不再需要渐进加载。
+ *
+ * 索引条目本身不存 id（key 就是它），这里是唯一需要「带 id 的 value 数组」的地方，
+ * 所以在取值时用 key 补上 —— 也顺便让 id 的唯一来源就是 key。
+ * 索引里没有的 id（只会在构建生成异常时出现）直接跳过，避免往下游传半个条目。
  */
-export async function* iterateCanAddedSiteMetadata(): AsyncGenerator<ISiteMetadata> {
+export function getCanAddedSiteIndexEntries(): TSiteMetadataIndexEntryWithId[] {
   const metadataStore = useMetadataStore();
   const addedSiteIds = new Set(metadataStore.getAddedSiteIds);
-  const canAddedSiteList = definitionList.filter((siteId) => !addedSiteIds.has(siteId));
-  for (let i = 0; i < canAddedSiteList.length; i += SITE_METADATA_CONCURRENCY) {
-    const batch = canAddedSiteList.slice(i, i + SITE_METADATA_CONCURRENCY);
-    yield* await Promise.all(batch.map((siteId) => getCachedSiteMetadata(siteId)));
-  }
-}
-
-export async function getCanAddedSiteMetadata() {
-  const canAddedSiteMetadata: Record<TSiteID, ISiteMetadata> = {};
-  const metadataStore = useMetadataStore();
-  const addedSiteIds = new Set(metadataStore.getAddedSiteIds);
-  const canAddedSiteList = definitionList.filter((x) => !addedSiteIds.has(x));
-  const metadatas = await loadSiteMetadataInBatches(canAddedSiteList, (siteId) => getCachedSiteMetadata(siteId));
-  canAddedSiteList.forEach((siteId, index) => {
-    canAddedSiteMetadata[siteId] = metadatas[index]!;
-  });
-  return canAddedSiteMetadata;
+  return definitionList
+    .filter((siteId) => !addedSiteIds.has(siteId) && !!siteMetadataIndex[siteId])
+    .map((siteId) => ({ id: siteId, ...siteMetadataIndex[siteId] }));
 }
 
 export interface ISiteTableItem {
   id: TSiteID;
-  metadata: ISiteMetadata;
+  /** 只放构建期轻量索引条目：站点表格只读固定属性，需要完整定义的地方（编辑器）自行按 id 取 */
+  metadata: ISiteMetadataIndexEntry;
   userConfig: ISiteUserConfig;
 }
 
 /**
- * `allAddedSiteInfo` 的加载标识。
+ * 索引里没有该站点时给表格用的占位条目。
  *
- * computedAsync 自身不暴露 loading 状态，而这里逐个 await 站点元数据可能耗时较久，
- * 首屏若不显示 loading 就会出现「空表格 → 突然填充」的抖动，因此在回调内手动置位。
+ * 上游（8c6022c98c）的做法是把这类行直接从表格里过滤掉，但那样用户就**无法删除**一个
+ * 「站点定义已从构建产物移除」的旧配置（fork 的 OPTIONSSHELL-2 专门为这种情况加了提示）。
+ * 这里保留该行，只把只读元数据退化为占位值，删除 / 开关等操作照常可用。
  */
-export const isLoadingAddedSiteInfo = ref<boolean>(false);
+const UNAVAILABLE_SITE_INDEX_ENTRY: ISiteMetadataIndexEntry = { name: "", type: "public", urls: [] };
 
-export const allAddedSiteInfo = computedAsync<ISiteTableItem[]>(async () => {
-  isLoadingAddedSiteInfo.value = true;
-  try {
-    const metadataStore = useMetadataStore();
-    // noinspection BadExpressionStatementJS
-    Object.values(metadataStore.sites).map((x) => x);
+/**
+ * 已添加站点的表格数据（同步）。
+ *
+ * 改成普通 `computed`：站点元数据来自构建期轻量索引，不再需要 `computedAsync` 的异步加载态，
+ * 首屏也不会有「空表格 → 突然填充」的抖动（因此不再需要 `isLoadingAddedSiteInfo`）。
+ */
+export const allAddedSiteInfo = computed<ISiteTableItem[]>(() => {
+  const metadataStore = useMetadataStore();
 
-    const siteEntries = Object.entries(metadataStore.sites);
-    // P1-21：站点定义走 memo + 分批并发（顺序与原来一致）
-    const metadatas = await loadSiteMetadataInBatches(siteEntries, ([siteId]) => getCachedSiteMetadata(siteId));
-
-    return siteEntries.map(([siteId, siteUserConfig], index) => ({
+  const sitesReturn: ISiteTableItem[] = [];
+  for (const [siteId, siteUserConfig] of Object.entries(metadataStore.sites)) {
+    const indexEntry = siteMetadataIndex[siteId];
+    sitesReturn.push({
       id: siteId,
-      metadata: metadatas[index]!,
+      metadata: indexEntry ?? { ...UNAVAILABLE_SITE_INDEX_ENTRY, name: siteId },
       userConfig: siteUserConfig,
-    }));
-  } finally {
-    isLoadingAddedSiteInfo.value = false;
+    });
   }
+
+  return sitesReturn;
 });

@@ -1,14 +1,14 @@
 import { shallowReactive } from "vue";
 
-import { definitionList, ISiteMetadata, NO_IMAGE, TSiteID } from "@ptd/site";
+import { definitionList, NO_IMAGE, TSiteID } from "@ptd/site";
+import { siteMetadataIndex, type TSiteMetadataIndexEntryWithId } from "@ptd/site/metadataIndex";
 
 import { sendMessage } from "@/messages.ts";
 import { i18n } from "@/options/plugins/i18n.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
-import { getCachedSiteMetadata } from "./siteMetadataCache.ts";
 
-export interface IExtendSiteMetadata extends Pick<ISiteMetadata, "id" | "type"> {
+export interface IExtendSiteMetadata extends Pick<TSiteMetadataIndexEntryWithId, "id" | "type"> {
   siteName: string; // 解析后的站点名称（当前用户使用的）
   combinedSiteName: string; // 所有该站点的名称，使用 "|$|" 分隔
   hasUserInfo: boolean; // 是否有用户配置
@@ -39,9 +39,17 @@ export async function loadAllAddedSiteMetadata(sites?: string[]): Promise<TOptio
     loadSites.map(async (siteId) => {
       if (allAddedSiteMetadata[siteId]) return;
 
+      // 这里只用到 type / name / aka / userInfo / isDead，全部在构建期轻量索引里，
+      // 不再逐个解析完整站点定义（默认 loadSites 就是整个 definitionList）
+      const indexEntry = siteMetadataIndex[siteId];
+      if (!indexEntry) {
+        // 站点定义已不在构建产物里（扩展升级删掉定义、站点改名后用户配置仍在）：
+        // 与原来 `getCachedSiteMetadata` 抛错走同一条路径 —— 收集起来统一提示用户（OPTIONSSHELL-2）
+        failedSiteIds.push(siteId);
+        return;
+      }
+
       try {
-        // P2-16/P1-21：站点定义走模块级 memo，避免每个站点重复动态 import + cloneDeep
-        const siteMetadata = await getCachedSiteMetadata(siteId);
         const siteFaviconUrl = await sendMessage("getSiteFavicon", { site: siteId });
 
         const siteName = await metadataStore.getSiteName(siteId);
@@ -57,13 +65,15 @@ export async function loadAllAddedSiteMetadata(sites?: string[]): Promise<TOptio
 
         (allAddedSiteMetadata as TOptionSiteMetadatas)[siteId] = {
           id: siteId,
-          type: siteMetadata.type,
+          type: indexEntry.type,
           siteName,
           combinedSiteName: Array.from(
-            new Set([siteName, siteMetadata.name, ...(siteMetadata.aka ?? [])].filter(Boolean)),
+            new Set([siteName, indexEntry.name, ...(indexEntry.aka ?? [])].filter(Boolean)),
           ).join("|$|"),
-          hasUserInfo: Object.hasOwn(siteMetadata, "userInfo"),
-          isDead: siteMetadata.isDead ?? false,
+          // hasUserInfo 的口径与 offscreen 初始化 allowQueryUserInfo 时一致（checkSiteMetadataAllow）：
+          // 空对象 `userInfo: {}` 视为「没有用户信息」，而不是「有这个键」
+          hasUserInfo: !!indexEntry.hasUserInfo,
+          isDead: indexEntry.isDead ?? false,
           isOffline: metadataStore.sites[siteId]?.isOffline ?? false,
           faviconSrc: siteFaviconUrl,
           faviconElement: siteFavicon,

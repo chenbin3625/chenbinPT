@@ -16,6 +16,17 @@ const storeState = vi.hoisted(() => ({
   siteHostMap: {} as Record<string, string>,
   siteTypes: {} as Record<string, "private" | "public">,
 }));
+/** 轻量索引：`getSiteType()` 直接读 siteMetadataIndex（不再解析完整站点定义） */
+vi.mock("@ptd/site/metadataIndex", () => ({
+  get siteMetadataIndex() {
+    return Object.fromEntries(
+      Object.entries(storeState.siteTypes).map(([siteId, type]) => [
+        siteId,
+        { name: siteId, type, urls: [`https://${siteId}.example/`] },
+      ]),
+    );
+  },
+}));
 vi.mock("@/options/stores/metadata.ts", () => {
   const store = {
     get siteHostMap() {
