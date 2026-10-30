@@ -83,6 +83,7 @@ describe("normalizedTorrentTagMap 边界匹配", () => {
       "2xFree",
       "2xUp",
       "2x50%",
+      "1.5xUp",
       "25%",
       "30%",
       "35%",
@@ -112,5 +113,11 @@ describe("normalizedTorrentTagMap 边界匹配", () => {
     ]);
     // Free 的 aka 只做匹配扩展，不新增预定义标签名
     expect(preDefinedTorrentTagMap.find((item) => item.name === "Free")!.aka).toEqual(["Freeleech"]);
+  });
+
+  it("1.5xUp 与 NL. 的新增别名（上游 13991d15b5）", () => {
+    expect(preDefinedTorrentTagMap.find((item) => item.name === "1.5xUp")!.color).toBe("light-green");
+    expect(preDefinedTorrentTagMap.find((item) => item.name === "NL.")!.aka).toEqual(["Neutral", "0流量%"]);
+    expect(normalizeTag("0流量%").name).toBe("NL.");
   });
 });

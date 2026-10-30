@@ -457,16 +457,20 @@ describe("dreadvault（上游 #1643，UNIT3D API）", () => {
     expect((superRequest.mock.calls[1][0] as any).headers?.Authorization).toBeUndefined();
   });
 
-  it("促销标签取自结构化字段，featured 等价于 Free + 2xUp，且全站 H&R", async () => {
+  it("促销信息取自结构化字段（factor），featured 等价于免费 + 2x 上传，且全站 H&R", async () => {
     const { default: DreadVault, siteMetadata } = await import("@ptd/site/definitions/dreadvault.ts");
+    const { normalizeTorrentPromotion } = await import("@ptd/site/utils/promotion.ts");
     const site: any = new DreadVault(siteMetadata);
-    const names = (row: object) => site.parseTorrentRowForTags({}, row, {}).tags.map((tag: any) => tag.name);
-    expect(names({ attributes: { featured: true } })).toEqual(["Free", "2xUp", "精选", "H&R"]);
-    expect(names({ attributes: { freeleech: "50%", double_upload: true, internal: true } })).toEqual([
-      "50%",
-      "2xUp",
-      "官方",
-      "H&R",
-    ]);
+    // 上游 13991d15b5 起：站点定义只给 factor，优惠标签由 normalizeTorrentPromotion 统一派生
+    const parsed = (row: object) => normalizeTorrentPromotion(site.parseTorrentRowForTags({}, row, {}));
+
+    const featured = parsed({ attributes: { featured: true } });
+    expect([featured.downloadVolumeFactor, featured.uploadVolumeFactor]).toEqual([0, 2]);
+    // 展示顺序由 sortTorrentTags 决定，这里只断言集合（归一时保留的非优惠标签在前）
+    expect(featured.tags!.map((tag: any) => tag.name).sort()).toEqual(["2xFree", "精选", "H&R"].sort());
+
+    const discounted = parsed({ attributes: { freeleech: "50%", double_upload: true, internal: true } });
+    expect([discounted.downloadVolumeFactor, discounted.uploadVolumeFactor]).toEqual([0.5, 2]);
+    expect(discounted.tags!.map((tag: any) => tag.name).sort()).toEqual(["2x50%", "官方", "H&R"].sort());
   });
 });
