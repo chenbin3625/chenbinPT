@@ -77,7 +77,8 @@ export function buildUserManifest({ target, version, versionName }: IManifestBui
             },
           },
           content_security_policy: {
-            extension_pages: "script-src 'self';",
+            // 显式放行 img-src，否则 Firefox 下站点图标（http 资源）会被 CSP 拦掉（上游 #1657）
+            extension_pages: "script-src 'self'; img-src 'self'",
           },
         }
       : {}),

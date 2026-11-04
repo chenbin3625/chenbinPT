@@ -44,8 +44,6 @@ watch(
 
 export const searchQueue = new PQueue({ concurrency: 1 }); // 默认设置为 1，避免并发搜索
 
-// 模块级别的 Set，用于跟踪已存在的搜索结果 ID，避免并发时的重复
-const globalExistingIds = new Set<string>();
 let searchEpoch = 0;
 let activeSearchSelection = "";
 
@@ -58,17 +56,10 @@ searchQueue.on("active", () => {
       () => {},
     );
   }
-
-  // 队列开始活跃时，更新全局 Set
-  globalExistingIds.clear();
-  runtimeStore.mediaServerSearch.searchResult.forEach((r) => globalExistingIds.add(r.url));
 });
 
 searchQueue.on("idle", () => {
   runtimeStore.mediaServerSearch.isSearching = false;
-
-  // 队列空闲时，清空全局 Set
-  globalExistingIds.clear();
 });
 
 /**
@@ -139,7 +130,6 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
   if (!loadMore || !sameSearch) {
     searchEpoch++;
     searchQueue.clear();
-    globalExistingIds.clear();
     runtimeStore.resetMediaServerSearchData();
     runtimeStore.mediaServerSearch.isSearching = queueBusy;
   }
@@ -214,12 +204,16 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
 
       // P2-5：先聚合本次新增（去重）的条目，再一次性 push，
       // 避免逐条 push 触发逐条响应式通知与逐次重渲染。
+      // 已存在的条目（同一 url）用新数据原位替换，保证收藏、观看状态等能随再次搜索刷新，
+      // 而不是被当作重复丢弃（上游 #1662）。
       const newItems: IMediaServerItem[] = [];
       for (const item of searchResult.items) {
-        // 根据 url 去重
-        if (globalExistingIds.has(item.url)) continue;
-        newItems.push(markRaw(item));
-        globalExistingIds.add(item.url);
+        const existingIndex = runtimeStore.mediaServerSearch.searchResult.findIndex((r) => r.url === item.url);
+        if (existingIndex !== -1) {
+          runtimeStore.mediaServerSearch.searchResult[existingIndex] = markRaw(item);
+        } else {
+          newItems.push(markRaw(item));
+        }
       }
 
       if (newItems.length > 0) {
