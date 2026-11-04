@@ -75,6 +75,31 @@ describe("搜索取消：必须使在途任务失效", () => {
     expect(defaultErrorSearchPlanStatus).toContain(plan.status);
   });
 
+  it("重搜一个方案时，另一方案也返回过的条目保留下来（不随该方案一起删除）", async () => {
+    runtimeState.search.searchResult = [
+      {
+        site: "site-a",
+        id: 1,
+        title: "shared",
+        uniqueId: "site-a-1",
+        solutionId: "default",
+        solutionKey: "site-a|$|default",
+        solutionKeys: ["site-a|$|default", "site-b|$|default"],
+      },
+    ] as any[];
+    vi.mocked(sendMessage).mockResolvedValueOnce({
+      status: EResultParseStatus.success,
+      data: [{ site: "site-a", id: 1, title: "shared" }],
+    });
+    const { doSearchEntity, searchQueue } = await loadSearchModule();
+
+    await doSearchEntity("site-a", "default", {} as any, true);
+    await searchQueue.onIdle();
+
+    expect(runtimeState.search.searchResult).toHaveLength(1);
+    expect(runtimeState.search.searchResult[0].solutionKeys).toEqual(["site-b|$|default", "site-a|$|default"]);
+  });
+
   it("取消后，取消前捕获的搜索轮次不再是当前轮次", async () => {
     const { cancelSearchQueue, captureSearchTaskEpoch, isSearchTaskCurrent } = await loadSearchModule();
     const taskEpoch = captureSearchTaskEpoch();
@@ -237,6 +262,17 @@ describe("D2-03：路由变化决定是否真正发起搜索", () => {
     const decision = resolveRouteSearchDecision({
       query: { search: "kw", plan: "default" },
       state: state(),
+    });
+    expect(decision.search).toBeUndefined();
+    expect(decision.resetData).toBe(false);
+  });
+
+  it("已完成的空搜索结果刷新时保留（不重跑整轮搜索）", async () => {
+    const { resolveRouteSearchDecision } = await loadSearchModule();
+
+    const decision = resolveRouteSearchDecision({
+      query: { search: "kw", plan: "default" },
+      state: state({ resultCount: 0, endAt: 2 }),
     });
     expect(decision.search).toBeUndefined();
     expect(decision.resetData).toBe(false);

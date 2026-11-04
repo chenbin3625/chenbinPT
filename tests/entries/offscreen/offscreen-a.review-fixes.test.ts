@@ -273,17 +273,25 @@ describe("offscreen-a 审查修复（OFFSCREEN-1 / 3 / 6 / 7）", () => {
   });
 
   describe("OFFSCREEN-7：替换缓存条目前释放旧实例", () => {
-    it("配置变化时对旧实例调用 releaseDownloaderInstance（关闭 Aria2 的长连接）", async () => {
-      const { mod } = await loadDownloadModule();
-      mocks.downloaders.d1 = { id: "d1", type: "Aria2", address: "http://127.0.0.1:6800" };
-      const first = await mod.getDownloaderInstance("d1");
+    it("配置变化时延迟 release 旧实例（宽限期内不关闭 Aria2 的在途连接）", async () => {
+      vi.useFakeTimers();
+      try {
+        const { mod } = await loadDownloadModule();
+        mocks.downloaders.d1 = { id: "d1", type: "Aria2", address: "http://127.0.0.1:6800" };
+        const first = await mod.getDownloaderInstance("d1");
 
-      mocks.downloaders.d1 = { ...mocks.downloaders.d1, address: "http://127.0.0.1:6801" };
-      const second = await mod.getDownloaderInstance("d1");
+        mocks.downloaders.d1 = { ...mocks.downloaders.d1, address: "http://127.0.0.1:6801" };
+        const second = await mod.getDownloaderInstance("d1");
 
-      expect(second).not.toBe(first);
-      expect(mocks.releaseDownloaderInstance).toHaveBeenCalledTimes(1);
-      expect(mocks.releaseDownloaderInstance).toHaveBeenCalledWith(first);
+        expect(second).not.toBe(first);
+        expect(mocks.releaseDownloaderInstance).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(mocks.releaseDownloaderInstance).toHaveBeenCalledTimes(1);
+        expect(mocks.releaseDownloaderInstance).toHaveBeenCalledWith(first);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("库级缓存返回同一个实例时不 dispose（避免关掉正在使用的连接）", async () => {

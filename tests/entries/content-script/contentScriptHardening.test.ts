@@ -297,8 +297,9 @@ describe("A-9 · 复制/下载动作", () => {
       expect(body, `${name} 应存在`).not.toBe("");
       expect(body, `${name} 应有 try/finally`).toContain("finally");
       expect(body, `${name} 复位语句应在 finally 之后`).toMatch(/finally \{[\s\S]*?\.value = false/);
-      // 发送必须被 await（fire-and-forget 会让 loading 在发送完成前复位）
-      expect(body, `${name} 应 await 发送结果`).toMatch(/await Promise\.all\(/);
+      // 发送必须被 await（fire-and-forget 会让 loading 在发送完成前复位）；
+      // SiteListPage 用 allSettled 以便区分部分失败
+      expect(body, `${name} 应 await 发送结果`).toMatch(/await Promise\.all(Settled)?\(/);
       expect(body).toContain(status);
     }
   });

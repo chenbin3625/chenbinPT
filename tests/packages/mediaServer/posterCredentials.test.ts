@@ -57,7 +57,7 @@ describe("媒体海报令牌不进入 URL", () => {
     expect(url).toMatch(/^data:image\/png;base64,/);
     const [path, config] = (client as any).request.mock.calls[0];
     expect(path).toBe("/Items/movie-1/Images/Primary");
-    expect(config.params).toEqual({ tag: "tag-1" });
+    expect(config.params).toEqual({ tag: "tag-1", maxHeight: 400 });
     expect(`${path}${JSON.stringify(config)}`).not.toContain("private-fnos-token");
   });
 

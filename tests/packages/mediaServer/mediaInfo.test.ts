@@ -393,6 +393,38 @@ describe("Plex", () => {
     expect(imageRequest.params["X-Plex-Token"]).toBeUndefined();
     expect(imageRequest.headers["X-Plex-Token"]).toBe("private-plex-token");
   });
+
+  it("时长与码率从 Plex 的毫秒/kbps 归一化为秒/bps", async () => {
+    const client = new PlexCtor(plexConfig());
+    (client as any).request = vi.fn(async (url: string) => {
+      if (url === "/identity") return { data: { MediaContainer: { machineIdentifier: "machine-1" } } };
+      return {
+        data: {
+          MediaContainer: {
+            Metadata: [
+              {
+                key: "/library/metadata/1",
+                title: "t",
+                type: "movie",
+                duration: 7200000,
+                Media: [
+                  {
+                    bitrate: 20000,
+                    Part: [{ size: 1, Stream: [{ streamType: 1, bitrate: 20000, width: 1920, height: 1080 }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+    });
+
+    const result = await client.getSearchResult("t");
+
+    expect(result.items[0]!.duration).toBe(7200);
+    expect(result.items[0]!.mediaInfo?.video?.bitrate).toBe(20_000_000);
+  });
 });
 
 describe("fnOS 概览", () => {

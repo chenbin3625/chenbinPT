@@ -47,6 +47,9 @@ export const mediaServerConfig: IEmbyConfig = {
   timeout: 5000,
 };
 
+/** 海报体积上限：搜索页只需要缩略图，超大原图既占内存也会撑爆 sessionStorage */
+const MAX_POSTER_BYTES = 5 * 1024 * 1024;
+
 const LEGACY_SEARCH_FIELDS =
   "BasicSyncInfo,Path,Status,ExternalUrls,CommunityRating,MediaSources,DisplayPreferences,Genres,DateCreated,Overview,ExtraIds";
 
@@ -367,6 +370,9 @@ export abstract class MediaBrowser<
         responseType: "blob",
         params,
       });
+      if ((response.data?.size ?? 0) > MAX_POSTER_BYTES) {
+        return "";
+      }
       return await blobToDataUrl(response.data);
     } catch {
       return "";
@@ -446,7 +452,8 @@ export abstract class MediaBrowser<
         // 海报需要带认证头逐张拉取，限并发避免一次搜索打出 50 个并行图片请求
         result.items = await mapWithConcurrency(Items, 5, async (item) => {
           const mediaItem = this.mapQueryItem(item);
-          mediaItem.poster = await this.getPoster(item.Id);
+          // 只取缩略图：列表页不需要原尺寸海报（原图 base64 会随每页结果常驻内存/会话存储）
+          mediaItem.poster = await this.getPoster(item.Id, { maxHeight: 400 });
           return mediaItem;
         });
         result.options = config;

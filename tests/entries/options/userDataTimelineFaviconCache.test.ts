@@ -67,6 +67,7 @@ vi.mock("@vueuse/core", async (importOriginal) => {
 vi.mock("@/options/views/Overview/MyData/utils/siteMetadata.ts", () => ({
   allAddedSiteMetadata: { "site-a": { siteName: "A", isDead: false, faviconElement: { width: 24, height: 24 } } },
   loadAllAddedSiteMetadata: vi.fn(async () => ({})),
+  isSiteOffline: () => false,
 }));
 vi.mock("@/options/views/Overview/MyData/UserDataTimeline/utils.ts", async () => {
   const { ref: vueRef } = await import("vue");

@@ -84,6 +84,14 @@ describe("Deluge：用返回的 torrent hash 设置标签", () => {
     expect(legacyForm.requestMock).toHaveBeenNthCalledWith(2, "label.set_torrent", ["HASH-3", "anime"]);
   });
 
+  it("重复添加（Torrent already in session）视为成功，而不是写入失败历史", async () => {
+    const { client, requestMock } = createClient();
+    requestMock.mockRejectedValueOnce(new Error("Torrent already in session (abcdef)"));
+
+    await expect(client.addTorrent(MAGNET, { addAtPaused: false })).resolves.toMatchObject({ success: true });
+    expect(requestMock).toHaveBeenCalledTimes(1);
+  });
+
   it("未传 label 时不调用 label.set_torrent；添加失败时 success=false", async () => {
     const withoutLabel = createClient("HASH-4");
     await expect(withoutLabel.client.addTorrent(MAGNET, { addAtPaused: false })).resolves.toMatchObject({

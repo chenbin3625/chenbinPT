@@ -26,9 +26,12 @@ const VISIBLE_RECOMMENDATION_CATEGORY_LIMIT = 5;
 const POSTER_CANDIDATE_LIMIT = 8;
 const VISIBLE_POSTER_CANDIDATE_LIMIT = 2;
 const POSTER_CACHE_LIMIT = 100;
+/** 单张海报可达数 MB，按条数限制不够；同时限制估算字节数（UTF-16 字符 ≈ 2 字节） */
+const POSTER_CACHE_MAX_BYTES = 20 * 1024 * 1024;
 const POSTER_FETCH_TIMEOUT = 3e3;
 const VISIBLE_POSTER_FETCH_TIMEOUT = 800;
 const posterDataUrlCache = new Map<string, string>();
+let posterDataUrlCacheBytes = 0;
 
 /**
  * 海报抓取的主机白名单（见 OS-6）。
@@ -104,13 +107,22 @@ function getPosterFinalResponseUrl(response: unknown): string | undefined {
 }
 
 function setPosterDataUrlCache(key: string, poster: string) {
-  if (posterDataUrlCache.size >= POSTER_CACHE_LIMIT) {
-    const oldestKey = posterDataUrlCache.keys().next().value;
-    if (oldestKey) {
-      posterDataUrlCache.delete(oldestKey);
-    }
+  const existing = posterDataUrlCache.get(key);
+  if (existing !== undefined) {
+    posterDataUrlCache.delete(key);
+    posterDataUrlCacheBytes -= existing.length * 2;
   }
+
   posterDataUrlCache.set(key, poster);
+  posterDataUrlCacheBytes += poster.length * 2;
+
+  while (posterDataUrlCache.size > POSTER_CACHE_LIMIT || posterDataUrlCacheBytes > POSTER_CACHE_MAX_BYTES) {
+    const oldestKey = posterDataUrlCache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    const oldest = posterDataUrlCache.get(oldestKey)!;
+    posterDataUrlCache.delete(oldestKey);
+    posterDataUrlCacheBytes -= oldest.length * 2;
+  }
 }
 
 function getDoubanPosterRatioCandidates(poster: string): string[] {

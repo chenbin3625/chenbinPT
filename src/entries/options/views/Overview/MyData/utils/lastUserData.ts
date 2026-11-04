@@ -9,7 +9,7 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 
 import { fixUserInfo } from "./format.ts";
-import { loadAllAddedSiteMetadata } from "./siteMetadata.ts";
+import { isSiteOffline, loadAllAddedSiteMetadata } from "./siteMetadata.ts";
 
 export interface IUserInfoItem extends IUserInfo {
   siteUserConfig: ISiteUserConfig;
@@ -37,7 +37,7 @@ async function buildPerSiteData(siteId: TSiteID, siteUserInfoData: IUserInfo): P
     siteUserConfig: metadataStore.sites[siteId],
     siteName: siteMeta.combinedSiteName,
     // 对 isDead 或者 isOffline 的站点不允许选择（ https://github.com/chenbin3625/chenbinPT/pull/140 ）
-    selectable: !(siteMeta.isDead || siteMeta.isOffline),
+    selectable: !(siteMeta.isDead || isSiteOffline(siteId)),
 
     // 预先计算 多少天未访问站点，以防止在 template 中反复计算
     lastAccessDuration:

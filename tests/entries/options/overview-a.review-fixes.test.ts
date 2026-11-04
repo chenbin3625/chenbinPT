@@ -77,6 +77,7 @@ vi.mock("@vueuse/core", async (importOriginal) => {
 vi.mock("@/options/views/Overview/MyData/utils/siteMetadata.ts", () => ({
   allAddedSiteMetadata: {},
   loadAllAddedSiteMetadata: vi.fn(async () => ({})),
+  isSiteOffline: () => false,
 }));
 
 // 时间轴页的取数/画布辅助全部替换为可控桩，避免动态 import 真实站点定义

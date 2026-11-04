@@ -140,6 +140,17 @@ describe("getTorrentSiteMatch", () => {
     expect(sendMessageMock).toHaveBeenCalledWith("getClientTorrentTrackers", { downloaderId: "qb", torrent: item });
   });
 
+  it("tracker 请求失败不缓存 unmatched：下一次调用会重新请求", async () => {
+    sendMessageMock.mockRejectedValueOnce(new Error("offscreen recycled"));
+    const item = torrent({ infoHash: "h-fail" });
+
+    await expect(getTorrentSiteMatch(item)).rejects.toThrow("Failed to fetch torrent trackers");
+
+    sendMessageMock.mockResolvedValueOnce(["https://tracker.pt.example.com/announce"]);
+    await expect(getTorrentSiteMatch(item)).resolves.toEqual({ type: "site", siteId: "examplept" });
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+  });
+
   it("站点映射重建（引用变化）后缓存失效并重新判定", async () => {
     const item = torrent({ infoHash: "h-rebuild", trackerUrls: ["https://tracker.new.example/announce"] });
     await expect(getTorrentSiteMatch(item)).resolves.toEqual({ type: "unmatched" });

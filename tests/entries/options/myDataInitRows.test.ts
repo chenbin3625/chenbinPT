@@ -4,6 +4,7 @@ import { prepareOptionsPinia } from "../../helpers/optionsView.ts";
 const loadMetadata = vi.hoisted(() => vi.fn());
 vi.mock("@/options/views/Overview/MyData/utils/siteMetadata.ts", () => ({
   loadAllAddedSiteMetadata: loadMetadata,
+  isSiteOffline: () => false,
 }));
 vi.mock("@/options/views/Overview/MyData/utils/format.ts", () => ({
   fixUserInfo: (info: unknown) => info,

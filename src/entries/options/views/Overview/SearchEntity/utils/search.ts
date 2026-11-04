@@ -26,6 +26,22 @@ const { advanceFilterDictRef, buildAdvanceItemPropsFn, updateTableFilterValueFn,
 
 // 模块级别的 Set，用于跟踪已存在的搜索结果 ID，避免并发时的重复
 const globalExistingIds = new Set<string>();
+// uniqueId → 行，用于在另一个方案再次返回同一项时补记来源方案
+const existingItemsById = new Map<string, ISearchResultTorrent>();
+
+function rebuildExistingSearchIds(): void {
+  globalExistingIds.clear();
+  existingItemsById.clear();
+  for (const item of runtimeStore.search.searchResult) {
+    globalExistingIds.add(item.uniqueId);
+    existingItemsById.set(item.uniqueId, item);
+  }
+}
+
+function clearExistingSearchIds(): void {
+  globalExistingIds.clear();
+  existingItemsById.clear();
+}
 
 export const searchQueue = new PQueue({ concurrency: 1 }); // 默认设置为 1，避免并发搜索
 
@@ -178,6 +194,7 @@ export interface IRouteSearchState {
   searchKey: string;
   searchPlanKey: string;
   startAt: number;
+  endAt?: number;
   resultCount: number;
 }
 
@@ -239,7 +256,9 @@ export function resolveRouteSearchDecision(params: {
 
   // 首次挂载：只有「地址里指定了搜索条件」且「恢复结果对不上」时才搜索
   if (search !== undefined) {
-    const restoredMatches = state.startAt > 0 && state.resultCount > 0 && search === state.searchKey;
+    // 已完成的空搜索结果同样算「恢复成功」：否则刷新后会重新跑一遍所有站点搜索
+    const completed = state.resultCount > 0 || (state.endAt ?? 0) > 0;
+    const restoredMatches = state.startAt > 0 && completed && search === state.searchKey;
     return restoredMatches ? { resetData } : buildSearch();
   }
 
@@ -265,9 +284,8 @@ searchQueue.on("active", () => {
     searchQueue.concurrency = configStore.searchEntity.queueConcurrency;
     console.debug("Search queue concurrency changed to: ", searchQueue.concurrency);
   }
-  // 队列开始活跃时，更新全局 Set
-  globalExistingIds.clear();
-  runtimeStore.search.searchResult.forEach((r) => globalExistingIds.add(r.uniqueId));
+  // 队列开始活跃时，按当前结果重建索引
+  rebuildExistingSearchIds();
 });
 
 searchQueue.on("idle", () => {
@@ -278,7 +296,7 @@ searchQueue.on("idle", () => {
   runtimeStore.search.isSearching = false;
   runtimeStore.search.endAt = Date.now();
 
-  globalExistingIds.clear(); // 队列空闲时，清空全局 Set
+  clearExistingSearchIds(); // 队列空闲时，清空本轮索引
   buildAdvanceItemPropsFn(); // 队列空闲时，构建高级筛选词
 });
 
@@ -348,14 +366,30 @@ export async function doSearchEntity(
   const solutionKey = `${siteId}|$|${searchEntryName}` as TSearchSolutionKey;
   let queuePriority = runtimeStore.search.searchPlan[solutionKey]?.queuePriority ?? 1;
 
-  // 对重新搜索的，清除对应搜索方法的搜索结果
+  // 对重新搜索的，只清除「仅由该方案提供」的结果：
+  // 同一 uniqueId 若还被其它方案返回，保留该行并改归另一个方案，避免整行消失。
   if (flush) {
-    const removedItems = runtimeStore.search.searchResult.filter((item) => item.solutionKey === solutionKey);
-    runtimeStore.search.searchResult = runtimeStore.search.searchResult.filter(
-      (item) => item.solutionKey != solutionKey,
-    );
-    // 同步更新全局 Set，移除被删除项目的 uniqueId
-    removedItems.forEach((item) => globalExistingIds.delete(item.uniqueId));
+    const keptItems: ISearchResultTorrent[] = [];
+    for (const item of runtimeStore.search.searchResult) {
+      const claimedKeys = item.solutionKeys ?? [item.solutionKey];
+      if (!claimedKeys.includes(solutionKey)) {
+        keptItems.push(item);
+        continue;
+      }
+
+      const remainingKeys = claimedKeys.filter((key) => key !== solutionKey);
+      if (remainingKeys.length === 0) {
+        globalExistingIds.delete(item.uniqueId);
+        existingItemsById.delete(item.uniqueId);
+        continue;
+      }
+
+      item.solutionKeys = remainingKeys;
+      item.solutionKey = remainingKeys[0]!;
+      item.solutionId = (remainingKeys[0]!.split("|$|")[1] ?? item.solutionId) as ISearchResultTorrent["solutionId"];
+      keptItems.push(item);
+    }
+    runtimeStore.search.searchResult = keptItems;
     queuePriority -= 1; // 对重新搜索的，降低优先级
   }
 
@@ -422,11 +456,13 @@ export async function doSearchEntity(
 
         for (const item of searchResult) {
           const itemUniqueId = `${item.site}-${item.id}`;
-          if (!globalExistingIds.has(itemUniqueId)) {
+          const existingItem = existingItemsById.get(itemUniqueId);
+          if (!existingItem) {
             const searchResultItem = item as ISearchResultTorrent;
             searchResultItem.uniqueId = itemUniqueId;
             searchResultItem.solutionId = searchEntryName;
             searchResultItem.solutionKey = solutionKey;
+            searchResultItem.solutionKeys = [solutionKey];
             searchResultItem.status ??= ETorrentStatus.unknown; // 确保 status 字段有默认值，避免过滤器无法处理 undefined
 
             if (imdbSearchKeywords && configStore.searchEntity.forceImdbIdMatchFilter && searchResultItem.ext_imdb) {
@@ -437,6 +473,13 @@ export async function doSearchEntity(
 
             newItems.push(markRaw(searchResultItem)); // 使用 markRaw 冻结对象，避免 Vue 创建响应式代理，提升性能
             globalExistingIds.add(itemUniqueId);
+            existingItemsById.set(itemUniqueId, searchResultItem);
+          } else {
+            // 另一个方案也返回了同一种子：记录来源，之后只重搜其中一个方案时该行不会被误删
+            existingItem.solutionKeys ??= [existingItem.solutionKey];
+            if (!existingItem.solutionKeys.includes(solutionKey)) {
+              existingItem.solutionKeys.push(solutionKey);
+            }
           }
         }
 

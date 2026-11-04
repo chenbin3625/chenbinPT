@@ -822,7 +822,8 @@ export default class Aria2 extends AbstractBittorrentClient {
       name: rawTask.bittorrent!.info.name,
       progress,
       isCompleted: progress >= 100,
-      ratio: rawTask.uploadLength / rawTask.totalLength || 0,
+      // 分享率 = 已上传 / 已下载；totalLength 是种子总大小，下载中会低估
+      ratio: Number(rawTask.completedLength) > 0 ? Number(rawTask.uploadLength) / Number(rawTask.completedLength) : 0,
       dateAdded: 0, // Aria2 不返回添加时间
       savePath: rawTask.dir,
       state,

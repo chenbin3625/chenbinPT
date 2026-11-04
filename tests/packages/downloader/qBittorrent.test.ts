@@ -489,6 +489,22 @@ describe("qBittorrent：C1 修复轮", () => {
     expect((captured.data as FormData).get("stopped")).toBe("true");
   });
 
+  it("QB-3：label 里的逗号被归一化，避免 qB 拆成两个 tag", async () => {
+    const client = apiKeyClient();
+    let captured: any;
+    axiosMock.request.mockImplementation(async (config: any) => {
+      captured = config;
+      return { data: "Ok." };
+    });
+
+    await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: false,
+      label: "Movie, The",
+    });
+
+    expect((captured.data as FormData).get("tags")).toBe("Movie- The");
+  });
+
   it("QB-5：使用 category: 前缀时不改写调用方的 advanceAddTorrentOptions", async () => {
     const client = apiKeyClient();
     axiosMock.request.mockResolvedValue({ data: "Ok." });

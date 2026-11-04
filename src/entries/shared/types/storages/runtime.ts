@@ -12,6 +12,12 @@ export interface ISearchResultTorrent extends ITorrent {
   uniqueId: string; // 每个种子的uniqueId，由 `${site}-${id}` 组成
   solutionId: TSolutionKey; // 对应搜索方案的id
   solutionKey: TSearchSolutionKey; // 对应搜索方案的key，由 `${site}-${solutionId}` 组成
+  /**
+   * 条目的全部来源方案：同一 uniqueId 可能被多个方案返回，去重后只保留一行。
+   * 只重搜其中一个方案时，据此决定该行是删除还是改归另一个仍声明它的方案。
+   * 旧数据没有该字段时按 `[solutionKey]` 处理。
+   */
+  solutionKeys?: TSearchSolutionKey[];
 }
 
 export interface ISearchPlanStatus extends Pick<ISearchResult, "status" | "statusMsg"> {

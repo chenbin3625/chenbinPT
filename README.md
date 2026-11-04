@@ -69,6 +69,6 @@ Firefox 版本使用 `npm run build:dist-firefox` 构建。构建后按上述步
 ### 其他建议
 
 - 定期更换站点的 `passkey` / 下载器密码；备份加密密钥与备份文件分开保管。
-- 备份建议设置加密密钥：未设置密钥时，**上传到远端存储**的备份不允许包含 `cookies` / `metadata` / `downloadHistory`（避免明文凭据外传；导出到本地文件请自行妥善保管）。
+- 备份建议设置加密密钥：未设置密钥时，**上传到远端存储**的备份不允许包含 `cookies` / `metadata` / `downloadHistory` / `torrentFavorite` / `keepUploadTask` / `searchResultSnapshot`（避免明文凭据外传；导出到本地文件请自行妥善保管）。
 - 「可选的本地原生桥接」（native messaging，默认关闭）只开放只读查询方法，返回值会做凭据脱敏；仅在确认本机宿主程序来源可信时开启。
 - 恢复来源不明的备份前，请先检查其内容（尤其备份服务器配置是否被改写）。

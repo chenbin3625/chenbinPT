@@ -1470,6 +1470,7 @@
     "inputSearchKeywords": "No search keyword was parsed. Please enter one:",
     "invalidDropData": "The dropped content is not valid torrent data and was ignored",
     "localDownloadFailed": "Local download failed. Check Download History for details.",
+    "localDownloadPartial": "{success} torrent(s) downloaded, {failed} failed. Only the failed ones need a retry.",
     "noTorrentParsed": "No torrents found on this page",
     "openPTD": "Open PTD",
     "operationFailed": "Operation failed. Please try again.",

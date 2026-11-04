@@ -28,6 +28,7 @@ vi.mock("@/options/views/Overview/MyData/utils/siteMetadata.ts", () => ({
   loadAllAddedSiteMetadata: vi.fn(async (siteIds: string[]) =>
     Object.fromEntries(siteIds.map((id) => [id, { id, combinedSiteName: id, type: "private" }])),
   ),
+  isSiteOffline: () => false,
 }));
 vi.mock("@/options/views/Overview/MyData/utils/format.ts", () => ({
   fixUserInfo: (v: unknown) => v,

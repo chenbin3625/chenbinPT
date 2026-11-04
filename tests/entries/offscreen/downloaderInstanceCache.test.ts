@@ -84,21 +84,29 @@ describe("B1-2：下载器实例并发创建去重", () => {
     expect(mocks.releaseDownloaderInstance).not.toHaveBeenCalled();
   });
 
-  it("未命中缓存时仍按配置变化重建并释放旧实例（OFFSCREEN-7 不回归）", async () => {
-    const { getDownloaderInstance } = await loadDownloadModule();
-    mocks.downloaders.d1 = { id: "d1", type: "Aria2", address: "http://127.0.0.1:6800" };
-    mocks.getDownloader.mockImplementation(async () => mocks.nextInstance());
+  it("配置变化时重建，旧实例延迟释放（避免关闭在途 RPC）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { getDownloaderInstance } = await loadDownloadModule();
+      mocks.downloaders.d1 = { id: "d1", type: "Aria2", address: "http://127.0.0.1:6800" };
+      mocks.getDownloader.mockImplementation(async () => mocks.nextInstance());
 
-    const first = await getDownloaderInstance("d1");
-    await getDownloaderInstance("d1");
-    expect(mocks.getDownloader, "同配置命中 offscreen 缓存").toHaveBeenCalledTimes(1);
+      const first = await getDownloaderInstance("d1");
+      await getDownloaderInstance("d1");
+      expect(mocks.getDownloader, "同配置命中 offscreen 缓存").toHaveBeenCalledTimes(1);
 
-    mocks.downloaders.d1 = { ...mocks.downloaders.d1, address: "http://127.0.0.1:6801" };
-    const second = await getDownloaderInstance("d1");
+      mocks.downloaders.d1 = { ...mocks.downloaders.d1, address: "http://127.0.0.1:6801" };
+      const second = await getDownloaderInstance("d1");
 
-    expect(second).not.toBe(first);
-    expect(mocks.getDownloader).toHaveBeenCalledTimes(2);
-    expect(mocks.releaseDownloaderInstance).toHaveBeenCalledWith(first);
+      expect(second).not.toBe(first);
+      expect(mocks.getDownloader).toHaveBeenCalledTimes(2);
+      expect(mocks.releaseDownloaderInstance).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mocks.releaseDownloaderInstance).toHaveBeenCalledWith(first);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("in-flight 创建失败后不留下毒化的 Promise（下次调用会重试）", async () => {

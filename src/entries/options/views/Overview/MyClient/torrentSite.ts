@@ -50,7 +50,7 @@ const siteMatchCache = shallowReactive(new Map<string, ISiteMatchCacheEntry>());
 const trackerUrlsCache = new Map<string, string[]>();
 
 /** 同一个种子的 tracker 请求合并 */
-const pendingTrackerRequests = new Map<string, Promise<string[]>>();
+const pendingTrackerRequests = new Map<string, Promise<string[] | undefined>>();
 
 /** 正在判定中的种子（自动刷新与手动刷新重叠时避免重复判定） */
 const resolvingKeys = new Set<string>();
@@ -65,8 +65,13 @@ function getTorrentCacheKey(torrent: CTorrent): string {
   return `${torrent.clientId}:${torrent.infoHash || torrent.id}`;
 }
 
-/** 获取种子的 tracker 地址列表（优先使用下载器已返回的数据，否则向下载器请求） */
-async function getTorrentTrackerUrls(torrent: CTorrent): Promise<string[]> {
+/**
+ * 获取种子的 tracker 地址列表（优先使用下载器已返回的数据，否则向下载器请求）。
+ *
+ * 返回 `undefined` 表示请求失败：调用方必须把这次判定当作「暂不可用」，不能缓存成 unmatched，
+ * 否则一次网络/offscreen 抖动会让该行整个会话都不再重试。
+ */
+async function getTorrentTrackerUrls(torrent: CTorrent): Promise<string[] | undefined> {
   if (torrent.trackerUrls?.length) {
     return torrent.trackerUrls;
   }
@@ -88,7 +93,7 @@ async function getTorrentTrackerUrls(torrent: CTorrent): Promise<string[]> {
       try {
         return (await sendMessage("getClientTorrentTrackers", { downloaderId: torrent.clientId, torrent })) ?? [];
       } catch {
-        return [];
+        return undefined;
       }
     })();
     pendingTrackerRequests.set(cacheKey, pending);
@@ -96,6 +101,9 @@ async function getTorrentTrackerUrls(torrent: CTorrent): Promise<string[]> {
 
   const trackerUrls = await pending;
   pendingTrackerRequests.delete(cacheKey);
+  if (typeof trackerUrls === "undefined") {
+    return undefined; // 失败不写缓存：下一次刷新会重新请求
+  }
   trackerUrlsCache.set(cacheKey, trackerUrls);
   return trackerUrls;
 }
@@ -139,6 +147,9 @@ async function resolveTorrentSiteMatch(torrent: CTorrent): Promise<TTorrentSiteM
   }
 
   const trackerUrls = await getTorrentTrackerUrls(torrent);
+  if (typeof trackerUrls === "undefined") {
+    throw new Error("Failed to fetch torrent trackers");
+  }
   if (trackerUrls.length === 0) {
     return { type: "unmatched" };
   }

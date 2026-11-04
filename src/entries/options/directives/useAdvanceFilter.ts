@@ -122,6 +122,18 @@ function normalizeFilterValue(value: unknown): string | undefined {
 // /pattern/[gimsuy]
 const regexLiteralPattern = /^\/((?:\\.|[^\\/])*)\/([gimsuy]*)$/;
 const regexCache = new Map<string, RegExp | null>();
+/** 用户输入的每个不同筛选值都会进缓存（含「不是正则」的 null）；限制条数避免长会话无限增长 */
+const REGEX_CACHE_LIMIT = 500;
+
+function setRegexCache(key: string, value: RegExp | null): void {
+  if (regexCache.size >= REGEX_CACHE_LIMIT) {
+    const oldestKey = regexCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      regexCache.delete(oldestKey);
+    }
+  }
+  regexCache.set(key, value);
+}
 
 /**
  * 仅解析 /pattern/[gimsuy] 结构，失败时返回 null。
@@ -136,7 +148,7 @@ function toRegexIfValid(normalizedValue: unknown): RegExp | null {
 
   const matched = regexLiteralPattern.exec(normalizedValue);
   if (!matched) {
-    regexCache.set(normalizedValue, null);
+    setRegexCache(normalizedValue, null);
     return null;
   }
 
@@ -146,10 +158,10 @@ function toRegexIfValid(normalizedValue: unknown): RegExp | null {
     // 带 g/y 时 lastIndex 会跨值残留，出现「隔一个值命中一次」——实测 `/1080p/g` 复用于
     // ["a1080pb","c1080pd","e1080pf","g1080ph"] 得到 true,false,true,false（期望全 true）。
     const regex = new RegExp(pattern, flags.replace(/[gy]/g, ""));
-    regexCache.set(normalizedValue, regex);
+    setRegexCache(normalizedValue, regex);
     return regex;
   } catch {
-    regexCache.set(normalizedValue, null);
+    setRegexCache(normalizedValue, null);
     return null;
   }
 }

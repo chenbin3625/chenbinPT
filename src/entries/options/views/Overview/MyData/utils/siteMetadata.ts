@@ -25,6 +25,14 @@ export const allAddedSiteMetadata = shallowReactive<TOptionSiteMetadatas>({});
 /** 已经提示过加载失败的站点：同一次会话里最多提示一次，避免每次刷新/每个页面都重复弹提示 */
 const reportedFailedSiteIds = new Set<string>();
 
+/**
+ * `isOffline` 可以随时在设置页修改，而缓存条目只在首次加载时写入。
+ * 读取时以 store 的当前值为准，避免同一 SPA 会话里继续用旧状态。
+ */
+export function isSiteOffline(siteId: TSiteID): boolean {
+  return useMetadataStore().sites[siteId]?.isOffline ?? allAddedSiteMetadata[siteId]?.isOffline ?? false;
+}
+
 export async function loadAllAddedSiteMetadata(sites?: string[]): Promise<TOptionSiteMetadatas> {
   const loadSites = sites ?? definitionList;
   const metadataStore = useMetadataStore();

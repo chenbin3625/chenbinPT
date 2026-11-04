@@ -64,6 +64,10 @@ export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = [
   "downloadHistory",
   // 种子收藏保存了完整的 ITorrent（含 link / url），与 downloadHistory 一样可能带 passkey
   "torrentFavorite",
+  // 辅种任务与搜索快照同样保存 ITorrent：items[].url / searchResult[].link 是站点下载链接，
+  // 很多站点定义把 passkey 直接拼在里面（见 hdbits.ts 等）。
+  "keepUploadTask",
+  "searchResultSnapshot",
 ];
 
 /** 无密钥 + 敏感字段时的提示文案（remote 拒绝用错误、local 仅告警） */
@@ -141,7 +145,10 @@ export async function createBackupData(backupFields: TBackupFields[] = []): Prom
       const results = await Promise.all(
         batch.map(async (siteHost) => {
           try {
-            return { siteHost, cookies: await sendMessage("getAllCookies", { domain: siteHost }) };
+            // siteHostMap 的键来自 url.host（可能带端口），而 cookie domain 永远不带端口；
+            // 直接用带端口的 host 查询会静默返回空。
+            const cookieDomain = normalizeHostname(siteHost) ?? siteHost;
+            return { siteHost, cookies: await sendMessage("getAllCookies", { domain: cookieDomain }) };
           } catch (e) {
             // 单个 host 读取失败不应让整份备份失败（例如带端口的 host 被 cookies API 拒绝）。
             logger({
@@ -410,7 +417,9 @@ function toCookieSetDetails(value: unknown): CookieSetDetails | null {
   }
 
   const secure = value.secure === true;
-  const path = typeof value.path === "string" && value.path.length > 0 ? value.path : "/";
+  // 只接受以 `/` 开头的 path：background 用 `domain + path` 重建 cookie URL，
+  // 相对 path（如 `@evil.example`）会把 URL 的主机改成别的域。
+  const path = typeof value.path === "string" && value.path.startsWith("/") ? value.path : "/";
   const domain = value.domain;
 
   const details: CookieSetDetails = {
@@ -608,12 +617,16 @@ export async function restoreBackupData(
   const restoreFields: TBackupFields[] = intersection(fields, restoreDataExistFields).filter(isBackupField);
   let cookiesToRestore: Required<IBackupData>["cookies"] | undefined;
   const allowedCookieHosts = new Set<string>();
+  // 本机已有站点时不允许备份里的 metadata 扩名单（防篡改备份）；只有全新配置（名单为空）才按
+  // 本次恢复的 metadata 放行，否则「新机器恢复自己的备份」永远恢复不了 Cookie。
+  let localCookieHostsAreEmpty = false;
   if (restoreFields.includes("cookies")) {
     if (isRestorableCookies(restoreData.cookies)) {
       cookiesToRestore = restoreData.cookies;
       try {
-        // 在写入任何备份字段前冻结本机允许域。否则同一份不可信备份可以先改 siteHostMap，
-        // 再借新加入的 host 写入 cookie。
+        // 在写入任何备份字段前冻结本机允许域：只恢复 cookies 时，备份里的 metadata 不能扩展名单。
+        // 若同一次恢复也显式包含 metadata（下面校验通过分支），则允许域会再并入恢复后的 siteHostMap —
+        // 新机器迁移的唯一可用路径，且仍只来自用户勾选并校验过的 metadata。
         const siteHostMap =
           ((await sendMessage("getExtStoragePath", {
             key: "metadata",
@@ -626,6 +639,7 @@ export async function restoreBackupData(
             allowedCookieHosts.add(normalized);
           }
         }
+        localCookieHostsAreEmpty = allowedCookieHosts.size === 0;
       } catch (e) {
         cookiesToRestore = undefined;
         report.skipped.push({
@@ -701,6 +715,19 @@ export async function restoreBackupData(
         restoreBackupServers,
         report,
       })) as IExtensionStorageSchema[typeof field];
+
+      // 新浏览器配置上本机 siteHostMap 为空；若本次同时恢复 cookies 与 metadata（迁移的常规用法），
+      // 允许恢复后的站点域，否则所有 Cookie 都会被当成「不属于本机站点」丢弃。
+      // 本机已有站点时不放行（见 localCookieHostsAreEmpty 的说明）。
+      if (cookiesToRestore && localCookieHostsAreEmpty) {
+        const restoredHostMap = (fieldData as IMetadataPiniaStorageSchema).siteHostMap ?? {};
+        for (const host of Object.keys(restoredHostMap)) {
+          const normalized = normalizeHostname(host);
+          if (normalized) {
+            allowedCookieHosts.add(normalized);
+          }
+        }
+      }
     }
 
     pendingWrites.push({ key: field, value: fieldData, field });
@@ -969,11 +996,20 @@ export async function restoreBackupData(
   return report;
 }
 
-onMessage("restoreBackupData", async ({ data: { restoreData, restoreOptions = {} } }) => {
+/**
+ * 恢复必须串行：两个设置页同时恢复时，否则会交错写入，且后失败的一方会回滚到
+ * 对方写入前的快照（把对方成功的恢复抹掉）。与 keepUploadTask / torrentFavorite 同一条约定。
+ */
+let restoreMutationChain: Promise<unknown> = Promise.resolve();
+
+onMessage("restoreBackupData", ({ data: { restoreData, restoreOptions = {} } }) => {
   // 直接把结构化报告回传给 UI：S-1 的安全提示（哪些字段被跳过、哪些被安全化）必须让用户看到，
   // 只回传 success 的话这条提示等于不存在（options 侧日志查看器已移除、offscreen 日志无人读取）。
   // 另注：本消息是**写类消息**，按 B-9 的裁决不在自动重试白名单里（重复执行会覆盖用户配置）。
-  return await restoreBackupData(restoreData, restoreOptions);
+  const run = () => restoreBackupData(restoreData, restoreOptions);
+  const next = restoreMutationChain.then(run, run);
+  restoreMutationChain = next.catch(() => undefined);
+  return next;
 });
 
 export async function getBackupHistory(backupServerId: string): Promise<IBackupFileInfo[]> {

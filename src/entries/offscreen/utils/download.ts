@@ -73,6 +73,31 @@ const downloaderInstanceCache = new Map<string, { configKey: string; instance: D
 const downloaderInstanceInFlight = new Map<string, Promise<DownloaderInstance | null>>();
 
 /**
+ * 配置变化时不能立刻 dispose 旧实例：Aria2 的 dispose 会关闭 WebSocket 并 reject 在途 RPC，
+ * 用户只是改了一个设置，正在推送的下载就会失败。先挂起 60s，期间若被重新采用则取消。
+ * shortcut: 固定宽限期，超过 60s 的 RPC 仍可能被关闭；需要时升级为引用计数。
+ */
+const DOWNLOADER_RETIRE_DELAY = 60_000;
+const retiredDownloaderInstances = new Map<DownloaderInstance, ReturnType<typeof setTimeout>>();
+
+function cancelDownloaderRetirement(instance: DownloaderInstance): void {
+  const timer = retiredDownloaderInstances.get(instance);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    retiredDownloaderInstances.delete(instance);
+  }
+}
+
+function retireDownloaderInstance(instance: DownloaderInstance): void {
+  if (retiredDownloaderInstances.has(instance)) return;
+  const timer = setTimeout(() => {
+    retiredDownloaderInstances.delete(instance);
+    releaseDownloaderInstance(instance);
+  }, DOWNLOADER_RETIRE_DELAY);
+  retiredDownloaderInstances.set(instance, timer);
+}
+
+/**
  * offscreen 自建实例缓存的 key（见 OFFSCREEN-3）。
  *
  * 早期实现只取连接字段，漏掉 `feature` / `advanceAddTorrentOptions`：
@@ -83,6 +108,49 @@ const downloaderInstanceInFlight = new Map<string, Promise<DownloaderInstance | 
 function getDownloaderConfigKey(config: IDownloaderMetadata): string {
   const { id, type, address, username, password, timeout, feature, advanceAddTorrentOptions } = config;
   return JSON.stringify({ id, type, address, username, password, timeout, feature, advanceAddTorrentOptions });
+}
+
+/**
+ * 内容脚本不能把任意 `addTorrentOptions` 原样送进下载器：
+ * - `savePath` 决定下载器把文件写到哪里，只接受该下载器已配置的建议目录/默认目录；
+ * - `advanceAddTorrentOptions` 只接受该下载器配置里声明过的键（值仍由用户在页面侧选择）；
+ * - 其余字段做类型收敛与长度限制。
+ * 只有扩展自身上下文不受此限制；内容脚本（含站点页的拖拽对话框）一律走校验。
+ */
+function sanitizeContentScriptAddTorrentOptions(
+  options: CAddTorrentOptions,
+  downloaderConfig: IDownloaderMetadata,
+  defaultFolder?: string,
+): CAddTorrentOptions {
+  const configuredAdvance = downloaderConfig.advanceAddTorrentOptions ?? {};
+  const requestedAdvance = options.advanceAddTorrentOptions ?? {};
+  const allowedSavePaths = new Set(
+    [...(downloaderConfig.suggestFolders ?? []), configuredAdvance.savePath, defaultFolder].filter(
+      (path): path is string => typeof path === "string" && path.length > 0,
+    ),
+  );
+  const savePath = typeof options.savePath === "string" ? options.savePath : "";
+  if (savePath && !allowedSavePaths.has(savePath)) {
+    // 不能静默改成空串：用户会以为自定义路径生效了。
+    throw new Error("Permission denied: save path is not in the configured folders of this downloader");
+  }
+
+  return {
+    addAtPaused: options.addAtPaused === true,
+    savePath,
+    label: typeof options.label === "string" ? options.label.slice(0, 200) : "",
+    uploadSpeedLimit:
+      typeof options.uploadSpeedLimit === "number" && Number.isFinite(options.uploadSpeedLimit)
+        ? Math.max(0, options.uploadSpeedLimit)
+        : 0,
+    // 保留 undefined，让 downloadTorrent 的默认值（默认开启本地中转）继续生效
+    localDownload: typeof options.localDownload === "boolean" ? options.localDownload : undefined,
+    advanceAddTorrentOptions: Object.fromEntries(
+      Object.keys(configuredAdvance)
+        .filter((key) => Object.hasOwn(requestedAdvance, key))
+        .map((key) => [key, requestedAdvance[key]]),
+    ),
+  };
 }
 
 export async function getDownloaderInstance(downloaderId: string): Promise<DownloaderInstance | null> {
@@ -102,12 +170,14 @@ export async function getDownloaderInstance(downloaderId: string): Promise<Downl
     }
 
     const instance = await getDownloader(downloaderConfig);
-    // OFFSCREEN-7：配置变化时旧实例会被本缓存丢弃，必须主动释放它持有的长连接（Aria2 的 WebSocket），
+    // OFFSCREEN-7：配置变化时旧实例会被本缓存丢弃，必须释放它持有的长连接（Aria2 的 WebSocket），
     // 否则反复改配置会在 offscreen 生命周期内累积孤儿连接。若库级缓存按稳定 key 返回的是同一个实例，
     // 则不能 dispose（否则会关掉正在用的连接），只需更新 key。
+    // 延迟释放而不是立即 release：旧实例可能还有在途 RPC。
     if (cached && cached.instance !== instance) {
-      releaseDownloaderInstance(cached.instance);
+      retireDownloaderInstance(cached.instance);
     }
+    cancelDownloaderRetirement(instance);
     downloaderInstanceCache.set(downloaderId, { configKey, instance });
     return instance;
   })();
@@ -814,6 +884,22 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
       // 无站点 magnet 是 content script 唯一被允许的无站点场景，但只能存本地文件；
       // 推送任意下载器（含 savePath/label）必须来自扩展页。
       throw new Error("Permission denied: content script can only download site-less magnet links to local file");
+    }
+
+    if (downloadOption.addTorrentOptions && downloadOption.downloaderId !== "local") {
+      const [downloaderConfig, defaultDownloader] = await Promise.all([
+        getDownloaderConfig(downloadOption.downloaderId ?? ""),
+        sendMessage("getExtStoragePath", {
+          key: "metadata",
+          path: "defaultDownloader",
+          defaultValue: {},
+        }) as Promise<{ folder?: string }>,
+      ]);
+      downloadOption.addTorrentOptions = sanitizeContentScriptAddTorrentOptions(
+        downloadOption.addTorrentOptions,
+        downloaderConfig,
+        typeof defaultDownloader?.folder === "string" ? defaultDownloader.folder : undefined,
+      );
     }
   }
   const incomingDownloadId = downloadOption.downloadId;

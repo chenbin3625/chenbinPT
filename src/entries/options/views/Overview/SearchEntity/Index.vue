@@ -414,6 +414,7 @@ watch(
         searchKey: runtimeStore.search.searchKey,
         searchPlanKey: runtimeStore.search.searchPlanKey,
         startAt: runtimeStore.search.startAt,
+        endAt: runtimeStore.search.endAt,
         resultCount: runtimeStore.search.searchResult.length,
       },
     });

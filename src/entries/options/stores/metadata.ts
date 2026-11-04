@@ -350,9 +350,14 @@ function flushMetadataSave(store: TSaveableStore, skipMerge = false): void {
   void store.$save(undefined, skipMerge ? { skipMerge: true } : undefined);
 }
 
-/** 立即落盘所有待保存的 store（页面卸载/隐藏时调用） */
-function flushAllMetadataSaves(): void {
-  [...pendingSaveTimers.keys()].forEach((store) => flushMetadataSave(store, true));
+/**
+ * 立即落盘所有待保存的 store（页面卸载/隐藏时调用）。
+ *
+ * 只有真正卸载（pagehide）才跳过合并；`visibilitychange:hidden` 在切标签页时也会触发，
+ * 此时 offscreen 可能正在写同一份 metadata，跳过合并会用旧快照覆盖它。
+ */
+function flushAllMetadataSaves(skipMerge = false): void {
+  [...pendingSaveTimers.keys()].forEach((store) => flushMetadataSave(store, skipMerge));
 }
 
 function scheduleMetadataSave(store: TSaveableStore): void {
@@ -369,7 +374,7 @@ function scheduleMetadataSave(store: TSaveableStore): void {
 // 页面被关闭/切到后台时立即落盘，避免去抖窗口内的改动丢失（与 runtime.ts 的做法一致）
 try {
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-    window.addEventListener("pagehide", flushAllMetadataSaves);
+    window.addEventListener("pagehide", () => flushAllMetadataSaves(true));
     document?.addEventListener?.("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
         flushAllMetadataSaves();

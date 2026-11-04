@@ -69,7 +69,7 @@ import {
   fixedLastUserInfo,
   loadFullData,
 } from "./utils.ts";
-import { allAddedSiteMetadata, loadAllAddedSiteMetadata } from "../utils/siteMetadata.ts";
+import { allAddedSiteMetadata, isSiteOffline, loadAllAddedSiteMetadata } from "../utils/siteMetadata.ts";
 
 const ext_version = __EXT_VERSION__;
 
@@ -959,7 +959,7 @@ function saveControl() {
                     style="margin-left: 4px; color: var(--ptd-text-secondary)"
                   />
                   <DisconnectOutlined
-                    v-if="allAddedSiteMetadata[siteId]?.isOffline && !allAddedSiteMetadata[siteId]?.isDead"
+                    v-if="isSiteOffline(siteId) && !allAddedSiteMetadata[siteId]?.isDead"
                     style="margin-left: 4px; color: var(--ptd-text-secondary)"
                   />
                 </span>

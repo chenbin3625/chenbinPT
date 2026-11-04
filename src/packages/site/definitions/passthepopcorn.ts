@@ -4,6 +4,7 @@
  */
 import { selectElements } from "../utils/selector";
 import Gazelle, { SchemaMetadata } from "../schemas/Gazelle.ts";
+import { parseInertHtmlFragment } from "../schemas/AbstractBittorrentSite.ts";
 import {
   parseValidTimeString,
   parseValidTimeStringInZone,
@@ -302,10 +303,9 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class PassThePopcorn extends Gazelle {
-  protected createTempDiv(rawHtml: string): HTMLDivElement {
-    const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = rawHtml;
-    return tempDiv;
+  /** 用惰性文档解析：API 返回的标题/时间来自站点，不能放进活动文档（<img src> 会真的发请求） */
+  protected createTempDiv(rawHtml: string): ParentNode {
+    return parseInertHtmlFragment(rawHtml).body ?? document.createElement("div");
   }
   protected parsePageData(movie: any, authKey: string, torrentPass: string): Partial<ITorrent> {
     const torrent = movie.GroupingQualities?.[0]?.Torrents?.[0];

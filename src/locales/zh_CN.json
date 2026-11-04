@@ -1467,6 +1467,7 @@
     "inputSearchKeywords": "未解析到搜索关键词，请输入：",
     "invalidDropData": "拖拽内容不是有效的种子数据，已忽略",
     "localDownloadFailed": "本地下载失败，请到下载历史中查看失败原因",
+    "localDownloadPartial": "已下载 {success} 个，失败 {failed} 个；请只重试失败的条目",
     "noTorrentParsed": "未解析到当前页面种子",
     "openPTD": "打开PTD",
     "operationFailed": "操作失败，请重试",

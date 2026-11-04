@@ -549,10 +549,17 @@ export default class Deluge extends AbstractBittorrentClient {
         this.invalidateSuggestListCache();
       }
     } catch (e) {
-      // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败。
-      // SEC-1：日志里的 URL 必须脱敏（PT 站下载链接通常带 passkey）。
-      addResult.message = e instanceof Error ? e.message : String(e);
-      logMessage("[Deluge] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
+      const message = e instanceof Error ? e.message : String(e);
+      // 重复添加不是失败：种子已经在 session 里（可能在别处做种）。与 Transmission 的口径保持一致。
+      if (/already in session/i.test(message)) {
+        addResult.success = true;
+        this.invalidateSuggestListCache();
+      } else {
+        // P1-5：把添加失败原因回传给调用方（会写入下载历史），不再静默失败。
+        // SEC-1：日志里的 URL 必须脱敏（PT 站下载链接通常带 passkey）。
+        addResult.message = message;
+        logMessage("[Deluge] 添加种子失败", { url: sanitizeDownloadUrlForLog(url), error: addResult.message }, "error");
+      }
     }
 
     return addResult;

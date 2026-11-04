@@ -11,7 +11,7 @@ import type { IStoredUserInfo, TUserInfoStorageSchema } from "@/shared/types.ts"
 import { i18n } from "@/options/plugins/i18n.ts";
 
 import { fixUserInfo, realFormatRatio } from "../utils/format.ts";
-import { allAddedSiteMetadata, TOptionSiteMetadatas } from "../utils/siteMetadata.ts";
+import { allAddedSiteMetadata, isSiteOffline, TOptionSiteMetadatas } from "../utils/siteMetadata.ts";
 // Konva 画布要用 MDI 字形绘制「站点已失效」等标记，必须显式注册该字体（原因见该文件注释）
 import "./mdi-canvas-font.css";
 
@@ -178,7 +178,7 @@ export const timelineDataRef = useResetableRef<ITimelineData>(
         }
 
         // 统计 offline 站点数量
-        if (allAddedSiteMetadata[userInfo.site]?.isOffline) {
+        if (isSiteOffline(userInfo.site)) {
           result.totalInfo.offlineSites++;
         }
 

@@ -73,7 +73,20 @@ async function handleLocalDownloadMulti() {
 
     // A-9：必须 await 这些消息。原来是 fire-and-forget，loading 在发送完成前就被复位（UI 谎报完成），
     // 失败也没有任何提示。offscreen 侧有 DOWNLOAD_CONCURRENCY 队列与下载间隔预留，并发投递是设计内行为。
-    await Promise.all(torrents.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })));
+    // 用 allSettled：一条失败不应把已成功的条目说成失败，否则用户重试会重复下载它们。
+    const results = await Promise.allSettled(
+      torrents.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
+    );
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed > 0) {
+      const success = results.length - failed;
+      runtimeStore.showSnackbar(
+        success > 0
+          ? t("contentScript.localDownloadPartial", { success, failed })
+          : t("contentScript.localDownloadFailed"),
+        { color: success > 0 ? "warning" : "error" },
+      );
+    }
   } catch (e) {
     runtimeStore.showSnackbar(t("contentScript.localDownloadFailed"), { color: "error" });
   } finally {

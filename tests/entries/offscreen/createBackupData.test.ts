@@ -170,6 +170,18 @@ describe("createBackupData：只打包被点名且在白名单内的字段（TES
     expect(backupData.metadata).toBeUndefined();
   });
 
+  it("cookies：带端口的 siteHostMap host 用去掉端口的 domain 查询（否则永远查不到）", async () => {
+    const { createBackupData } = await loadBackupModule();
+    storage.set("metadata", {
+      sites: {},
+      siteHostMap: { "pt.example:8443": "self", "pt2.example": "other" },
+    });
+
+    await createBackupData(["cookies"]);
+
+    expect(cookieCalls.sort()).toEqual(["pt.example", "pt2.example"]);
+  });
+
   it("downloadHistory 只在被点名时读 IndexedDB，并在导出前脱敏请求配置（OS-1）", async () => {
     const { createBackupData } = await loadBackupModule();
     storage.set("config", { lang: "zh_CN" });
@@ -252,6 +264,9 @@ describe("exportBackupData：自动备份链路的字段装配不被放宽（TES
     await expect(exportBackupData("srv", ["downloadHistory"])).rejects.toThrow(/downloadHistory/);
     // 种子收藏保存了完整的 ITorrent（含 link），与 downloadHistory 同样可能带 passkey
     await expect(exportBackupData("srv", ["torrentFavorite"])).rejects.toThrow(/torrentFavorite/);
+    // 辅种任务/搜索快照同样保存下载链接（可能带 passkey）
+    await expect(exportBackupData("srv", ["keepUploadTask"])).rejects.toThrow(/keepUploadTask/);
+    await expect(exportBackupData("srv", ["searchResultSnapshot"])).rejects.toThrow(/searchResultSnapshot/);
     expect(addFile).not.toHaveBeenCalled();
     // 拒绝发生在读取 IndexedDB / 抓 cookie 之前
     expect(mocks.getAll).not.toHaveBeenCalled();

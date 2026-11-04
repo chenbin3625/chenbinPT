@@ -429,18 +429,27 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   private async queryItems(
     parentId: string,
     keywords: string,
-    options: IMediaServerSearchOptions,
-    multiViewMode: boolean,
+    options: Pick<IMediaServerSearchOptions, "startIndex" | "limit">,
     /** 只要这些类型（服务端过滤）；概览遍历用它跳过剧集下成千上万的单集 */
     includeItemTypes?: string,
   ): Promise<IFnOSQueryItem[]> {
+    return (await this.queryItemsResponse(parentId, keywords, options, includeItemTypes)).Items ?? [];
+  }
+
+  /** 带 TotalRecordCount 的查询：多视图分页先用它把全局 offset 映射到每个视图的窗口 */
+  private async queryItemsResponse(
+    parentId: string,
+    keywords: string,
+    options: Pick<IMediaServerSearchOptions, "startIndex" | "limit">,
+    includeItemTypes?: string,
+  ): Promise<IFnOSQueryResult> {
     const session = await this.login();
     const requestConfig: AxiosRequestConfig = {
       params: {
         ParentId: parentId,
         Recursive: true,
-        StartIndex: multiViewMode ? 0 : options.startIndex,
-        Limit: multiViewMode ? (options.startIndex ?? 0) + (options.limit ?? 50) : options.limit,
+        StartIndex: options.startIndex,
+        Limit: options.limit,
         Fields: FNOS_SEARCH_FIELDS,
       },
     };
@@ -456,7 +465,18 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     const mergedConfig = toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {});
     const response = await this.request<IFnOSQueryResult>(`/Users/${session.userId}/Items`, mergedConfig);
 
-    return response.data.Items ?? [];
+    return response.data;
+  }
+
+  /** 合并多视图结果：只保留影视条目，按 Id 去重 */
+  private dedupeSearchItems(items: IFnOSQueryItem[]): Map<string, IFnOSQueryItem> {
+    const deduped = new Map<string, IFnOSQueryItem>();
+    for (const item of items) {
+      if ((item.Type === "Movie" || item.Type === "Series") && !deduped.has(item.Id)) {
+        deduped.set(item.Id, item);
+      }
+    }
+    return deduped;
   }
 
   private async getPoster(item: IFnOSQueryItem): Promise<string> {
@@ -475,7 +495,8 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       const session = await this.login();
 
       const response = await this.request<Blob>(`/Items/${item.Id}/Images/Primary`, {
-        params: { tag: primaryTag },
+        // 列表只展示小图；不传 maxHeight 时服务器会返回原图
+        params: { tag: primaryTag, maxHeight: 400 },
         responseType: "blob",
       });
       const posterDataUrl = await blobToDataUrl(response.data);
@@ -722,7 +743,7 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       // 并在服务端只取 Movie/Series（空关键词时 queryItems 默认不过滤类型，会把所有单集也翻一遍）。
       let startIndex = 0;
       while (dedupedItems.size < maxItems) {
-        const items = await this.queryItems(viewId, "", { startIndex, limit: pageSize }, false, "Movie,Series");
+        const items = await this.queryItems(viewId, "", { startIndex, limit: pageSize }, "Movie,Series");
         if (items.length === 0) break;
 
         collect(items);
@@ -755,20 +776,57 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
 
     try {
       const viewIds = await this.getViewIds();
+      if (viewIds.length === 0) {
+        // 没有可见媒体库：旧实现返回空列表并标记成功，这里保持一致
+        result.options = config;
+        result.status = EResultParseStatus.success;
+        return result;
+      }
       const multiViewMode = viewIds.length > 1;
-      const queryResults = await Promise.all(
-        viewIds.map((viewId) => this.queryItems(viewId, keywords, config, multiViewMode)),
-      );
-      const dedupedItems = new Map<string, IFnOSQueryItem>();
-      for (const item of queryResults.flat()) {
-        if ((item.Type === "Movie" || item.Type === "Series") && !dedupedItems.has(item.Id)) {
-          dedupedItems.set(item.Id, item);
+      const startIndex = config.startIndex ?? 0;
+      const limit = config.limit ?? 50;
+
+      let mergedItems: IFnOSQueryItem[];
+      if (multiViewMode) {
+        // 每个视图先取总数，把全局 offset 映射成各视图自己的窗口：旧实现每次都请求
+        // 0..startIndex+limit，翻到第 N 页会把前 N-1 页重复传输一遍（O(N²)）。
+        const totals = await Promise.all(
+          viewIds.map(async (viewId) => {
+            const response = await this.queryItemsResponse(viewId, keywords, { startIndex: 0, limit: 1 });
+            return { viewId, total: Number(response.TotalRecordCount) };
+          }),
+        );
+
+        if (totals.some(({ total }) => !Number.isFinite(total) || total < 0)) {
+          // 服务端没给总数：退回旧行为（多取一点再切片），至少结果正确
+          const responses = await Promise.all(
+            viewIds.map((viewId) => this.queryItems(viewId, keywords, { startIndex: 0, limit: startIndex + limit })),
+          );
+          mergedItems = [...this.dedupeSearchItems(responses.flat()).values()].slice(startIndex, startIndex + limit);
+        } else {
+          let viewOffset = 0;
+          const windows = totals
+            .map(({ viewId, total }) => {
+              const from = Math.max(0, startIndex - viewOffset);
+              const to = Math.min(total, startIndex + limit - viewOffset);
+              viewOffset += total;
+              return { viewId, from, to };
+            })
+            .filter(({ from, to }) => to > from);
+
+          const responses = await Promise.all(
+            windows.map(({ viewId, from, to }) =>
+              this.queryItems(viewId, keywords, { startIndex: from, limit: to - from }),
+            ),
+          );
+          mergedItems = responses.flat();
         }
+      } else {
+        mergedItems = await this.queryItems(viewIds[0], keywords, { startIndex, limit });
       }
 
-      const items = Array.from(dedupedItems.values());
-      const pagedItems = multiViewMode ? items.slice(config.startIndex, config.startIndex + config.limit) : items;
-      result.items = await Promise.all(pagedItems.map((item) => this.buildMediaItem(item)));
+      const items = Array.from(this.dedupeSearchItems(mergedItems).values());
+      result.items = await Promise.all(items.map((item) => this.buildMediaItem(item)));
       result.options = config;
       result.status = EResultParseStatus.success;
     } catch (e) {

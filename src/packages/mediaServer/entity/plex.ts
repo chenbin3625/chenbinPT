@@ -16,6 +16,9 @@ import {
 } from "../types";
 import { blobToDataUrl, createOverviewAccumulator, getResolutionLabel, normalizeLanguage } from "../utils.ts";
 
+/** 海报体积上限：搜索页只需要缩略图，超大原图会占满内存/会话存储 */
+const MAX_POSTER_BYTES = 5 * 1024 * 1024;
+
 export const mediaServerMetaData: IMediaServerMetadata = {
   description: "Plex 是一款流行的媒体服务器软件，支持多种设备和平台，提供丰富的媒体管理和播放功能",
   warning: ["apikey 可通过在console面板中查看 localStorage 中的 myPlexAccessToken 值"],
@@ -237,6 +240,9 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
               },
             })
           : await this.request<Blob>(thumb, { responseType: "blob" });
+      if ((response.data?.size ?? 0) > MAX_POSTER_BYTES) {
+        return "";
+      }
       return await blobToDataUrl(response.data);
     } catch {
       return "";
@@ -391,6 +397,9 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
     let truncated = false;
     for (const section of sections) {
       if (truncated) break;
+      // 音乐/照片库不会被 accumulate（只收 movie/show/season），但翻页仍会跑完整个库。
+      // 缺省 type 时不跳过：老版本/代理可能不回该字段，宁可多扫也不能漏库。
+      if (section.type && !["movie", "show"].includes(section.type)) continue;
 
       let startIndex = 0;
       while (true) {
@@ -439,6 +448,8 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
     const streams = part?.Stream ?? [];
     const videoStream = streams.find((stream) => stream.streamType === 1);
     const hasStreams = streams.length > 0;
+    // Plex 的 bitrate 单位是 kbps；共用结构约定为 bps
+    const plexBitrate = videoStream?.bitrate ?? media?.bitrate;
     const isPlayed = (item.viewCount ?? 0) > 0;
     const detailUrl = `${this.webBaseUrl}#!/server/${serverIdentity}/details?key=${encodeURIComponent(item.key.replace(/\/children$/, ""))}`;
 
@@ -453,7 +464,8 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
       description: item.summary || (item as IPlexRecentlyAddedItem).parentSummary || "",
       format: media?.container ?? "",
       size: part?.size ?? 0,
-      duration: item.duration ?? 0,
+      // Plex 的 duration 单位是毫秒；共用结构约定为秒（Emby/FnOS 同样会先换算）
+      duration: item.duration ? item.duration / 1000 : 0,
       poster: "",
       tags: item.Genre?.map((tag) => ({ name: tag.tag, url: "" })) ?? [],
       rating: item.audienceRating ?? "-",
@@ -484,7 +496,7 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
                         : videoStream.colorTrc === "arib-std-b67"
                           ? "HLG"
                           : undefined,
-                    bitrate: videoStream.bitrate ?? media?.bitrate,
+                    bitrate: plexBitrate != null ? plexBitrate * 1000 : undefined,
                     frameRate: videoStream.frameRate ? Number(videoStream.frameRate) : undefined,
                   }
                 : undefined,

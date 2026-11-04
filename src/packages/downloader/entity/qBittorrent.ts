@@ -225,6 +225,14 @@ function extractIsPrivate(rawTorrent: rawTorrent): boolean | undefined {
   return typeof isPrivate === "boolean" ? isPrivate : undefined;
 }
 
+/**
+ * qBittorrent 的 `tags` 是逗号分隔的多值字段，而本插件的 label 契约是**单一**标签。
+ * 不归一化逗号时，`Movie, The` 会被存成两个 tag，而显示端只读第一个。
+ */
+function singleQbittorrentTag(label: string): string {
+  return label.replaceAll(",", "-");
+}
+
 /** 取第一个 tag 作为 CTorrent.label（label 语义统一到 tags，见 QB-3） */
 function primaryTag(tags: string | undefined): string | undefined {
   const first = (tags ?? "")
@@ -636,7 +644,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       }
 
       if (options.label) {
-        formData.append("tags", options.label); // Tags for the torrent
+        formData.append("tags", singleQbittorrentTag(options.label)); // Tags for the torrent
       }
 
       // QB-4：显式下发暂停/开始，让「自动开始」选项不被客户端的全局偏好覆盖。
@@ -954,7 +962,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
     try {
       const hash = normalizePieces(id);
-      const target = label.trim();
+      const target = singleQbittorrentTag(label.trim());
 
       if (target) {
         // 加法：不读当前 tags、不删任何 tag（多一次 /torrents/info 也无必要）

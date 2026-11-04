@@ -78,7 +78,11 @@ vi.mock("@/options/views/Overview/MyData/utils/siteMetadata.ts", async () => {
   const { shallowReactive } = await import("vue");
   const allAddedSiteMetadata = shallowReactive<Record<string, any>>({});
   siteMetadataState.allAddedSiteMetadata = allAddedSiteMetadata;
-  return { allAddedSiteMetadata, loadAllAddedSiteMetadata: async () => allAddedSiteMetadata };
+  return {
+    allAddedSiteMetadata,
+    loadAllAddedSiteMetadata: async () => allAddedSiteMetadata,
+    isSiteOffline: (siteId: string) => !!allAddedSiteMetadata[siteId]?.isOffline,
+  };
 });
 
 /** 站点名 / favicon 子组件会去读 store 并打后台消息，这里只关心父组件结构 */

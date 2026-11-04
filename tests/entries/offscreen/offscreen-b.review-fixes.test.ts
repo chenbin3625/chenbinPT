@@ -328,6 +328,49 @@ describe("restoreBackupData 的 cookie 恢复（OFFSCREEN-4 / OFFSCREEN-5）", (
     expect(report.skipped.some((item) => item.field === "cookies" && item.reason.includes("结构非法"))).toBe(true);
   });
 
+  it("新浏览器配置（本机 siteHostMap 为空）同时恢复 metadata 与 cookies 时，按恢复后的站点域写入 Cookie", async () => {
+    const { restoreBackupData } = await loadBackupModule();
+    installMessageRouter();
+    storageStore.set("metadata", { siteHostMap: {} });
+
+    const report = await restoreBackupData(
+      {
+        metadata: {
+          sites: { freshpt: {} },
+          siteHostMap: { "freshpt.example": "freshpt" },
+          siteNameMap: { freshpt: "FreshPT" },
+        },
+        cookies: {
+          "freshpt.example": [makeCookie({ name: "fresh", domain: "freshpt.example" })],
+        },
+        manifest: makeManifest({ metadata: "h", cookies: "h" }),
+      },
+      { fields: ["metadata", "cookies"] },
+    );
+
+    expect(setCookieCalls.map((cookie) => cookie.name)).toEqual(["fresh"]);
+    expect(report.restored).toContain("cookies");
+    expect(report.skipped.some((item) => item.field === "cookies")).toBe(false);
+  });
+
+  it("备份里的非绝对 path 被归一化为 `/`（不能借 domain + path 改写写入 URL 的主机）", async () => {
+    const { restoreBackupData } = await loadBackupModule();
+    installMessageRouter();
+    storageStore.set("metadata", { siteHostMap: { "kp.m-team.cc": "mteam" } });
+
+    await restoreBackupData(
+      {
+        cookies: {
+          "kp.m-team.cc": [makeCookie({ name: "evil-path", path: "@evil.example" })],
+        },
+        manifest: makeManifest({ cookies: "h" }),
+      },
+      { fields: ["cookies"] },
+    );
+
+    expect(setCookieCalls.find((cookie) => cookie.name === "evil-path")!.path).toBe("/");
+  });
+
   it("备份恢复保留 hostOnly 标记，background 可以省略 domain", async () => {
     const { restoreBackupData } = await loadBackupModule();
     installMessageRouter();

@@ -115,12 +115,40 @@ export function sanitizeDownloadUrlForLog(url: unknown): string {
 const MAX_TORRENT_FILE_SIZE = 50 * 1024 * 1024;
 
 export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Promise<ParsedTorrent> {
-  const req = await axios.request({
-    ...options,
-    responseType: "arraybuffer", // 统一以 ArrayBuffer 形式获取，方便后面转化
-  });
+  const controller = new AbortController();
+  let abortedForSize = false;
+  // axios 的 signal 是 GenericAbortSignal（不一定有 reason/throwIfAborted），不能直接交给 AbortSignal.any
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      options.signal.addEventListener?.("abort", () => controller.abort(), { once: true });
+    }
+  }
 
-  // PKG-3：加体积上限，避免误把大文件（视频/备份）当种子读进内存
+  let req;
+  try {
+    req = await axios.request({
+      ...options,
+      responseType: "arraybuffer", // 统一以 ArrayBuffer 形式获取，方便后面转化
+      signal: controller.signal,
+      // PKG-3：只在下完整个响应后检查体积等于没有检查 —— 超大响应会先被完整读进内存。
+      // 传输过程中一旦超过上限就中止（浏览器适配器支持 signal）。
+      onDownloadProgress: (event) => {
+        if (event.loaded > MAX_TORRENT_FILE_SIZE) {
+          abortedForSize = true;
+          controller.abort();
+        }
+      },
+    });
+  } catch (e) {
+    if (abortedForSize) {
+      throw new Error("Invalid Torrent From Server (response too large)");
+    }
+    throw e;
+  }
+
+  // 兜底：进度事件缺失（或服务器谎报长度）时仍按最终体积拒绝
   const contentLength = Number(req.headers["content-length"] ?? 0);
   const dataLength = (req.data as ArrayBuffer | undefined)?.byteLength ?? 0;
   if ((contentLength > 0 && contentLength > MAX_TORRENT_FILE_SIZE) || dataLength > MAX_TORRENT_FILE_SIZE) {
