@@ -67,7 +67,7 @@ const REQUIRED_ARTIFACTS = [
 const BUDGETS_KB_BY_TARGET = {
   chrome: {
     total: 10752, // 实测 ~9180（8.97 MB）
-    icons: 1536, // 实测 ~1114
+    icons: 2048, // 实测 ~1855（站点 favicon 随包本地资产）
     "lib/mdi": 24, // 实测 11（子集化 webfont，icons.css/fontface.css 已随 DOM 侧 MDI 图标退役删除）
     "content-bootstrap": 32, // 实测 ~15（content-scripts/content.js）
     "largest-js-chunk": 3584, // 实测 ~3030（content-scripts/cs-app.js）
@@ -76,7 +76,7 @@ const BUDGETS_KB_BY_TARGET = {
     // Firefox 使用 background script（含 offscreen 的处理函数），以 ESM 输出并与 options 页共享 chunk
     // （见 src/entrypoints/background.ts）；退回 IIFE 会让 offscreen 依赖图重复打包，total 回到 ~11.2MB。
     total: 11264, // 实测 ~9440（9.22 MB）
-    icons: 1536, // 实测 ~1114
+    icons: 2048, // 实测 ~1855（站点 favicon 随包本地资产）
     "lib/mdi": 24, // 实测 11（子集化 webfont，icons.css/fontface.css 已随 DOM 侧 MDI 图标退役删除）
     "content-bootstrap": 32, // 实测 ~15（content-scripts/content.js）
     "largest-js-chunk": 3584, // 实测 ~3050（content-scripts/cs-app.js；background.js 入口 ~62）
