@@ -79,6 +79,13 @@ const router = useRouter();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 const control = configStore.userDataTimelineControl;
+
+/**
+ * 画布内的固定颜色（#9E9E9E 次要文字、#b5b5b5 页脚水印，#fff 兜底底色，见 utils.ts 的分隔线 / 奖杯色）
+ * 刻意不取 --ptd-*：这张图的背景 / 用户名 / 正文颜色都由右侧控制台让用户自选（默认深色背景 + 白字）。
+ * 若跟随页面深浅主题，切到浅色主题时会把浅灰文字画在用户选定的深色背景上，反而失去对比度。
+ * 真正跟随主题的是页面控件（面板、按钮、文字），它们全部走 --ptd-*。
+ */
 const timelineTitle = computed({
   get: () => timelineData.value.title,
   set: (value: string) => {
@@ -190,6 +197,8 @@ const favicon = (config: TKonvaConfig) => {
   // 如果设置中传入了 canvas 这个自定义参数，我们为这个 favicon 生成一个带有背景的 canvas，然后在 canvas 上居中绘制 favicon
   if (config.canvas) {
     const { width: canvasWidth = imageBaseSize, height: canvasHeight = imageBaseSize } = config.canvas;
+    // 未指定底色的合成画布用白色兜底（favicon 是透明 PNG，需要不透明底才能正常显示）；
+    // 站点图标处的实际底色由调用方传入 control.backgroundColor，不依赖页面主题。
     const fillStyle = config.canvas.fillStyle ?? "#fff";
     const canvasKey = `${config.site}|${imageBaseSize}|${canvasWidth}x${canvasHeight}|${fillStyle}`;
 

@@ -89,18 +89,18 @@ watch(showDialog, (open) => {
 
 <template>
   <a-modal v-model:open="showDialog" :title="t('common.AdvanceFilterGenerateDialog.title')" :width="800">
-    <div style="padding: 0">
+    <div class="advance-filter__content">
       <a-row :gutter="0"
         ><a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.keywords") }}</a-typography-text>
       </a-row>
-      <a-row :gutter="8" style="margin-top: 0">
+      <a-row :gutter="8" class="advance-filter__keywords-row">
         <a-col flex="1 1 0">
           <a-select
             v-model:value="advanceFilterDictRef.text.required"
             mode="tags"
             allow-clear
             :placeholder="t('common.AdvanceFilterGenerateDialog.required')"
-            style="width: 100%"
+            class="advance-filter__select"
           />
         </a-col>
         <a-col flex="1 1 0">
@@ -109,7 +109,7 @@ watch(showDialog, (open) => {
             mode="tags"
             allow-clear
             :placeholder="t('common.AdvanceFilterGenerateDialog.exclude')"
-            style="width: 100%"
+            class="advance-filter__select"
           />
         </a-col>
       </a-row>
@@ -126,8 +126,8 @@ watch(showDialog, (open) => {
             :indeterminate="keywordStateOf('siteId', site) === 'exclude'"
             @click.prevent.stop="() => cycleKeywordState('siteId', site)"
           >
-            <SiteFavicon :site-id="site" :size="16" style="margin-right: 8px" />
-            <SiteName :site-id="site" tag="span" style="text-decoration: none" />
+            <SiteFavicon :site-id="site" :size="16" class="advance-filter__site-icon" />
+            <SiteName :site-id="site" tag="span" class="advance-filter__site-name" />
           </a-checkbox>
         </a-col>
       </a-row>
@@ -153,13 +153,13 @@ watch(showDialog, (open) => {
       <!-- TODO 下载状态 -->
       <a-row :gutter="0">
         <a-col :span="24">
-          <a-row :gutter="0" style="padding-right: 16px">
+          <a-row :gutter="0" class="advance-filter__date-row">
             <a-typography-text>{{ t("common.AdvanceFilterGenerateDialog.date") }}</a-typography-text>
-            <div style="flex: 1 1 auto"></div>
+            <div class="advance-filter__spacer"></div>
             <a-tag
               v-for="dateUnit in ['day', 'week', 'month', 'quarter', 'year'] as const"
               :key="dateUnit"
-              style="margin-right: 4px"
+              class="advance-filter__tag"
               @click="() => (advanceFilterDictRef.downloadAt = getThisDateUnitRange(dateUnit, downloadAtRange))"
             >
               {{ t(`common.AdvanceFilterGenerateDialog.dateUnit.${dateUnit}`) }}
@@ -198,7 +198,7 @@ watch(showDialog, (open) => {
               :min="downloadAtRange[0]"
               :step="60 * 1000"
               :tip-formatter="(value: number) => formatDate(value ?? 0, 'yyyy-MM-dd HH:mm')"
-              style="padding: 0 24px"
+              class="advance-filter__slider"
             />
           </a-row>
         </a-col>
@@ -222,3 +222,42 @@ watch(showDialog, (open) => {
     </template>
   </a-modal>
 </template>
+
+<style scoped>
+/* 高级过滤弹窗中重复的静态行内样式，收敛为语义类 */
+.advance-filter__content {
+  padding: 0;
+}
+
+.advance-filter__keywords-row {
+  margin-top: 0;
+}
+
+.advance-filter__select {
+  width: 100%;
+}
+
+.advance-filter__site-icon {
+  margin-right: 8px;
+}
+
+.advance-filter__site-name {
+  text-decoration: none;
+}
+
+.advance-filter__date-row {
+  padding-right: 16px;
+}
+
+.advance-filter__spacer {
+  flex: 1 1 auto;
+}
+
+.advance-filter__tag {
+  margin-right: 4px;
+}
+
+.advance-filter__slider {
+  padding: 0 24px;
+}
+</style>

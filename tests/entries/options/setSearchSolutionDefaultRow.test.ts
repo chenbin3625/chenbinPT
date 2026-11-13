@@ -15,7 +15,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
+import { mountOptionsView, loadScopedStyles, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
@@ -53,6 +53,28 @@ describe("搜索方案默认行布局", () => {
     const checkbox = defaultRow!.querySelector<HTMLInputElement>('input[type="checkbox"]');
     expect(checkbox, "内置行应有选择框（只是禁用）").not.toBeNull();
     expect(checkbox!.disabled, "内置默认方案不可被选中（不能删除/导出它）").toBe(true);
+
+    view.unmount();
+  });
+});
+
+describe("导入入口与相邻工具条按钮对齐", () => {
+  it("a-upload 包裹层是 inline-flex 并与按钮垂直居中（不再是仅字体高度的行内 span）", async () => {
+    loadScopedStyles("src/entries/options/views/Settings/SetSearchSolution/Index.vue");
+
+    const pinia = prepareOptionsPinia();
+    const { default: SetSearchSolution } = await import("@/options/views/Settings/SetSearchSolution/Index.vue");
+    const view = mountOptionsView(SetSearchSolution, { pinia, router: true });
+    await view.settle(120);
+
+    const wrapper = view.$<HTMLElement>(".page-toolbar .ant-upload-wrapper");
+    expect(wrapper, "工具条里应有 a-upload 包裹层").not.toBeNull();
+    // antd 4 的 Upload 根节点是 span；行内布局下它的盒高只有字体行高（实测约 15px），
+    // 与内部 28px 的按钮对不齐。这里断言我们的复写确实把它变成了 flex 容器。
+    expect(getComputedStyle(wrapper!).display).toBe("inline-flex");
+    expect(getComputedStyle(wrapper!).alignItems).toBe("center");
+    // 包裹层内必须有真正的按钮（而不是仅一个裸文件输入）
+    expect(wrapper!.querySelector("button"), "导入按钮应渲染在 a-upload 的默认插槽内").not.toBeNull();
 
     view.unmount();
   });

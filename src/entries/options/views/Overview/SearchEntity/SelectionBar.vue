@@ -42,9 +42,13 @@ const billableSize = computed(() =>
 /** 「不显示」模式下连计费体积也一起隐藏（它同样是优惠系数的折算结果） */
 const showBillableSize = computed(() => configStore.searchEntifyControl.promotionDisplay !== "none");
 
-// 操作条固定在视口底部（页面滚动时始终可见），因此不能用 sticky：
-// #ptd-main 带 overflow: auto，是 sticky 的滚动容器且自身从不滚动（高度由内容撑开）。
-// 这里用 #ptd-main 的实际内边界做定位，随左侧导航折叠/断点变化自动跟随，避免写死 220/64 等宽度。
+// 操作条固定在视口底部（列表滚动时始终可见），因此不能用 sticky：
+// #ptd-main 是列表的滚动容器（自身滚动、高度固定），sticky 会跟着滚动内容走。
+// 这里用 #ptd-main 的内容盒边界做定位，随左侧导航折叠/断点变化自动跟随，避免写死 220/64 等宽度。
+//
+// 右边界取 `rect.left + clientWidth` 而不是 `rect.right`：滚动条现在在 #ptd-main **内部**
+// （`overflow: auto`），`rect.right` 等于视口右缘，用它算出的 right 会少掉一个滚动条宽度，
+// 操作条会压到滚动条上并向右多伸出约 15px。
 const insets = ref({ bottom: "16px", left: "16px", right: "16px" });
 
 function syncInsets() {
@@ -53,10 +57,11 @@ function syncInsets() {
   const rect = main.getBoundingClientRect();
   const style = getComputedStyle(main);
   const padding = (value: string) => Number.parseFloat(value) || 0;
+  const contentRight = rect.left + main.clientWidth;
   insets.value = {
     bottom: `${padding(style.paddingBottom) || 16}px`,
     left: `${rect.left + padding(style.paddingLeft)}px`,
-    right: `${Math.max(window.innerWidth - rect.right + padding(style.paddingRight), 0)}px`,
+    right: `${Math.max(window.innerWidth - contentRight + padding(style.paddingRight), 0)}px`,
   };
 }
 

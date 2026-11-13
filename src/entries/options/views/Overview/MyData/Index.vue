@@ -56,6 +56,7 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
 import {
   tableData,
@@ -65,6 +66,9 @@ import {
   isTableDataLoading,
   reconcileFlushPlan,
 } from "./utils/lastUserData.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 const router = useRouter();
@@ -301,197 +305,208 @@ function viewStatistic() {
 }
 
 const showExportDialog = ref(false);
+
+/** 空态引导：表格里一个站点都没有时，直接跳到站点设置页添加 */
+function goToSiteSettings() {
+  void router.push({ name: "SetSite" });
+}
 </script>
 
 <template>
   <a-card>
-    <a-typography-text strong>
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <!-- 刷新，取消刷新 -->
+    <a-flex class="page-toolbar" align="center" :gap="8">
+      <!-- 刷新，取消刷新 -->
+      <NavButton
+        v-if="runtimeStore.isUserInfoFlush"
+        :text="t('MyData.index.flushCancel')"
+        color="red"
+        :icon="StopOutlined"
+        @click="cancelFlushSiteLastUserInfo"
+      />
+
+      <NavButton
+        v-else
+        :text="t('MyData.index.flushSelectSite')"
+        color="green"
+        :icon="SyncOutlined"
+        @click="multiFlush"
+      />
+
+      <NavButton
+        :disabled="tableSelected.length === 0"
+        color="indigo"
+        :icon="ExportOutlined"
+        :text="t('MyData.index.multiOpen')"
+        @click="multiOpen"
+      />
+
+      <a-divider type="vertical" class="my-data-toolbar-divider"></a-divider>
+
+      <NavButton color="green" :icon="FundOutlined" :text="t('MyData.index.viewTimeline')" @click="viewTimeline" />
+      <NavButton
+        color="green"
+        :icon="BarChartOutlined"
+        :text="t('MyData.index.viewStatistic')"
+        @click="viewStatistic"
+      />
+
+      <a-divider type="vertical" class="my-data-toolbar-divider"></a-divider>
+
+      <!-- 导出按钮 -->
+      <NavButton
+        color="orange-darken-3"
+        :icon="ExportOutlined"
+        :text="t('MyData.index.exportData')"
+        @click="showExportDialog = true"
+      />
+
+      <a-divider type="vertical" class="my-data-toolbar-divider"></a-divider>
+
+      <a-popover placement="bottom" trigger="click">
         <NavButton
-          v-if="runtimeStore.isUserInfoFlush"
-          :text="t('MyData.index.flushCancel')"
-          color="red"
-          :icon="StopOutlined"
-          @click="cancelFlushSiteLastUserInfo"
+          color="blue"
+          :icon="SettingOutlined"
+          :text="t('MyData.index.setting')"
+          class="my-data-settings-button"
         />
-
-        <NavButton
-          v-else
-          :text="t('MyData.index.flushSelectSite')"
-          color="green"
-          :icon="SyncOutlined"
-          @click="multiFlush"
-        />
-
-        <NavButton
-          :disabled="tableSelected.length === 0"
-          color="indigo"
-          :icon="ExportOutlined"
-          :text="t('MyData.index.multiOpen')"
-          @click="multiOpen"
-        />
-
-        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-        <NavButton color="green" :icon="FundOutlined" :text="t('MyData.index.viewTimeline')" @click="viewTimeline" />
-        <NavButton
-          color="green"
-          :icon="BarChartOutlined"
-          :text="t('MyData.index.viewStatistic')"
-          @click="viewStatistic"
-        />
-
-        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-        <!-- 导出按钮 -->
-        <NavButton
-          color="orange-darken-3"
-          :icon="ExportOutlined"
-          :text="t('MyData.index.exportData')"
-          @click="showExportDialog = true"
-        />
-
-        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-        <a-popover placement="bottom" trigger="click">
-          <NavButton color="blue" :icon="SettingOutlined" :text="t('MyData.index.setting')" style="margin-right: 4px" />
-          <template #content>
-            <a-list size="small">
-              <!-- 入站时间显示 -->
-              <a-list-item>
-                <a-flex align="center" :gap="8">
-                  <CalendarOutlined />
-                  <span style="font-size: 14px">{{ t("MyData.index.joinTimeFormat") }}</span>
-                </a-flex>
-                <a-radio-group
-                  v-model:value="configStore.myDataTableControl.joinTimeFormat"
-                  button-style="solid"
-                  style="margin-left: 8px"
-                  @click.stop
-                  @change="() => configStore.$save()"
+        <template #content>
+          <a-list size="small">
+            <!-- 入站时间显示 -->
+            <a-list-item>
+              <a-flex align="center" :gap="8">
+                <CalendarOutlined />
+                <span class="my-data-setting-title">{{ t("MyData.index.joinTimeFormat") }}</span>
+              </a-flex>
+              <a-radio-group
+                v-model:value="configStore.myDataTableControl.joinTimeFormat"
+                button-style="solid"
+                class="my-data-radio-group"
+                @click.stop
+                @change="() => configStore.$save()"
+              >
+                <a-radio-button
+                  v-for="type in ['alive', 'aliveWeek', 'added']"
+                  :key="type"
+                  :value="type"
+                  :title="t(`MyData.index.joinTimeFormatOptions.${type}`)"
                 >
-                  <a-radio-button
-                    v-for="type in ['alive', 'aliveWeek', 'added']"
-                    :key="type"
-                    :value="type"
-                    :title="t(`MyData.index.joinTimeFormatOptions.${type}`)"
-                  >
-                    {{ t(`MyData.index.joinTimeFormatOptions.${type}`) }}
-                  </a-radio-button>
-                </a-radio-group>
-              </a-list-item>
+                  {{ t(`MyData.index.joinTimeFormatOptions.${type}`) }}
+                </a-radio-button>
+              </a-radio-group>
+            </a-list-item>
 
-              <a-divider style="margin: 4px 0" />
+            <a-divider class="my-data-settings-divider" />
 
-              <!-- 其他开关控制 -->
-              <a-list-item v-for="index in filteredTableBooleanControlKeys" :key="index" class="my-data-setting-item">
-                <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->
-                <span class="my-data-setting-label">{{ t("MyData.index." + index) }}</span>
-                <!-- a-switch 的 click 载荷是 (newChecked, event)，不能用 `.stop` 修饰符（见 stopEventPropagation） -->
-                <a-switch
-                  v-model:checked="configStore.myDataTableControl[index]"
-                  @click="stopEventPropagation"
-                  @change="() => configStore.$save()"
-                />
-              </a-list-item>
-            </a-list>
-          </template>
-        </a-popover>
+            <!-- 其他开关控制 -->
+            <a-list-item v-for="index in filteredTableBooleanControlKeys" :key="index" class="my-data-setting-item">
+              <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->
+              <span class="my-data-setting-label">{{ t("MyData.index." + index) }}</span>
+              <!-- a-switch 的 click 载荷是 (newChecked, event)，不能用 `.stop` 修饰符（见 stopEventPropagation） -->
+              <a-switch
+                v-model:checked="configStore.myDataTableControl[index]"
+                @click="stopEventPropagation"
+                @change="() => configStore.$save()"
+              />
+            </a-list-item>
+          </a-list>
+        </template>
+      </a-popover>
 
-        <div style="flex: 1 1 auto"></div>
+      <div class="my-data-spacer"></div>
 
-        <a-input
-          :value="tableWaitFilterRef"
-          allow-clear
-          :placeholder="t('common.search')"
-          @update:value="onTableFilterInput"
-        >
-          <template #prefix>
-            <a-popover placement="bottom" trigger="click">
-              <FilterOutlined />
-              <template #content>
-                <a-list size="small" style="padding: 0">
-                  <a-list-item>
-                    <a-typography-text strong style="margin: 8px">{{ t("MyData.index.siteStatus") }}</a-typography-text>
-                  </a-list-item>
+      <a-input
+        :value="tableWaitFilterRef"
+        allow-clear
+        :placeholder="t('common.search')"
+        @update:value="onTableFilterInput"
+      >
+        <template #prefix>
+          <a-popover placement="bottom" trigger="click">
+            <FilterOutlined />
+            <template #content>
+              <a-list size="small" class="my-data-filter-list">
+                <a-list-item>
+                  <a-typography-text strong class="my-data-filter-heading">{{
+                    t("MyData.index.siteStatus")
+                  }}</a-typography-text>
+                </a-list-item>
 
-                  <a-list-item
-                    style="cursor: pointer"
-                    @click.stop="
-                      () => {
-                        advanceFilterDictRef.updateAt = [0, new Date().setHours(0, 0, 0, 0) - 1];
-                        updateTableFilterValueFn();
-                      }
-                    "
-                  >
-                    {{ t("MyData.index.filter.todayNotUpdated") }}
-                  </a-list-item>
+                <a-list-item
+                  class="my-data-filter-option"
+                  @click.stop="
+                    () => {
+                      advanceFilterDictRef.updateAt = [0, new Date().setHours(0, 0, 0, 0) - 1];
+                      updateTableFilterValueFn();
+                    }
+                  "
+                >
+                  {{ t("MyData.index.filter.todayNotUpdated") }}
+                </a-list-item>
 
-                  <a-list-item
-                    style="cursor: pointer"
-                    @click.stop="
-                      () => {
-                        advanceFilterDictRef.status.required = lastUpdateErrorStatusValues;
-                        updateTableFilterValueFn();
-                      }
-                    "
-                  >
-                    {{ t("MyData.index.filter.lastUpdateError") }}
-                  </a-list-item>
+                <a-list-item
+                  class="my-data-filter-option"
+                  @click.stop="
+                    () => {
+                      advanceFilterDictRef.status.required = lastUpdateErrorStatusValues;
+                      updateTableFilterValueFn();
+                    }
+                  "
+                >
+                  {{ t("MyData.index.filter.lastUpdateError") }}
+                </a-list-item>
 
-                  <a-list-item
-                    style="cursor: pointer"
-                    @click.stop="
-                      () => {
-                        advanceFilterDictRef.messageCount = [1, ' '];
-                        updateTableFilterValueFn();
-                      }
-                    "
-                  >
-                    {{ t("MyData.index.filter.unreadMessage") }}
-                  </a-list-item>
+                <a-list-item
+                  class="my-data-filter-option"
+                  @click.stop="
+                    () => {
+                      advanceFilterDictRef.messageCount = [1, ' '];
+                      updateTableFilterValueFn();
+                    }
+                  "
+                >
+                  {{ t("MyData.index.filter.unreadMessage") }}
+                </a-list-item>
 
-                  <a-list-item>
-                    <a-typography-text strong style="margin: 8px">{{
-                      t("MyData.index.siteCategory")
-                    }}</a-typography-text>
-                  </a-list-item>
+                <a-list-item>
+                  <a-typography-text strong class="my-data-filter-heading">{{
+                    t("MyData.index.siteCategory")
+                  }}</a-typography-text>
+                </a-list-item>
 
-                  <a-list-item
-                    v-for="(item, index) in metadataStore.getSitesGroupData"
-                    :key="index"
-                    style="padding-right: 24px"
-                  >
-                    <!-- V-21：原为 `:indeterminate="true"`（硬编码）→ antd 只要该属性为真就画半选横杠，
+                <a-list-item
+                  v-for="(item, index) in metadataStore.getSitesGroupData"
+                  :key="index"
+                  class="my-data-filter-group"
+                >
+                  <!-- V-21：原为 `:indeterminate="true"`（硬编码）→ antd 只要该属性为真就画半选横杠，
                          用户无法判断哪些分组筛选已生效。真实三态是：
                          checked = 在 required（只保留该分组）；indeterminate = 在 exclude（排除该分组）；
                          未勾选 = 该分组不参与筛选。 -->
-                    <a-checkbox
-                      :checked="advanceFilterDictRef[`siteUserConfig.groups`].required.includes(index)"
-                      :indeterminate="advanceFilterDictRef[`siteUserConfig.groups`].exclude.includes(index)"
-                      @click.stop="toggleKeywordStateFn(`siteUserConfig.groups`, index)"
-                      @update:checked="
-                        (checked: boolean) => {
-                          const current = advanceFilterDictRef[`siteUserConfig.groups`].required;
-                          advanceFilterDictRef[`siteUserConfig.groups`].required = checked
-                            ? Array.from(new Set([...current, index]))
-                            : current.filter((x: any) => x !== index);
-                          updateTableFilterValueFn();
-                        }
-                      "
-                    >
-                      {{ `${index} (${item.length})` }}
-                    </a-checkbox>
-                  </a-list-item>
-                </a-list>
-              </template>
-            </a-popover>
-          </template>
-        </a-input>
-      </a-flex>
-    </a-typography-text>
+                  <a-checkbox
+                    :checked="advanceFilterDictRef[`siteUserConfig.groups`].required.includes(index)"
+                    :indeterminate="advanceFilterDictRef[`siteUserConfig.groups`].exclude.includes(index)"
+                    @click.stop="toggleKeywordStateFn(`siteUserConfig.groups`, index)"
+                    @update:checked="
+                      (checked: boolean) => {
+                        const current = advanceFilterDictRef[`siteUserConfig.groups`].required;
+                        advanceFilterDictRef[`siteUserConfig.groups`].required = checked
+                          ? Array.from(new Set([...current, index]))
+                          : current.filter((x: any) => x !== index);
+                        updateTableFilterValueFn();
+                      }
+                    "
+                  >
+                    {{ `${index} (${item.length})` }}
+                  </a-checkbox>
+                </a-list-item>
+              </a-list>
+            </template>
+          </a-popover>
+        </template>
+      </a-input>
+    </a-flex>
     <a-table
+      :sticky="mainTableSticky"
       :columns="tableColumns"
       :data-source="filteredTableData"
       :loading="isTableLoading"
@@ -511,7 +526,7 @@ const showExportDialog = ref(false);
       @change="onTableChange"
     >
       <template #title>
-        <div style="display: flex; justify-content: flex-end">
+        <div class="my-data-table-toolbar">
           <ColumnSelector
             :headers="fullTableHeader"
             :visible-keys="configStore.tableBehavior.MyData.columns"
@@ -523,7 +538,7 @@ const showExportDialog = ref(false);
       <!-- 站点信息 -->
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'siteUserConfig.sortIndex'">
-          <div style="display: flex; flex-direction: column; align-items: center">
+          <div class="my-data-site-cell">
             <a-badge
               color="error"
               :count="
@@ -544,8 +559,7 @@ const showExportDialog = ref(false);
 
             <SiteName
               v-if="configStore.myDataTableControl.showSiteName"
-              class="ptd-cell-ellipsis"
-              style="max-width: 10rem"
+              class="ptd-cell-ellipsis my-data-name-cell"
               :site-id="record.site"
             />
           </div>
@@ -554,8 +568,7 @@ const showExportDialog = ref(false);
         <!-- 用户名，用户ID -->
         <template v-else-if="column.key === 'name'">
           <span
-            class="ptd-cell-ellipsis"
-            style="max-width: 10rem"
+            class="ptd-cell-ellipsis my-data-name-cell"
             :title="
               [configStore.myDataTableControl.showUserName ? (record.name ?? '-') : '******', record.id as string]
                 .filter(Boolean)
@@ -573,99 +586,81 @@ const showExportDialog = ref(false);
 
         <!-- 上传、下载 -->
         <template v-else-if="column.key === 'uploaded'">
-          <div style="padding-top: 0px; padding-bottom: 0px; padding-right: 0px">
-            <a-row :gutter="0" style="justify-content: flex-end; flex-wrap: nowrap">
-              <span style="white-space: nowrap">
+          <div class="my-data-totals">
+            <a-row :gutter="0" class="my-data-num-row">
+              <span class="my-data-nowrap">
                 {{ typeof record.uploaded !== "undefined" ? formatSize(record.uploaded) : "-" }}
               </span>
-              <UpOutlined style="color: var(--ptd-success)" />
+              <UpOutlined class="my-data-icon-success" />
             </a-row>
-            <a-row :gutter="0" style="justify-content: flex-end; flex-wrap: nowrap">
-              <span style="white-space: nowrap">
+            <a-row :gutter="0" class="my-data-num-row">
+              <span class="my-data-nowrap">
                 {{ typeof record.downloaded !== "undefined" ? formatSize(record.downloaded) : "-" }}
               </span>
-              <DownOutlined style="color: var(--ptd-danger)" />
+              <DownOutlined class="my-data-icon-danger" />
             </a-row>
           </div>
         </template>
 
         <!-- 真实上传、下载 -->
         <template v-else-if="column.key === 'trueUploaded'">
-          <div style="padding-top: 0px; padding-bottom: 0px; padding-right: 0px">
-            <a-row :gutter="0" style="justify-content: flex-end; flex-wrap: nowrap">
-              <span style="white-space: nowrap">
+          <div class="my-data-totals">
+            <a-row :gutter="0" class="my-data-num-row">
+              <span class="my-data-nowrap">
                 {{ typeof record.trueUploaded !== "undefined" ? formatSize(record.trueUploaded) : "-" }}
               </span>
-              <UpOutlined style="color: var(--ptd-success)" />
+              <UpOutlined class="my-data-icon-success" />
             </a-row>
-            <a-row :gutter="0" style="justify-content: flex-end; flex-wrap: nowrap">
-              <span style="white-space: nowrap">
+            <a-row :gutter="0" class="my-data-num-row">
+              <span class="my-data-nowrap">
                 {{ typeof record.trueDownloaded !== "undefined" ? formatSize(record.trueDownloaded) : "-" }}
               </span>
-              <DownOutlined style="color: var(--ptd-danger)" />
+              <DownOutlined class="my-data-icon-danger" />
             </a-row>
           </div>
         </template>
 
         <!-- 分享率 -->
         <template v-else-if="column.key === 'ratio'">
-          <span style="white-space: nowrap">{{ formatRatio(record) }}</span>
+          <span class="my-data-nowrap">{{ formatRatio(record) }}</span>
         </template>
 
         <!-- 真实分享率 -->
         <template v-else-if="column.key === 'trueRatio'">
-          <span style="white-space: nowrap">{{ formatRatio(record, "trueRatio") }}</span>
+          <span class="my-data-nowrap">{{ formatRatio(record, "trueRatio") }}</span>
         </template>
 
         <!-- 发布数 -->
         <template v-else-if="column.key === 'uploads'">
-          <span style="white-space: nowrap">{{ record.uploads ?? "-" }}</span>
+          <span class="my-data-nowrap">{{ record.uploads ?? "-" }}</span>
         </template>
 
         <!-- 做种数， H&R 情况  -->
         <template v-else-if="column.key === 'seeding'">
-          <div style="padding-top: 0px; padding-bottom: 0px; padding-right: 0px">
-            <a-row
-              :gutter="0"
-              style="
-                align-items: center;
-                justify-content: flex-end;
-                flex-wrap: nowrap;
-                margin-top: 0px;
-                margin-bottom: 0px;
-              "
-            >
-              <span style="white-space: nowrap">{{ record.seeding ?? "-" }}</span>
+          <div class="my-data-totals">
+            <a-row :gutter="0" class="my-data-num-row my-data-num-row--middle">
+              <span class="my-data-nowrap">{{ record.seeding ?? "-" }}</span>
             </a-row>
             <a-row
               v-if="configStore.myDataTableControl.showHnR"
               :gutter="0"
-              style="
-                align-items: center;
-                justify-content: flex-end;
-                flex-wrap: nowrap;
-                margin-top: 0px;
-                margin-bottom: 0px;
-              "
+              class="my-data-num-row my-data-num-row--middle"
             >
               <span
                 v-if="typeof record.hnrPreWarning !== 'undefined' && record.hnrPreWarning > 0"
-                style="display: inline-flex; align-items: center; margin-left: 8px"
+                class="my-data-inline-icon my-data-inline-icon--warning"
               >
-                <WarningOutlined :title="t('levelRequirement.hnrPreWarning')" style="color: var(--ptd-warning)" />
-                <span style="white-space: nowrap">
+                <WarningOutlined :title="t('levelRequirement.hnrPreWarning')" class="my-data-icon-warning" />
+                <span class="my-data-nowrap">
                   {{ record.hnrPreWarning }}
                 </span>
               </span>
               <span
                 v-if="typeof record.hnrUnsatisfied !== 'undefined' && record.hnrUnsatisfied > 0"
-                style="display: inline-flex; align-items: center; margin-left: 4px"
+                class="my-data-inline-icon my-data-inline-icon--danger"
               >
-                <ExclamationCircleOutlined
-                  :title="t('levelRequirement.hnrUnsatisfied')"
-                  style="color: var(--ptd-danger)"
-                />
-                <span style="white-space: nowrap">
+                <ExclamationCircleOutlined :title="t('levelRequirement.hnrUnsatisfied')" class="my-data-icon-danger" />
+                <span class="my-data-nowrap">
                   {{ record.hnrUnsatisfied }}
                 </span>
               </span>
@@ -675,16 +670,16 @@ const showExportDialog = ref(false);
 
         <!-- 做种量 -->
         <template v-else-if="column.key === 'seedingSize'">
-          <span style="white-space: nowrap">
+          <span class="my-data-nowrap">
             {{ typeof record.seedingSize !== "undefined" ? formatSize(record.seedingSize) : "-" }}
           </span>
         </template>
 
         <!-- 魔力/积分 -->
         <template v-else-if="column.key === 'bonus'">
-          <div style="padding-top: 0px; padding-bottom: 0px; padding-right: 0px">
-            <a-row :gutter="0" style="align-items: center; justify-content: flex-end; flex-wrap: nowrap">
-              <DollarOutlined :title="t('levelRequirement.bonus')" style="color: var(--ptd-success)" />
+          <div class="my-data-totals">
+            <a-row :gutter="0" class="my-data-num-row my-data-num-row--middle">
+              <DollarOutlined :title="t('levelRequirement.bonus')" class="my-data-icon-success" />
               <BonusFormatSpan :num="record.bonus" />
             </a-row>
             <a-row
@@ -696,9 +691,9 @@ const showExportDialog = ref(false);
               align="middle"
               justify="end"
               :gutter="0"
-              style="flex-wrap: nowrap"
+              class="my-data-nowrap-row"
             >
-              <ThunderboltOutlined :title="t('levelRequirement.seedingBonus')" style="color: var(--ptd-success)" />
+              <ThunderboltOutlined :title="t('levelRequirement.seedingBonus')" class="my-data-icon-success" />
               <BonusFormatSpan :num="record.seedingBonus" />
             </a-row>
           </div>
@@ -709,12 +704,12 @@ const showExportDialog = ref(false);
         </template>
 
         <template v-else-if="column.key === 'invites'">
-          <span style="white-space: nowrap">{{ typeof record.invites !== "undefined" ? record.invites : "-" }}</span>
+          <span class="my-data-nowrap">{{ typeof record.invites !== "undefined" ? record.invites : "-" }}</span>
         </template>
 
         <!-- 入站时间 -->
         <template v-else-if="column.key === 'joinTime'">
-          <span :title="record.joinTime ? (formatDate(record.joinTime) as string) : '-'" style="white-space: nowrap">
+          <span :title="record.joinTime ? (formatDate(record.joinTime) as string) : '-'" class="my-data-nowrap">
             {{
               typeof record.joinTime !== "undefined"
                 ? configStore.myDataTableControl.joinTimeFormat === "aliveWeek"
@@ -782,7 +777,12 @@ const showExportDialog = ref(false);
       </template>
 
       <template #emptyText>
-        <NoDataPlaceholder compact :description="t('MyData.table.noData')" />
+        <!-- 只有「真的没有站点」才引导去设置；筛选无匹配时 tableData 非空，不应把用户送走 -->
+        <NoDataPlaceholder compact :description="t('MyData.table.noData')">
+          <a-button v-if="tableData.length === 0" type="primary" @click="goToSiteSettings">
+            {{ t("common.goToSiteSettings") }}
+          </a-button>
+        </NoDataPlaceholder>
       </template>
     </a-table>
   </a-card>
@@ -790,3 +790,116 @@ const showExportDialog = ref(false);
   <HistoryDataViewDialog v-model="showHistoryDataViewDialog" :site-id="historyDataViewDialogSiteId!" />
   <ExportUserInfoDialog v-model="showExportDialog" :selected-site-ids="tableSelected" />
 </template>
+
+<style scoped>
+/* 以下类由模板里原本重复的静态行内样式抽出；值与原来的内联样式一一对应，
+   动态绑定（列宽、海报尺寸等）仍留在模板的 :style 上。 */
+.my-data-toolbar-divider {
+  margin-right: 8px;
+  margin-left: 8px;
+}
+
+.my-data-settings-button {
+  margin-right: 4px;
+}
+
+.my-data-setting-title {
+  font-size: 14px;
+}
+
+.my-data-radio-group {
+  margin-left: 8px;
+}
+
+.my-data-settings-divider {
+  margin: 4px 0;
+}
+
+.my-data-spacer {
+  flex: 1 1 auto;
+}
+
+.my-data-filter-list {
+  padding: 0;
+}
+
+.my-data-filter-heading {
+  margin: 8px;
+}
+
+.my-data-filter-option {
+  cursor: pointer;
+}
+
+.my-data-filter-group {
+  padding-right: 24px;
+}
+
+.my-data-table-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.my-data-site-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 站点名 / 用户名的截断宽度（原先写死在元素上） */
+.my-data-name-cell {
+  max-width: 10rem;
+}
+
+/* 上传/下载、做种等单元格的两行数字容器 */
+.my-data-totals {
+  padding: 0;
+}
+
+/* 数字行统一右对齐、不换行；--middle 用于带图标的行 */
+.my-data-num-row {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.my-data-num-row--middle {
+  align-items: center;
+}
+
+.my-data-nowrap {
+  white-space: nowrap;
+}
+
+/* 仅禁止换行的 a-row（做种积分行），对齐由 antd 的 align / justify 属性负责 */
+.my-data-nowrap-row {
+  flex-wrap: nowrap;
+}
+
+.my-data-inline-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.my-data-inline-icon--warning {
+  margin-left: 8px;
+}
+
+.my-data-inline-icon--danger {
+  margin-left: 4px;
+}
+
+/* 语义色统一走主题变量，深色模式自动切换 */
+.my-data-icon-success {
+  color: var(--ptd-success);
+}
+
+.my-data-icon-danger {
+  color: var(--ptd-danger);
+}
+
+.my-data-icon-warning {
+  color: var(--ptd-warning);
+}
+</style>

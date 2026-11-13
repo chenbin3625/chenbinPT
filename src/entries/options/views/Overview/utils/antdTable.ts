@@ -2,6 +2,7 @@ import { computed, h, type VNode } from "vue";
 import { Tooltip } from "ant-design-vue";
 
 import { useConfigStore } from "@/options/stores/config.ts";
+import { useDisplay } from "@/options/composables/useDisplay.ts";
 import type { DataTableHeader, DataTableSortItem } from "@/options/types/dataTable.ts";
 
 type AnyRecord = Record<string, any>;
@@ -38,6 +39,31 @@ function makeSorter(key: string, multiSort?: boolean) {
  * - 没声明的列吃这个兜底值，避免个别超长文本把整列撑开、把别的列挤没。
  */
 export const DEFAULT_CELL_MAX_WIDTH = "20rem";
+
+/**
+ * 页面内长表格的表头吸顶配置（直接传给 `<a-table :sticky="...">`）。
+ *
+ * 为什么用 antd 的 `sticky` 而不是在 style.css 里给 th 写 `position: sticky`：
+ * 带 `scroll.x` 的表格会由 antd 内联 `overflow-x:auto`，CSS 规定此时 `overflow-y` 也算 auto，
+ * `.ant-table-content` 就成了 th 的最近滚动祖先 —— 它垂直方向从不滚动，th 永远不吸顶。
+ * 要压过内联样式只能写 `!important`（本仓库的 check:antd 禁止）。`sticky` 让 antd 把表头
+ * 渲染成独立的 `.ant-table-sticky-holder`，横向滚动由它与表体同步，垂直吸顶相对 `getContainer`。
+ *
+ * - `getContainer`：滚动发生在 `#ptd-main`（见 style.css 的布局约定），不是 window；
+ *   antd 的 StickyScrollBar 也据此监听滚动、计算横向假滚动条的位置。
+ * - `offsetHeader`：holder 的 `top` 相对滚动容器的内容盒，而 `#ptd-main` 有内边距，
+ *   回退一个内边距后表头才贴在顶栏下沿（窄屏内边距 8px，与 style.css 断点同步）。
+ *
+ * 弹层里的表格不要用它：弹层的滚动容器是 `.ant-modal-wrap`，表头贴到视口顶部会盖住弹层标题。
+ */
+export function useMainTableSticky() {
+  const display = useDisplay();
+  return computed(() => ({
+    // 与 style.css 的 `@media (max-width: 840px)` 同一阈值：840 本身属于窄屏档（mdAndUp 在 840 为 true，不能直接用）
+    offsetHeader: display.width.value > 840 ? -12 : -8,
+    getContainer: () => document.getElementById("ptd-main") ?? window,
+  }));
+}
 
 /** 数字按 px 处理，字符串（rem / vw / %）原样使用 */
 export function toCssSize(value?: string | number): string | undefined {

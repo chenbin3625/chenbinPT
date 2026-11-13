@@ -8,8 +8,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadOptionsStyles, mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
-
+import { computedStyle, loadOptionsStyles, mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 const sendMessageMock = vi.hoisted(() => vi.fn());
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
 
@@ -100,6 +99,11 @@ describe("辅种任务表格：共享组件", () => {
     const actionButtons = Array.from(actionGroup!.querySelectorAll("button"));
     expect(actionButtons).toHaveLength(5);
     expect(actionButtons.every((button) => button.classList.contains("ant-btn-sm"))).toBe(true);
+    // 行内小图标按钮的点击目标不能低于 24px（全局 controlHeightSM 已提升到 24px）；
+    // 用计算样式断言，避免只断言 size="small" 却在主题里被压回 21px 的回归。
+    for (const button of actionButtons) {
+      expect(parseFloat(computedStyle(button, "height")), "行内操作按钮高度应 >= 24px").toBeGreaterThanOrEqual(24);
+    }
     view.unmount();
   });
 });

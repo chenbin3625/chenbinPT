@@ -11,7 +11,7 @@
 import { theme } from "ant-design-vue";
 import { describe, expect, it } from "vitest";
 
-import { useAntdConfig } from "@/options/plugins/antd.ts";
+import { buildThemeVars, useAntdConfig } from "@/options/plugins/antd.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { computedStyle, loadOptionsStyles, mountDom, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
@@ -50,10 +50,47 @@ describe("options 页面紧凑布局密度", () => {
     const { themeConfig } = useAntdConfig();
 
     configStore.theme = "light";
-    expect(themeConfig.value?.algorithm).toEqual([theme.defaultAlgorithm, theme.compactAlgorithm]);
+    const lightAlgorithms = themeConfig.value?.algorithm as Array<unknown>;
+    expect(lightAlgorithms.slice(0, 2)).toEqual([theme.defaultAlgorithm, theme.compactAlgorithm]);
+    expect(lightAlgorithms[2], "排版的最终覆盖必须在 compact 之后").toBeTypeOf("function");
 
     configStore.theme = "dark";
-    expect(themeConfig.value?.algorithm).toEqual([theme.darkAlgorithm, theme.compactAlgorithm]);
+    const darkAlgorithms = themeConfig.value?.algorithm as Array<unknown>;
+    expect(darkAlgorithms.slice(0, 2)).toEqual([theme.darkAlgorithm, theme.compactAlgorithm]);
+    expect(darkAlgorithms[2], "排版的最终覆盖必须在 compact 之后").toBeTypeOf("function");
+  });
+
+  it("算法链的最终 token：正文 13px、行高 1.5、sm 控件 24px（theme.token 对 seed token 无效）", () => {
+    prepareOptionsPinia();
+
+    const configStore = useConfigStore();
+    const { themeConfig } = useAntdConfig();
+    configStore.theme = "light";
+
+    // 复刻 antd 的 derivative 链：default → compact → 项目排版算法。
+    // 不能用 theme.token 断言：antd 的 formatToken 会把 seed token（fontSize）从
+    // algorithm 之后的 override 里剥掉，落到组件上的仍是 compact 的 12px（实测会变成 10px）。
+    const algorithms = themeConfig.value?.algorithm as Array<(seed: any, map?: any) => any>;
+    const resolved = algorithms.reduce<any>((map, algorithm) => algorithm(theme.defaultSeed, map), undefined);
+
+    expect(resolved).toMatchObject({
+      fontSize: 13,
+      lineHeight: 1.5,
+      fontSizeSM: 12,
+      fontSizeLG: 15,
+      fontSizeXL: 18,
+      controlHeightSM: 24,
+    });
+  });
+
+  it("buildThemeVars 输出最终生效的排版 token，而不是 compact / antd 默认的中间值", () => {
+    for (const dark of [false, true]) {
+      const vars = buildThemeVars(dark);
+      // 13px / 1.5：与 ConfigProvider 里组件拿到的 token 相同（此前是 antd 默认的 14px / 1.5714）
+      expect(vars["--ptd-font-size"], `dark=${dark}`).toBe("13px");
+      expect(vars["--ptd-line-height"], `dark=${dark}`).toBe("1.5");
+      expect(vars["--ptd-font-size-sm"], `dark=${dark}`).toBe("12px");
+    }
   });
 
   it("主布局间距收紧，页面能展示更多内容", () => {
@@ -66,7 +103,12 @@ describe("options 页面紧凑布局密度", () => {
     expect(computedStyle(shell.root.querySelector("#ptd-topbar")!, "height")).toBe("48px");
     // 侧栏紧贴 48px 顶栏下沿（sticky 偏移），顶栏高度改了这里必须跟着改
     expect(computedStyle(shell.root.querySelector("#ptd-navigation")!, "top")).toBe("48px");
-    expect(computedStyle(shell.root.querySelector("#ptd-main")!, "padding")).toBe("12px");
+    const main = shell.root.querySelector("#ptd-main")!;
+    expect(computedStyle(main, "padding")).toBe("12px");
+    // #ptd-main 必须是真正的滚动容器：表头吸顶（antd sticky 的 getContainer）依赖它会滚
+    expect(computedStyle(main, "overflow")).toBe("auto");
+    // 高度钉在视口 − 48px（happy-dom 用自己的 768px 视口求值，浏览器实测见验收报告）
+    expect(computedStyle(main, "height").replace(/\s+/g, "")).toMatch(/^calc\(\d+px-48px\)$/);
 
     const [genericForm, setBaseForm] = Array.from(shell.root.querySelectorAll<HTMLElement>(".ptd-settings-form"));
     expect(computedStyle(genericForm!, "padding"), "通用设置容器四边 16px").toBe("16px");
@@ -84,9 +126,66 @@ describe("options 页面紧凑布局密度", () => {
     expect(computedStyle(scope.querySelector(".ant-table-wrapper")!, "margin-top")).toBe("12px");
     expect(computedStyle(scope.querySelector(".ant-table-thead > tr > th")!, "padding")).toBe("2px 6px");
     expect(computedStyle(scope.querySelector(".ant-table-tbody > tr > td")!, "padding")).toBe("2px 6px");
+    // 表头与单元格同一字号（13px），修复此前「表头 12px 比单元格 13px 还小」的倒挂
+    expect(computedStyle(scope.querySelector(".ant-table-thead > tr > th")!, "font-size")).toBe("13px");
+    expect(computedStyle(scope.querySelector(".ant-table-tbody > tr > td")!, "font-size")).toBe("13px");
     expect(computedStyle(scope.querySelector(".ant-table-pagination.ant-pagination")!, "margin")).toBe("8px 0px 0px");
 
+    // 弹层里的表格不在 #ptd-main 内：表头不能吸顶（否则会贴到视口顶部盖住弹层标题）
+    expect(computedStyle(scope.querySelector(".ant-table-thead > tr > th")!, "position")).not.toBe("sticky");
+
     popup.unmount();
+  });
+
+  it("正文基准 13px、次要文字 12px，全部来自 --ptd-* 变量回退值", () => {
+    // 不塞 #ptd 时裸文本应是浏览器默认 16px；放进 #ptd 后由 token 决定
+    const { root, unmount } = mountDom(`
+      <span id="outside">页面外</span>
+      <div id="ptd">
+        <span id="body-text">正文</span>
+        <span class="ptd-meta-text">次要</span>
+      </div>
+    `);
+
+    expect(computedStyle(root.querySelector("#outside")!, "font-size")).not.toBe("13px");
+    expect(computedStyle(root.querySelector("#ptd")!, "font-size")).toBe("13px");
+    expect(computedStyle(root.querySelector("#body-text")!, "font-size")).toBe("13px");
+    expect(computedStyle(root.querySelector(".ptd-meta-text")!, "font-size")).toBe("12px");
+
+    unmount();
+  });
+
+  it("页面表格表头吸顶交给 antd sticky：滚动容器指向 #ptd-main，偏移回退主区内边距", async () => {
+    // 不再用 CSS 给 th 写 sticky：带 scroll.x 的表格被 antd 内联 overflow-x:auto，
+    // .ant-table-content 会成为 th 的最近滚动祖先，th 永远不吸顶，只能 !important 硬压。
+    const { root, unmount } = mountDom(`
+      <div id="ptd-main">
+        <div class="ant-table-wrapper"><div class="ant-table-content">
+          <table><thead class="ant-table-thead"><tr><th>标题</th></tr></thead></table>
+        </div></div>
+      </div>
+    `);
+    expect(computedStyle(root.querySelector(".ant-table-thead > tr > th")!, "position")).not.toBe("sticky");
+
+    const { useMainTableSticky } = await import("@/options/views/Overview/utils/antdTable.ts");
+
+    window.innerWidth = 1440;
+    window.dispatchEvent(new Event("resize"));
+    const sticky = useMainTableSticky();
+    expect(sticky.value.getContainer(), "吸顶相对的滚动容器必须是 #ptd-main（window 不再滚动）").toBe(
+      root.querySelector("#ptd-main"),
+    );
+    // 偏移 = 负的主区内边距：与上面断言的 #ptd-main padding 12px 同源
+    expect(sticky.value.offsetHeader).toBe(-12);
+
+    // 窄屏档与 style.css 的 @media (max-width: 840px) 同一阈值（840 本身属于窄屏）
+    window.innerWidth = 840;
+    window.dispatchEvent(new Event("resize"));
+    expect(sticky.value.offsetHeader).toBe(-8);
+
+    window.innerWidth = 1024;
+    window.dispatchEvent(new Event("resize"));
+    unmount();
   });
 
   it("表格是容器首元素时不额外留上边距（卡片标题 / 弹层标题下方不留空白）", () => {

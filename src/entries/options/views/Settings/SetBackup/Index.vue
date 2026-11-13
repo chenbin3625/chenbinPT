@@ -25,6 +25,7 @@ import {
   applyTableActionColumn,
   useTableActionColumnLayout,
   withEllipsisCell,
+  useMainTableSticky,
 } from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import { BackupFields, type IBackupServerMetadata, type TBackupFields, type TBackupServerKey } from "@/shared/types.ts";
@@ -40,6 +41,9 @@ import LocalExportConfirmDialog from "./LocalExportConfirmDialog.vue";
 import HistoryDialog from "./HistoryDialog.vue";
 import RestoreDialog from "./RestoreDialog.vue";
 import { getBackupFailureReason, needsBackupEncryptionKeyHint } from "./utils.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t, te } = useI18n();
 const router = useRouter();
@@ -305,6 +309,7 @@ async function confirmDeleteBackupServer(id: TBackupServerKey) {
     </a-alert>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="columns"
       :data-source="tableData"
       :loading="isStoreHydrating"

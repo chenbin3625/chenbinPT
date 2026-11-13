@@ -28,6 +28,7 @@ import {
   applyTableActionColumn,
   useTableActionColumnLayout,
   withEllipsisCell,
+  useMainTableSticky,
 } from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 
@@ -40,6 +41,9 @@ import DefaultDownloaderEditDialog from "./DefaultDownloaderEditDialog.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 const router = useRouter();
@@ -322,6 +326,7 @@ function pruneTableSelected() {
     </template>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="columns"
       :data-source="tableData"
       :loading="isStoreHydrating"

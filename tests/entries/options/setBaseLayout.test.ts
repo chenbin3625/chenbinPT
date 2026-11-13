@@ -14,7 +14,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 
-import { routerInstance } from "@/options/plugins/router.ts";
+import { routerInstance, saveMainScrollTop } from "@/options/plugins/router.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import {
@@ -27,39 +27,84 @@ import {
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 
-/** 造一个 vue-router 传给 scrollBehavior 的已解析路由（只用到 name） */
-const routeNamed = (name: string) => ({ name }) as any;
+/** 造一个 vue-router 传给 scrollBehavior 的已解析路由（只用到 name / fullPath） */
+const routeNamed = (name: string, fullPath = name) => ({ name, fullPath }) as any;
+
+/**
+ * 造一个真正可滚动的 `#ptd-main`。
+ *
+ * happy-dom 不做布局：scrollHeight / clientHeight 恒为 0，`scrollTop` 的 setter 会把写入
+ * 夹到 0；`scrollMainTo` 也会因此认为「内容还不够高」而放弃写入。这里在实例上覆写这几个
+ * 属性，只保留「写入什么就读到什么」的语义。
+ */
+function mountScrollableMain(scrollHeight = 1200, clientHeight = 800) {
+  document.getElementById("ptd-main")?.remove();
+  const main = document.createElement("div");
+  main.id = "ptd-main";
+  let scrollTop = 0;
+  Object.defineProperty(main, "scrollHeight", { configurable: true, value: scrollHeight });
+  Object.defineProperty(main, "clientHeight", { configurable: true, value: clientHeight });
+  Object.defineProperty(main, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = value;
+    },
+  });
+  document.body.appendChild(main);
+  return {
+    element: main,
+    get scrollTop() {
+      return scrollTop;
+    },
+  };
+}
 
 describe("SetBase 页签切换的滚动行为", () => {
   const scrollBehavior = routerInstance.options.scrollBehavior!;
 
-  it("浏览器前进 / 后退时恢复历史滚动位置", () => {
-    const saved = { left: 0, top: 320 };
+  it("浏览器前进 / 后退时恢复离开时的主区滚动位置", async () => {
+    const main = mountScrollableMain();
+    main.element.scrollTop = 320;
+    // 守卫在离开路由前调用它；这里直接构造「曾经从 /my-data 滚到 320 离开」的场景
+    saveMainScrollTop("/my-data");
 
-    // savedPosition 存在时优先返回它（此时不应再去做「滚到 #ptd-main 顶部」）
-    expect(scrollBehavior(routeNamed("SetBaseDownload"), routeNamed("MyData"), saved)).toEqual(saved);
-    expect(scrollBehavior(routeNamed("MyData"), routeNamed("SetBaseUi"), saved)).toEqual(saved);
+    await expect(
+      scrollBehavior(routeNamed("MyData", "/my-data"), routeNamed("SetBaseDownload", "/set-base/download"), {
+        left: 0,
+        top: 0,
+      }),
+    ).resolves.toBe(false);
+    expect(main.scrollTop).toBe(320);
   });
 
-  it("在常规设置的页签之间切换时只滚到顶部，而不是保留上一页签的 scrollY", () => {
-    // 这是本用例要守的核心行为：长页签（下载设置）底部 → 短页签（界面设置）时，
-    // 若沿用 window.scrollY，浏览器会把它夹到新内容底部，看起来像自动跳到底部。
-    // 同时反证旧写法（返回 false = 不做任何滚动）已不存在。
-    const result = scrollBehavior(routeNamed("SetBaseDownload"), routeNamed("SetBaseUi"), null);
+  it("前进 / 后退到未访问过的路由时回到顶部", async () => {
+    const main = mountScrollableMain();
+    main.element.scrollTop = 500;
 
-    expect(result).toEqual({ top: 0 });
-    expect(result).not.toBe(false);
+    await scrollBehavior(routeNamed("SearchEntity", "/search-entity"), routeNamed("MyData", "/my-data"), {
+      left: 0,
+      top: 0,
+    });
+    expect(main.scrollTop).toBe(0);
   });
 
-  it("进入 / 离开常规设置时为固定顶栏保留 48px，避免遮住页签和保存按钮", () => {
-    expect(scrollBehavior(routeNamed("MyData"), routeNamed("SearchEntity"), null)).toEqual({
-      el: "#ptd-main",
-      top: 48,
-    });
-    expect(scrollBehavior(routeNamed("SetBaseUi"), routeNamed("MyData"), null)).toEqual({
-      el: "#ptd-main",
-      top: 48,
-    });
+  it("在常规设置的页签之间切换时滚到顶部，而不是保留上一页签的位置", async () => {
+    // 核心行为：长页签（下载设置）底部 → 短页签（界面设置）时，保留旧位置会被浏览器
+    // 夹到新内容底部，看起来像自动跳到底部。
+    const main = mountScrollableMain();
+    main.element.scrollTop = 640;
+
+    await scrollBehavior(routeNamed("SetBaseDownload"), routeNamed("SetBaseUi"), null);
+    expect(main.scrollTop).toBe(0);
+  });
+
+  it("普通路由切换回到主区顶部，并声明已自行处理滚动", async () => {
+    const main = mountScrollableMain();
+    main.element.scrollTop = 480;
+
+    await expect(scrollBehavior(routeNamed("MyData"), routeNamed("SearchEntity"), null)).resolves.toBe(false);
+    expect(main.scrollTop).toBe(0);
   });
 });
 

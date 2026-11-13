@@ -253,6 +253,7 @@ watch(isRecommendationMenuOpen, (isOpen) => {
 <template>
   <a-popover v-model:open="isRecommendationMenuOpen" placement="bottomRight" trigger="click">
     <a-button
+      :aria-label="t('layout.header.hotRecommendations.title')"
       :disabled="disabled"
       :title="t('layout.header.hotRecommendations.title')"
       size="small"

@@ -73,43 +73,57 @@ router.onError((error) => {
 });
 
 /**
- * v-scroll：在窗口滚动时调用 binding.value。
+ * v-scroll：在「页面滚动容器」滚动时调用 binding.value。
  *
- * 为什么固定在 window 上，而不是像 Vuetify 的 v-scroll 那样自动寻找可滚动祖先（以及为什么不能用元素滚动）：
- * - options 页面的滚动容器是 document/body：#ptd 与 .ant-layout 都只有 min-height（style.css:19-22），
- *   #ptd-main 的 `overflow: auto` 因其高度同样由内容撑开而**永远不会产生元素级滚动**（scrollTop 恒为 0）。
- * - 唯一调用点 `views/Overview/MediaServerEntity/Index.vue` 的 `onScroll` 也是按页面滚动来判断的
- *   （`window.innerHeight + window.scrollY >= document.body.offsetHeight - 50`）。
- *   监听挂在元素上时该元素从不触发 scroll，因而「滚动加载更多」永远不会执行（style-layout-audit G-09）。
- * - 挂在 window 上时 `event.currentTarget === window`（不是 HTMLElement），恰好吃到调用点的 window 分支。
+ * 滚动容器是 `#ptd-main`：style.css 给它固定视口高度 + `overflow: auto`，这样才能让表格
+ * 表头 `position: sticky` 真正生效（sticky 相对最近的滚动祖先定位）。指令挂载的元素本身
+ * （`MediaServerEntity` 的 `<section>`）不滚动，所以必须向上找滚动容器再挂监听；
+ * 直接挂 window 会一次都收不到 scroll —— 「滚动加载更多」永远不触发。
+ *
+ * 找不到 `#ptd-main` 时退回 window，保证该指令在别处使用时不会静默失效。
+ * 回调的 `event.currentTarget` 因此可能是元素也可能是 window，调用点两种分支都要处理
+ * （MediaServerEntity 的 onScroll 已支持：元素分支用 scrollTop/clientHeight/scrollHeight）。
  */
-// 记录每个元素当前注册的回调，避免 updated/unmounted 时移除错回调或重复注册
-const scrollHandlers = new WeakMap<HTMLElement, EventListener>();
+interface ScrollBinding {
+  handler: EventListener;
+  target: HTMLElement | Window;
+}
+
+function resolveScrollTarget(el: HTMLElement): HTMLElement | Window {
+  return (el.closest("#ptd-main") as HTMLElement | null) ?? window;
+}
+
+// 记录每个元素当前注册的回调与目标，避免 updated/unmounted 时移除错回调或重复注册
+const scrollBindings = new WeakMap<HTMLElement, ScrollBinding>();
+
+function bindScroll(el: HTMLElement, handler: EventListener) {
+  const target = resolveScrollTarget(el);
+  target.addEventListener("scroll", handler, { passive: true });
+  scrollBindings.set(el, { handler, target });
+}
+
+function unbindScroll(el: HTMLElement) {
+  const binding = scrollBindings.get(el);
+  if (binding) binding.target.removeEventListener("scroll", binding.handler);
+  scrollBindings.delete(el);
+}
 
 app.directive("scroll", {
   mounted(el, binding) {
     const handler = binding.value as EventListener;
     if (typeof handler !== "function") return;
-    scrollHandlers.set(el, handler);
-    window.addEventListener("scroll", handler, { passive: true });
+    bindScroll(el, handler);
   },
   updated(el, binding) {
-    const previous = scrollHandlers.get(el);
+    const previous = scrollBindings.get(el);
     const handler = binding.value as EventListener;
     if (typeof handler !== "function") return;
-    if (previous === handler) return; // 回调未变化，避免重复注册
-    if (previous) {
-      window.removeEventListener("scroll", previous);
-    }
-    scrollHandlers.set(el, handler);
-    window.addEventListener("scroll", handler, { passive: true });
+    if (previous?.handler === handler) return; // 回调未变化，避免重复注册
+    unbindScroll(el);
+    bindScroll(el, handler);
   },
   unmounted(el) {
-    const handler = scrollHandlers.get(el);
-    if (handler) {
-      window.removeEventListener("scroll", handler);
-    }
-    scrollHandlers.delete(el);
+    unbindScroll(el);
   },
 });
 

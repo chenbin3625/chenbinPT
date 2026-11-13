@@ -33,7 +33,13 @@ const stateDisplay: Record<CTorrentState, { color: string; icon: Component; labe
 
 <template>
   <a-tag
-    ><component :is="stateDisplay[item.state]?.icon" style="margin-right: 4px" />
+    ><component :is="stateDisplay[item.state]?.icon" class="torrent-state__icon" />
     {{ t(stateDisplay[item.state]?.label ?? "MyClient.state.unknown") }}
   </a-tag>
 </template>
+
+<style scoped>
+.torrent-state__icon {
+  margin-right: 4px;
+}
+</style>

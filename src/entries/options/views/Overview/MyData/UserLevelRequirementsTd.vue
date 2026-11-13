@@ -11,7 +11,6 @@ import type { Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { isEmpty } from "es-toolkit/compat";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
-import { resolveColor } from "@/shared/colors.ts";
 import { getNextLevelUnMet, guessUserLevelGroupType, type IUserInfo, type TLevelGroupType } from "@ptd/site";
 
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -91,13 +90,16 @@ const isDonorAccountKept = computed(() => {
 });
 
 const currentUserLevelColor = computed(() => {
+  // 原先返回 green / indigo / light-blue 三个 Material 色名，经 resolveColor 变成固定十六进制，
+  // 深色主题下不会跟随 antd Token。这里直接返回 --ptd-* 变量：
+  // vip 用成功色、manager 与保号用户原本就是蓝色系（indigo / light-blue），统一收敛到主色。
   switch (userLevelGroupType.value) {
     case "vip":
-      return "green";
+      return "var(--ptd-success)";
     case "manager":
-      return "indigo";
+      return "var(--ptd-primary)";
     case "user": {
-      if (matchedLevelRequirements.value?.isKept || isDonorAccountKept.value) return "light-blue"; // 保号用户
+      if (matchedLevelRequirements.value?.isKept || isDonorAccountKept.value) return "var(--ptd-primary)"; // 保号用户
       return "";
     }
     default:
@@ -188,7 +190,7 @@ const userLevelGroupIcon = computed(() => {
 
       <span :style="truncateStyle">
         <component :is="userLevelGroupIcon" style="margin-right: 4px" />
-        <span :style="{ color: resolveColor(currentUserLevelColor) }">{{ levelName }}</span>
+        <span :style="{ color: currentUserLevelColor }">{{ levelName }}</span>
         <CheckOutlined
           v-if="
             configStore.myDataTableControl.showNextLevelInTable &&

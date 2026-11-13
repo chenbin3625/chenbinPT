@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ClearOutlined, CommentOutlined, DeleteOutlined, FolderOutlined } from "@ant-design/icons-vue";
+import { ClearOutlined, CommentOutlined, DeleteOutlined, FolderOutlined, SearchOutlined } from "@ant-design/icons-vue";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { refDebounced } from "@vueuse/core";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
@@ -15,6 +16,7 @@ import ActionTd from "@/options/views/Overview/SearchEntity/ActionTd.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import ToolbarActions, { type ToolbarAction } from "@/options/components/ToolbarActions.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import SiteName from "@/options/components/SiteName.vue";
 import TorrentTitleTd from "@/options/components/TorrentTitleTd.vue";
@@ -26,11 +28,16 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
+const router = useRouter();
 
 const favorites = ref<ITorrentFavoriteItem[]>([]);
 const selectedKeys = ref<TTorrentFavoriteKey[]>([]);
@@ -74,6 +81,24 @@ const tablePagination = computed(() =>
     { allowUnpaginated: false },
   ),
 );
+
+/**
+ * 工具条次操作：只有「清空全部」。
+ * 「删除所选」与批量收藏操作是主操作，留在 #primary；清空全部低频且破坏性，窄屏收进「更多」。
+ */
+const toolbarItems = computed<ToolbarAction[]>(() => [
+  {
+    key: "clearAll",
+    label: t("MyCollection.clearAll"),
+    icon: ClearOutlined,
+    danger: true,
+    disabled: favorites.value.length === 0,
+  },
+]);
+
+function onToolbarAction(key: string) {
+  if (key === "clearAll") void clearAll();
+}
 
 function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
   configStore.updateTableBehavior("MyCollection", "sortBy", toSortBy(sorter as never));
@@ -197,57 +222,51 @@ async function clearAll() {
 </script>
 
 <template>
-  <a-alert :message="t('MyCollection.alert')" show-icon style="margin-bottom: 12px" type="info" />
+  <a-alert :message="t('MyCollection.alert')" show-icon class="my-collection__alert" type="info" />
 
   <a-card>
-    <a-typography-text strong>
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <NavButton
-          :disabled="selectedFavorites.length === 0"
-          color="error"
-          :icon="DeleteOutlined"
-          :text="t('common.remove')"
-          @click="tryToDelete(selectedFavorites.map((x) => x.key))"
-        />
-        <NavButton
-          :disabled="favorites.length === 0"
-          color="error"
-          :icon="ClearOutlined"
-          :text="t('MyCollection.clearAll')"
-          @click="clearAll"
-        />
+    <a-flex class="page-toolbar" align="center" :gap="8">
+      <ToolbarActions :items="toolbarItems" @select="onToolbarAction">
+        <template #primary>
+          <NavButton
+            :disabled="selectedFavorites.length === 0"
+            color="error"
+            :icon="DeleteOutlined"
+            :text="t('common.remove')"
+            @click="tryToDelete(selectedFavorites.map((x) => x.key))"
+          />
 
-        <a-divider type="vertical" />
+          <a-divider type="vertical" />
 
-        <!-- 集中下载收藏的种子（例如等到站免时批量推送到下载器）；星标可批量为选中的收藏改分类/备注 -->
-        <ActionTd :torrent-items="selectedFavorites" :show-keep-upload-btn="false" @favorite-saved="loadFavorites" />
+          <!-- 集中下载收藏的种子（例如等到站免时批量推送到下载器）；星标可批量为选中的收藏改分类/备注 -->
+          <ActionTd :torrent-items="selectedFavorites" :show-keep-upload-btn="false" @favorite-saved="loadFavorites" />
+        </template>
+      </ToolbarActions>
 
-        <div style="flex: 1 1 auto"></div>
+      <a-select
+        v-model:value="favCategoryFilter"
+        :options="favCategoryFilterOptions"
+        :placeholder="t('MyCollection.filterAll')"
+        allow-clear
+        class="my-collection__category-filter"
+        max-tag-count="responsive"
+        mode="multiple"
+      >
+        <template #suffixIcon><FolderOutlined /></template>
+        <!-- 下拉项右侧显示该分类的收藏数量 -->
+        <template #option="{ label, count }">
+          <a-flex justify="space-between" :gap="8">
+            <span>{{ label }}</span>
+            <a-typography-text type="secondary">{{ count }}</a-typography-text>
+          </a-flex>
+        </template>
+      </a-select>
 
-        <a-select
-          v-model:value="favCategoryFilter"
-          :options="favCategoryFilterOptions"
-          :placeholder="t('MyCollection.filterAll')"
-          allow-clear
-          class="my-collection__category-filter"
-          max-tag-count="responsive"
-          mode="multiple"
-        >
-          <template #suffixIcon><FolderOutlined /></template>
-          <!-- 下拉项右侧显示该分类的收藏数量 -->
-          <template #option="{ label, count }">
-            <a-flex justify="space-between" :gap="8">
-              <span>{{ label }}</span>
-              <a-typography-text type="secondary">{{ count }}</a-typography-text>
-            </a-flex>
-          </template>
-        </a-select>
-
-        <a-input v-model:value="tableWaitFilter" allow-clear :placeholder="t('MyCollection.filterLabel')" />
-      </a-flex>
-    </a-typography-text>
+      <a-input v-model:value="tableWaitFilter" allow-clear :placeholder="t('MyCollection.filterLabel')" />
+    </a-flex>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="columns"
       :data-source="filteredFavorites"
       :loading="loading"
@@ -269,20 +288,15 @@ async function clearAll() {
         <template v-if="column.key === 'site'">
           <div class="my-collection__site">
             <SiteFavicon :site-id="record.site" :size="18" />
-            <SiteName class="ptd-cell-ellipsis" style="max-width: 6rem; font-size: 12px" :site-id="record.site" />
+            <SiteName class="ptd-cell-ellipsis my-collection__site-name" :site-id="record.site" />
           </div>
         </template>
 
         <template v-else-if="column.key === 'title'">
           <TorrentTitleTd :item="record" max-width="30vw" />
           <!-- 备注：与正文同号展示，否则太不显眼 -->
-          <div
-            v-if="record.comment"
-            class="ptd-cell-ellipsis"
-            style="max-width: 30vw; color: var(--ptd-text-secondary)"
-            :title="record.comment"
-          >
-            <CommentOutlined style="margin-right: 4px" />{{ record.comment }}
+          <div v-if="record.comment" class="ptd-cell-ellipsis my-collection__comment" :title="record.comment">
+            <CommentOutlined class="my-collection__comment-icon" />{{ record.comment }}
           </div>
         </template>
 
@@ -298,11 +312,11 @@ async function clearAll() {
               {{ category }}
             </a-tag>
           </template>
-          <span v-else style="color: var(--ptd-text-tertiary)">{{ t("MyCollection.table.unclassified") }}</span>
+          <span v-else class="my-collection__muted">{{ t("MyCollection.table.unclassified") }}</span>
         </template>
 
         <template v-else-if="column.key === 'size'">
-          <span style="white-space: nowrap">{{ formatSize(record.size ?? 0) }}</span>
+          <span class="my-collection__nowrap">{{ formatSize(record.size ?? 0) }}</span>
         </template>
 
         <template v-else-if="column.key === 'time'">
@@ -332,7 +346,16 @@ async function clearAll() {
       </template>
 
       <template #emptyText>
-        <NoDataPlaceholder compact :description="t('MyCollection.emptyNotice')" />
+        <NoDataPlaceholder compact :description="t('MyCollection.emptyNotice')">
+          <a-button
+            v-if="favorites.length === 0 && !loading"
+            type="primary"
+            @click="router.push({ name: 'SearchEntity' })"
+          >
+            <template #icon><SearchOutlined /></template>
+            {{ t("common.search") }}
+          </a-button>
+        </NoDataPlaceholder>
       </template>
     </a-table>
   </a-card>
@@ -353,6 +376,28 @@ async function clearAll() {
   gap: 2px;
 }
 
+.my-collection__site-name {
+  max-width: 6rem;
+  font-size: var(--ptd-font-size-sm);
+}
+
+.my-collection__comment {
+  max-width: 30vw;
+  color: var(--ptd-text-secondary);
+}
+
+.my-collection__comment-icon {
+  margin-right: 4px;
+}
+
+.my-collection__muted {
+  color: var(--ptd-text-tertiary);
+}
+
+.my-collection__nowrap {
+  white-space: nowrap;
+}
+
 .my-collection__category-filter {
   flex: 0 1 240px;
   min-width: 160px;
@@ -361,5 +406,9 @@ async function clearAll() {
 .my-collection__category-tag {
   margin: 2px;
   cursor: pointer;
+}
+
+.my-collection__alert {
+  margin-bottom: 12px;
 }
 </style>

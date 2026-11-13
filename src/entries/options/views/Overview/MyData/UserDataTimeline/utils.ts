@@ -24,6 +24,8 @@ export interface IMaxInfo {
   subValue: number;
 }
 
+// 冠军 / 亚军的奖杯色：金、银是「名次」的固定语义，不随深浅主题变化；
+// 它们画在用户自选的画布背景上（默认 #455A64 深色），固定色反而能保证两种背景下的辨识度。
 export const topSiteRenderAttr = [
   { iconFill: "#C9B037", siteKey: "site", valueKey: "maxValue" },
   { iconFill: "#B4B4B4", siteKey: "subSite", valueKey: "subValue" },
@@ -256,7 +258,15 @@ export const text = (config: TKonvaConfig) => ({
   fill: useConfigStore().userDataTimelineControl.textColor ?? defaultTimelineTextColor,
   ...config,
 });
-export const divider = (config: TKonvaConfig) => ({ x: 0, y: 0, stroke: "#0000001f", strokeWidth: 2, ...config });
+export const divider = (config: TKonvaConfig) => ({
+  x: 0,
+  y: 0,
+  // 半透明黑在浅色背景上是细分隔线、在深色背景上几乎不可见——这正好是「辅助线」的预期；
+  // 画布背景由用户自选（默认深色），不能改用跟随页面主题的 --ptd-border。
+  stroke: "#0000001f",
+  strokeWidth: 2,
+  ...config,
+});
 export const image = (config: TKonvaConfig) => {
   const imageBaseSize = config.size ?? 24;
   const imageWidth = config.image?.width ?? imageBaseSize;

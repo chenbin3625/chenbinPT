@@ -104,7 +104,7 @@ async function checkConnect() {
 </script>
 
 <template>
-  <a-card style="margin-bottom: 20px">
+  <a-card class="ptd-editor-card">
     <a-form v-if="clientConfig" layout="vertical">
       <div>
         <a-row :gutter="16">
@@ -138,14 +138,14 @@ async function checkConnect() {
               v-if="isInsecureAddress(clientConfig.address)"
               :message="t('common.insecureAddressWarning')"
               show-icon
-              style="margin-bottom: 16px"
+              class="ptd-editor-alert"
               type="warning"
             />
           </a-col>
         </a-row>
 
         <a-row>
-          <a-col style="padding-block: 0" :span="24">
+          <a-col class="ptd-editor-col-flush" :span="24">
             <a-typography-text strong>{{ t("SetMediaServer.Editor.authInfo") }}</a-typography-text>
           </a-col>
           <a-col v-for="authField in clientMeta!.auth_field" :key="authFieldName(authField)" :span="24">
@@ -163,10 +163,14 @@ async function checkConnect() {
                 <template v-if="isSecretAuthField(authField)" #suffix>
                   <EyeOutlined
                     v-if="revealedAuthFields.has(authField)"
-                    style="cursor: pointer"
+                    class="ptd-editor-secret-toggle"
                     @click="toggleAuthFieldReveal(authField)"
                   />
-                  <EyeInvisibleOutlined v-else style="cursor: pointer" @click="toggleAuthFieldReveal(authField)" />
+                  <EyeInvisibleOutlined
+                    v-else
+                    class="ptd-editor-secret-toggle"
+                    @click="toggleAuthFieldReveal(authField)"
+                  />
                 </template>
               </a-input>
             </a-form-item>
@@ -179,10 +183,14 @@ async function checkConnect() {
                 <template v-if="isSecretAuthField(authField)" #suffix>
                   <EyeOutlined
                     v-if="revealedAuthFields.has(authField.name)"
-                    style="cursor: pointer"
+                    class="ptd-editor-secret-toggle"
                     @click="toggleAuthFieldReveal(authField)"
                   />
-                  <EyeInvisibleOutlined v-else style="cursor: pointer" @click="toggleAuthFieldReveal(authField)" />
+                  <EyeInvisibleOutlined
+                    v-else
+                    class="ptd-editor-secret-toggle"
+                    @click="toggleAuthFieldReveal(authField)"
+                  />
                 </template>
               </a-input>
             </a-form-item>
@@ -191,14 +199,14 @@ async function checkConnect() {
 
         <a-row>
           <a-col :span="24">
-            <a-form-item :label="t('SetDownloader.editor.timeout')" style="padding-inline: 8px">
+            <a-form-item :label="t('SetDownloader.editor.timeout')" class="ptd-editor-form-item--tight">
               <a-flex align="center" :gap="8">
                 <a-slider
                   v-model:value="clientConfig.timeout"
                   :max="10 * 60e3"
                   :min="0"
                   :step="1e3"
-                  style="flex: 1 1 auto"
+                  class="ptd-editor-grow"
                 />
                 <a-button type="text" @click="clientConfig.timeout = 60e3">
                   {{ formatDate(clientConfig.timeout!, "mm:ss") }}
@@ -222,3 +230,32 @@ async function checkConnect() {
     </a-form>
   </a-card>
 </template>
+
+<style lang="scss" scoped>
+/* 媒体服务器编辑器里重复出现的静态行内样式；动态绑定保持原样。 */
+.ptd-editor-card {
+  margin-bottom: 20px;
+}
+
+.ptd-editor-alert {
+  margin-bottom: 16px;
+}
+
+/* 「认证信息」标题行：去掉 a-col 默认的上下内边距，让标题紧贴上方表单 */
+.ptd-editor-col-flush {
+  padding-block: 0;
+}
+
+.ptd-editor-form-item--tight {
+  padding-inline: 8px;
+}
+
+.ptd-editor-grow {
+  flex: 1 1 auto;
+}
+
+/* 凭据字段的明密文切换图标 */
+.ptd-editor-secret-toggle {
+  cursor: pointer;
+}
+</style>

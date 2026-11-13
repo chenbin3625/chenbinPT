@@ -86,7 +86,7 @@ async function submit() {
     :width="560"
     @ok="submit"
   >
-    <a-radio-group v-model:value="inputMode" button-style="solid" style="margin-bottom: 16px">
+    <a-radio-group v-model:value="inputMode" button-style="solid" class="push-to-downloader__mode">
       <a-radio-button value="url"><LinkOutlined />{{ t("MyClient.pushToDownloader.modeUrl") }}</a-radio-button>
       <a-radio-button value="file"><UploadOutlined />{{ t("MyClient.pushToDownloader.modeFile") }}</a-radio-button>
     </a-radio-group>
@@ -133,3 +133,10 @@ async function submit() {
     @done="() => (showDialog = false)"
   />
 </template>
+
+<style scoped>
+/* 推送方式切换与下方输入区留出间距 */
+.push-to-downloader__mode {
+  margin-bottom: 16px;
+}
+</style>

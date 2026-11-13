@@ -106,14 +106,11 @@ watch(showDialog, (open) => {
       >
         <a-list-item-meta>
           <template #avatar>
-            <a-avatar :src="getDownloaderIcon(d.type)" :size="32" style="margin-right: 8px"></a-avatar>
+            <a-avatar :src="getDownloaderIcon(d.type)" :size="32" class="client-status__avatar"></a-avatar>
           </template>
           <template #title>
             <strong>{{ d.name }}</strong>
-            <span
-              v-if="clientVersions[d.id]"
-              style="margin-left: 8px; color: var(--ptd-text-tertiary); font-size: 12px"
-            >
+            <span v-if="clientVersions[d.id]" class="client-status__version">
               {{ clientVersions[d.id] }}
             </span>
             <!-- N6：文案提示「点击感叹号图标可恢复」，原先这个图标只有 tooltip、点不动。
@@ -135,7 +132,7 @@ watch(showDialog, (open) => {
               :href="d.address"
               rel="noopener noreferrer nofollow"
               target="_blank"
-              style="font-size: 12px"
+              class="client-status__address"
               @click.stop
             >
               {{ d.address }}
@@ -143,32 +140,32 @@ watch(showDialog, (open) => {
           </template>
         </a-list-item-meta>
 
-        <a-spin v-if="clientLoading[d.id]" style="margin-right: 16px"></a-spin>
+        <a-spin v-if="clientLoading[d.id]" class="client-status__loading"></a-spin>
         <template v-else>
-          <div style="margin-right: 8px; text-align: right; font-size: 12px">
+          <div class="client-status__summary">
             <a-flex align="center" justify="flex-end" :gap="4">
-              <UpOutlined style="color: var(--ptd-success)" />
-              <span style="white-space: nowrap">
+              <UpOutlined class="client-status__speed-up" />
+              <span class="client-status__nowrap">
                 {{ formatSizeOrDash(clientStatuses[d.id]?.upSpeed) }}/s ({{
                   formatSizeOrDash(clientStatuses[d.id]?.upData)
                 }})
               </span>
             </a-flex>
             <a-flex align="center" justify="flex-end" :gap="4">
-              <DownOutlined style="color: var(--ptd-danger)" />
-              <span style="white-space: nowrap">
+              <DownOutlined class="client-status__speed-down" />
+              <span class="client-status__nowrap">
                 {{ formatSizeOrDash(clientStatuses[d.id]?.dlSpeed) }}/s ({{
                   formatSizeOrDash(clientStatuses[d.id]?.dlData)
                 }})
               </span>
             </a-flex>
-            <div style="color: var(--ptd-text-tertiary)">
+            <div class="client-status__muted">
               {{ t("MyClient.clientStatusDialog.torrentCount", { count: torrentCountFor(d.id) }) }}
             </div>
           </div>
         </template>
 
-        <a-divider style="margin: 0 8px" type="vertical" />
+        <a-divider class="client-status__divider" type="vertical" />
         <a-button
           v-if="suspendedDownloaders.has(d.id)"
           :title="t('MyClient.autoRefresh.resumeDownloader')"
@@ -213,3 +210,50 @@ watch(showDialog, (open) => {
     </template>
   </a-modal>
 </template>
+
+<style scoped>
+/* 下载器状态行内重复的静态样式，收敛为语义类（选中高亮等动态 :style 保持原样） */
+.client-status__avatar {
+  margin-right: 8px;
+}
+
+.client-status__version {
+  margin-left: 8px;
+  font-size: var(--ptd-font-size-sm);
+  color: var(--ptd-text-tertiary);
+}
+
+.client-status__address {
+  font-size: var(--ptd-font-size-sm);
+}
+
+.client-status__loading {
+  margin-right: 16px;
+}
+
+.client-status__summary {
+  margin-right: 8px;
+  font-size: var(--ptd-font-size-sm);
+  text-align: right;
+}
+
+.client-status__speed-up {
+  color: var(--ptd-success);
+}
+
+.client-status__speed-down {
+  color: var(--ptd-danger);
+}
+
+.client-status__nowrap {
+  white-space: nowrap;
+}
+
+.client-status__muted {
+  color: var(--ptd-text-tertiary);
+}
+
+.client-status__divider {
+  margin: 0 8px;
+}
+</style>

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, h, ref, watch, type Component } from "vue";
+import { computed, h, onBeforeUnmount, onMounted, ref, watch, type Component } from "vue";
 import { LeftOutlined, MenuOutlined, RightOutlined } from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -46,6 +46,20 @@ function onNavBarCollapsed(collapsed: boolean) {
   configStore.$save();
 }
 
+/**
+ * 窄屏抽屉的 Esc 关闭不能只依赖 sider 上的 @keydown.esc：该事件只在焦点位于侧栏内部时
+ * 触发，而用户点开抽屉后焦点往往还在顶栏 / 遮罩上，此时按 Esc 没有任何反应，与
+ * 「点遮罩关闭」的行为不一致。抽屉打开期间在 window 上监听并复用同一个关闭动作。
+ */
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && !display.smAndUp.value && narrowNavOpen.value) {
+    narrowNavOpen.value = false;
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
+
 // 根据 meta 的 isMainMenu 属性自动从 router.ts 生成目录
 const menuItems = computed<ItemType[]>(() =>
   routes
@@ -78,6 +92,7 @@ async function onMenuClick({ key }: { key: string | number }) {
   <button
     v-if="!display.smAndUp.value && narrowNavOpen"
     class="ptd-navigation-backdrop"
+    type="button"
     :aria-label="t('common.dialog.close')"
     @click="narrowNavOpen = false"
   />
@@ -126,6 +141,22 @@ async function onMenuClick({ key }: { key: string | number }) {
 </template>
 
 <style lang="scss" scoped>
+/*
+ * antd 的折叠触发条（桌面端 .ant-layout-sider-trigger、窄屏 .ant-layout-sider-zero-width-trigger）
+ * 自身没有 hover 样式，只有内部 text 按钮的 hover；窄屏零宽触发器又是一个 32x32 的绝对定位
+ * 浮动块，悬停时看起来仍是静态图标。这里给整块加一层轻微亮度反馈，与菜单项的整行 hover
+ * 保持同一套交互语言。antd 没有为 trigger 暴露 hover 样式 prop，所以只能覆写。
+ */
+:deep(.ant-layout-sider-trigger:hover),
+:deep(.ant-layout-sider-zero-width-trigger:hover) {
+  filter: brightness(0.96);
+}
+
+/* 触发器按钮撑满整条/整块，焦点环画在外沿会被侧栏边缘裁掉一部分；改为内嵌。 */
+.ptd-navigation-toggle:focus-visible {
+  outline-offset: -2px;
+}
+
 .ptd-navigation-footer {
   margin-top: auto;
   padding: 8px;

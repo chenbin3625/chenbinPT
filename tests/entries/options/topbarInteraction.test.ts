@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { mountOptionsView } from "../../helpers/optionsView.ts";
+import { mountOptionsView, loadScopedStyles } from "../../helpers/optionsView.ts";
 
 const stores = vi.hoisted(() => ({ runtime: undefined as any }));
 
@@ -85,6 +85,15 @@ describe("顶栏搜索交互", () => {
     pressEnter(input, true);
     await view.settle();
     expect(router.currentRoute.value.name).toBe("Home");
+  });
+
+  it("窄屏下方案按钮与搜索按钮不被 flex 压缩（保住 24px 触控命中区）", async () => {
+    loadScopedStyles("src/entries/options/views/Layout/Topbar.vue");
+    await mountTopbar();
+    const plan = view.$<HTMLElement>(".ptd-search-plan-btn")!;
+    const search = view.$<HTMLElement>(".ptd-search-input > .ant-btn:last-child")!;
+    expect(getComputedStyle(plan).flexShrink, "方案按钮是固定控件，不应被输入框挤压").toBe("0");
+    expect(getComputedStyle(search).flexShrink, "搜索按钮是固定控件，不应被输入框挤压").toBe("0");
   });
 
   it("导航完成前连续回车只提交一次，完成后可以再次搜索", async () => {

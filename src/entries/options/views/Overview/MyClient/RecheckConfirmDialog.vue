@@ -46,7 +46,7 @@ async function confirmRecheck() {
     :width="420"
     @ok="confirmRecheck"
   >
-    <div style="font-size: 16px">
+    <div class="my-client-recheck__text">
       {{ t("MyClient.recheckDialog.text", { count: torrentCount }) }}
     </div>
     <div v-if="torrentTitles.length > 0" class="my-client-recheck-list">
@@ -57,6 +57,10 @@ async function confirmRecheck() {
 </template>
 
 <style scoped>
+.my-client-recheck__text {
+  font-size: 16px;
+}
+
 .my-client-recheck-list {
   max-height: 160px;
   margin: 8px 0 0;

@@ -269,7 +269,7 @@ watch(
               <!-- L-17：a-list-item 渲染为裸 <li>，补上按钮语义与键盘触发，纯键盘用户才能用 -->
               <a-list-item
                 role="button"
-                style="cursor: pointer"
+                class="sent-to-downloader__quick-row"
                 tabindex="0"
                 @click="() => quickSendToDownloader(row.downloader, row.path)"
                 @keydown.enter.prevent="() => quickSendToDownloader(row.downloader, row.path)"
@@ -423,3 +423,10 @@ watch(
        （内容脚本下即 shadow root），而不是宿主页面的 document.body（V-11） -->
   <component :is="modalContextHolder" />
 </template>
+
+<style scoped>
+/* 快速发送行整行可点，用类承载指针样式（静态行内样式收敛） */
+.sent-to-downloader__quick-row {
+  cursor: pointer;
+}
+</style>

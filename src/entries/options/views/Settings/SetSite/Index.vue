@@ -24,7 +24,11 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
-import { applyTableActionColumn, useTableActionColumnLayout } from "@/options/views/Overview/utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  useTableActionColumnLayout,
+  useMainTableSticky,
+} from "@/options/views/Overview/utils/antdTable.ts";
 
 import AddDialog from "./AddDialog.vue";
 import EditDialog from "./EditDialog.vue";
@@ -39,6 +43,9 @@ import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 
 // 数据来源
 import { allAddedSiteInfo, type ISiteTableItem } from "./utils.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 
@@ -428,6 +435,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
     </template>
 
     <a-table
+      :sticky="mainTableSticky"
       class="table-stripe table-header-no-wrap"
       :columns="columns"
       :data-source="dataSource"

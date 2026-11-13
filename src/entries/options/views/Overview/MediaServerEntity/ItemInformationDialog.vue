@@ -220,7 +220,7 @@ function formatDuration(seconds: number) {
         <!-- 站点搜索（拿外部标识去站点搜索页）与外部链接（打开服务器给出的页面）都是「动作」，放在海报下方更容易识别 -->
         <div class="media-detail-links">
           <template v-if="richItem.providerIds?.imdb || richItem.providerIds?.tmdb">
-            <div class="info-label" style="margin-bottom: 4px">
+            <div class="info-label media-detail-section-label">
               {{ t("MediaServerEntity.ItemInformationDialog.searchOnSite") }}
             </div>
             <a-flex vertical :gap="4">
@@ -230,7 +230,7 @@ function formatDuration(seconds: number) {
                     :size="16"
                     :src="`/icons/social/${field}.png`"
                     shape="square"
-                    style="margin-right: 6px; vertical-align: -3px"
+                    class="media-detail-link-icon"
                   />
                   {{ richItem.providerIds[field] }}
                 </a-button>
@@ -238,7 +238,7 @@ function formatDuration(seconds: number) {
             </a-flex>
           </template>
           <template v-if="richItem.externalUrls?.length">
-            <div class="info-label" style="margin: 8px 0 4px">
+            <div class="info-label media-detail-section-label media-detail-section-label--spaced">
               {{ t("MediaServerEntity.ItemInformationDialog.externalUrls") }}
             </div>
             <a-flex vertical :gap="4">
@@ -255,7 +255,7 @@ function formatDuration(seconds: number) {
                   :size="16"
                   :src="socialIcon(externalUrl.name)"
                   shape="square"
-                  style="margin-right: 6px; vertical-align: -3px"
+                  class="media-detail-link-icon"
                 />
                 {{ externalUrl.name }}
                 <ExportOutlined />
@@ -266,83 +266,81 @@ function formatDuration(seconds: number) {
       </aside>
       <div class="media-detail-content">
         <div v-if="richItem.tags && richItem.tags.length > 0" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.type")
           }}</a-typography-text>
-          <a-space wrap>
+          <a-space wrap :size="4">
             <!-- M-24：antd 4.2.6 的 a-tag 没有 href 属性（渲染成 <span href>，点不动），链接必须包一层 <a>；
                  无链接（Plex / fnOS 传空串）时只渲染标签，不留无效的 href="" -->
             <template v-for="tag in richItem.tags ?? []" :key="tag.name">
               <a v-if="tag.url" :href="tag.url" rel="noopener noreferrer nofollow" target="_blank">
-                <a-tag color="#ff9800" style="margin-right: 4px; cursor: pointer"
-                  ><TagsOutlined style="margin-right: 4px" />{{ tag.name }}</a-tag
+                <a-tag color="orange" class="media-detail-tag-clickable"
+                  ><TagsOutlined class="media-detail-tag-icon" />{{ tag.name }}</a-tag
                 >
               </a>
-              <a-tag v-else color="#ff9800" style="margin-right: 4px"
-                ><TagsOutlined style="margin-right: 4px" />{{ tag.name }}</a-tag
-              >
+              <a-tag v-else color="orange"><TagsOutlined class="media-detail-tag-icon" />{{ tag.name }}</a-tag>
             </template>
           </a-space>
         </div>
         <div v-if="richItem.duration" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.duration")
           }}</a-typography-text>
-          <a-tag style="margin-right: 4px" color="#4caf50"
-            ><ClockCircleOutlined style="margin-right: 4px" />
+          <a-tag color="green"
+            ><ClockCircleOutlined class="media-detail-tag-icon" />
             {{ formatDuration(richItem.duration ?? 0) }}
           </a-tag>
         </div>
         <div v-if="richItem.size" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.size")
           }}</a-typography-text>
-          <a-tag style="margin-right: 4px" color="#673ab7"
-            ><HddOutlined style="margin-right: 4px" />
+          <a-tag color="purple"
+            ><HddOutlined class="media-detail-tag-icon" />
             {{ formatSize(richItem.size ?? 0) }}
           </a-tag>
         </div>
         <!-- 评分（调研 A1） -->
         <div v-if="typeof richItem.rating === 'number'" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.rating")
           }}</a-typography-text>
-          <a-tag color="#ffc107"><StarFilled style="margin-right: 4px" />{{ richItem.rating.toFixed(1) }}</a-tag>
+          <a-tag color="gold"><StarFilled class="media-detail-tag-icon" />{{ richItem.rating.toFixed(1) }}</a-tag>
         </div>
         <template v-if="hasMediaInfo">
           <!-- 画质（调研 A2） -->
           <div v-if="richItem.format || videoText" class="info-label">
-            <a-typography-text style="padding-right: 12px">{{
+            <a-typography-text class="media-detail-info-label">{{
               t("MediaServerEntity.ItemInformationDialog.video")
             }}</a-typography-text>
             <a-space wrap :size="4">
-              <a-tag v-if="richItem.format" color="#2196f3"
-                ><ArrowsAltOutlined style="margin-right: 4px" />{{ richItem.format.toUpperCase() }}</a-tag
+              <a-tag v-if="richItem.format" color="blue"
+                ><ArrowsAltOutlined class="media-detail-tag-icon" />{{ richItem.format.toUpperCase() }}</a-tag
               >
-              <a-tag v-if="videoText" color="#2196f3"
-                ><VideoCameraOutlined style="margin-right: 4px" />{{ videoText }}</a-tag
+              <a-tag v-if="videoText" color="blue"
+                ><VideoCameraOutlined class="media-detail-tag-icon" />{{ videoText }}</a-tag
               >
             </a-space>
           </div>
           <!-- 音轨（调研 A2） -->
           <div v-if="richItem.mediaInfo?.audio?.length" class="info-label">
-            <a-typography-text style="padding-right: 12px; white-space: nowrap">
+            <a-typography-text class="media-detail-info-label media-detail-info-label--nowrap">
               {{ t("MediaServerEntity.ItemInformationDialog.audio") }} ({{ richItem.mediaInfo.audio.length }})
             </a-typography-text>
             <a-space wrap :size="4">
-              <a-tag v-for="(audio, idx) in richItem.mediaInfo.audio" :key="idx" color="#009688"
-                ><SoundOutlined style="margin-right: 4px" />{{ audioText(audio) }}</a-tag
+              <a-tag v-for="(audio, idx) in richItem.mediaInfo.audio" :key="idx" color="cyan"
+                ><SoundOutlined class="media-detail-tag-icon" />{{ audioText(audio) }}</a-tag
               >
             </a-space>
           </div>
           <!-- 字幕（调研 A2） -->
           <div v-if="richItem.mediaInfo?.subtitle?.length" class="info-label">
-            <a-typography-text style="padding-right: 12px; white-space: nowrap">
+            <a-typography-text class="media-detail-info-label media-detail-info-label--nowrap">
               {{ t("MediaServerEntity.ItemInformationDialog.subtitle") }} ({{ richItem.mediaInfo.subtitle.length }})
             </a-typography-text>
             <a-space wrap :size="4">
-              <a-tag v-for="(subtitle, idx) in richItem.mediaInfo.subtitle" :key="idx" color="#3f51b5"
-                ><FileTextOutlined style="margin-right: 4px" />{{
+              <a-tag v-for="(subtitle, idx) in richItem.mediaInfo.subtitle" :key="idx" color="geekblue"
+                ><FileTextOutlined class="media-detail-tag-icon" />{{
                   [
                     subtitle.language,
                     subtitle.codec,
@@ -357,85 +355,85 @@ function formatDuration(seconds: number) {
         </template>
         <!-- 部分媒体服务器（如 Plex 的搜索结果）不返回流信息，此处给出空状态占位而不是让整块信息消失 -->
         <div v-else class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.mediaInfo")
           }}</a-typography-text>
           <NoDataPlaceholder compact />
         </div>
         <!-- 观看深度（调研 A6）：次数 · 进度 · 最近观看 -->
         <div v-if="watchText" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.watched")
           }}</a-typography-text>
-          <a-tag color="#4caf50"><PlayCircleOutlined style="margin-right: 4px" />{{ watchText }}</a-tag>
+          <a-tag color="green"><PlayCircleOutlined class="media-detail-tag-icon" />{{ watchText }}</a-tag>
         </div>
         <!-- 文件路径（调研 A3）：路径很长且不含空格，按字符换行，避免撑破容器 -->
         <a-flex v-if="richItem.path" class="info-label">
-          <a-typography-text style="padding-right: 12px; flex: 0 0 auto; white-space: nowrap">{{
-            t("MediaServerEntity.ItemInformationDialog.path")
-          }}</a-typography-text>
           <a-typography-text
-            type="secondary"
-            style="flex: 1 1 auto; min-width: 0; word-break: break-all; overflow-wrap: anywhere"
+            class="media-detail-info-label media-detail-info-label--nowrap media-detail-info-label--fixed"
+            >{{ t("MediaServerEntity.ItemInformationDialog.path") }}</a-typography-text
           >
+          <a-typography-text type="secondary" class="media-detail-path-value">
             {{ richItem.path }}
           </a-typography-text>
         </a-flex>
         <!-- 入库时间（调研 A4） -->
         <div v-if="richItem.dateCreated" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.dateCreated")
           }}</a-typography-text>
-          <a-tag color="#607d8b"
-            ><CalendarOutlined style="margin-right: 4px" />{{
+          <a-tag color="default"
+            ><CalendarOutlined class="media-detail-tag-icon" />{{
               formatDate(new Date(richItem.dateCreated).getTime())
             }}</a-tag
           >
         </div>
         <!-- 年份 / 首播 / 分级 / 影评人评分（调研 B8） -->
         <div v-if="richItem.productionYear" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.year")
           }}</a-typography-text>
-          <a-tag color="#607d8b">{{ richItem.productionYear }}</a-tag>
+          <a-tag color="default">{{ richItem.productionYear }}</a-tag>
         </div>
         <div v-if="richItem.premiereDate" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.premiereDate")
           }}</a-typography-text>
-          <a-tag color="#607d8b">{{ richItem.premiereDate.slice(0, 10) }}</a-tag>
+          <a-tag color="default">{{ richItem.premiereDate.slice(0, 10) }}</a-tag>
         </div>
         <div v-if="richItem.officialRating || richItem.criticRating" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.officialRating")
           }}</a-typography-text>
-          <a-tag v-if="richItem.officialRating" color="#ff9800">{{ richItem.officialRating }}</a-tag>
-          <a-tag v-if="richItem.criticRating" color="#ffc107">
-            {{ t("MediaServerEntity.ItemInformationDialog.criticRating") }} {{ richItem.criticRating.toFixed(1) }}
-          </a-tag>
+          <a-space wrap :size="4">
+            <a-tag v-if="richItem.officialRating" color="orange">{{ richItem.officialRating }}</a-tag>
+            <a-tag v-if="richItem.criticRating" color="gold">
+              {{ t("MediaServerEntity.ItemInformationDialog.criticRating") }} {{ richItem.criticRating.toFixed(1) }}
+            </a-tag>
+          </a-space>
         </div>
         <!-- 剧集信息（调研 B10） -->
         <div v-if="seriesInfoText" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.series")
           }}</a-typography-text>
           <a-typography-text type="secondary">{{ seriesInfoText }}</a-typography-text>
         </div>
         <!-- 同片多版本 / 制片公司 / 自定义标签 / 宣传语（调研 B9 / B8 / B12） -->
         <div v-if="(richItem.mediaSourceCount ?? 0) > 1" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.mediaSourceCount")
           }}</a-typography-text>
           <a-tag color="purple">{{ t("MediaServerEntity.versions", { count: richItem.mediaSourceCount }) }}</a-tag>
         </div>
         <div v-if="richItem.studios?.length" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.studios")
           }}</a-typography-text>
           <a-typography-text type="secondary">{{ richItem.studios.join(" / ") }}</a-typography-text>
         </div>
         <div v-if="richItem.labels?.length" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.labels")
           }}</a-typography-text>
           <a-space wrap :size="4">
@@ -443,14 +441,14 @@ function formatDuration(seconds: number) {
           </a-space>
         </div>
         <div v-if="richItem.taglines?.length" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.taglines")
           }}</a-typography-text>
           <a-typography-text italic type="secondary">{{ richItem.taglines.join(" / ") }}</a-typography-text>
         </div>
         <!-- 演职人员（调研 B12，二次拉取才有） -->
         <div v-if="richItem.people?.length" class="info-label">
-          <a-typography-text style="padding-right: 12px">{{
+          <a-typography-text class="media-detail-info-label">{{
             t("MediaServerEntity.ItemInformationDialog.people")
           }}</a-typography-text>
           <a-space wrap :size="4">
@@ -468,17 +466,17 @@ function formatDuration(seconds: number) {
                     :preview="false"
                     :src="person.imageUrl"
                     :width="160"
-                    style="object-fit: cover; border-radius: 4px"
+                    class="media-detail-person-image"
                   />
                   <a-typography-text>{{ person.name }}</a-typography-text>
-                  <a-typography-text v-if="person.role" type="secondary" style="font-size: 12px">
+                  <a-typography-text v-if="person.role" type="secondary" class="media-detail-role">
                     {{ person.role }}
                   </a-typography-text>
                 </a-flex>
               </template>
               <!-- a-tag 没有 href（见上方 M-24），有演员页时包一层 <a> -->
               <a v-if="person.url" :href="person.url" rel="noopener noreferrer nofollow" target="_blank">
-                <a-tag style="cursor: pointer"
+                <a-tag class="media-detail-tag-clickable"
                   >{{ person.name }}<template v-if="person.role"> · {{ person.role }}</template></a-tag
                 >
               </a>
@@ -488,11 +486,11 @@ function formatDuration(seconds: number) {
             </a-popover>
           </a-space>
         </div>
-        <a-divider style="margin: 8px 0" />
+        <a-divider class="media-detail-divider" />
 
-        <a-flex align="center" style="width: 100%">
+        <a-flex align="center" class="media-detail-footer">
           <a-tooltip :title="playedTitle">
-            <span style="display: inline-flex">
+            <span class="media-detail-played">
               <PlayedStateIcon
                 :is-played="richItem.user?.IsPlayed"
                 :percent="richItem.user?.playedPercentage"
@@ -503,11 +501,10 @@ function formatDuration(seconds: number) {
           <a-tooltip :title="favoriteTitle">
             <component
               :is="richItem.user?.IsFavorite ? HeartFilled : HeartOutlined"
-              class="ptd-icon-lg"
-              style="color: var(--ptd-danger); margin-left: 8px"
+              class="ptd-icon-lg media-detail-favorite"
             />
           </a-tooltip>
-          <div style="flex: 1 1 auto"></div>
+          <div class="media-detail-spacer"></div>
           <a-button :href="richItem.url" rel="noopener noreferrer nofollow" target="_blank">
             <template #icon><SelectOutlined /></template>
             {{ t("common.visit") }}
@@ -605,6 +602,83 @@ function formatDuration(seconds: number) {
   gap: 6px 0;
   margin-bottom: 12px;
   overflow-wrap: anywhere;
+}
+
+/* 信息行左侧的字段名：统一右留白，替代原先每个标签手写的 padding-right: 12px */
+.media-detail-info-label {
+  padding-right: 12px;
+}
+
+/* 字段名本身不应换行（音轨 / 字幕 / 路径），否则标签会掉到下一行 */
+.media-detail-info-label--nowrap {
+  white-space: nowrap;
+}
+
+/* 路径字段名固定宽度不参与收缩，把剩余宽度全部让给路径值 */
+.media-detail-info-label--fixed {
+  flex: 0 0 auto;
+}
+
+.media-detail-path-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* 标签内图标与文字之间的间距（a-tag 没有 gap，只能给图标留右外边距） */
+.media-detail-tag-icon {
+  margin-right: 4px;
+}
+
+/* 海报下方按钮里的 imdb / tmdb / 社交图标：垂直微调与文字基线对齐 */
+.media-detail-link-icon {
+  margin-right: 6px;
+  vertical-align: -3px;
+}
+
+.media-detail-tag-clickable {
+  cursor: pointer;
+}
+
+/* 侧栏分组标题与「搜索」区块之间的间距 */
+.media-detail-section-label {
+  margin-bottom: 4px;
+}
+
+.media-detail-section-label--spaced {
+  margin: 8px 0 4px;
+}
+
+.media-detail-person-image {
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.media-detail-role {
+  font-size: 12px;
+}
+
+.media-detail-divider {
+  margin: 8px 0;
+}
+
+.media-detail-footer {
+  width: 100%;
+}
+
+.media-detail-played {
+  display: inline-flex;
+}
+
+/* 收藏心形：危险色 + 与观看状态图标拉开间距 */
+.media-detail-favorite {
+  margin-left: 8px;
+  color: var(--ptd-danger);
+}
+
+.media-detail-spacer {
+  flex: 1 1 auto;
 }
 
 .media-detail-content :deep(.ant-space),

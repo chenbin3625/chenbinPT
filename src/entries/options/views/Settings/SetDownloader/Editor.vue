@@ -82,7 +82,7 @@ async function checkConnect() {
 </script>
 
 <template>
-  <a-card style="margin-bottom: 20px">
+  <a-card class="ptd-editor-card">
     <a-form v-if="clientConfig" layout="vertical">
       <div>
         <a-row :gutter="16">
@@ -110,7 +110,7 @@ async function checkConnect() {
               <a-input-number
                 v-model:value="clientConfig.sortIndex"
                 :status="sortIndexError ? 'error' : undefined"
-                style="width: 100%"
+                class="ptd-editor-full-width"
               />
             </a-form-item>
           </a-col>
@@ -123,9 +123,9 @@ async function checkConnect() {
             <!-- M-10：http:// / ws:// 地址下密码与 token 会明文传输，明确提示而不是静默拦截 -->
             <a-alert
               v-if="isInsecureAddress(clientConfig.address)"
+              class="ptd-editor-alert"
               :message="t('common.insecureAddressWarning')"
               show-icon
-              style="margin-bottom: 16px"
               type="warning"
             />
           </a-col>
@@ -139,11 +139,11 @@ async function checkConnect() {
         </a-row>
         <a-row>
           <a-col :span="24">
-            <a-form-item :label="t('SetDownloader.editor.password')" style="padding-right: 20px">
+            <a-form-item class="ptd-editor-form-item--pad-right" :label="t('SetDownloader.editor.password')">
               <a-input v-model:value="clientConfig.password" :type="showPassword ? 'text' : 'password'">
                 <template #suffix>
-                  <EyeOutlined v-if="showPassword" style="cursor: pointer" @click="showPassword = false" />
-                  <EyeInvisibleOutlined v-else style="cursor: pointer" @click="showPassword = true" />
+                  <EyeOutlined v-if="showPassword" class="ptd-editor-secret-toggle" @click="showPassword = false" />
+                  <EyeInvisibleOutlined v-else class="ptd-editor-secret-toggle" @click="showPassword = true" />
                 </template>
               </a-input>
             </a-form-item>
@@ -151,14 +151,14 @@ async function checkConnect() {
         </a-row>
         <a-row>
           <a-col :span="24">
-            <a-form-item :label="t('SetDownloader.editor.timeout')" style="padding-inline: 8px">
+            <a-form-item class="ptd-editor-form-item--tight" :label="t('SetDownloader.editor.timeout')">
               <a-flex align="center" :gap="8">
                 <a-slider
                   v-model:value="clientConfig.timeout"
+                  class="ptd-editor-grow"
                   :max="10 * 60e3"
                   :min="0"
                   :step="1e3"
-                  style="flex: 1 1 auto"
                 />
                 <a-button type="text" @click="clientConfig.timeout = 60e3">
                   {{ formatDate(clientConfig.timeout!, "mm:ss") }}
@@ -169,7 +169,7 @@ async function checkConnect() {
         </a-row>
         <a-row>
           <a-col v-if="clientMeta?.feature?.DefaultAutoStart?.allowed" :span="24">
-            <a-form-item style="margin-left: 16px">
+            <a-form-item class="ptd-editor-form-item--indent">
               <a-flex align="center" :gap="8">
                 <a-switch v-model:checked="clientConfig.feature!.DefaultAutoStart" />
                 <a-typography-text>{{ t("SetDownloader.editor.autoStart") }}</a-typography-text>
@@ -180,7 +180,7 @@ async function checkConnect() {
         <!-- 连接行为开关（非种子添加参数），按 clientMeta.feature.BypassCSRF 声明显式开启（目前仅 qBittorrent） -->
         <a-row>
           <a-col v-if="clientMeta?.feature?.BypassCSRF?.allowed" :span="24">
-            <a-form-item :help="t('SetDownloader.editor.bypassCSRFHelp')" style="margin-left: 16px">
+            <a-form-item class="ptd-editor-form-item--indent" :help="t('SetDownloader.editor.bypassCSRFHelp')">
               <a-flex align="center" :gap="8">
                 <a-switch v-model:checked="clientConfig.feature!.BypassCSRF" />
                 <a-typography-text>{{ t("SetDownloader.editor.bypassCSRF") }}</a-typography-text>
@@ -218,3 +218,41 @@ async function checkConnect() {
     </a-form>
   </a-card>
 </template>
+
+<style lang="scss" scoped>
+/* 编辑器卡片与表单行共用的静态样式。原先重复写成行内 style；抽成类后
+ * 视觉值保持不变，动态绑定（:style）仍留在模板里。 */
+.ptd-editor-card {
+  margin-bottom: 20px;
+}
+
+.ptd-editor-full-width {
+  width: 100%;
+}
+
+.ptd-editor-alert {
+  margin-bottom: 16px;
+}
+
+.ptd-editor-form-item--pad-right {
+  padding-right: 20px;
+}
+
+.ptd-editor-form-item--tight {
+  padding-inline: 8px;
+}
+
+.ptd-editor-form-item--indent {
+  margin-left: 16px;
+}
+
+/* 滑块吃满剩余宽度；滑块与前后按钮的间距由 a-flex 的 gap 提供。 */
+.ptd-editor-grow {
+  flex: 1 1 auto;
+}
+
+/* 密码明/密文切换图标 */
+.ptd-editor-secret-toggle {
+  cursor: pointer;
+}
+</style>

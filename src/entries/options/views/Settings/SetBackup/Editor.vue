@@ -308,10 +308,10 @@ async function checkConnect() {
 </script>
 
 <template>
-  <a-card style="margin-bottom: 20px">
+  <a-card class="ptd-editor-card">
     <a-form v-if="clientConfig" layout="vertical">
       <div>
-        <a-typography-text strong style="display: block; margin: 8px 0">{{ t("common.basicInfo") }}</a-typography-text>
+        <a-typography-text strong class="ptd-editor-section-title">{{ t("common.basicInfo") }}</a-typography-text>
         <a-row :gutter="16">
           <a-col :md="8" :xs="24">
             <a-form-item :label="t('common.type')">
@@ -334,7 +334,7 @@ async function checkConnect() {
           </a-col>
         </a-row>
 
-        <a-typography-text strong style="display: block; margin: 8px 0">
+        <a-typography-text strong class="ptd-editor-section-title">
           {{ t("SetBackup.Editor.serverConfig") }}
         </a-typography-text>
 
@@ -355,12 +355,12 @@ async function checkConnect() {
                 >
                   <template #suffix>
                     <EyeInvisibleOutlined
-                      style="cursor: pointer"
+                      class="ptd-editor-secret-toggle"
                       @click="toggleConfigFieldReveal(metaField.key as string)"
                     />
                   </template>
                 </a-input>
-                <div v-else style="display: flex; align-items: flex-start; gap: 4px">
+                <div v-else class="ptd-editor-secret-row">
                   <a-textarea v-model:value="clientConfig.config[metaField.key! as string]" :rows="3" />
                   <a-button
                     type="text"
@@ -379,12 +379,12 @@ async function checkConnect() {
                 <template v-if="isSecretConfigField(metaField)" #suffix>
                   <EyeOutlined
                     v-if="revealedConfigFields.has(metaField.key as string)"
-                    style="cursor: pointer"
+                    class="ptd-editor-secret-toggle"
                     @click="toggleConfigFieldReveal(metaField.key as string)"
                   />
                   <EyeInvisibleOutlined
                     v-else
-                    style="cursor: pointer"
+                    class="ptd-editor-secret-toggle"
                     @click="toggleConfigFieldReveal(metaField.key as string)"
                   />
                 </template>
@@ -397,9 +397,9 @@ async function checkConnect() {
           </a-col>
         </a-row>
 
-        <a-divider style="margin: 8px 0" />
+        <a-divider class="ptd-editor-divider--tight" />
 
-        <a-typography-text strong style="display: block; margin: 8px 0">
+        <a-typography-text strong class="ptd-editor-section-title">
           {{ t("SetBackup.Editor.backupConfig") }}
         </a-typography-text>
 
@@ -407,7 +407,7 @@ async function checkConnect() {
         <!-- 备份内容 -->
         <div>
           <a-form-item :help="backupFieldsError" :label="t('SetBackup.Editor.backupFields')" required>
-            <a-checkbox-group v-model:value="clientConfig.backupFields" style="width: 100%">
+            <a-checkbox-group v-model:value="clientConfig.backupFields" class="ptd-editor-full-width">
               <a-row :gutter="[0, 8]">
                 <a-col v-for="backupField in BackupFields" :key="backupField" :md="8" :xs="24">
                   <a-checkbox :value="backupField">{{ t(`SetBackup.fields.${backupField}`) }}</a-checkbox>
@@ -419,13 +419,13 @@ async function checkConnect() {
           <a-alert
             v-if="showsEncryptionKeyRequired"
             show-icon
-            style="margin-bottom: 8px"
+            class="ptd-editor-alert--tight"
             type="warning"
             :message="t('SetBackup.Editor.encryptionKeyRequired')"
           />
         </div>
 
-        <a-divider style="margin: 12px 0" />
+        <a-divider class="ptd-editor-divider--section" />
 
         <!-- 自动备份间隔 -->
         <div>
@@ -435,11 +435,16 @@ async function checkConnect() {
             :extra="t('SetBackup.Editor.backupIntervalHint')"
             :label="t('SetBackup.Editor.backupIntervalField')"
           >
-            <a-input-number v-model:value="clientConfig.backupInterval" addon-after="h" :min="0" style="width: 100%" />
+            <a-input-number
+              v-model:value="clientConfig.backupInterval"
+              addon-after="h"
+              :min="0"
+              class="ptd-editor-full-width"
+            />
           </a-form-item>
         </div>
 
-        <a-divider style="margin: 12px 0" />
+        <a-divider class="ptd-editor-divider--section" />
 
         <!-- 备份保留策略：设置项直接内联展示，不再单独弹出对话框 -->
         <div>
@@ -458,11 +463,11 @@ async function checkConnect() {
             </a-button>
           </a-flex>
 
-          <a-typography-text style="display: block" type="secondary">
+          <a-typography-text class="ptd-editor-note" type="secondary">
             {{ t("SetBackup.RetentionDialog.tip") }}
           </a-typography-text>
 
-          <div class="retention-group" style="padding: 16px">
+          <div class="retention-group ptd-editor-padded">
             <!-- 按时间期限保留 -->
             <div class="retention-row">
               <a-switch v-model:checked="retentionDraft.time!.enabled" />
@@ -473,12 +478,12 @@ async function checkConnect() {
                   :addon-after="t('SetBackup.RetentionDialog.daySuffix')"
                   :disabled="!retentionDraft.time!.enabled"
                   :min="1"
-                  style="width: 100%"
+                  class="ptd-editor-full-width"
                 />
               </div>
             </div>
 
-            <a-divider style="margin: 8px 0" />
+            <a-divider class="ptd-editor-divider--tight" />
 
             <!-- 按数量保留 -->
             <div class="retention-row">
@@ -490,12 +495,12 @@ async function checkConnect() {
                   :addon-after="t('SetBackup.RetentionDialog.countSuffix')"
                   :disabled="!retentionDraft.count!.enabled"
                   :min="1"
-                  style="width: 100%"
+                  class="ptd-editor-full-width"
                 />
               </div>
             </div>
 
-            <a-divider style="margin: 8px 0" />
+            <a-divider class="ptd-editor-divider--tight" />
 
             <!-- 按时间窗口采样保留 -->
             <div>
@@ -503,7 +508,7 @@ async function checkConnect() {
                 <a-switch v-model:checked="retentionDraft.sample!.enabled" />
                 <a-typography-text>{{ t("SetBackup.RetentionDialog.sample.title") }}</a-typography-text>
               </div>
-              <a-typography-text style="display: block" type="secondary">
+              <a-typography-text class="ptd-editor-note" type="secondary">
                 {{ t("SetBackup.RetentionDialog.sample.hint") }}
               </a-typography-text>
 
@@ -517,7 +522,7 @@ async function checkConnect() {
               >
                 <template #bodyCell="{ column, record }">
                   <template v-if="column.key === 'type'">
-                    <span style="white-space: nowrap">
+                    <span class="ptd-editor-nowrap">
                       {{ t(`SetBackup.RetentionDialog.sample.type.${record.type}`) }}
                     </span>
                   </template>
@@ -548,3 +553,55 @@ async function checkConnect() {
     </a-form>
   </a-card>
 </template>
+
+<style lang="scss" scoped>
+/* 备份服务器编辑器里重复出现的静态行内样式；动态绑定（:style）保持原样。 */
+.ptd-editor-card {
+  margin-bottom: 20px;
+}
+
+/* 分组小标题：基本信息 / 服务器配置 / 备份配置 */
+.ptd-editor-section-title {
+  display: block;
+  margin: 8px 0;
+}
+
+.ptd-editor-secret-toggle {
+  cursor: pointer;
+}
+
+/* 多行凭据输入 + 右侧「显示」按钮 */
+.ptd-editor-secret-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.ptd-editor-divider--tight {
+  margin: 8px 0;
+}
+
+.ptd-editor-divider--section {
+  margin: 12px 0;
+}
+
+.ptd-editor-full-width {
+  width: 100%;
+}
+
+.ptd-editor-alert--tight {
+  margin-bottom: 8px;
+}
+
+.ptd-editor-note {
+  display: block;
+}
+
+.ptd-editor-padded {
+  padding: 16px;
+}
+
+.ptd-editor-nowrap {
+  white-space: nowrap;
+}
+</style>

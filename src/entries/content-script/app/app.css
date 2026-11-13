@@ -16,8 +16,11 @@
    *
    * font-family / font-size / line-height 与 options 页面共用同一组变量（style.css 的 #ptd），
    * 不再手抄字体栈：`all: initial` 会把基准字号重置为浏览器默认的 16px，而 antd 组件内部是
-   * token.fontSize（compactAlgorithm 下为 12px），此前 overlay 的裸文本因此比组件文字大一档。
-   * （`all` 不影响自定义属性，所以下面这几条 var() 能正常取到宿主上的值。） */
+   * token.fontSize（本项目排版算法下为 13px），此前 overlay 的裸文本因此比组件文字大一档。
+   * （`all` 不影响自定义属性，所以下面这几条 var() 能正常取到宿主上的值。）
+   *
+   * 回退值与 options 侧保持一致（13px / 1.5）：变量由 syncThemeVarsToHost 在挂载后同步写入，
+   * 但写入前的那一帧只有回退值，两边取不同值时首帧会闪一下字号。 */
   color: var(--ptd-text, rgba(0, 0, 0, 0.88));
   font-family: var(
     --ptd-font-family,
@@ -30,8 +33,8 @@
     "Noto Sans",
     sans-serif
   );
-  font-size: var(--ptd-font-size, 14px);
-  line-height: var(--ptd-line-height, 1.5714);
+  font-size: var(--ptd-font-size, 13px);
+  line-height: var(--ptd-line-height, 1.5);
   word-break: normal;
 }
 

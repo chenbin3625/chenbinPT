@@ -199,16 +199,16 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
 </script>
 
 <template>
-  <a-card style="margin-bottom: 20px; padding: 4px">
+  <a-card class="ptd-editor-card">
     <a-form :disabled="siteMetaData.isDead" layout="vertical">
       <div>
-        <a-typography-text strong style="display: block; margin: 8px 0">
+        <a-typography-text strong class="ptd-editor-section-title">
           {{ t("common.basicInfo") }}
         </a-typography-text>
         <a-row :gutter="16">
           <a-col :md="8" :xs="24">
             <a-form-item :help="nameError" :label="t('SetSite.common.name')" required>
-              <a-auto-complete v-model:value="siteName" :options="siteNameOptions" style="width: 100%" />
+              <a-auto-complete v-model:value="siteName" :options="siteNameOptions" class="ptd-editor-full-width" />
             </a-form-item>
           </a-col>
           <a-col :md="8" :xs="24">
@@ -222,18 +222,28 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
                 v-model:value="siteUserConfig.sortIndex"
                 :placeholder="t('SetSite.editor.sortIndexTip')"
                 :status="sortIndexError ? 'error' : undefined"
-                style="width: 100%"
+                class="ptd-editor-full-width"
               />
             </a-form-item>
           </a-col>
           <a-col :span="24">
             <a-form-item :label="t('SetSite.common.groups')">
-              <a-select v-model:value="siteUserConfig.groups" mode="tags" :options="groupOptions" style="width: 100%" />
+              <a-select
+                v-model:value="siteUserConfig.groups"
+                mode="tags"
+                :options="groupOptions"
+                class="ptd-editor-full-width"
+              />
             </a-form-item>
           </a-col>
           <a-col :span="24">
             <a-form-item :label="t('SetSite.editor.timezone')">
-              <a-select v-model:value="siteTimezoneOffset" :options="timeZoneOptions" show-search style="width: 100%" />
+              <a-select
+                v-model:value="siteTimezoneOffset"
+                :options="timeZoneOptions"
+                show-search
+                class="ptd-editor-full-width"
+              />
             </a-form-item>
           </a-col>
         </a-row>
@@ -241,11 +251,11 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
         <a-row>
           <a-col :span="24">
             <a-form-item :help="urlError" :label="t('SetSite.common.url')" required>
-              <a-radio-group v-model:value="siteUserConfig.url" style="width: 100%">
-                <a-radio v-for="url in siteMetaData.urls" :key="url" :value="url" style="display: block">
-                  <span style="display: inline-flex; align-items: center; width: 100%">
+              <a-radio-group v-model:value="siteUserConfig.url" class="ptd-editor-full-width">
+                <a-radio v-for="url in siteMetaData.urls" :key="url" :value="url" class="ptd-editor-radio-block">
+                  <span class="ptd-editor-radio-line">
                     {{ url }}
-                    <span style="flex: 1 1 auto; min-width: 8px" />
+                    <span class="ptd-editor-spacer" />
                     <a-tooltip :title="t('SetSite.common.open')">
                       <a-button :href="url" shape="circle" target="_blank" type="text">
                         <template #icon>
@@ -255,12 +265,12 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
                     </a-tooltip>
                   </span>
                 </a-radio>
-                <a-radio :value="customSiteUrl" style="display: block">
+                <a-radio :value="customSiteUrl" class="ptd-editor-radio-block">
                   <a-input
                     v-model:value="customSiteUrl"
                     :placeholder="t('SetSite.editor.customUrlPlaceholder')"
                     :status="customUrlError ? 'error' : undefined"
-                    style="width: 100%"
+                    class="ptd-editor-full-width"
                     @update:value="updateCustomUrl"
                   />
                 </a-radio>
@@ -272,7 +282,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
         <a-divider />
 
         <template v-if="siteMetaData.userInputSettingMeta && siteUserConfig.inputSetting">
-          <a-typography-text strong style="display: block; margin: 8px 0">
+          <a-typography-text strong class="ptd-editor-section-title">
             {{ t("SetSite.Editor.siteSettings") }}
           </a-typography-text>
 
@@ -294,12 +304,12 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
               <template v-if="isSecretInputSetting(userInputMeta.name)" #suffix>
                 <EyeOutlined
                   v-if="revealedInputSettings.has(userInputMeta.name)"
-                  style="cursor: pointer"
+                  class="ptd-editor-secret-toggle"
                   @click="toggleInputSettingReveal(userInputMeta.name)"
                 />
                 <EyeInvisibleOutlined
                   v-else
-                  style="cursor: pointer"
+                  class="ptd-editor-secret-toggle"
                   @click="toggleInputSettingReveal(userInputMeta.name)"
                 />
               </template>
@@ -309,7 +319,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
           <a-divider />
         </template>
 
-        <a-typography-text strong style="display: block; margin: 8px 0">
+        <a-typography-text strong class="ptd-editor-section-title">
           {{ t("SetSite.Editor.otherSettings") }}
         </a-typography-text>
 
@@ -331,7 +341,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
               :max="10 * 60e3"
               :min="0"
               :step="1e3"
-              style="flex: 1 1 auto"
+              class="ptd-editor-grow"
             />
             <a-button type="text" @click="siteUserConfig.timeout = 30e3">
               {{ formatDate(siteUserConfig.timeout!, "mm:ss") }}
@@ -346,7 +356,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
               :max="(siteUserConfig.downloadInterval ?? 0) < 600 ? 600 : 1200"
               :min="0"
               :step="(siteUserConfig.downloadInterval ?? 0) <= 60 ? 1 : 10"
-              style="flex: 1 1 auto"
+              class="ptd-editor-grow"
             />
             <a-button type="text" @click="siteUserConfig.downloadInterval = 0">
               {{ formatDate((siteUserConfig.downloadInterval ?? 0) * 1e3, "mm:ss") }}
@@ -361,7 +371,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
               :max="1024"
               :min="0"
               :step="1"
-              style="flex: 1 1 auto"
+              class="ptd-editor-grow"
             />
             <a-button type="text" @click="siteUserConfig.uploadSpeedLimit = 0">
               {{ siteUserConfig.uploadSpeedLimit ?? 0 }} MiB/s
@@ -372,3 +382,47 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
     </a-form>
   </a-card>
 </template>
+
+<style lang="scss" scoped>
+/* 站点编辑器里重复出现的静态行内样式，统一抽成语义类；视觉值与原来的
+ * 行内声明一致，动态绑定（:style）保持原样。 */
+.ptd-editor-card {
+  margin-bottom: 20px;
+  padding: 4px;
+}
+
+/* 分组小标题：基础信息 / 站点设置 / 其他设置 */
+.ptd-editor-section-title {
+  display: block;
+  margin: 8px 0;
+}
+
+.ptd-editor-full-width {
+  width: 100%;
+}
+
+/* 每行 URL 独占一行，内部用 flex 把「打开站点」按钮推到最右侧 */
+.ptd-editor-radio-block {
+  display: block;
+}
+
+.ptd-editor-radio-line {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+
+.ptd-editor-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+/* 密码 / 凭据的明密文切换图标 */
+.ptd-editor-secret-toggle {
+  cursor: pointer;
+}
+
+.ptd-editor-grow {
+  flex: 1 1 auto;
+}
+</style>

@@ -27,12 +27,18 @@ const match = computed(() => getCachedTorrentSiteMatch(item));
       <SiteName class="ptd-cell-ellipsis torrent-site-td__name" :site-id="match.siteId" />
     </template>
     <template v-else-if="match?.type === 'public'">
-      <GlobalOutlined :title="t('MyClient.sitePublicTip')" style="font-size: 18px; color: var(--ptd-text-tertiary)" />
-      <span class="torrent-site-td__label" style="color: var(--ptd-text-tertiary)">{{ t("MyClient.sitePublic") }}</span>
+      <GlobalOutlined
+        :title="t('MyClient.sitePublicTip')"
+        class="torrent-site-td__icon torrent-site-td__icon--public"
+      />
+      <span class="torrent-site-td__label torrent-site-td__label--public">{{ t("MyClient.sitePublic") }}</span>
     </template>
     <template v-else-if="match?.type === 'unmatched'">
-      <GlobalOutlined :title="t('MyClient.siteUnmatchedTip')" style="font-size: 18px; color: var(--ptd-warning)" />
-      <span class="torrent-site-td__label" style="color: var(--ptd-warning)">{{ t("MyClient.siteUnmatched") }}</span>
+      <GlobalOutlined
+        :title="t('MyClient.siteUnmatchedTip')"
+        class="torrent-site-td__icon torrent-site-td__icon--unmatched"
+      />
+      <span class="torrent-site-td__label torrent-site-td__label--unmatched">{{ t("MyClient.siteUnmatched") }}</span>
     </template>
     <a-spin v-else size="small" />
   </div>
@@ -54,5 +60,20 @@ const match = computed(() => getCachedTorrentSiteMatch(item));
 .torrent-site-td__label {
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* 公网 / 未匹配两种状态的图标与文案色（原先 4 处静态行内样式） */
+.torrent-site-td__icon {
+  font-size: 18px;
+}
+
+.torrent-site-td__icon--public,
+.torrent-site-td__label--public {
+  color: var(--ptd-text-tertiary);
+}
+
+.torrent-site-td__icon--unmatched,
+.torrent-site-td__label--unmatched {
+  color: var(--ptd-warning);
 }
 </style>

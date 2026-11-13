@@ -136,7 +136,7 @@ function selectSearchPlan({ key }: { key: string | number }) {
     <a-space-compact class="ptd-search-input">
       <!-- 搜索方案选择框 -->
       <a-dropdown :trigger="['click']">
-        <a-button class="ptd-search-plan-btn" type="primary" :title="searchPlanLabel">
+        <a-button aria-haspopup="menu" class="ptd-search-plan-btn" type="primary" :title="searchPlanLabel">
           <span class="ptd-search-plan-label">{{ searchPlanLabel }}</span>
           <DownOutlined />
         </a-button>
@@ -216,3 +216,26 @@ function selectSearchPlan({ key }: { key: string | number }) {
     </a-space-compact>
   </a-layout-header>
 </template>
+
+<style lang="scss" scoped>
+/*
+ * 搜索方案按钮与搜索按钮是紧凑组里的固定控件：窄屏（420px）时应当由输入框让出宽度，
+ * 而不是反过来把这两个按钮压扁 —— 图标按钮一旦被 flex 收缩，命中区域就会小于
+ * 24px 的触控下限。antd 的 Space.Compact 没有「子项不收缩」的 prop，只能在这里声明。
+ */
+.ptd-search-plan-btn,
+.ptd-search-input > .ant-btn {
+  flex: 0 0 auto;
+}
+
+/*
+ * 输入框后缀里的热门推荐入口是 size="small" 的 text 按钮。compact 算法下 sm 控件高度
+ * 在不同版本里曾出现 21px（小于 24px 目标尺寸），显式固定为 24×24，窄屏也能稳定点中。
+ */
+.ptd-search-key :deep(.ant-btn-sm) {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding-inline: 0;
+}
+</style>

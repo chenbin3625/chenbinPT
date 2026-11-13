@@ -6,6 +6,7 @@ import {
   ExclamationCircleOutlined,
   PauseOutlined,
   PlayCircleOutlined,
+  SearchOutlined,
   SettingOutlined,
   StopOutlined,
   SyncOutlined,
@@ -44,6 +45,7 @@ import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import TorrentTitleTd from "@/options/components/TorrentTitleTd.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import ToolbarActions from "@/options/components/ToolbarActions.vue";
 
 import ColumnSelector from "../components/ColumnSelector.vue";
 import {
@@ -53,6 +55,7 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
 
 import ActionTd from "./ActionTd.vue";
@@ -83,6 +86,9 @@ import {
 } from "./utils/search";
 import { getSearchSolutionDisplayName } from "./utils/planName";
 
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
+
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
@@ -93,6 +99,7 @@ const display = useDisplay();
 
 const showSearchStatusDialog = ref<boolean>(false);
 const showSaveSnapshotDialog = ref<boolean>(false);
+const showDisplayPreferences = ref<boolean>(false);
 
 /**
  * 标题单元格的宽度上限（`undefined` = 不限宽，让标题列吃满剩余宽度）。
@@ -488,6 +495,54 @@ function getSearchSolutionName(planKey: string) {
   return getSearchSolutionDisplayName(planKey, (key) => metadataStore.getSearchSolutionName(key));
 }
 
+// 状态行与工具条都依赖这两个名字；抽成 computed 避免模板里重复调用 store 查询
+const searchPlanName = computed(() => getSearchSolutionName(runtimeStore.search.searchPlanKey));
+const snapshotName = computed(() => {
+  const snapshotId = runtimeStore.search.snapshot;
+  return snapshotId ? (metadataStore.snapshots[snapshotId]?.name ?? snapshotId) : "";
+});
+
+/**
+ * 工具条次操作。图标 / 禁用态与菜单项同源：ToolbarActions 在 md 以下会把这些按钮收进「更多」，
+ * 若在这里拆成两套（宽屏按钮、窄屏菜单）两边的可用状态迟早会分叉。
+ */
+const toolbarActions = computed(() => [
+  {
+    key: "retryFailed",
+    label: t("SearchEntity.index.actionLabel.retryFailed"),
+    title: t("SearchEntity.index.action.retryFailed"),
+    icon: ExclamationCircleOutlined,
+    disabled: searchPlanStatus.value.error === 0 || inSnapshotView.value,
+  },
+  {
+    key: "saveSnapshot",
+    label: t("SearchEntity.index.actionLabel.saveSnapshot"),
+    title: t("SearchEntity.index.action.saveSnapshot"),
+    icon: CameraOutlined,
+    disabled: runtimeStore.search.isSearching || runtimeStore.search.searchResult.length === 0 || inSnapshotView.value,
+  },
+]);
+
+function onToolbarAction(key: string) {
+  switch (key) {
+    case "retryFailed":
+      void retrySearch();
+      break;
+    case "saveSnapshot":
+      showSaveSnapshotDialog.value = true;
+      break;
+  }
+}
+
+/** 空状态引导：顶栏搜索框是发起搜索的唯一入口，聚焦它比再复制一份输入框更省事 */
+function focusTopbarSearch() {
+  document.querySelector<HTMLInputElement>("#ptd-topbar .ptd-search-key input")?.focus();
+}
+
+function openSearchSolutionSettings() {
+  void router.push({ name: "SetSearchSolution" });
+}
+
 const tableNonBooleanControlKey = ["maxTagCountBeforeGroup", "hiddenTagNames", "promotionDisplay"];
 
 // 过滤出表格控制中非布尔类型的键
@@ -574,43 +629,54 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 </script>
 
 <template>
-  <div class="ptd-inline-toolbar">
-    <strong>
-      <template v-if="runtimeStore.search.startAt === 0">
+  <div class="ptd-inline-toolbar search-status">
+    <div class="search-status__main">
+      <!-- 未开始搜索时只留一句引导，避免显示一排空的状态标签 -->
+      <span v-if="runtimeStore.search.startAt === 0" class="ptd-meta-text">
         {{ t("SearchEntity.index.alert.enterKeyword") }}
-      </template>
-      <template v-else-if="runtimeStore.search.isSearching">
-        <template v-if="isSearchingParsed">
-          {{ t("SearchEntity.index.alert.paused") }}
-        </template>
-        <template v-else>
-          <template v-if="runtimeStore.search.searchResult.length > 0">
-            {{ t("SearchEntity.index.alert.plan") }}
-            [{{ getSearchSolutionName(runtimeStore.search.searchPlanKey) }}]，
-            {{ t("SearchEntity.index.alert.keyword") }}
-            [{{ runtimeStore.search.searchKey }}]，
-            {{ t("SearchEntity.index.alert.searchProgress", [runtimeStore.search.searchResult.length]) }}
-          </template>
-          <template v-else>
-            {{ t("SearchEntity.index.alert.searching") }}
-          </template>
-        </template>
-      </template>
+      </span>
       <template v-else>
-        <template v-if="runtimeStore.search.snapshot">
+        <!-- 状态标签：搜索中 / 暂停 / 快照是最需要一眼区分的状态 -->
+        <a-tag v-if="runtimeStore.search.isSearching" :color="isSearchingParsed ? 'warning' : 'processing'">
+          {{ isSearchingParsed ? t("SearchEntity.index.alert.paused") : t("SearchEntity.index.alert.searching") }}
+        </a-tag>
+        <a-tag v-else-if="runtimeStore.search.snapshot" color="processing">
           {{ t("SearchEntity.index.alert.snapshot") }}
-          [{{ metadataStore.snapshots[runtimeStore.search.snapshot]?.name ?? runtimeStore.search.snapshot }}]，
+        </a-tag>
+
+        <!-- 快照视图没有「搜索方案」，用快照名占位，保持与方案/关键词一致的「标签 + 值」读法 -->
+        <span v-if="runtimeStore.search.snapshot" class="search-status__item">
+          <span class="search-status__value" :title="snapshotName">{{ snapshotName }}</span>
+        </span>
+        <span v-else class="search-status__item">
+          <span class="ptd-meta-text">{{ t("SearchEntity.index.alert.plan") }}</span>
+          <a-tag class="search-status__tag" :title="searchPlanName">{{ searchPlanName }}</a-tag>
+        </span>
+
+        <span v-if="runtimeStore.search.searchKey" class="search-status__item">
+          <span class="ptd-meta-text">{{ t("SearchEntity.index.alert.keyword") }}</span>
+          <a-tag class="search-status__tag" :title="runtimeStore.search.searchKey">
+            {{ runtimeStore.search.searchKey }}
+          </a-tag>
+        </span>
+
+        <!-- 搜索中显示「已接收 N 条」；结束后才显示结果总数与耗时 -->
+        <span
+          v-if="runtimeStore.search.isSearching && runtimeStore.search.searchResult.length > 0"
+          class="ptd-secondary-text"
+        >
+          {{ t("SearchEntity.index.alert.searchProgress", [runtimeStore.search.searchResult.length]) }}
+        </span>
+        <template v-else-if="!runtimeStore.search.isSearching">
+          <span class="ptd-secondary-text">
+            {{ t("SearchEntity.index.alert.results", [runtimeStore.search.searchResult.length]) }}
+          </span>
+          <span class="ptd-secondary-text">
+            {{ t("SearchEntity.index.alert.duration", [(runtimeStore.searchCostTime / 1000).toFixed(1)]) }}
+          </span>
         </template>
-        <template v-else>
-          {{ t("SearchEntity.index.alert.plan") }}
-          [{{ getSearchSolutionName(runtimeStore.search.searchPlanKey) }}]，
-        </template>
-        {{ t("SearchEntity.index.alert.keyword") }}
-        [{{ runtimeStore.search.searchKey }}]，
-        {{ t("SearchEntity.index.alert.results", [runtimeStore.search.searchResult.length]) }}
-        {{ t("SearchEntity.index.alert.duration", [(runtimeStore.searchCostTime / 1000).toFixed(1)]) }}
       </template>
-    </strong>
+    </div>
     <a-button
       :title="t('SearchEntity.index.alert.searchStatus')"
       class="status-btn"
@@ -627,120 +693,110 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       <span v-if="searchPlanStatus.queued > 0" class="status-btn__item">
         {{ searchPlanStatus.queued }}<ClockCircleOutlined class="ptd-icon-sm" style="color: var(--ptd-text-tertiary)" />
       </span>
+      <!-- 三个计数都为 0（还没搜过 / 被清空）时按钮里什么都没有，会缩成一条 16px 宽的蓝块；
+           给一个与计数同款的占位，保证点击区域与「打开搜索情况」的含义都在。 -->
+      <span
+        v-if="searchPlanStatus.success + searchPlanStatus.error + searchPlanStatus.queued === 0"
+        class="status-btn__item"
+      >
+        0<CheckOutlined class="ptd-icon-sm" />
+      </span>
     </a-button>
   </div>
   <a-card>
-    <a-typography-text strong>
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <!-- 搜索队列控制：文字按钮（title 保留完整说明作为悬停提示） -->
-        <a-flex align="center" :gap="4">
-          <!-- 启动/暂停 搜索队列 -->
-          <a-button
-            v-show="isSearchingParsed"
-            :title="t('SearchEntity.index.action.start')"
-            @click="() => startSearchQueue()"
-            type="primary"
-            ><template #icon><PlayCircleOutlined /></template>
-            {{ t("SearchEntity.index.actionLabel.start") }}
-          </a-button>
-          <a-button
-            v-show="!isSearchingParsed"
-            :title="t('SearchEntity.index.action.pause')"
-            @click="() => pauseSearchQueue()"
-            type="primary"
-            ><template #icon><PauseOutlined /></template>
-            {{ t("SearchEntity.index.actionLabel.pause") }}
-          </a-button>
+    <a-flex class="page-toolbar" align="center" :gap="8">
+      <!--
+        主操作（开始/暂停、取消/重试）常驻；重试失败 / 搜索快照交给 ToolbarActions，
+        窄屏自动收进「更多」，避免 420~800px 下工具条折成两三行。
+      -->
+      <ToolbarActions :items="toolbarActions" @select="onToolbarAction">
+        <template #primary>
+          <!-- 搜索队列控制：文字按钮（title 保留完整说明作为悬停提示） -->
+          <a-flex align="center" :gap="4">
+            <!-- 启动/暂停 搜索队列 -->
+            <a-button
+              v-show="isSearchingParsed"
+              :title="t('SearchEntity.index.action.start')"
+              @click="() => startSearchQueue()"
+              type="primary"
+              ><template #icon><PlayCircleOutlined /></template>
+              {{ t("SearchEntity.index.actionLabel.start") }}
+            </a-button>
+            <a-button
+              v-show="!isSearchingParsed"
+              :title="t('SearchEntity.index.action.pause')"
+              @click="() => pauseSearchQueue()"
+              type="primary"
+              ><template #icon><PauseOutlined /></template>
+              {{ t("SearchEntity.index.actionLabel.pause") }}
+            </a-button>
 
-          <!-- 取消/重试 搜索队列 -->
-          <a-button
-            v-show="runtimeStore.search.isSearching"
-            :title="t('SearchEntity.index.action.cancel')"
-            @click="cancelSearchQueue"
-            danger
-            ><template #icon><StopOutlined /></template>
-            {{ t("SearchEntity.index.actionLabel.cancel") }}
-          </a-button>
-          <a-button
-            v-show="!runtimeStore.search.isSearching"
-            :disabled="isSearchingParsed || inSnapshotView"
-            :title="t('SearchEntity.index.action.retry')"
-            @click="() => doSearch()"
-            danger
-            ><template #icon><SyncOutlined /></template>
-            {{ t("SearchEntity.index.actionLabel.retry") }}
-          </a-button>
+            <!-- 取消/重试 搜索队列 -->
+            <a-button
+              v-show="runtimeStore.search.isSearching"
+              :title="t('SearchEntity.index.action.cancel')"
+              @click="cancelSearchQueue"
+              danger
+              ><template #icon><StopOutlined /></template>
+              {{ t("SearchEntity.index.actionLabel.cancel") }}
+            </a-button>
+            <a-button
+              v-show="!runtimeStore.search.isSearching"
+              :disabled="isSearchingParsed || inSnapshotView"
+              :title="t('SearchEntity.index.action.retry')"
+              @click="() => doSearch()"
+              danger
+              ><template #icon><SyncOutlined /></template>
+              {{ t("SearchEntity.index.actionLabel.retry") }}
+            </a-button>
+          </a-flex>
+        </template>
+      </ToolbarActions>
 
-          <!-- 重试失败的搜索 -->
-          <a-button
-            :disabled="searchPlanStatus.error === 0 || inSnapshotView"
-            :title="t('SearchEntity.index.action.retryFailed')"
-            @click="() => retrySearch()"
-            ><template #icon><ExclamationCircleOutlined /></template>
-            {{ t("SearchEntity.index.actionLabel.retryFailed") }}
-          </a-button>
-        </a-flex>
-
-        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-        <!-- 创建搜索快照 -->
-        <a-button
-          :disabled="runtimeStore.search.isSearching || runtimeStore.search.searchResult.length === 0 || inSnapshotView"
-          :title="t('SearchEntity.index.action.saveSnapshot')"
-          @click="showSaveSnapshotDialog = true"
-          ><template #icon><CameraOutlined /></template>
-          {{ t("SearchEntity.index.actionLabel.saveSnapshot") }}
+      <!--
+        展示偏好带弹层内容，而 ToolbarActions 只渲染按钮，塞进 items 就只能挂在一个看不见的锚点上
+        （弹层会浮在离按钮很远的地方）。这里保留真实按钮作为 popover 触发器：窄屏只显示图标 + 悬停提示，
+        不再占用一整格文字宽度。
+      -->
+      <a-popover v-model:open="showDisplayPreferences" placement="bottomRight" trigger="click">
+        <a-button :title="t('SearchEntity.index.action.displayPreferences')">
+          <template #icon><SettingOutlined /></template>
+          <span v-if="display.mdAndUp.value">{{ t("SearchEntity.index.actionLabel.displayPreferences") }}</span>
         </a-button>
+        <template #content>
+          <a-list>
+            <a-list-item v-for="item in filteredTableBooleanControlKeys" :key="item">
+              <div class="display-preferences-item">
+                <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->
+                <span>{{ t("SearchEntity.index." + item) }}</span>
+                <!-- a-switch 的 click 载荷是 (newChecked, event)，不能用 `.stop` 修饰符（见 stopEventPropagation） -->
+                <a-switch
+                  v-model:checked="configStore.searchEntifyControl[item]"
+                  @click="stopEventPropagation"
+                  @update:checked="() => configStore.$save()"
+                />
+              </div>
+            </a-list-item>
+            <a-list-item v-if="configStore.searchEntifyControl.showTorrentTag" style="margin-top: 8px">
+              <a-form-item :label="t('SetBase.searchEntity.hiddenTagNames')"
+                ><a-textarea
+                  v-model:value="hiddenTagNamesText"
+                  :rows="5"
+                  allow-clear
+                  @blur="saveSearchControl"
+                ></a-textarea
+              ></a-form-item>
+            </a-list-item>
+          </a-list>
+        </template>
+      </a-popover>
+    </a-flex>
 
-        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-        <a-popover placement="bottom" trigger="click">
-          <a-button :title="t('SearchEntity.index.action.displayPreferences')"
-            ><template #icon><SettingOutlined /></template>
-            {{ t("SearchEntity.index.actionLabel.displayPreferences") }}
-          </a-button>
-          <template #content>
-            <a-list>
-              <a-list-item v-for="item in filteredTableBooleanControlKeys" :key="item">
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    gap: 16px;
-                    min-width: 180px;
-                  "
-                >
-                  <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->
-                  <span>{{ t("SearchEntity.index." + item) }}</span>
-                  <!-- a-switch 的 click 载荷是 (newChecked, event)，不能用 `.stop` 修饰符（见 stopEventPropagation） -->
-                  <a-switch
-                    v-model:checked="configStore.searchEntifyControl[item]"
-                    @click="stopEventPropagation"
-                    @update:checked="() => configStore.$save()"
-                  />
-                </div>
-              </a-list-item>
-              <a-list-item v-if="configStore.searchEntifyControl.showTorrentTag" style="margin-top: 8px">
-                <a-form-item :label="t('SetBase.searchEntity.hiddenTagNames')"
-                  ><a-textarea
-                    v-model:value="hiddenTagNamesText"
-                    :rows="5"
-                    allow-clear
-                    @blur="saveSearchControl"
-                  ></a-textarea
-                ></a-form-item>
-              </a-list-item>
-            </a-list>
-          </template>
-        </a-popover>
-      </a-flex>
-    </a-typography-text>
-
-    <div style="padding-top: 8px; padding-bottom: 0px">
+    <div class="search-entity-table-wrap">
       <SearchFilterBar />
 
       <a-table
+        :sticky="mainTableSticky"
         id="ptd-search-entity-table"
         :columns="tableColumns"
         :data-source="filteredTableData"
@@ -764,7 +820,7 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'site'">
-            <div style="display: flex; flex-direction: column; align-items: center">
+            <div class="search-entity-site-cell">
               <SiteFavicon :site-id="record.site" :size="configStore.searchEntifyControl.showSiteName ? 18 : 24" />
               <SiteName
                 v-if="configStore.searchEntifyControl.showSiteName"
@@ -789,7 +845,7 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
           <!-- 优惠（下载量系数），默认隐藏；勾选该列后可按优惠排序 -->
           <template v-else-if="column.key === 'downloadVolumeFactor'">
             <span
-              style="white-space: nowrap"
+              class="search-entity-nowrap"
               :style="promoCellText(record) === '-' ? { color: 'var(--ptd-text-secondary)' } : undefined"
             >
               {{ promoCellText(record) }}
@@ -799,14 +855,14 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
           <!-- 种子大小，下载情况 -->
           <template v-else-if="column.key === 'size'">
             <!-- 使用零间距布局，让大小与进度条保持紧凑对齐 -->
-            <div style="padding: 0px">
+            <div class="search-entity-size-cell">
               <a-row :gutter="0">
-                <a-col flex="1 1 0" style="padding: 0px">
-                  <span style="white-space: nowrap">{{ formatSize(record.size ?? 0) }}</span>
+                <a-col flex="1 1 0" class="search-entity-size-cell">
+                  <span class="search-entity-nowrap">{{ formatSize(record.size ?? 0) }}</span>
                 </a-col>
               </a-row>
               <a-row v-if="record.status && (record.status as ETorrentStatus) !== ETorrentStatus.unknown" :gutter="0">
-                <a-col flex="1 1 0" style="padding: 0px">
+                <a-col flex="1 1 0" class="search-entity-size-cell">
                   <TorrentProcessTd :torrent="record"></TorrentProcessTd>
                 </a-col>
               </a-row>
@@ -815,22 +871,22 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 
           <!-- 上传人数 -->
           <template v-else-if="column.key === 'seeders'">
-            <span style="white-space: nowrap">{{ record.seeders }}</span>
+            <span class="search-entity-nowrap">{{ record.seeders }}</span>
           </template>
 
           <!-- 下载人数 -->
           <template v-else-if="column.key === 'leechers'">
-            <span style="white-space: nowrap">{{ record.leechers }}</span>
+            <span class="search-entity-nowrap">{{ record.leechers }}</span>
           </template>
 
           <!-- 完成人数 -->
           <template v-else-if="column.key === 'completed'">
-            <span style="white-space: nowrap">{{ record.completed }}</span>
+            <span class="search-entity-nowrap">{{ record.completed }}</span>
           </template>
 
           <!-- 评论人数 -->
           <template v-else-if="column.key === 'comments'">
-            <span style="white-space: nowrap">{{ record.comments }}</span>
+            <span class="search-entity-nowrap">{{ record.comments }}</span>
           </template>
 
           <!-- 发布日期 -->
@@ -853,10 +909,22 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
         </template>
 
         <template #emptyText>
-          <NoDataPlaceholder compact :description="t('SearchEntity.index.noData')" />
+          <NoDataPlaceholder compact :description="t('SearchEntity.index.noData')">
+            <!-- 尚未发起搜索时给出可执行入口；搜索过但无结果时仍只展示原描述 -->
+            <a-space v-if="runtimeStore.search.startAt === 0" :size="8" wrap>
+              <a-button type="primary" @click="focusTopbarSearch">
+                <template #icon><SearchOutlined /></template>
+                {{ t("common.search") }}
+              </a-button>
+              <a-button @click="openSearchSolutionSettings">
+                <template #icon><SettingOutlined /></template>
+                {{ t("route.Settings.SetSearchSolution") }}
+              </a-button>
+            </a-space>
+          </NoDataPlaceholder>
         </template>
         <template #title>
-          <div style="display: flex; justify-content: flex-end">
+          <div class="search-entity-table-title">
             <ColumnSelector
               :headers="fullTableHeader"
               :visible-keys="configStore.tableBehavior.SearchEntity.columns"
@@ -877,3 +945,78 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
   <!-- 多选操作条：仅在选中种子后出现在页面底部 -->
   <SelectionBar :selected-torrents="tableSelectedRaw" @clear="clearTableSelection" />
 </template>
+
+<style scoped>
+/* 状态行外层沿用 .ptd-inline-toolbar 的两端对齐；窄屏换行时「搜索情况」按钮落到第二行，
+   行距与内部标签组（下方 6px）保持一致，不出现两种行距 */
+.search-status {
+  row-gap: 6px;
+}
+
+/* 状态行：说明文字与状态标签作为一组，窄屏按「标签 + 值」整组换行，不会把一个语义拆到两行。 */
+.search-status__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.search-status__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* a-tag 自带 margin-inline-end，间距统一交给父级 gap；长方案名/关键词单行省略，悬停 title 看全文。 */
+.search-status__tag {
+  max-width: min(16rem, 60vw);
+  margin-inline-end: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.search-status__value {
+  max-width: min(16rem, 60vw);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 站点图标与站名纵向居中（从重复内联样式抽出，视觉不变） */
+.search-entity-site-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 大小列使用零间距布局，让大小与进度条紧凑对齐 */
+.search-entity-size-cell {
+  padding: 0;
+}
+
+.search-entity-nowrap {
+  white-space: nowrap;
+}
+
+/* 列选择器固定在表格标题栏右侧 */
+.search-entity-table-title {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.search-entity-table-wrap {
+  padding-top: 8px;
+}
+
+.display-preferences-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 180px;
+}
+</style>

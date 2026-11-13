@@ -13,6 +13,7 @@ import {
   PauseOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SettingOutlined,
   StopOutlined,
   SwapOutlined,
   SyncOutlined,
@@ -27,6 +28,7 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -48,6 +50,7 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import ToolbarActions, { type ToolbarAction } from "@/options/components/ToolbarActions.vue";
 
 import DeleteDialog from "./DeleteDialog.vue";
 import PushToDownloaderDialog from "./PushToDownloaderDialog.vue";
@@ -74,6 +77,9 @@ import {
   torrentKey,
   useClientRefresh,
 } from "./utils.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 const route = useRoute();
@@ -573,175 +579,205 @@ function clearDownloaderFilter() {
   selectedDownloaderIds.value = [];
   void loadTorrents();
 }
+
+/**
+ * 工具条次操作（重新校验 / 批量限速 / 批量标签 / 刷新）。
+ *
+ * 为什么收进 ToolbarActions：这 4 个操作在窄屏会把工具条折成两三行，且与「推送 / 开始暂停 / 删除」
+ * 混在一起看不出主次。ToolbarActions 在 >=840px 平铺、以下收进「更多」下拉，状态与主区同源。
+ * 自动刷新是带输入框的 Popover、客户端状态是统计药丸，无法表达成菜单项，仍留在主区（窄屏只留图标）。
+ */
+const toolbarSecondaryItems = computed<ToolbarAction[]>(() => {
+  const noSelection = selectedTorrents.value.length === 0;
+  const recheckUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "Recheck");
+  const speedLimitUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "SpeedLimit");
+  const labelUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "Label");
+
+  return [
+    {
+      key: "recheck",
+      label: t("MyClient.recheckSelected"),
+      icon: ReloadOutlined,
+      disabled: !!pendingCommand.value || noSelection || recheckUnsupported,
+      title: recheckUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.recheckSelected"),
+    },
+    {
+      key: "speedLimit",
+      label: t("MyClient.speedLimit.batchBtn"),
+      icon: DashboardOutlined,
+      disabled: !!pendingCommand.value || noSelection || speedLimitUnsupported,
+      title: speedLimitUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.speedLimit.batchBtn"),
+    },
+    {
+      key: "label",
+      label: t("MyClient.label.batchBtn"),
+      icon: TagOutlined,
+      disabled: !!pendingCommand.value || noSelection || labelUnsupported,
+      title: labelUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.label.batchBtn"),
+    },
+    {
+      key: "refresh",
+      label: t("MyClient.refresh"),
+      icon: SyncOutlined,
+    },
+  ];
+});
+
+function onToolbarSecondaryAction(key: string) {
+  switch (key) {
+    case "recheck":
+      openRecheckDialog(selectedTorrents.value);
+      break;
+    case "speedLimit":
+      openSpeedLimitDialog();
+      break;
+    case "label":
+      openLabelDialog();
+      break;
+    case "refresh":
+      void loadTorrents();
+      break;
+  }
+}
 </script>
 
 <template>
   <a-card>
-    <a-typography-text strong>
-      <div class="my-client-toolbar">
-        <div class="my-client-toolbar__actions">
-          <a-button
-            :title="t('MyClient.pushToDownloader.navBtn')"
-            @click="showPushToDownloaderDialog = true"
-            type="link"
-            ><template #icon><CloudUploadOutlined /></template>{{ t("MyClient.pushToDownloader.navBtn") }}</a-button
-          >
+    <div class="my-client-toolbar">
+      <div class="my-client-toolbar__actions">
+        <!-- 主操作常显；次操作（重新校验 / 批量限速 / 批量标签 / 刷新）见 toolbarSecondaryItems -->
+        <ToolbarActions :items="toolbarSecondaryItems" @select="onToolbarSecondaryAction">
+          <template #primary>
+            <a-button
+              :title="t('MyClient.pushToDownloader.navBtn')"
+              :aria-label="t('MyClient.pushToDownloader.navBtn')"
+              @click="showPushToDownloaderDialog = true"
+              type="primary"
+              ><template #icon><CloudUploadOutlined /></template
+              ><span class="my-client-toolbar__label">{{ t("MyClient.pushToDownloader.navBtn") }}</span></a-button
+            >
 
-          <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
+            <a-button
+              :disabled="selectedTorrents.length === 0 || !!pendingCommand"
+              :loading="pendingCommand === 'resume'"
+              :title="t('MyClient.resumeSelected')"
+              :aria-label="t('MyClient.resumeSelected')"
+              @click="() => resumeTorrents(selectedTorrents)"
+              type="link"
+              ><template #icon><PlayCircleOutlined /></template
+              ><span class="my-client-toolbar__label">{{ t("MyClient.resumeSelected") }}</span></a-button
+            >
 
-          <a-button
-            :disabled="selectedTorrents.length === 0 || !!pendingCommand"
-            :loading="pendingCommand === 'resume'"
-            :title="t('MyClient.resumeSelected')"
-            @click="() => resumeTorrents(selectedTorrents)"
-            type="link"
-            ><template #icon><PlayCircleOutlined /></template>{{ t("MyClient.resumeSelected") }}</a-button
-          >
+            <a-button
+              :disabled="selectedTorrents.length === 0 || !!pendingCommand"
+              :loading="pendingCommand === 'pause'"
+              :title="t('MyClient.pauseSelected')"
+              :aria-label="t('MyClient.pauseSelected')"
+              @click="() => pauseTorrents(selectedTorrents)"
+              type="text"
+              ><template #icon><PauseOutlined /></template
+              ><span class="my-client-toolbar__label">{{ t("MyClient.pauseSelected") }}</span></a-button
+            >
 
+            <a-button
+              :disabled="selectedTorrents.length === 0 || !!pendingCommand"
+              :title="t('MyClient.deleteSelected')"
+              :aria-label="t('MyClient.deleteSelected')"
+              @click="() => openDeleteDialog(selectedTorrents)"
+              type="text"
+              danger
+              ><template #icon><DeleteOutlined /></template
+              ><span class="my-client-toolbar__label">{{ t("MyClient.deleteSelected") }}</span></a-button
+            >
+          </template>
+        </ToolbarActions>
+
+        <!-- auto-refresh controls -->
+        <a-popover placement="bottom" trigger="click">
           <a-button
-            :disabled="selectedTorrents.length === 0 || !!pendingCommand"
-            :loading="pendingCommand === 'pause'"
-            :title="t('MyClient.pauseSelected')"
-            @click="() => pauseTorrents(selectedTorrents)"
+            :title="t('MyClient.autoRefresh.btnTitle')"
+            :aria-label="t('MyClient.autoRefresh.btnTitle')"
+            class="my-client-toolbar__auto-refresh"
             type="text"
-            ><template #icon><PauseOutlined /></template>{{ t("MyClient.pauseSelected") }}</a-button
           >
-
-          <a-button
-            :disabled="selectedTorrents.length === 0 || !!pendingCommand"
-            :title="t('MyClient.deleteSelected')"
-            @click="() => openDeleteDialog(selectedTorrents)"
-            type="text"
-            danger
-            ><template #icon><DeleteOutlined /></template>{{ t("MyClient.deleteSelected") }}</a-button
-          >
-
-          <a-button
-            :disabled="
-              !!pendingCommand || selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Recheck')
-            "
-            :title="
-              selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'Recheck')
-                ? t('MyClient.batch.unsupported')
-                : t('MyClient.recheckSelected')
-            "
-            @click="() => openRecheckDialog(selectedTorrents)"
-            type="text"
-            ><template #icon><ReloadOutlined /></template>{{ t("MyClient.recheckSelected") }}</a-button
-          >
-
-          <a-button
-            :disabled="
-              !!pendingCommand ||
-              selectedTorrents.length === 0 ||
-              !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')
-            "
-            :title="
-              selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'SpeedLimit')
-                ? t('MyClient.batch.unsupported')
-                : t('MyClient.speedLimit.batchBtn')
-            "
-            @click="openSpeedLimitDialog"
-            type="text"
-            ><template #icon><DashboardOutlined /></template>{{ t("MyClient.speedLimit.batchBtn") }}</a-button
-          >
-
-          <a-button
-            :disabled="
-              !!pendingCommand || selectedTorrents.length === 0 || !isFeatureAllowedForAll(selectedTorrents, 'Label')
-            "
-            :title="
-              selectedTorrents.length > 0 && !isFeatureAllowedForAll(selectedTorrents, 'Label')
-                ? t('MyClient.batch.unsupported')
-                : t('MyClient.label.batchBtn')
-            "
-            @click="openLabelDialog"
-            type="text"
-            ><template #icon><TagOutlined /></template>{{ t("MyClient.label.batchBtn") }}</a-button
-          >
-
-          <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-          <a-button :title="t('MyClient.refresh')" @click="loadTorrents" type="link"
-            ><template #icon><SyncOutlined /></template>{{ t("MyClient.refresh") }}</a-button
-          >
-
-          <!-- auto-refresh controls -->
-          <a-popover placement="bottom" trigger="click">
-            <a-button :title="t('MyClient.autoRefresh.btnTitle')" type="text" style="margin-left: 4px">
-              <template #icon>
-                <component :is="autoRefreshRunning ? FieldTimeOutlined : ClockCircleOutlined" />
-              </template>
-              {{ t("MyClient.autoRefresh.btnTitle") }}
-            </a-button>
-            <template #content>
-              <a-card style="min-width: 240px; padding: 8px">
-                <a-typography-text type="secondary" style="padding: 4px">
-                  {{ t("MyClient.autoRefresh.intervalLabel") }}
-                </a-typography-text>
-                <a-form-item :label="t('MyClient.autoRefresh.intervalUnit')">
-                  <a-input-number v-model:value="globalRefreshInterval" :min="0" :max="3600" style="margin: 4px" />
-                </a-form-item>
-                <div style="padding: 8px 4px 4px">
-                  <a-button
-                    :danger="autoRefreshRunning"
-                    :type="autoRefreshRunning ? 'default' : 'primary'"
-                    :disabled="!autoRefreshRunning && globalRefreshInterval <= 0"
-                    block
-                    @click="toggleAutoRefresh"
-                  >
-                    <component :is="autoRefreshRunning ? StopOutlined : PlayCircleOutlined" />
-                    {{ autoRefreshRunning ? t("MyClient.autoRefresh.stop") : t("MyClient.autoRefresh.start") }}
-                  </a-button>
-                </div>
-              </a-card>
+            <template #icon>
+              <component :is="autoRefreshRunning ? FieldTimeOutlined : ClockCircleOutlined" />
             </template>
-          </a-popover>
-
-          <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
-
-          <!-- 客户端状态汇总（原「页面标题 alert」的 append 区，标题 alert 已移除，按钮移到工具条内保留入口） -->
-          <a-button
-            :title="t('MyClient.clientStatusDialog.openBtn')"
-            class="status-btn"
-            @click="showClientStatusDialog = true"
-            type="primary"
-            size="small"
-          >
-            <span class="status-btn__item"> {{ allTorrents.length }}<DatabaseOutlined class="ptd-icon-sm" /> </span>
-            <span class="status-btn__item">
-              {{ formatSize(totalUpSpeed) }}/s<UpOutlined class="ptd-icon-sm" style="color: var(--ptd-success)" />
-            </span>
-            <span class="status-btn__item">
-              {{ formatSize(totalDlSpeed) }}/s<DownOutlined class="ptd-icon-sm" style="color: var(--ptd-danger)" />
-            </span>
+            <span class="my-client-toolbar__label">{{ t("MyClient.autoRefresh.btnTitle") }}</span>
           </a-button>
-        </div>
+          <template #content>
+            <a-card class="my-client-auto-refresh__card">
+              <a-typography-text type="secondary" class="my-client-auto-refresh__hint">
+                {{ t("MyClient.autoRefresh.intervalLabel") }}
+              </a-typography-text>
+              <a-form-item :label="t('MyClient.autoRefresh.intervalUnit')">
+                <a-input-number
+                  v-model:value="globalRefreshInterval"
+                  :min="0"
+                  :max="3600"
+                  class="my-client-auto-refresh__interval"
+                />
+              </a-form-item>
+              <div class="my-client-auto-refresh__start">
+                <a-button
+                  :danger="autoRefreshRunning"
+                  :type="autoRefreshRunning ? 'default' : 'primary'"
+                  :disabled="!autoRefreshRunning && globalRefreshInterval <= 0"
+                  block
+                  @click="toggleAutoRefresh"
+                >
+                  <component :is="autoRefreshRunning ? StopOutlined : PlayCircleOutlined" />
+                  {{ autoRefreshRunning ? t("MyClient.autoRefresh.stop") : t("MyClient.autoRefresh.start") }}
+                </a-button>
+              </div>
+            </a-card>
+          </template>
+        </a-popover>
 
-        <div class="my-client-toolbar__filters">
-          <!-- N6：自动刷新因连续失败被暂停时，文案提示「点击下载器标签可恢复」；标签原先只绑了 @close，
-               点它没有任何反应。这里让标签本身也能恢复该下载器的自动刷新（未暂停时点击无副作用）。 -->
-          <a-tag
-            v-if="selectedDownloaderIds.length === 1"
-            closable
-            color="#1677ff"
-            :title="
-              suspendedDownloaders.has(selectedDownloaderIds[0])
-                ? t('MyClient.autoRefresh.resumeDownloader')
-                : undefined
-            "
-            @click="() => onDownloaderTagClick(selectedDownloaderIds[0])"
-            @close="clearDownloaderFilter"
-            ><a-avatar :src="clientIcon(selectedDownloaderIds[0])" :size="20" style="margin-right: 4px" />
-            {{ clientName(selectedDownloaderIds[0]) }}
-          </a-tag>
-
-          <a-input v-model:value="searchText" allow-clear :placeholder="t('MyClient.searchPlaceholder')"></a-input>
-        </div>
+        <!-- 客户端状态汇总（原「页面标题 alert」的 append 区，标题 alert 已移除，按钮移到工具条内保留入口） -->
+        <a-button
+          :title="t('MyClient.clientStatusDialog.openBtn')"
+          class="status-btn"
+          @click="showClientStatusDialog = true"
+          type="primary"
+          size="small"
+        >
+          <span class="status-btn__item"> {{ allTorrents.length }}<DatabaseOutlined class="ptd-icon-sm" /> </span>
+          <span class="status-btn__item">
+            {{ formatSize(totalUpSpeed) }}/s<UpOutlined class="ptd-icon-sm my-client-status__up" />
+          </span>
+          <span class="status-btn__item">
+            {{ formatSize(totalDlSpeed) }}/s<DownOutlined class="ptd-icon-sm my-client-status__down" />
+          </span>
+        </a-button>
       </div>
-    </a-typography-text>
+
+      <div class="my-client-toolbar__filters">
+        <!-- N6：自动刷新因连续失败被暂停时，文案提示「点击下载器标签可恢复」；标签原先只绑了 @close，
+             点它没有任何反应。这里让标签本身也能恢复该下载器的自动刷新（未暂停时点击无副作用）。 -->
+        <a-tag
+          v-if="selectedDownloaderIds.length === 1"
+          closable
+          color="#1677ff"
+          :title="
+            suspendedDownloaders.has(selectedDownloaderIds[0]) ? t('MyClient.autoRefresh.resumeDownloader') : undefined
+          "
+          @click="() => onDownloaderTagClick(selectedDownloaderIds[0])"
+          @close="clearDownloaderFilter"
+          ><a-avatar
+            :src="clientIcon(selectedDownloaderIds[0])"
+            :size="20"
+            class="my-client-toolbar__downloader-avatar"
+          />
+          {{ clientName(selectedDownloaderIds[0]) }}
+        </a-tag>
+
+        <a-input v-model:value="searchText" allow-clear :placeholder="t('MyClient.searchPlaceholder')"></a-input>
+      </div>
+    </div>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="tableColumns"
       :data-source="filteredTorrents"
       :loading="loading"
@@ -762,27 +798,17 @@ function clearDownloaderFilter() {
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'clientId'">
-          <div style="display: flex; flex-direction: column; align-items: center">
+          <div class="my-client-cell">
             <a-avatar :src="clientIcon(record.clientId)" :size="22"></a-avatar>
-            <span style="font-size: 12px; white-space: nowrap; margin-top: 4px">{{ clientName(record.clientId) }}</span>
+            <span class="my-client-cell__client-name">{{ clientName(record.clientId) }}</span>
           </div>
         </template>
 
         <!-- name column -->
         <template v-else-if="column.key === 'name'">
           <div>
-            <span
-              class="ptd-cell-ellipsis"
-              style="font-weight: 500; max-width: 20rem"
-              :title="String(record.name ?? '')"
-              >{{ record.name }}</span
-            >
-            <div
-              v-if="record.label"
-              class="ptd-cell-ellipsis"
-              style="font-size: 12px; color: var(--ptd-text-tertiary); max-width: 20rem"
-              :title="String(record.label)"
-            >
+            <span class="ptd-cell-ellipsis my-client-name" :title="String(record.name ?? '')">{{ record.name }}</span>
+            <div v-if="record.label" class="ptd-cell-ellipsis my-client-label" :title="String(record.label)">
               <TagOutlined class="ptd-icon-sm" /> {{ record.label }}
             </div>
           </div>
@@ -795,7 +821,7 @@ function clearDownloaderFilter() {
 
         <!-- size column -->
         <template v-else-if="column.key === 'totalSize'">
-          <span style="white-space: nowrap">{{ formatSize(record.totalSize) }}</span>
+          <span class="my-client-nowrap">{{ formatSize(record.totalSize) }}</span>
         </template>
 
         <!-- progress column -->
@@ -817,28 +843,28 @@ function clearDownloaderFilter() {
 
         <!-- upload speed -->
         <template v-else-if="column.key === 'uploadSpeed'">
-          <span v-if="record.uploadSpeed > 0" style="white-space: nowrap; color: var(--ptd-success)">
+          <span v-if="record.uploadSpeed > 0" class="my-client-nowrap my-client-speed-up">
             {{ formatSize(record.uploadSpeed) }}/s
           </span>
-          <span v-else style="color: var(--ptd-text-tertiary)">-</span>
+          <span v-else class="my-client-muted">-</span>
         </template>
 
         <!-- download speed -->
         <template v-else-if="column.key === 'downloadSpeed'">
-          <span v-if="record.downloadSpeed > 0" style="white-space: nowrap; color: var(--ptd-primary)">
+          <span v-if="record.downloadSpeed > 0" class="my-client-nowrap my-client-speed-down">
             {{ formatSize(record.downloadSpeed) }}/s
           </span>
-          <span v-else style="color: var(--ptd-text-tertiary)">-</span>
+          <span v-else class="my-client-muted">-</span>
         </template>
 
         <!-- total uploaded -->
         <template v-else-if="column.key === 'totalUploaded'">
-          <span style="white-space: nowrap; color: var(--ptd-success)">{{ formatSize(record.totalUploaded) }}</span>
+          <span class="my-client-nowrap my-client-speed-up">{{ formatSize(record.totalUploaded) }}</span>
         </template>
 
         <!-- total downloaded -->
         <template v-else-if="column.key === 'totalDownloaded'">
-          <span style="white-space: nowrap; color: var(--ptd-primary)">{{ formatSize(record.totalDownloaded) }}</span>
+          <span class="my-client-nowrap my-client-speed-down">{{ formatSize(record.totalDownloaded) }}</span>
         </template>
 
         <!-- ratio column -->
@@ -856,19 +882,14 @@ function clearDownloaderFilter() {
 
         <!-- save path -->
         <template v-else-if="column.key === 'savePath'">
-          <span
-            class="ptd-cell-ellipsis"
-            style="font-size: 12px; max-width: 16rem"
-            :title="String(record.savePath ?? '')"
-            >{{ record.savePath }}</span
-          >
+          <span class="ptd-cell-ellipsis my-client-path" :title="String(record.savePath ?? '')">{{
+            record.savePath
+          }}</span>
         </template>
 
         <!-- date added -->
         <template v-else-if="column.key === 'dateAdded'">
-          <span class="ptd-date-time" style="font-size: 12px">{{
-            formatDateTimeForTable(record.dateAdded * 1000)
-          }}</span>
+          <span class="ptd-date-time my-client-date">{{ formatDateTimeForTable(record.dateAdded * 1000) }}</span>
         </template>
 
         <!-- actions -->
@@ -916,16 +937,16 @@ function clearDownloaderFilter() {
                   @click="({ key }: any) => moveTorrentsInQueue([record], key as 'top' | 'up' | 'down' | 'bottom')"
                 >
                   <a-menu-item key="top"
-                    ><DoubleLeftOutlined style="margin-right: 4px" />{{ t("MyClient.action.queueTop") }}</a-menu-item
+                    ><DoubleLeftOutlined class="my-client-menu-icon" />{{ t("MyClient.action.queueTop") }}</a-menu-item
                   >
                   <a-menu-item key="up"
-                    ><UpOutlined style="margin-right: 4px" />{{ t("MyClient.action.queueUp") }}</a-menu-item
+                    ><UpOutlined class="my-client-menu-icon" />{{ t("MyClient.action.queueUp") }}</a-menu-item
                   >
                   <a-menu-item key="down"
-                    ><DownOutlined style="margin-right: 4px" />{{ t("MyClient.action.queueDown") }}</a-menu-item
+                    ><DownOutlined class="my-client-menu-icon" />{{ t("MyClient.action.queueDown") }}</a-menu-item
                   >
                   <a-menu-item key="bottom"
-                    ><DoubleRightOutlined style="margin-right: 4px" />{{
+                    ><DoubleRightOutlined class="my-client-menu-icon" />{{
                       t("MyClient.action.queueBottom")
                     }}</a-menu-item
                   >
@@ -951,10 +972,20 @@ function clearDownloaderFilter() {
       </template>
 
       <template #emptyText>
-        <NoDataPlaceholder compact />
+        <NoDataPlaceholder compact>
+          <!-- 全量为空时才引导去下载设置；只是搜索词没命中时不应把用户带去别处 -->
+          <a-button
+            v-if="allTorrents.length === 0 && !loading"
+            type="primary"
+            @click="router.push({ name: 'SetDownloader' })"
+          >
+            <template #icon><SettingOutlined /></template>
+            {{ t("route.Settings.SetDownloader") }}
+          </a-button>
+        </NoDataPlaceholder>
       </template>
       <template #title>
-        <div style="display: flex; justify-content: flex-end">
+        <div class="my-client-table-title">
           <ColumnSelector
             :headers="fullTableHeader"
             :visible-keys="(configStore.tableBehavior['MyClient'] as any)?.columns"
@@ -1031,6 +1062,114 @@ function clearDownloaderFilter() {
   flex: 1 1 260px;
   min-width: min(100%, 240px);
   max-width: 400px;
+}
+
+/*
+ * 窄屏（<840px，与 useDisplay 的 md 断点一致）隐藏文字标签，只留图标：
+ * ToolbarActions 已经把次操作收进「更多」，主区里的常显按钮与自定义 Popover 仍会挤压行宽。
+ * 图标按钮的 title 仍保留完整文案，纯键盘/读屏也通过 aria-label 获取（ToolbarActions/NavButton 已带）。
+ */
+.my-client-toolbar__label {
+  white-space: nowrap;
+}
+
+.my-client-toolbar__auto-refresh {
+  margin-left: 4px;
+}
+
+.my-client-toolbar__downloader-avatar {
+  margin-right: 4px;
+}
+
+.my-client-auto-refresh__card {
+  min-width: 240px;
+  padding: 8px;
+}
+
+.my-client-auto-refresh__hint {
+  padding: 4px;
+}
+
+.my-client-auto-refresh__interval {
+  margin: 4px;
+}
+
+.my-client-auto-refresh__start {
+  padding: 8px 4px 4px;
+}
+
+.my-client-status__up {
+  color: var(--ptd-success);
+}
+
+.my-client-status__down {
+  color: var(--ptd-danger);
+}
+
+/* 表格单元格：原先散落在模板里的静态行内样式，收敛为语义类（动态 max-width 仍走 :style） */
+.my-client-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.my-client-cell__client-name {
+  margin-top: 4px;
+  font-size: var(--ptd-font-size-sm);
+  white-space: nowrap;
+}
+
+.my-client-name {
+  max-width: 20rem;
+  font-weight: 500;
+}
+
+.my-client-label {
+  max-width: 20rem;
+  font-size: var(--ptd-font-size-sm);
+  color: var(--ptd-text-tertiary);
+}
+
+.my-client-nowrap {
+  white-space: nowrap;
+}
+
+.my-client-muted {
+  color: var(--ptd-text-tertiary);
+}
+
+.my-client-speed-up {
+  color: var(--ptd-success);
+}
+
+.my-client-speed-down {
+  color: var(--ptd-primary);
+}
+
+.my-client-path {
+  max-width: 16rem;
+  font-size: var(--ptd-font-size-sm);
+}
+
+.my-client-date {
+  font-size: var(--ptd-font-size-sm);
+}
+
+.my-client-table-title {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.my-client-menu-icon {
+  margin-right: 4px;
+}
+
+@media (max-width: 839px) {
+  /* 窄屏只留图标：文字被裁掉后按钮的可访问名改由 aria-label 提供（见模板），
+     否则读屏软件只能靠 title 猜测。 */
+  .my-client-toolbar__label {
+    display: none;
+  }
 }
 
 .my-client-progress {

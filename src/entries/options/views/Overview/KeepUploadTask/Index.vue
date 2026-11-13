@@ -6,9 +6,11 @@ import {
   DeleteOutlined,
   DownloadOutlined,
   NumberOutlined,
+  SearchOutlined,
 } from "@ant-design/icons-vue";
 import { computed, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import type { CAddTorrentOptions } from "@ptd/downloader";
 import { datePathTemplateVars, expandPathTemplate } from "@ptd/downloader/utils/pathTemplate.ts";
 
@@ -29,14 +31,20 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import ToolbarActions, { type ToolbarAction } from "@/options/components/ToolbarActions.vue";
 import { summarizeKeepUploadSendOutcomes, type TKeepUploadSendOutcome } from "./utils.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 const configStore = useConfigStore();
+const router = useRouter();
 
 const tasks = ref<IKeepUploadTask[]>([]);
 // 数据表格设置了 row-key="id"，因此 selectedTasks 中保存的是任务ID（TKeepUploadTaskKey）而非任务对象
@@ -83,6 +91,25 @@ const tablePagination = computed(() =>
     configStore.updateTableBehavior("KeepUploadTask", "itemsPerPage", v),
   ),
 );
+
+/**
+ * 工具条次操作：只有「清空全部」。
+ * 「删除所选」跟随选中状态、是批量主操作，留在 #primary 常显；清空全部是破坏性低频操作，
+ * 窄屏收进「更多」，避免和删除所选并排时误触。
+ */
+const toolbarItems = computed<ToolbarAction[]>(() => [
+  {
+    key: "clearAll",
+    label: t("KeepUploadTask.clearAll"),
+    icon: ClearOutlined,
+    danger: true,
+    disabled: tasks.value.length === 0,
+  },
+]);
+
+function onToolbarAction(key: string) {
+  if (key === "clearAll") void clearAllTasks();
+}
 
 function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
   configStore.updateTableBehavior("KeepUploadTask", "sortBy", toSortBy(sorter as never));
@@ -363,28 +390,23 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
 
 <template>
   <a-card>
-    <a-typography-text strong>
-      <!-- 与其它列表页一致的共享工具条（NavButton：窄屏只显示图标） -->
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <NavButton
-          :disabled="selectedTasks.length === 0"
-          color="error"
-          :icon="DeleteOutlined"
-          :text="t('common.remove')"
-          @click="deleteSelectedTasks"
-        />
-
-        <NavButton
-          :disabled="tasks.length === 0"
-          color="error"
-          :icon="ClearOutlined"
-          :text="t('KeepUploadTask.clearAll')"
-          @click="clearAllTasks"
-        />
-      </a-flex>
-    </a-typography-text>
+    <!-- 与其它列表页一致的共享工具条（NavButton：窄屏只显示图标） -->
+    <a-flex class="page-toolbar" align="center" :gap="8">
+      <ToolbarActions :items="toolbarItems" @select="onToolbarAction">
+        <template #primary>
+          <NavButton
+            :disabled="selectedTasks.length === 0"
+            color="error"
+            :icon="DeleteOutlined"
+            :text="t('common.remove')"
+            @click="deleteSelectedTasks"
+          />
+        </template>
+      </ToolbarActions>
+    </a-flex>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="columns"
       :data-source="tasks"
       :loading="loading"
@@ -400,7 +422,7 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'site'">
-          <div style="display: flex; flex-direction: column; align-items: center">
+          <div class="keep-upload__site">
             <SiteFavicon :site-id="record.items[0]?.site" :size="18" />
           </div>
         </template>
@@ -408,18 +430,16 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
         <template v-else-if="column.key === 'title'">
           <div>
             <a-typography-link
-              class="ptd-cell-ellipsis"
+              class="ptd-cell-ellipsis keep-upload__title"
               :href="record.items[0]?.link"
               target="_blank"
               rel="noopener noreferrer nofollow"
-              style="font-size: 16px; max-width: 28rem"
               :title="String(record.title ?? '')"
             >
               {{ record.title }}
             </a-typography-link>
             <div
-              class="ptd-cell-ellipsis"
-              style="color: var(--ptd-text-tertiary); font-size: 12px; max-width: 28rem"
+              class="ptd-cell-ellipsis keep-upload__path"
               :title="`${t('KeepUploadTask.savePath')}${record.downloadOptions?.clientName} -> ${
                 record.downloadOptions?.savePath || t('KeepUploadTask.defaultPath')
               }`"
@@ -427,7 +447,7 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
               {{ t("KeepUploadTask.savePath") }}{{ record.downloadOptions?.clientName }} ->
               {{ record.downloadOptions?.savePath || t("KeepUploadTask.defaultPath") }}
             </div>
-            <div style="font-size: 12px">{{ t("KeepUploadTask.torrentCount") }}{{ record.items.length }}</div>
+            <div class="keep-upload__count">{{ t("KeepUploadTask.torrentCount") }}{{ record.items.length }}</div>
           </div>
         </template>
 
@@ -479,11 +499,10 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
               <template #avatar><SiteFavicon :site-id="subItem.site" :size="16" /></template>
               <template #title>
                 <a-typography-link
-                  class="ptd-cell-ellipsis"
+                  class="ptd-cell-ellipsis keep-upload__sub-title"
                   :href="subItem.link"
                   target="_blank"
                   rel="noopener noreferrer nofollow"
-                  style="max-width: 48rem"
                   :title="String(subItem.title ?? '')"
                 >
                   {{ subItem.title }}
@@ -507,12 +526,17 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
       </template>
 
       <template #emptyText>
-        <NoDataPlaceholder compact :description="t('KeepUploadTask.emptyNotice')" />
+        <NoDataPlaceholder compact :description="t('KeepUploadTask.emptyNotice')">
+          <a-button v-if="tasks.length === 0 && !loading" type="primary" @click="router.push({ name: 'SearchEntity' })">
+            <template #icon><SearchOutlined /></template>
+            {{ t("common.search") }}
+          </a-button>
+        </NoDataPlaceholder>
       </template>
     </a-table>
   </a-card>
 
-  <a-alert type="warning" show-icon style="margin-top: 16px">
+  <a-alert type="warning" show-icon class="keep-upload__warning">
     <template #description>
       <div>
         {{ t("KeepUploadTask.warning.title") }}
@@ -525,3 +549,35 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
     </template>
   </a-alert>
 </template>
+
+<style scoped>
+/* 表格单元格 / 页尾提示的静态样式，收敛为语义类（不再散落行内） */
+.keep-upload__site {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.keep-upload__title {
+  max-width: 28rem;
+  font-size: 16px;
+}
+
+.keep-upload__path {
+  max-width: 28rem;
+  font-size: var(--ptd-font-size-sm);
+  color: var(--ptd-text-tertiary);
+}
+
+.keep-upload__count {
+  font-size: var(--ptd-font-size-sm);
+}
+
+.keep-upload__sub-title {
+  max-width: 48rem;
+}
+
+.keep-upload__warning {
+  margin-top: 16px;
+}
+</style>

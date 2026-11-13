@@ -23,7 +23,11 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t } = useI18n();
 const router = useRouter();
@@ -147,26 +151,25 @@ async function confirmDeleteSearchSnapshot(searchSnapshotId: TSearchSnapshotKey)
 
 <template>
   <a-card>
-    <a-typography-text strong>
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <NavButton
-          :disabled="tableSelected.length === 0"
-          color="error"
-          :icon="MinusOutlined"
-          :text="t('common.remove')"
-          @click="tryToDeleteSearchSnapshot(tableSelected)"
-        />
+    <a-flex class="page-toolbar" align="center" :gap="8">
+      <NavButton
+        :disabled="tableSelected.length === 0"
+        color="error"
+        :icon="MinusOutlined"
+        :text="t('common.remove')"
+        @click="tryToDeleteSearchSnapshot(tableSelected)"
+      />
 
-        <div style="flex: 1 1 auto"></div>
-        <a-input
-          v-model:value="tableWaitFilter"
-          allow-clear
-          :placeholder="t('SearchResultSnapshot.table.filterLabel')"
-        ></a-input>
-      </a-flex>
-    </a-typography-text>
+      <div style="flex: 1 1 auto"></div>
+      <a-input
+        v-model:value="tableWaitFilter"
+        allow-clear
+        :placeholder="t('SearchResultSnapshot.table.filterLabel')"
+      ></a-input>
+    </a-flex>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="columns"
       :data-source="tableData"
       :loading="isStoreHydrating"

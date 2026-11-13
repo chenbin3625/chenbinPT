@@ -40,16 +40,13 @@ body {
 
   /* 基准排版：全站唯一的一份声明，与 antd token 同源（见 plugins/antd.ts 的 buildThemeVars）。
    *
-   * 本项目给 ConfigProvider 挂了 compactAlgorithm，它把基准字号取成 fontSizeSM，
-   * 于是 token.fontSize = 12px —— antd 组件内部就是 12px（表格单元格是下面那条 13px 的
-   * 覆写、少量 14px 是刻意的强调）。而项目此前从未声明过基准字体，组件之外的裸文本继承的是
-   * reset.css 的 `html { font-family: sans-serif }` 与浏览器默认 16px，同一个页面里
-   * 「组件文字 12px、裸文本 16px」并存。content-script overlay 侧同理
-   * （`all: initial` 拿到 16px、并手抄了一遍字体栈），两个 surface 的基准排版并不一致。
-   *
+   * ConfigProvider 挂了 compactAlgorithm，但它只负责紧凑间距；正文基准字号由算法链尾的
+   * ptdTypographyAlgorithm 覆盖为 13px（compact 内部会把基准压到 fontSizeSM=12px，
+   * 且 theme.token.fontSize 会被 formatToken 当作 seed token 剥掉，详见 PTD_THEME_TOKEN 的注释）。
+   * 组件之外的裸文本此前继承 reset.css 的 `sans-serif` + 浏览器默认 16px，与组件文字并存；
    * 现在 options（本规则）与 overlay（content-script/app/app.css）读同一组变量，
-   * 值随 algorithm 变化，改一处即可同时覆盖两者。
-   * 下面三个回退值 = antd 官方默认（不挂 compact）的 token 值，只在变量尚未写入的首帧生效。 */
+   * 值随 algorithm/token 变化，改一处即可同时覆盖两者。
+   * 回退值 = 与 token 相同的 13px / 1.5，只在变量尚未写入的首帧生效（避免首帧闪成 14px）。 */
   font-family: var(
     --ptd-font-family,
     -apple-system,
@@ -61,8 +58,22 @@ body {
     "Noto Sans",
     sans-serif
   );
-  font-size: var(--ptd-font-size, 14px);
-  line-height: var(--ptd-line-height, 1.5714);
+  font-size: var(--ptd-font-size, 13px);
+  line-height: var(--ptd-line-height, 1.5);
+}
+
+/*
+ * 键盘焦点可见性兜底。
+ *
+ * 只用 `:focus-visible`（键盘 / 辅助技术触发），鼠标点击不会出现焦点环。
+ * 用 `:where()` 把权重压到 0：antd 组件自己的 `:focus-visible` 规则（按钮的 4px outline、
+ * 输入框的 box-shadow、菜单项的高亮）权重更高，会继续按原样生效；这条规则只覆盖项目自绘的
+ * 可聚焦元素（筛选 chip、种子标签、抽屉遮罩按钮等），它们此前只有浏览器默认的细线或完全没有焦点态。
+ * `outline` 不参与布局，不会引起抖动。
+ */
+:where(:focus-visible) {
+  outline: 2px solid var(--ptd-primary, #1677ff);
+  outline-offset: 2px;
 }
 
 /*
@@ -118,7 +129,8 @@ body {
 
 .ptd-meta-text {
   color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
-  font-size: 12px;
+  /* 次要文字 12px：取 token 的 fontSizeSM，与 antd 的小号组件同源 */
+  font-size: var(--ptd-font-size-sm, 12px);
 }
 
 .ptd-topbar-title,
@@ -210,7 +222,7 @@ body {
   padding: 12px;
   border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
   color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
-  font-size: 12px;
+  font-size: var(--ptd-font-size-sm, 12px);
   text-align: center;
 }
 
@@ -276,7 +288,7 @@ body {
   flex: 0 0 auto;
   align-items: center;
   color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
-  font-size: 12px;
+  font-size: var(--ptd-font-size-sm, 12px);
 }
 
 .hot-recommendation-meta {
@@ -304,7 +316,7 @@ body {
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  font-size: 12px;
+  font-size: var(--ptd-font-size-sm, 12px);
   line-height: 18px;
 }
 
@@ -337,11 +349,9 @@ body {
   overflow-y: auto;
 }
 
-/* 左侧菜单文案保持紧凑，不改变图标尺寸和菜单项高度。 */
-#ptd-navigation .ant-menu-item-group-title,
-#ptd-navigation .ant-menu-title-content {
-  font-size: 13px;
-}
+/* 左侧菜单文案不再单独写 font-size：它继承 #ptd 的正文基准 13px（由 token 决定，
+ * 深色/浅色与 content-script overlay 同源）。此前这里手写 13px 是为了把 compact 的 12px
+ * 「补回来」，属于与 token 重复的补丁；现在基准本身就是 13px，删掉即可。 */
 
 /* 原生零宽触发器：默认 top 是 antd 的 header 高度(48px)，本项目顶栏也为 48px，贴合其下沿。
  * antd 未暴露该偏移量的 prop。 */
@@ -387,11 +397,28 @@ body {
 
 /* ── 主内容区 ─────────────────────────────────────────────────────────── */
 
+/*
+ * 主内容区是**真正的滚动容器**（不只是 overflow: auto 的摆设）。
+ *
+ * 原状态：min-height 由内容撑开、overflow: auto 永远不会产生元素级滚动（scrollTop 恒为 0），
+ * 滚动发生在 document 上；而 #ptd-main 的 overflow 又让它成为 CSS sticky 的最近滚动祖先，
+ * 于是表头 sticky 永远不生效（滚动的是 document，sticky 却盯着一个不滚的元素）。
+ *
+ * 现在把高度钉在「视口 − 48px 顶栏」，垂直/水平滚动都发生在 #ptd-main 内：
+ * - document 不再滚动，表头吸顶（antd `sticky`，getContainer 指向 #ptd-main）有了真正会滚的容器；
+ * - 宽表格在自己的 .ant-table-content / sticky-holder 里横向滚动，不会把整页撑出横向滚动条；
+ * - scrollbar-gutter: stable 预留滚动条宽度，长短页面切换时内容宽度不跳变。
+ * 高度用 100vh 是为了与 #ptd-navigation 的 `calc(100vh - 48px)` 对齐。
+ *
+ * 表头吸顶的 offsetHeader 等于负的内边距（sticky 的定位原点是滚动容器的内容盒）：
+ * 改这里的 12px / 窄屏 8px 必须同步改 views/Overview/utils/antdTable.ts 的 useMainTableSticky。
+ */
 #ptd-main {
   min-width: 0;
-  min-height: calc(100vh - 48px);
+  height: calc(100vh - 48px);
   padding: 12px;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 #ptd-main > .ant-card,
@@ -428,9 +455,13 @@ body {
 
 /* ── 设置页（SetBase / SetSite / SetDownloader / SetSearchSolution / SetBackup / SetMediaServer）── */
 
-/* 列表页卡片：表格自带边框，卡片本身只做裁切，避免表格圆角顶出卡片 */
+/* 列表页卡片：表格自带边框，卡片本身只做裁切，避免表格圆角顶出卡片。
+ *
+ * 用 `overflow: clip` 而不是 `hidden`：hidden 会建立滚动容器，恰好又成为表头 sticky 的
+ * 最近祖先（它从不滚动），让下方 `#ptd-main` 里的 sticky 表头失效；clip 只裁切、
+ * 不建立滚动容器，圆角裁切效果不变。 */
 .ptd-settings-card {
-  overflow: hidden;
+  overflow: clip;
 }
 
 /*
@@ -470,8 +501,7 @@ body {
 .ptd-section-description {
   display: block;
   margin: 4px 0 8px;
-  font-size: 13px;
-  line-height: 1.6;
+  /* 字号 / 行高继承 #ptd 的正文基准（13px / 1.5）：这里不再手写 13px 把 compact 的 12px 补回来。 */
 }
 
 :where(.ptd-section-description, .ptd-setting-group__title, .ptd-setting-note, .ptd-selection-bar__size) {
@@ -548,7 +578,7 @@ body {
 
 .ptd-setting-group__title {
   padding-bottom: 2px;
-  font-size: 13px;
+  /* 字号继承正文 13px（token.fontSize）；加粗已能建立层级，不再单独写一次 13px。 */
   font-weight: 600;
 }
 
@@ -569,11 +599,11 @@ body {
   min-width: 0;
 }
 
-/* 选项下方的说明块（如“自动刷新”“自动延长 cookies”的配置提示） */
+/* 选项下方的说明块（如“自动刷新”“自动延长 cookies”的配置提示）
+ * 字号继承正文 13px；这里只保留缩进与可横向滚动的超长命令。 */
 .ptd-setting-note {
   padding: 4px 0 8px 16px;
   overflow-x: auto;
-  font-size: 13px;
 }
 
 /* 「插件重置」页的列表行：同样是一行一个选项，文案在左、按钮在右；
@@ -613,8 +643,8 @@ body {
 }
 
 /*
- * 兜底：各列宽度之和确实超过容器时（例如窄窗口下的下载历史表），
- * 让表格在自己的容器里横向滚动，而不是把卡片/内容区顶出去。
+ * 兜底：各列宽度之和确实超过容器时，让表格在自己的容器里横向滚动，而不是把卡片/内容区顶出去。
+ * 弹层里的表格（不在 #ptd-main 内）保留这一行为。
  */
 .ptd-data-table .ant-table-content,
 .ptd-data-table .ant-table-body,
@@ -631,23 +661,32 @@ body {
  *
  * 为什么用 CSS 而不是 ConfigProvider 的 Table token：
  * - 无 size 的表格，纵向内边距取的是全局 token `paddingContentVerticalLG`，不是 Table 组件 token；
- * - 表头字号没有对应 token（tableFontSize 同时作用于表头与表体，而两者需要不同字号）。
- * 内边距同时覆盖 size="middle"/"small" 的表格（antd 的大小类规则在 :where() 里，权重为 0）。
+ * - 表头 / 表体字号都取 `var(--ptd-font-size)`（最终 token 13px），不再手写 12/13 造成
+ *   表头比单元格还小的倒挂；内边距同时覆盖 size="middle"/"small" 的表格
+ *   （antd 的大小类规则在 :where() 里，权重为 0）。
  */
 .ant-table-wrapper .ant-table-thead > tr > th {
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: var(--ptd-font-size, 13px);
   line-height: 16px;
   overflow-wrap: anywhere;
 }
 
 .ant-table-wrapper .ant-table-tbody > tr > td {
   padding: 2px 6px;
-  font-size: 13px;
+  font-size: var(--ptd-font-size, 13px);
   line-height: 1.3;
   overflow: hidden;
   overflow-wrap: anywhere;
 }
+
+/*
+ * 长表格表头吸顶不在这里写：交给 antd 的 `<a-table :sticky>`（见 views/Overview/utils/antdTable.ts
+ * 的 useMainTableSticky）。原因是带 scroll.x 的表格会被 antd 内联 overflow-x:auto，CSS 规定此时
+ * overflow-y 也算 auto，`.ant-table-content` 就成了 th 的最近滚动祖先，th 写 sticky 永远不吸顶；
+ * 要压过内联样式只能 !important。antd 的 sticky 会把表头渲染成独立的 sticky-holder，
+ * 相对 getContainer（#ptd-main）吸顶，并自带同步的横向滚动。
+ */
 
 /*
  * 单元格文本：限制最大宽度、超出单行省略，悬停由 Tooltip 展示全文。
@@ -806,7 +845,7 @@ body {
  * 只有需要脱离正文档次的图标才显式给档位——全站仅下面两档，各一处定义
  * （此前散落 13 处内联 font-size: 12px 与 2 处 36px）。 */
 .ptd-icon-sm {
-  font-size: 12px;
+  font-size: var(--ptd-font-size-sm, 12px);
 }
 
 /* 状态大图标：媒体信息弹层里「已观看 / 已收藏」这类独立成行的状态标记 */
@@ -815,7 +854,7 @@ body {
 }
 
 .info-label {
-  font-size: 12px;
+  font-size: var(--ptd-font-size-sm, 12px);
 }
 
 :where(.info-label) {
@@ -968,8 +1007,9 @@ body {
 }
 
 /* 搜索结果页底部多选操作条（SelectionBar）：仅在选中种子后出现，不使用 alert 样式。
- * 位置不用 sticky —— #ptd-main 带 overflow:auto 是 sticky 的滚动容器且自身从不滚动；
- * 这里由组件按 #ptd-main 的实际内边界算出 left/right/bottom 内联样式，position:fixed 贴在视口底部。 */
+ * #ptd-main 现在是会真正滚动的容器（表头吸顶依赖它），sticky 会被内容滚动带走；
+ * 因此这里仍用 position:fixed：组件按 #ptd-main 的视口矩形 + padding 算出内联的
+ * left/right/bottom，贴在视口底部，不随内容滚动。 */
 .ptd-selection-bar {
   position: fixed;
   z-index: 30;
@@ -1081,6 +1121,7 @@ body {
   }
 
   #ptd-main {
+    /* 与 useMainTableSticky 的窄屏 offsetHeader（-8）同步 */
     padding: 8px;
   }
 

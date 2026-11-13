@@ -90,7 +90,9 @@ const distributionKeys = ["byResolution", "byCodec", "byContainer", "byRootPath"
     <template v-if="!confirmed">
       <a-alert show-icon type="warning">
         <template #message>
-          <a-typography-text strong>{{ t("SetMediaServer.Overview.warningTitle") }}</a-typography-text>
+          <!-- 整句警告不应再加粗：Alert 的 message 槽位本身已是提示层级，
+               加粗只会与 description 里的正文抢注意力。 -->
+          <span>{{ t("SetMediaServer.Overview.warningTitle") }}</span>
         </template>
         <template #description>
           <a-typography-paragraph style="margin: 8px 0 0">

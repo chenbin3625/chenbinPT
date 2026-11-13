@@ -147,16 +147,16 @@ async function save() {
       v-if="favoritedItems.length > 0 && !isEdit"
       :message="t('MyCollection.dialog.alreadyFavoritedNotice', [favoritedItems.length])"
       show-icon
-      style="margin-bottom: 8px"
+      class="torrent-favorite__notice"
       type="warning"
     />
 
-    <a-list :data-source="torrentItems" size="small" style="max-height: 240px; overflow-y: auto">
+    <a-list :data-source="torrentItems" size="small" class="torrent-favorite__list">
       <template #renderItem="{ item }">
         <a-list-item>
           <a-list-item-meta :description="formatSize(item.size ?? 0)">
             <template #title>
-              <span class="ptd-cell-ellipsis" style="max-width: 36rem" :title="item.title">{{ item.title }}</span>
+              <span class="ptd-cell-ellipsis torrent-favorite__title" :title="item.title">{{ item.title }}</span>
             </template>
           </a-list-item-meta>
           <a-tag v-if="isFavorited(item)" color="gold">{{ t("MyCollection.dialog.alreadyFavorited") }}</a-tag>
@@ -180,3 +180,19 @@ async function save() {
     </template>
   </a-modal>
 </template>
+
+<style scoped>
+/* 收藏对话框的静态行内样式收敛为语义类 */
+.torrent-favorite__notice {
+  margin-bottom: 8px;
+}
+
+.torrent-favorite__list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.torrent-favorite__title {
+  max-width: 36rem;
+}
+</style>

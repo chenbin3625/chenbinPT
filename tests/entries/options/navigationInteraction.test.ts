@@ -94,6 +94,19 @@ describe("窄屏导航", () => {
     expect(view.$("#ptd-navigation")?.classList.contains("ant-layout-sider-collapsed")).toBe(true);
   });
 
+  it("焦点不在侧栏内时按 Esc 也能关闭抽屉", async () => {
+    await mountNavigation();
+    view.$<HTMLElement>(".ant-layout-sider-zero-width-trigger")!.click();
+    await view.settle();
+    expect(view.$("#ptd-navigation")?.classList.contains("ant-layout-sider-collapsed")).toBe(false);
+
+    // 焦点留在页面（body）上：窗口级监听必须与「点遮罩」走同一套关闭逻辑
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await view.settle();
+    expect(view.$(".ptd-navigation-backdrop")).toBeNull();
+    expect(view.$("#ptd-navigation")?.classList.contains("ant-layout-sider-collapsed")).toBe(true);
+  });
+
   it("桌面端仍恢复并保存原有折叠偏好", async () => {
     state.display.smAndUp.value = true;
     state.display.mdAndUp.value = true;

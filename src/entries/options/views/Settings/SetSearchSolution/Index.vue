@@ -26,6 +26,7 @@ import {
   applyTableActionColumn,
   useTableActionColumnLayout,
   withEllipsisCell,
+  useMainTableSticky,
 } from "@/options/views/Overview/utils/antdTable.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import type { ISearchSolutionMetadata, TSolutionKey } from "@/shared/types.ts";
@@ -35,6 +36,9 @@ import SolutionLabel from "./SolutionLabel.vue";
 import { isSafeSearchEntryKey, sanitizeSearchEntryRequestConfig } from "./utils.ts";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 
 const { t, te } = useI18n();
 const configStore = useConfigStore();
@@ -492,6 +496,7 @@ async function copySearchSolution(solutionId: TSolutionKey) {
 
         <a-upload
           accept="application/json"
+          class="ptd-toolbar-upload"
           :before-upload="beforeImportUpload"
           :file-list="[]"
           :multiple="true"
@@ -521,6 +526,7 @@ async function copySearchSolution(solutionId: TSolutionKey) {
     </template>
 
     <a-table
+      :sticky="mainTableSticky"
       :columns="columns"
       :data-source="tableRows"
       :loading="isStoreHydrating"
@@ -617,3 +623,19 @@ async function copySearchSolution(solutionId: TSolutionKey) {
     @all-delete="pruneTableSelected"
   />
 </template>
+
+<style lang="scss" scoped>
+/*
+ * antd 4 的 Upload 根节点是 <span class="ant-upload-wrapper">，真正的按钮容器
+ * （.ant-upload-select）只是其中的 inline-block 子元素。
+ *
+ * 行内 span 的盒高由字体行高决定（13px 字号下浏览器实测约 15px），不包含内部 28px
+ * 的按钮，所以放在普通块级流里时包装层比按钮矮、与相邻按钮对不齐；放进 flex 工具条
+ * 也只是碰巧被浏览器 blockify 成按钮高度。antd 没有为 Upload 暴露布局 prop，
+ * 这里把包装层显式设为 inline-flex 并垂直居中，让任何容器下的高度都严格等于按钮。
+ */
+.ptd-toolbar-upload {
+  display: inline-flex;
+  align-items: center;
+}
+</style>

@@ -9,7 +9,7 @@ import {
 } from "@ant-design/icons-vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useIntersectionObserver, useThrottleFn } from "@vueuse/core";
 import { isEmpty } from "es-toolkit/compat";
 import { getMediaServerIcon, type IMediaServerItem } from "@ptd/mediaServer";
@@ -31,6 +31,7 @@ import { seriesText, videoRangeBadge, videoSummary } from "./itemDisplay.ts";
 
 const { t } = useI18n();
 const route = useRoute();
+const router = useRouter();
 const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
@@ -123,6 +124,11 @@ function showItemInformation(item: IMediaServerItem) {
   hoverItemUrl.value = null;
   showItem.value = item;
   showItemInformationDialog.value = true;
+}
+
+/** 空状态引导：没有任何启用的媒体服务器时，直接跳到媒体服务设置页添加 */
+function goToMediaServerSettings() {
+  void router.push({ name: "SetMediaServer" });
 }
 
 function submitSearch() {
@@ -287,7 +293,7 @@ onUnmounted(() => {
                 :is-played="item.user?.IsPlayed"
                 :percent="item.user?.playedPercentage"
               />
-              <HeartFilled v-if="item.user?.IsFavorite" style="color: var(--ptd-danger)" />
+              <HeartFilled v-if="item.user?.IsFavorite" class="media-card-favorite" />
             </span>
             <span v-if="typeof item.rating === 'number'" class="media-card-rating">
               <StarFilled /> {{ item.rating.toFixed(1) }}
@@ -376,8 +382,13 @@ onUnmounted(() => {
                 ? t('MediaServerEntity.loadFailed')
                 : t('MediaServerEntity.noItems')
       "
-    />
-    <div v-if="hasHiddenResults" ref="gridSentinel" style="height: 1px; width: 100%"></div>
+    >
+      <!-- 空状态的下一步：没有启用服务器时与「我的数据」一致，给出直达设置页的引导 -->
+      <a-button v-if="enabledMediaServerIds.length === 0" type="primary" @click="goToMediaServerSettings">
+        {{ t("common.goToMediaServerSettings") }}
+      </a-button>
+    </NoDataPlaceholder>
+    <div v-if="hasHiddenResults" ref="gridSentinel" class="media-library-sentinel"></div>
     <div
       v-if="
         hasHiddenResults || (!isEmpty(runtimeStore.mediaServerSearch.searchStatus) && searchMediaServerIds.length > 0)
@@ -504,6 +515,8 @@ onUnmounted(() => {
   gap: 6px;
   padding: 4px 6px;
   border-radius: 4px;
+  /* 这两组浮标压在任意海报图片（可能是亮色）上，必须保持深底白字才保证对比度。
+     它们不跟随深色模式是有意的：浅色模式下海报也不会变亮，跟随主题反而可能白底压白图。 */
   background: rgba(0, 0, 0, 0.76);
   color: #fff;
   font-size: 12px;
@@ -520,7 +533,18 @@ onUnmounted(() => {
 }
 
 .media-card-rating > .anticon {
+  /* 星星同样压在深色遮罩上：用固定金色而不是 --ptd-warning，后者在深色主题下是
+     深橙黄色，压在这块遮罩上会与白字/深底混在一起、失去辨识度。 */
   color: #ffc53d;
+}
+
+.media-card-favorite {
+  color: var(--ptd-danger);
+}
+
+.media-library-sentinel {
+  width: 100%;
+  height: 1px;
 }
 
 .media-card-body {

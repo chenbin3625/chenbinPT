@@ -154,7 +154,7 @@ watch(showDialog, (open) => {
           :loading="isReDownloading[key]"
           block
           size="large"
-          style="justify-content: flex-start"
+          class="re-download-select__button"
           @click="reDownload(key)"
           ><component :is="value.icon" />
           {{ value.title }}
@@ -170,3 +170,10 @@ watch(showDialog, (open) => {
     @done="() => submitDownloadFinish('downloader')"
   />
 </template>
+
+<style scoped>
+/* 三种重下方式按钮统一左对齐，图标与文案从同一基线开始 */
+.re-download-select__button {
+  justify-content: flex-start;
+}
+</style>

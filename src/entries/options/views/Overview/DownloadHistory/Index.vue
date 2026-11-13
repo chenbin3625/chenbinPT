@@ -4,10 +4,12 @@ import {
   DownloadOutlined,
   FilterOutlined,
   MinusOutlined,
+  SearchOutlined,
   SyncOutlined,
   WarningOutlined,
 } from "@ant-design/icons-vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { onMounted, onUnmounted, ref, shallowRef, computed } from "vue";
 import {
   applyTableActionColumn,
@@ -16,6 +18,7 @@ import {
   toPagination,
   toSortBy,
   useTableActionColumnLayout,
+  useMainTableSticky,
 } from "../utils/antdTable.ts";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
@@ -32,6 +35,7 @@ import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import DownloaderLabel from "@/options/components/DownloaderLabel.vue";
 import NavButton from "@/options/components/NavButton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import ToolbarActions, { type ToolbarAction } from "@/options/components/ToolbarActions.vue";
 import ReDownloadSelectDialog from "./ReDownloadSelectDialog.vue";
 import AdvanceFilterGenerateDialog from "./AdvanceFilterGenerateDialog.vue";
 
@@ -47,8 +51,12 @@ import {
 } from "./utils.ts"; // <-- 主要方法
 
 const { t } = useI18n();
+
+// 页面级表格表头吸顶（滚动容器是 #ptd-main，见 useMainTableSticky 的说明）
+const mainTableSticky = useMainTableSticky();
 const configStore = useConfigStore();
 const display = useDisplay();
+const router = useRouter();
 
 const { tableFilterRef, tableWaitFilterRef, tableFilterFn } = tableCustomFilter;
 
@@ -109,6 +117,18 @@ const tablePagination = computed(() =>
     configStore.updateTableBehavior("DownloadHistory", "itemsPerPage", v),
   ),
 );
+
+/**
+ * 工具条次操作：刷新只保留在「更多」里，避免与已选记录的两个批量主操作抢位置。
+ * 主要操作（重新下载 / 删除）放在 ToolbarActions 的 #primary 插槽，窄屏也始终可见。
+ */
+const toolbarItems = computed<ToolbarAction[]>(() => [
+  { key: "refresh", label: t("DownloadHistory.refresh"), icon: SyncOutlined },
+]);
+
+function onToolbarAction(key: string) {
+  if (key === "refresh") void throttleLoadDownloadHistory();
+}
 
 /**
  * 当前可见且仍被勾选的记录（N3）。
@@ -194,45 +214,37 @@ onUnmounted(() => {
 
 <template>
   <a-card>
-    <a-typography-text strong>
-      <a-flex class="page-toolbar" align="center" :gap="8">
-        <!-- 按钮组 -->
-        <NavButton
-          color="green"
-          :icon="SyncOutlined"
-          :text="t('DownloadHistory.refresh')"
-          @click="() => void throttleLoadDownloadHistory()"
-        />
+    <a-flex class="page-toolbar" align="center" :gap="8">
+      <!-- 重新下载 / 删除是批量主操作：始终平铺；刷新是次操作，窄屏收进「更多」 -->
+      <ToolbarActions :items="toolbarItems" @select="onToolbarAction">
+        <template #primary>
+          <NavButton
+            :disabled="visibleSelectedIds.length === 0"
+            color="primary"
+            :icon="DownloadOutlined"
+            :text="t('DownloadHistory.reDownload')"
+            @click="() => reDownloadTorrent(visibleSelectedIds)"
+          />
 
-        <a-divider type="vertical" style="margin-left: 8px; margin-right: 8px"></a-divider>
+          <NavButton
+            :disabled="visibleSelectedIds.length === 0"
+            :text="t('common.remove')"
+            color="error"
+            :icon="MinusOutlined"
+            @click="deleteDownloadHistory(visibleSelectedIds)"
+          />
+        </template>
+      </ToolbarActions>
 
-        <NavButton
-          :disabled="visibleSelectedIds.length === 0"
-          color="primary"
-          :icon="DownloadOutlined"
-          :text="t('DownloadHistory.reDownload')"
-          @click="() => reDownloadTorrent(visibleSelectedIds)"
-        />
-
-        <NavButton
-          :disabled="visibleSelectedIds.length === 0"
-          :text="t('common.remove')"
-          color="error"
-          :icon="MinusOutlined"
-          @click="deleteDownloadHistory(visibleSelectedIds)"
-        />
-
-        <div style="flex: 1 1 auto"></div>
-
-        <!-- 筛选框 -->
-        <a-input v-model:value="tableWaitFilterRef" allow-clear :placeholder="t('DownloadHistory.filterPlaceholder')">
-          <template #prefix>
-            <FilterOutlined style="cursor: pointer" @click="showAdvanceFilterDialog = true" />
-          </template>
-        </a-input>
-      </a-flex>
-    </a-typography-text>
+      <!-- 筛选框：style.css 的 .page-toolbar > .ant-input-affix-wrapper 会把它固定贴右 -->
+      <a-input v-model:value="tableWaitFilterRef" allow-clear :placeholder="t('DownloadHistory.filterPlaceholder')">
+        <template #prefix>
+          <FilterOutlined class="download-history__filter-icon" @click="showAdvanceFilterDialog = true" />
+        </template>
+      </a-input>
+    </a-flex>
     <a-table
+      :sticky="mainTableSticky"
       :columns="tableColumns"
       :data-source="filteredTableData"
       :loading="isLoadingDownloadHistory"
@@ -252,9 +264,9 @@ onUnmounted(() => {
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'siteId'">
-          <div style="display: flex; flex-direction: column; align-items: center">
+          <div class="download-history__site">
             <SiteFavicon :site-id="record.siteId" :size="18" />
-            <SiteName class="ptd-cell-ellipsis" style="max-width: 10rem" :site-id="record.siteId" />
+            <SiteName class="ptd-cell-ellipsis download-history__site-name" :site-id="record.siteId" />
           </div>
         </template>
 
@@ -273,14 +285,14 @@ onUnmounted(() => {
         <template v-else-if="column.key === 'downloadStatus'">
           <a-flex align="center" justify="center" :gap="4">
             <a-tag @click="() => viewDownloadDetail(record)"
-              ><component :is="downloadStatusMeta(record.downloadStatus).icon" style="margin-right: 4px" />
+              ><component :is="downloadStatusMeta(record.downloadStatus).icon" class="download-history__status-icon" />
               {{ downloadStatusMeta(record.downloadStatus).title }}
             </a-tag>
             <!-- DOWNLOADER-8：成功但降级的记录在列表里也要可见。用 warning 色（浅色告警，不是 error 红）
                  + tooltip 承载完整文案，避免把长文案塞进表格列把行撑高 -->
             <a-tooltip v-if="record.warningMessage" :title="record.warningMessage">
               <a-tag class="ptd-download-warning" color="warning" @click="() => viewDownloadDetail(record)"
-                ><WarningOutlined style="margin-right: 4px" />{{ t("DownloadHistory.warning") }}</a-tag
+                ><WarningOutlined class="download-history__status-icon" />{{ t("DownloadHistory.warning") }}</a-tag
               >
             </a-tooltip>
           </a-flex>
@@ -304,7 +316,17 @@ onUnmounted(() => {
       </template>
 
       <template #emptyText>
-        <NoDataPlaceholder compact />
+        <NoDataPlaceholder compact>
+          <!-- 底层记录为空时才引导去搜索；仅筛选无结果时留在本页调整过滤词 -->
+          <a-button
+            v-if="downloadHistoryList.length === 0 && !isLoadingDownloadHistory"
+            type="primary"
+            @click="router.push({ name: 'SearchEntity' })"
+          >
+            <template #icon><SearchOutlined /></template>
+            {{ t("common.search") }}
+          </a-button>
+        </NoDataPlaceholder>
       </template>
     </a-table>
   </a-card>
@@ -339,23 +361,22 @@ onUnmounted(() => {
       v-if="downloadDetail.warningMessage"
       type="warning"
       show-icon
-      style="margin-bottom: 12px"
-      class="ptd-download-warning-detail"
+      class="ptd-download-warning-detail download-history__detail-alert"
       ><template #icon><WarningOutlined /></template
       ><template #description>
-        <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px">
+        <div class="download-history__detail-heading">
           {{ t("DownloadHistory.detail.warningMessage") }}
         </div>
-        <code style="font-size: 14px">{{ downloadDetail.warningMessage }}</code>
+        <code class="download-history__detail-code">{{ downloadDetail.warningMessage }}</code>
       </template></a-alert
     >
-    <a-alert v-if="downloadDetail.errorMessage" type="error" show-icon style="margin-bottom: 12px"
+    <a-alert v-if="downloadDetail.errorMessage" type="error" show-icon class="download-history__detail-alert"
       ><template #icon><WarningOutlined /></template
       ><template #description>
-        <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px">
+        <div class="download-history__detail-heading">
           {{ t("DownloadHistory.detail.errorMessage") }}
         </div>
-        <code style="font-size: 14px">{{ downloadDetail.errorMessage }}</code>
+        <code class="download-history__detail-code">{{ downloadDetail.errorMessage }}</code>
       </template></a-alert
     >
     <pre> {{ JSON.stringify(downloadDetail, null, 2) }}</pre>
@@ -380,5 +401,38 @@ onUnmounted(() => {
   content: "•";
   position: absolute;
   left: 2px;
+}
+
+/* 表格单元格 / 详情弹窗中重复的静态样式，收敛为语义类（动态位置相关样式仍留在模板） */
+.download-history__site {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.download-history__site-name {
+  max-width: 10rem;
+}
+
+.download-history__filter-icon {
+  cursor: pointer;
+}
+
+.download-history__status-icon {
+  margin-right: 4px;
+}
+
+.download-history__detail-alert {
+  margin-bottom: 12px;
+}
+
+.download-history__detail-heading {
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.download-history__detail-code {
+  font-size: 14px;
 }
 </style>

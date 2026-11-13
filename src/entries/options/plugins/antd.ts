@@ -47,6 +47,8 @@ import {
   type ConfigProviderProps,
 } from "ant-design-vue";
 import { StyleProvider } from "ant-design-vue/es/_util/cssinjs";
+import type { MappingAlgorithm } from "ant-design-vue/es/config-provider/context";
+import type { MapToken } from "ant-design-vue/es/theme/interface";
 import zhCN from "ant-design-vue/es/locale/zh_CN";
 import enUS from "ant-design-vue/es/locale/en_US";
 import dayjs from "dayjs";
@@ -179,6 +181,64 @@ const antdLocaleMap: Record<TLangCode, { locale: ConfigProviderProps["locale"]; 
 };
 
 /**
+ * 全站排版与控件高度的**唯一**来源：由算法链尾的 `ptdTypographyAlgorithm` 输出，
+ * `buildThemeVars` 用同一套求值顺序计算 `--ptd-*`。
+ *
+ * 为什么不能用 ConfigProvider 的 `theme.token` 直接覆盖：antd 的 `formatToken` 会把
+ * **seed token**（`fontSize` 就在 seedToken 里）从 algorithm 之后的 override 中剥掉，
+ * 只保留 override 里的非 seed 键。而 `compactAlgorithm` 会把 `fontSize` 改写成
+ * `fontSizeSM` 派生出的偶数（默认 seed 14px → compact 12px；seed 13px → compact 10px），
+ * 于是 `theme.token.fontSize` 无法把 compact 的 12/10px 抬回 13px —— 实测组件计算值仍是 10px。
+ *
+ * 解决办法：把整组值放进算法链的**最后一个 derivative**。algorithm 的产物属于
+ * restToken（不是 override），`formatToken` 不会剥离，所以这是唯一能让 compact 之后
+ * 真正生效的注入点。保留 compact 的间距，只改字号与 sm 控件高度。
+ *
+ * 为什么显式给字号：compact 会把基准字号取成 `fontSizeSM`（12px）——工具条、表格、表单
+ * 全部落到 12px，而手写 CSS 又在若干处补回 13px，同一页面出现 12/13 混排。这里只把
+ * 正文基准抬到 13px；`fontSizeSM/LG/XL` 同时显式声明，字号层级收敛为
+ * 「正文 13 / 次要 12 / 标题 15、18」。
+ *
+ * 为什么 `controlHeightSM`：compact 会把 `controlHeightSM` 压到 21px（32 → 28 → ×0.75），
+ * 表格里的 `size="small"` 图标按钮因此只有 21×21 的点击区域。24px 是 WCAG 2.2 目标尺寸的
+ * 下限；默认（非 sm）控件高度仍由 compact 的 28px 决定，不整体变松。
+ */
+const PTD_THEME_TOKEN = {
+  fontSize: 13,
+  lineHeight: 1.5,
+  fontSizeSM: 12,
+  fontSizeLG: 15,
+  fontSizeXL: 18,
+  controlHeightSM: 24,
+};
+
+/**
+ * 算法链尾的排版 derivative（见 PTD_THEME_TOKEN 的注释）。
+ *
+ * `mapToken` 是 default/dark + compact 的产物；在它之上覆盖最终值后返回。
+ * 运行时它永远不是 undefined（排在本项目的算法链末尾），这里的断言只用于类型收窄。
+ */
+const ptdTypographyAlgorithm: MappingAlgorithm = (_seedToken, mapToken) => ({
+  ...(mapToken as MapToken),
+  ...PTD_THEME_TOKEN,
+});
+
+/**
+ * 复刻 ConfigProvider 内部的 token 求值顺序，供不经过组件树的 `buildThemeVars` 使用。
+ *
+ * 与 ConfigProvider 的 algorithm 数组保持完全一致：default/dark → compact →
+ * `ptdTypographyAlgorithm`。这样 `--ptd-font-size` 与组件实际拿到的值同源。
+ */
+function resolveAntdToken(dark: boolean) {
+  const algorithm = dark ? theme.darkAlgorithm : theme.defaultAlgorithm;
+  // compact 必须排在 default/dark 之后：它读取上一步的 mapToken 来换算尺寸，深色底也来自上一步。
+  return ptdTypographyAlgorithm(
+    theme.defaultSeed,
+    theme.compactAlgorithm(theme.defaultSeed, algorithm(theme.defaultSeed)),
+  );
+}
+
+/**
  * 手写 CSS 仍在用的 `--ptd-*` 变量，值**全部取自 antd 的 Design Token**。
  *
  * 这样主题只有 antd 一个来源：`uiTheme` 一变，antd 组件（cssinjs）与手写
@@ -200,7 +260,7 @@ const antdLocaleMap: Record<TLangCode, { locale: ConfigProviderProps["locale"]; 
  *    algorithm 变化，深色主题下会直接掉对比度。
  */
 export function buildThemeVars(dark: boolean): Record<string, string> {
-  const token = (dark ? theme.darkAlgorithm : theme.defaultAlgorithm)(theme.defaultSeed);
+  const token = resolveAntdToken(dark);
   return {
     "--ptd-bg": token.colorBgLayout,
     "--ptd-surface": token.colorBgContainer,
@@ -214,8 +274,11 @@ export function buildThemeVars(dark: boolean): Record<string, string> {
     "--ptd-table-highlight": token.colorFillSecondary,
     // 基础排版：options 页面与 content-script overlay 共用同一份定义（此前 overlay 手抄了
     // 一遍字体栈，options 侧则完全没有基准排版，裸文本落到 reset.css 的 `sans-serif` + 16px）。
+    // 这里输出的是**最终生效**的 token（见 resolveAntdToken）：fontSize 13、lineHeight 1.5，
+    // 与 ConfigProvider 里组件实际拿到的值一致；不是 antd 默认或 compact 的中间值。
     "--ptd-font-family": token.fontFamily,
     "--ptd-font-size": `${token.fontSize}px`,
+    "--ptd-font-size-sm": `${token.fontSizeSM}px`,
     "--ptd-line-height": `${token.lineHeight}`,
     "--ptd-primary": token.colorPrimary,
     "--ptd-success": token.colorSuccess,
@@ -253,10 +316,14 @@ export function useAntdConfig() {
   );
 
   const themeConfig = computed<ConfigProviderProps["theme"]>(() => ({
-    algorithm:
-      configStore.uiTheme === "dark"
-        ? [theme.darkAlgorithm, theme.compactAlgorithm]
-        : [theme.defaultAlgorithm, theme.compactAlgorithm],
+    // 排版 token 必须排在 compact **之后**（原因见 PTD_THEME_TOKEN 注释）：
+    // 若把 fontSize 放进 theme.token，它会先并入 seed、被 compact 改写成 10/12px，
+    // 随后又被 formatToken 从 override 中剥掉，最终组件仍是 compact 的字号。
+    algorithm: [
+      configStore.uiTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+      theme.compactAlgorithm,
+      ptdTypographyAlgorithm,
+    ],
   }));
 
   /** 跟随 `uiTheme` 的 `--ptd-*`：由 options/App.vue 写到 document.documentElement */

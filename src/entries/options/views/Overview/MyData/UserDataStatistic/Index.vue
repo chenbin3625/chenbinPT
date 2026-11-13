@@ -379,6 +379,16 @@ onMounted(async () => {
   }
 });
 
+/**
+ * 读取 antd 写到 `<html>` 上的主题变量（见 plugins/antd.ts 的 buildThemeVars）。
+ * canvas 的 fillStyle 不认 `var(--ptd-*)`，必须解析成具体色值；变量缺失时退回给定的默认值
+ * （默认值与旧的固定色一致，保证离屏渲染 / 测试环境下行为不变）。
+ */
+function getThemeColor(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 async function exportStatisticImg() {
   const createdAt = formatDate(new Date());
   const mainCanvas = document.createElement("canvas");
@@ -396,8 +406,9 @@ async function exportStatisticImg() {
 
   const ctx = mainCanvas.getContext("2d") as CanvasRenderingContext2D;
 
-  // 填充白色背景
-  ctx.fillStyle = "white";
+  // 导出图的底色跟随当前主题：浅色主题仍是白底（--ptd-surface = #fff），深色主题用容器底色，
+  // 避免固定白底与深色图表拼在一起显得割裂。
+  ctx.fillStyle = getThemeColor("--ptd-surface", "#ffffff");
   ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
   // 将 echart 图表渲染到 canvas 上
@@ -409,7 +420,9 @@ async function exportStatisticImg() {
 
   // 在 canvas 上添加右对齐文字
   ctx.font = "12px Arial";
-  ctx.fillStyle = "#b5b5b5";
+  // 页脚水印用三级文字色：浅色主题下是深灰（旧值 #b5b5b5 略淡），深色主题下是浅灰，
+  // 两种底色上都保持可读。
+  ctx.fillStyle = getThemeColor("--ptd-text-tertiary", "#b5b5b5");
   ctx.textAlign = "right"; // 设置文字右对齐
 
   const textX = containerWidth.value - 10; // 距离右侧边缘 10px
@@ -432,17 +445,24 @@ function saveControl() {
   configStore.$save();
   runtimeStore.showSnackbar(t("common.saveSuccess"), { color: "success" });
 }
+
+/** 空态引导：没有任何站点的用户信息时，先去站点设置添加站点 */
+function goToSiteSettings() {
+  void router.push({ name: "SetSite" });
+}
 </script>
 
 <template>
   <a-card>
-    <a-row :gutter="8" style="justify-content: flex-start; padding: 8px">
-      <a-col ref="chartContainer" id="chartContainer" style="max-width: 800px" flex="1 1 0">
+    <a-row :gutter="8" class="user-statistic-layout">
+      <a-col ref="chartContainer" id="chartContainer" class="user-statistic-chart-column" flex="1 1 0">
         <!-- 数据加载中：先撑起与图表同高的骨架，避免内容区空白 / 高度跳动 -->
         <PageSkeleton v-if="isLoading" variant="chart" />
 
         <!-- 没有任何站点用户数据（未添加站点或未刷新过用户信息） -->
-        <NoDataPlaceholder v-else-if="allSites.length === 0" :description="t('UserDataStatistic.chart.noData')" />
+        <NoDataPlaceholder v-else-if="allSites.length === 0" :description="t('UserDataStatistic.chart.noData')">
+          <a-button type="primary" @click="goToSiteSettings">{{ t("common.goToSiteSettings") }}</a-button>
+        </NoDataPlaceholder>
 
         <template v-else>
           <!-- 总上传、总下载、总积分 -->
@@ -493,10 +513,10 @@ function saveControl() {
         </template>
       </a-col>
       <a-col flex="1 1 0">
-        <a-row :gutter="8" style="flex-wrap: nowrap; margin-bottom: 4px">
-          <a-col flex="1 1 0" style="display: flex">
+        <a-row :gutter="8" class="user-statistic-toolbar">
+          <a-col flex="1 1 0" class="user-statistic-toolbar-col">
             <NavButton color="grey" :icon="ArrowLeftOutlined" :text="t('common.back')" @click="() => router.back()" />
-            <div style="flex: 1 1 auto"></div>
+            <div class="user-statistic-spacer"></div>
             <NavButton
               color="info"
               :icon="ExportOutlined"
@@ -507,12 +527,12 @@ function saveControl() {
           </a-col>
         </a-row>
 
-        <div class="ptd-section-heading" style="margin-top: 0">
+        <div class="ptd-section-heading user-statistic-section-heading">
           {{ t("UserDataStatistic.chart.chartStyleSettings") }}
         </div>
 
         <a-row :gutter="8">
-          <a-col flex="1 1 0" style="align-self: center">
+          <a-col flex="1 1 0" class="user-statistic-label-col">
             <a-typography-text>{{ t("common.username") }}</a-typography-text>
           </a-col>
           <a-col :span="24" :sm="20">
@@ -521,10 +541,10 @@ function saveControl() {
                 v-model:value="configStore.userName"
                 :options="Object.keys(configStore.getUserNames.names).map((name) => ({ value: name, label: name }))"
                 :placeholder="t('common.username')"
-                style="flex: 1 1 0"
+                class="user-statistic-grow"
               />
               <HistoryOutlined
-                style="cursor: pointer"
+                class="user-statistic-reset"
                 @click="() => (configStore.userName = configStore.getUserNames.perfName)"
               />
             </a-flex>
@@ -532,7 +552,7 @@ function saveControl() {
         </a-row>
 
         <a-row :gutter="8">
-          <a-col flex="1 1 0" style="align-self: center">
+          <a-col flex="1 1 0" class="user-statistic-label-col">
             <a-typography-text>{{ t("UserDataStatistic.chart.displayChart") }}</a-typography-text>
           </a-col>
           <a-col :span="24" :sm="20">
@@ -541,7 +561,7 @@ function saveControl() {
                 v-for="(item, index) in configStore.userStatisticControl.showChart"
                 :key="index"
                 :span="12"
-                style="padding: 0"
+                class="user-statistic-flush-col"
               >
                 <a-checkbox v-model:checked="configStore.userStatisticControl.showChart[index]">{{
                   t("UserDataStatistic.chart." + index)
@@ -552,11 +572,11 @@ function saveControl() {
         </a-row>
 
         <a-row :gutter="8">
-          <a-col flex="1 1 0" style="align-self: center">
+          <a-col flex="1 1 0" class="user-statistic-label-col">
             <a-typography-text>{{ t("UserDataStatistic.chart.dateRange") }}</a-typography-text>
           </a-col>
           <a-col :span="24" :sm="20">
-            <a-flex :gap="4" style="overflow-x: auto">
+            <a-flex :gap="4" class="user-statistic-date-range">
               <a-button
                 v-for="day in [7, 30, 60, 90, 180]"
                 :key="day"
@@ -610,7 +630,7 @@ function saveControl() {
         </a-row>
 
         <a-row :gutter="8">
-          <a-col flex="1 1 0" style="align-self: center">
+          <a-col flex="1 1 0" class="user-statistic-label-col">
             <a-typography-text>{{ t("UserDataStatistic.chart.chartSettings") }}</a-typography-text>
           </a-col>
           <a-col :span="24" :sm="20">
@@ -628,15 +648,15 @@ function saveControl() {
           </a-col>
         </a-row>
 
-        <div class="ptd-section-heading user-statistic-site-settings-heading" style="margin-top: 16px">
+        <div class="ptd-section-heading user-statistic-site-settings-heading">
           <span>{{ t("UserDataStatistic.chart.displaySiteSettings") }}</span>
           <span class="user-statistic-site-settings-toggle">
             <CheckSwitchButton v-model="selectedSites" :all="allSites" color="grey" />
           </span>
         </div>
 
-        <a-row :gutter="0" style="margin: 8px 0">
-          <a-col v-for="siteId in allSites" :key="siteId" :span="12" :sm="6" style="padding: 0">
+        <a-row :gutter="0" class="user-statistic-site-list">
+          <a-col v-for="siteId in allSites" :key="siteId" :span="12" :sm="6" class="user-statistic-flush-col">
             <a-checkbox
               :checked="selectedSites.includes(siteId)"
               :disabled="!availableSites.includes(siteId)"
@@ -662,10 +682,62 @@ function saveControl() {
 </template>
 
 <style scoped>
+/* 以下类由模板里原本重复的静态行内样式抽出；图表高度的 :style 动态绑定保持原样。 */
+.user-statistic-layout {
+  justify-content: flex-start;
+  padding: 8px;
+}
+
+.user-statistic-chart-column {
+  max-width: 800px;
+}
+
+.user-statistic-toolbar {
+  flex-wrap: nowrap;
+  margin-bottom: 4px;
+}
+
+.user-statistic-toolbar-col {
+  display: flex;
+}
+
+.user-statistic-spacer {
+  flex: 1 1 auto;
+}
+
+.user-statistic-section-heading {
+  margin-top: 0;
+}
+
+.user-statistic-label-col {
+  align-self: center;
+}
+
+.user-statistic-grow {
+  flex: 1 1 0;
+}
+
+.user-statistic-reset {
+  cursor: pointer;
+}
+
+.user-statistic-flush-col {
+  padding: 0;
+}
+
+.user-statistic-date-range {
+  overflow-x: auto;
+}
+
+.user-statistic-site-list {
+  margin: 8px 0;
+}
+
 .user-statistic-site-settings-heading {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: 16px;
 }
 
 .user-statistic-site-settings-toggle {

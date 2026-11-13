@@ -302,6 +302,7 @@ watch(restoreMetadataKey, () => {
       <div v-show="currentStep === 'file'">
         <a-upload
           accept="application/zip"
+          class="ptd-restore-upload"
           :before-upload="beforeLoadLocalBackupFile"
           :file-list="[]"
           :max-count="1"
@@ -487,3 +488,16 @@ watch(restoreMetadataKey, () => {
     </template>
   </a-modal>
 </template>
+
+<style lang="scss" scoped>
+/*
+ * 与搜索方案页同一个根因：antd 4 的 .ant-upload-wrapper 是行内 span，包住 28px 的
+ * .ant-upload-select 按钮后自身只有字体行高（实测约 15px）。恢复对话框里的上传入口
+ * 处于普通块级流（不在 flex 工具条内），不会像 flex item 那样被 blockify，
+ * 因此必须显式改成 inline-flex 才能与按钮同高。antd 没有对应 prop。
+ */
+.ptd-restore-upload {
+  display: inline-flex;
+  align-items: center;
+}
+</style>

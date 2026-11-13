@@ -362,7 +362,7 @@ function formatTimestamp(timestamp: number | undefined): string {
                   <template #avatar><KeyOutlined /></template>
                   <template #title>
                     <a-flex align="center" :gap="8">
-                      <code style="font-size: 12px">{{ torrent.infoHash }}</code>
+                      <code class="torrent-detail__small">{{ torrent.infoHash }}</code>
                       <a-button
                         :title="t('MyClient.detail.copyHash')"
                         type="text"
@@ -409,23 +409,19 @@ function formatTimestamp(timestamp: number | undefined): string {
                 <a-col :span="12">
                   <a-list-item>
                     <a-list-item-meta>
-                      <template #avatar><UpOutlined style="color: var(--ptd-success)" /></template>
+                      <template #avatar><UpOutlined class="torrent-detail__speed-up" /></template>
                       <template #title>
                         {{ formatSpeed(torrent.uploadSpeed) }}
-                        <span style="color: var(--ptd-text-tertiary); font-size: 12px; margin-left: 4px">
-                          ({{ formatTotal(torrent.totalUploaded) }})
-                        </span>
+                        <span class="torrent-detail__muted"> ({{ formatTotal(torrent.totalUploaded) }}) </span>
                       </template>
                     </a-list-item-meta>
                   </a-list-item>
                   <a-list-item>
                     <a-list-item-meta>
-                      <template #avatar><DownOutlined style="color: var(--ptd-danger)" /></template>
+                      <template #avatar><DownOutlined class="torrent-detail__speed-down" /></template>
                       <template #title>
                         {{ formatSpeed(torrent.downloadSpeed) }}
-                        <span style="color: var(--ptd-text-tertiary); font-size: 12px; margin-left: 4px">
-                          ({{ formatTotal(torrent.totalDownloaded) }})
-                        </span>
+                        <span class="torrent-detail__muted"> ({{ formatTotal(torrent.totalDownloaded) }}) </span>
                       </template>
                     </a-list-item-meta>
                   </a-list-item>
@@ -453,7 +449,7 @@ function formatTimestamp(timestamp: number | undefined): string {
                 <a-list-item-meta>
                   <template #avatar><FolderOutlined /></template>
                   <template #title>
-                    <span style="font-size: 12px">{{ torrent.savePath }}</span>
+                    <span class="torrent-detail__small">{{ torrent.savePath }}</span>
                   </template>
                 </a-list-item-meta>
               </a-list-item>
@@ -477,7 +473,7 @@ function formatTimestamp(timestamp: number | undefined): string {
         <!-- 文件管理 -->
         <a-tab-pane v-if="featureAllowed('FileList')" key="files" :tab="t('MyClient.detail.fileTitle')">
           <div>
-            <div v-if="filesLoading" style="padding: 16px 0; text-align: center">
+            <div v-if="filesLoading" class="torrent-detail__loading">
               <a-spin />
             </div>
             <a-table
@@ -512,15 +508,15 @@ function formatTimestamp(timestamp: number | undefined): string {
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'path'">
-                  <span class="ptd-cell-ellipsis" style="font-size: 12px" :title="String(record.path ?? '')">{{
+                  <span class="ptd-cell-ellipsis torrent-detail__small" :title="String(record.path ?? '')">{{
                     record.path
                   }}</span>
                 </template>
                 <template v-else-if="column.key === 'size'">
-                  <span style="font-size: 12px">{{ formatSize(record.size) }}</span>
+                  <span class="torrent-detail__small">{{ formatSize(record.size) }}</span>
                 </template>
                 <template v-else-if="column.key === 'progress'">
-                  <span style="font-size: 12px">{{ normalizeTorrentProgress(record.progress).toFixed(1) }}%</span>
+                  <span class="torrent-detail__small">{{ normalizeTorrentProgress(record.progress).toFixed(1) }}%</span>
                 </template>
                 <template v-else-if="column.key === 'priority'">
                   <a-select
@@ -532,7 +528,7 @@ function formatTimestamp(timestamp: number | undefined): string {
                     size="small"
                     @change="(value: any) => updateFilePriority(record, value)"
                   />
-                  <span v-else style="font-size: 12px">{{ record.priority }}</span>
+                  <span v-else class="torrent-detail__small">{{ record.priority }}</span>
                 </template>
               </template>
             </a-table>
@@ -544,7 +540,7 @@ function formatTimestamp(timestamp: number | undefined): string {
         <!-- Peers -->
         <a-tab-pane v-if="featureAllowed('PeerList')" key="peers" :tab="t('MyClient.detail.peersTitle')">
           <div>
-            <div v-if="peersLoading" style="padding: 16px 0; text-align: center">
+            <div v-if="peersLoading" class="torrent-detail__loading">
               <a-spin />
             </div>
             <a-table
@@ -587,26 +583,26 @@ function formatTimestamp(timestamp: number | undefined): string {
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'ip'">
-                  <span style="font-size: 12px">{{ record.ip }}</span>
+                  <span class="torrent-detail__small">{{ record.ip }}</span>
                 </template>
                 <template v-else-if="column.key === 'client'">
-                  <span style="font-size: 12px">{{ record.client || "-" }}</span>
+                  <span class="torrent-detail__small">{{ record.client || "-" }}</span>
                 </template>
                 <template v-else-if="column.key === 'progress'">
-                  <span style="font-size: 12px">{{ normalizeTorrentProgress(record.progress).toFixed(1) }}%</span>
+                  <span class="torrent-detail__small">{{ normalizeTorrentProgress(record.progress).toFixed(1) }}%</span>
                 </template>
                 <template v-else-if="column.key === 'downloadSpeed'">
-                  <span style="font-size: 12px">{{ formatSize(record.downloadSpeed) }}/s</span>
+                  <span class="torrent-detail__small">{{ formatSize(record.downloadSpeed) }}/s</span>
                 </template>
                 <template v-else-if="column.key === 'uploadSpeed'">
-                  <span style="font-size: 12px">{{ formatSize(record.uploadSpeed) }}/s</span>
+                  <span class="torrent-detail__small">{{ formatSize(record.uploadSpeed) }}/s</span>
                 </template>
                 <template v-else-if="column.key === 'encrypted'">
                   <LockOutlined v-if="record.encrypted" />
                   <span v-else>-</span>
                 </template>
                 <template v-else-if="column.key === 'country'">
-                  <span style="font-size: 12px">{{ record.country || "-" }}</span>
+                  <span class="torrent-detail__small">{{ record.country || "-" }}</span>
                 </template>
               </template>
             </a-table>
@@ -617,13 +613,13 @@ function formatTimestamp(timestamp: number | undefined): string {
         <!-- Tracker 管理 -->
         <a-tab-pane v-if="featureAllowed('TrackerList')" key="trackers" :tab="t('MyClient.detail.trackers')">
           <div>
-            <a-row align="middle" :gutter="8" style="margin-bottom: 8px">
+            <a-row align="middle" :gutter="8" class="torrent-detail__tracker-toolbar">
               <a-col flex="1 1 0">
                 <a-form-item :label="t('MyClient.detail.addTrackerTitle')">
                   <a-input v-model:value="trackerInput" :disabled="trackerOpLoading" @keyup.enter="addTracker" />
                 </a-form-item>
               </a-col>
-              <a-col style="flex: none">
+              <a-col class="torrent-detail__tracker-action">
                 <a-button
                   :disabled="!trackerInput.trim() || trackerOpLoading"
                   :loading="trackerOpLoading"
@@ -635,7 +631,7 @@ function formatTimestamp(timestamp: number | undefined): string {
               </a-col>
             </a-row>
 
-            <div v-if="trackersLoading" style="padding: 16px 0; text-align: center">
+            <div v-if="trackersLoading" class="torrent-detail__loading">
               <a-spin />
             </div>
             <a-table
@@ -685,22 +681,22 @@ function formatTimestamp(timestamp: number | undefined): string {
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'url'">
-                  <span style="font-size: 12px">{{ record.url }}</span>
+                  <span class="torrent-detail__small">{{ record.url }}</span>
                 </template>
                 <template v-else-if="column.key === 'tier'">
-                  <span style="font-size: 12px">{{ record.tier }}</span>
+                  <span class="torrent-detail__small">{{ record.tier }}</span>
                 </template>
                 <template v-else-if="column.key === 'status'">
                   <component :is="trackerStatusIcon[record.status as CTrackerState]" />
                 </template>
                 <template v-else-if="column.key === 'seeds'">
-                  <span style="font-size: 12px">{{ record.seeds ?? "-" }}</span>
+                  <span class="torrent-detail__small">{{ record.seeds ?? "-" }}</span>
                 </template>
                 <template v-else-if="column.key === 'leeches'">
-                  <span style="font-size: 12px">{{ record.leeches ?? "-" }}</span>
+                  <span class="torrent-detail__small">{{ record.leeches ?? "-" }}</span>
                 </template>
                 <template v-else-if="column.key === 'lastAnnounce'">
-                  <span style="font-size: 12px">{{ formatTimestamp(record.lastAnnounce) }}</span>
+                  <span class="torrent-detail__small">{{ formatTimestamp(record.lastAnnounce) }}</span>
                 </template>
                 <template v-else-if="column.key === 'action'">
                   <a-button
@@ -721,10 +717,49 @@ function formatTimestamp(timestamp: number | undefined): string {
         <!-- 原始数据 -->
         <a-tab-pane key="raw" :tab="t('MyClient.action.viewRaw')">
           <div>
-            <pre class="raw-json" style="font-size: 14px">{{ JSON.stringify(torrent, null, 2) }}</pre>
+            <pre class="raw-json torrent-detail__raw">{{ JSON.stringify(torrent, null, 2) }}</pre>
           </div>
         </a-tab-pane>
       </a-tabs>
     </template>
   </a-modal>
 </template>
+
+<style scoped>
+/* 详情弹窗中重复的静态行内样式，收敛为语义类（比例色等动态 :style 保持原样） */
+.torrent-detail__small {
+  font-size: var(--ptd-font-size-sm);
+}
+
+.torrent-detail__muted {
+  margin-left: 4px;
+  font-size: var(--ptd-font-size-sm);
+  color: var(--ptd-text-tertiary);
+}
+
+.torrent-detail__speed-up {
+  color: var(--ptd-success);
+}
+
+.torrent-detail__speed-down {
+  color: var(--ptd-danger);
+}
+
+/* 文件 / Peers / Tracker 三个 tab 的加载占位 */
+.torrent-detail__loading {
+  padding: 16px 0;
+  text-align: center;
+}
+
+.torrent-detail__tracker-toolbar {
+  margin-bottom: 8px;
+}
+
+.torrent-detail__tracker-action {
+  flex: none;
+}
+
+.torrent-detail__raw {
+  font-size: 14px;
+}
+</style>

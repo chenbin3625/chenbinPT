@@ -126,8 +126,11 @@ describe("种子标题单元格（渲染行为）", () => {
 
 describe("种子标题单元格的省略规则（样式行为）", () => {
   it("标题单行省略，副标题走共享省略容器（默认限宽 20rem）", async () => {
-    const { loadOptionsStyles } = await import("../../helpers/optionsView.ts");
+    // TorrentTitleTd 的省略规则已收进组件自身的 <style scoped>；vitest 默认不处理 SFC 样式，
+    // 需要显式注入，否则 getComputedStyle 读不到这些声明。
+    const { loadOptionsStyles, loadScopedStyles } = await import("../../helpers/optionsView.ts");
     loadOptionsStyles();
+    loadScopedStyles("src/entries/options/components/TorrentTitleTd.vue");
 
     const pinia = prepareOptionsPinia();
     const { useConfigStore } = await import("@/options/stores/config.ts");

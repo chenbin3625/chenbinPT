@@ -48,11 +48,11 @@ const downloaderNameTitle = computed(() => {
           </template>
         </a-avatar>
       </div>
-      <div class="downloader_info" style="align-self: center">
+      <div class="downloader_info downloader_label__info">
         <!-- 名称与地址都可能很长（自定义名称 / 带 token 的完整地址），
              各自限制最大宽度并单行省略，悬停由原生 title 展示全文：
              否则地址换行会把整行撑到 90px 以上（下载历史表尤其明显）。 -->
-        <strong class="ptd-cell-ellipsis" style="max-width: 12rem" :title="downloaderNameTitle">
+        <strong class="ptd-cell-ellipsis downloader_label__name" :title="downloaderNameTitle">
           <template v-if="downloader === 'local'">{{ t("downloaderLabel.localDownload") }}</template>
           <template v-else-if="downloaderConfig">{{ downloaderConfig.name }}</template>
           <template v-else>
@@ -61,9 +61,8 @@ const downloaderNameTitle = computed(() => {
         </strong>
         <template v-if="downloaderConfig">
           <a-typography-link
-            class="ptd-cell-ellipsis"
+            class="ptd-cell-ellipsis downloader_label__address"
             :href="downloaderConfig.address"
-            style="font-size: 12px; max-width: 12rem"
             target="_blank"
             :title="downloaderConfig.address"
           >
@@ -74,3 +73,19 @@ const downloaderNameTitle = computed(() => {
     </div>
   </slot>
 </template>
+
+<style scoped>
+/* 行内静态样式收敛：名称 / 地址各自限宽单行省略，避免长地址把表格行撑高 */
+.downloader_label__info {
+  align-self: center;
+}
+
+.downloader_label__name {
+  max-width: 12rem;
+}
+
+.downloader_label__address {
+  max-width: 12rem;
+  font-size: var(--ptd-font-size-sm);
+}
+</style>
