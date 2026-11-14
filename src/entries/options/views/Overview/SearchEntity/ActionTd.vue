@@ -18,6 +18,10 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import SentToDownloaderDialog from "@/options/components/SentToDownloaderDialog/Index.vue";
 import TorrentFavoriteDialog from "@/options/components/TorrentFavoriteDialog.vue";
 import KeepUploadDialog from "./KeepUploadDialog.vue";
+import { mapWithConcurrency } from "./utils/concurrency.ts";
+
+/** 批量请求的并发上限：避免一次性打满消息通道，也避免串行等待过久 */
+const BATCH_CONCURRENCY = 4;
 
 const {
   torrentItems,
@@ -57,36 +61,55 @@ const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
 
 async function getTorrentDownloadLinks() {
-  const downloadUrls = [];
-
-  for (const torrent of torrentItems) {
+  return mapWithConcurrency(torrentItems, BATCH_CONCURRENCY, async (torrent) => {
     const downloadUrl = await sendMessage("getTorrentDownloadLink", torrent);
     // 记录 site/id 而不是 `${torrent}`（模板字符串里是 "[object Object]"，没有任何信息量）；
     // 下载链接里的凭据由 offscreen logger 统一脱敏。日志失败不影响取链接。
     void sendMessage("logger", { msg: `torrent ${torrent.site}/${torrent.id} download link: ${downloadUrl}` }).catch(
       () => {},
     );
-    downloadUrls.push({ torrent, downloadUrl });
-  }
-
-  return downloadUrls;
+    return { torrent, downloadUrl };
+  });
 }
 
 const copyTorrentDownloadLinkBtnStatus = ref(false);
 async function copyTorrentDownloadLink() {
-  // V-16：整段都必须包在 try/finally 里——`getTorrentDownloadLinks()` 一旦 reject
-  // （`sendMessage("getTorrentDownloadLink")` 失败），原先位于 try 之外的复位语句不会执行，
-  // 复制按钮会永久转圈，同时产生 unhandled rejection。
   copyTorrentDownloadLinkBtnStatus.value = true;
   try {
-    const downloadUrls = await getTorrentDownloadLinks();
+    // 有并发上限的 allSettled：单个链接失败不再丢弃已经取到的其余链接
+    const results = await getTorrentDownloadLinks();
+    const succeeded = results.filter(
+      (result): result is PromiseFulfilledResult<{ torrent: ITorrent; downloadUrl: string }> =>
+        result.status === "fulfilled",
+    );
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+
+    if (succeeded.length === 0) {
+      runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
+      return;
+    }
+
+    // 先复制成功部分；剪贴板失败（写入 reject）由外层 catch 统一提示
     await navigator.clipboard.writeText(
-      downloadUrls
-        .map((x) => x.downloadUrl)
+      succeeded
+        .map((result) => result.value.downloadUrl)
         .join("\n")
         .trim(),
     );
-    runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkSuccess"), { color: "success" });
+
+    if (failed.length === 0) {
+      runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkSuccess"), { color: "success" });
+      return;
+    }
+
+    // 部分成功：复用现有成功/失败文案 + 数量与首个失败原因，不新增 i18n key
+    const firstReason = String(failed[0]!.reason ?? "");
+    const detail = firstReason ? ` (${firstReason})` : "";
+    runtimeStore.showSnackbar(
+      `${t("SearchEntity.ActionTd.copyLinkSuccess")} (${succeeded.length}/${results.length}) ` +
+        `${t("SearchEntity.ActionTd.copyLinkFailed")} (${failed.length})${detail}`,
+      { color: "warning" },
+    );
   } catch (e) {
     runtimeStore.showSnackbar(t("SearchEntity.ActionTd.copyLinkFailed"), { color: "error" });
   } finally {
@@ -98,8 +121,8 @@ const localDlTorrentDownloadLinkBtnStatus = ref(false);
 async function localDlTorrentDownloadLink() {
   localDlTorrentDownloadLinkBtnStatus.value = true;
   try {
-    const results = await Promise.allSettled(
-      torrentItems.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
+    const results = await mapWithConcurrency(torrentItems, BATCH_CONCURRENCY, (torrent) =>
+      sendMessage("downloadTorrent", { torrent, downloaderId: "local" }),
     );
 
     // OPTIONSOVERVIEW-3：downloadTorrent 失败时不会 reject，而是返回 { downloadStatus: "failed", errorMessage }，

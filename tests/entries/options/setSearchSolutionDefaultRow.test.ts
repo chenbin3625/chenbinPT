@@ -137,7 +137,9 @@ describe("F2-High-14：导入搜索方案时剥离可改写请求目标的 reque
       expect(dumped).not.toContain('"method"');
 
       expect(
-        snackbar.mock.calls.some(([message]) => typeof message === "string" && /unsafe request config/i.test(message)),
+        snackbar.mock.calls.some(
+          ([message]) => typeof message === "string" && /unsafe request config|不安全的请求配置/i.test(message),
+        ),
         "必须告知用户导入文件里有被剥离的字段",
       ).toBe(true);
     } finally {

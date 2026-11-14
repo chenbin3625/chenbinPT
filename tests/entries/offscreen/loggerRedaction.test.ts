@@ -134,6 +134,21 @@ describe("logger 脱敏（L-7）", () => {
     expect(getLoggerItems()[0]!.msg).toBe("https://site.example/user/@name/profile?id=***");
   });
 
+  it("fragment 里的 k=v 值也被脱敏，不含 = 的 fragment 保持不变", async () => {
+    const { logger, getLoggerItems } = await loadLoggerModule();
+
+    logger({ msg: "oauth: https://site.example/cb#access_token=s3cr3t&token_type=bearer" });
+    logger({ msg: "anchor: https://site.example/page#section-2" });
+    logger({ msg: "both: https://site.example/cb?code=abc#access_token=xyz" });
+
+    const [fragmentOnly, anchor, queryAndHash] = getLoggerItems();
+    expect(fragmentOnly!.msg).toBe("oauth: https://site.example/cb#access_token=***&token_type=***");
+    expect(fragmentOnly!.msg).not.toContain("s3cr3t");
+    expect(anchor!.msg).toBe("anchor: https://site.example/page#section-2");
+    expect(queryAndHash!.msg).toBe("both: https://site.example/cb?code=***#access_token=***");
+    expect(queryAndHash!.msg).not.toContain("xyz");
+  });
+
   it("不就地改写调用方对象（2026-10-24 logger handoff）", async () => {
     const { logger, getLoggerItems } = await loadLoggerModule();
 

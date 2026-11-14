@@ -106,3 +106,36 @@ describe("Flood FL-3：失败返回 false（符合 Promise<boolean> 契约）", 
     expect(requestMock.mock.calls[2]![0].url).toBe("/api/torrents/stop");
   });
 });
+
+describe("Flood：error 状态优先于其它状态", () => {
+  const rawTorrent = (status: string[]) =>
+    ({
+      status,
+      name: "torrent",
+      dateAdded: 0,
+      bytesDone: 0,
+      sizeBytes: 0,
+      percentComplete: 0,
+      tags: [],
+      directory: "/downloads",
+      ratio: 0,
+      upRate: 0,
+      downRate: 0,
+      upTotal: 0,
+      downTotal: 0,
+      isPrivate: false,
+      trackerURIs: [],
+    }) as any;
+
+  it.each([
+    [["stopped", "error"], "error"],
+    [["seeding", "error"], "error"],
+    [["downloading", "error"], "error"],
+    [["stopped"], "paused"],
+  ])("status=%j 映射为 %s", async (status, expected) => {
+    requestMock.mockResolvedValue({ data: { torrents: { [HASH.toUpperCase()]: rawTorrent(status) } } });
+
+    const [torrent] = await makeClient().getAllTorrents();
+    expect(torrent.state).toBe(expected);
+  });
+});

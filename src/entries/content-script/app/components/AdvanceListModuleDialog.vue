@@ -145,15 +145,55 @@ const rowSelection = computed(() => ({
 }));
 
 const localDownloadMultiStatus = ref<boolean>(false);
+
+/**
+ * 以有限并发执行任务并保留每一项的 settle 结果。
+ * 批量下载/复制不能因为一条失败就丢弃其余已成功的结果（Promise.all 的全有或全无）。
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let cursor = 0;
+  const run = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      try {
+        results[index] = { status: "fulfilled", value: await worker(items[index]!) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => run()));
+  return results;
+}
+
 async function handleLocalDownloadMulti() {
   localDownloadMultiStatus.value = true;
 
   try {
     // A-9：发送也要在 try 内 —— 任一条 reject 都必须走到 finally 复位按钮，
     // 否则按钮永久转圈且产生 unhandled rejection。offscreen 侧有并发队列与下载间隔预留，可并发投递。
-    await Promise.all(
-      selectedTorrents.value.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
+    const results = await mapWithConcurrency(selectedTorrents.value, 4, (torrent) =>
+      sendMessage("downloadTorrent", { torrent, downloaderId: "local" }),
     );
+    // downloadTorrent 的失败通常以返回值 { downloadStatus: "failed" } 表示，而不是 reject
+    const failed = results.filter(
+      (result) =>
+        result.status === "rejected" || (result.status === "fulfilled" && result.value?.downloadStatus === "failed"),
+    ).length;
+    if (failed > 0) {
+      const success = results.length - failed;
+      runtimeStore.showSnackbar(
+        success > 0
+          ? t("contentScript.localDownloadPartial", { success, failed })
+          : t("contentScript.localDownloadFailed"),
+        { color: success > 0 ? "warning" : "error" },
+      );
+    }
   } catch (e) {
     runtimeStore.showSnackbar(t("contentScript.localDownloadFailed"), { color: "error" });
   } finally {
@@ -166,16 +206,37 @@ async function handleLinkCopyMulti() {
   linkCopyMultiStatus.value = true;
 
   try {
-    const downloadUrls = await Promise.all(
-      selectedTorrents.value.map((torrent) => sendMessage("getTorrentDownloadLink", torrent)),
+    // 并发上限 4：一条链接获取失败不影响其余条目，先复制成功的部分
+    const results = await mapWithConcurrency(selectedTorrents.value, 4, (torrent) =>
+      sendMessage("getTorrentDownloadLink", torrent),
     );
+    const downloadUrls = results
+      .filter((result): result is PromiseFulfilledResult<string> => result.status === "fulfilled" && !!result.value)
+      .map((result) => result.value);
+    const failed = results.length - downloadUrls.length;
+
+    if (downloadUrls.length === 0) {
+      runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
+      return;
+    }
 
     // A-9：走已有的 copyTextToClipboard（clipboard API 不可用 / 文档失焦时回退 execCommand），
     // 并且只有真的复制成功才提示成功
     const copied = await copyTextToClipboard(downloadUrls.join("\n").trim());
-    runtimeStore.showSnackbar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
-      color: copied ? "success" : "error",
-    });
+    if (!copied) {
+      runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
+      return;
+    }
+
+    if (failed > 0) {
+      // 部分成功：复用现有两条提示组合展示，不新增 i18n key
+      runtimeStore.showSnackbar(
+        `${t("contentScript.copyLinkSuccess")} (${downloadUrls.length}/${results.length}) / ${t("contentScript.copyLinkFailed")} (${failed}/${results.length})`,
+        { color: "warning" },
+      );
+    } else {
+      runtimeStore.showSnackbar(t("contentScript.copyLinkSuccess"), { color: "success" });
+    }
   } catch (e) {
     runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
   } finally {

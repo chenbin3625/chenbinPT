@@ -62,9 +62,13 @@ export async function setCookie(cookie: CookieSetDetails, force: boolean = false
     ] as (keyof chrome.cookies.SetDetails)[]
   ).forEach((key) => {
     if (key == "sameSite" && cookie[key] && cookie[key].toLowerCase() == "unspecified" && __BROWSER__ === "firefox") {
-      // firefox 下 unspecified 会导致cookie无法设置
+      // Firefox 下 unspecified 会导致 cookie 无法设置；但 SameSite=None（no_restriction）要求 secure，
+      // 非 HTTPS cookie 强设为 no_restriction 同样会失败。因此只在 secure=true 时映射为 no_restriction，
+      // 非 secure 时**不传** sameSite，让浏览器按默认值（Lax）处理。
       // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/cookies/SameSiteStatus
-      new_cookie["sameSite"] = "no_restriction";
+      if (cookie.secure === true) {
+        new_cookie["sameSite"] = "no_restriction";
+      }
     } else {
       // @ts-expect-error 这里按同一 key 逐字段拷贝，标量/联合类型在索引写入时无法收窄
       new_cookie[key] = cookie[key];
@@ -127,7 +131,11 @@ onMessage("removeCookie", async ({ data }) => {
   const removeCookie = {} as chrome.cookies.CookieDetails;
 
   removeCookie.name = data.name!;
-  removeCookie.storeId = data.storeId ?? "0";
+  // 只在调用方明确给出 storeId 时透传：默认 "0" 是 Chrome 的 storeId 语义，
+  // Firefox 没有该默认存储分区，传 "0" 可能删不到 cookie。
+  if (typeof data.storeId !== "undefined") {
+    removeCookie.storeId = data.storeId;
+  }
 
   if (typeof data.url === "undefined") {
     const setDetails = data as chrome.cookies.SetDetails;

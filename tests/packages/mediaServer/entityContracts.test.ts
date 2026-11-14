@@ -161,3 +161,44 @@ describe("C2-M-5：fnOS 静态缓存回收", () => {
     expect((FnOS as any).posterUrlCacheBytes).toBeLessThanOrEqual(maxBytes);
   });
 });
+
+describe("fnOS 海报抓取：并发与体积上限", () => {
+  it("单张海报响应超过 5MB 时降级为空串", async () => {
+    const client = new FnOSCtor(fnosConfig());
+    (client as any).login = vi.fn().mockResolvedValue({ apikey: "t", userId: "u" });
+    (client as any).request = vi.fn().mockResolvedValue({ data: { size: 5 * 1024 * 1024 + 1 } });
+
+    await expect((client as any).getPoster({ Id: "movie-1", ImageTags: { Primary: "tag-1" } })).resolves.toBe("");
+  });
+
+  it("搜索结果的海报请求并发不超过 4", async () => {
+    const client = new FnOSCtor(fnosConfig());
+    (client as any).getViewIds = vi.fn().mockResolvedValue(["view-1"]);
+    (client as any).login = vi.fn().mockResolvedValue({ apikey: "t", userId: "u" });
+
+    const items = Array.from({ length: 12 }, (_, i) => ({
+      Id: `item-${i}`,
+      Name: "n",
+      Type: "Movie",
+      ImageTags: { Primary: `tag-${i}` },
+    }));
+
+    let active = 0;
+    let maxActive = 0;
+    (client as any).request = vi.fn(async (_url: string, config: any) => {
+      if (config?.responseType === "blob") {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return { data: new Blob(["image"], { type: "image/png" }) };
+      }
+      return { data: { Items: items } };
+    });
+
+    const result = await client.getSearchResult("");
+
+    expect(result.items).toHaveLength(12);
+    expect(maxActive).toBe(4);
+  });
+});

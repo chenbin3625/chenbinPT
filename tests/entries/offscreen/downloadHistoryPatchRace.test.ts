@@ -29,8 +29,14 @@ const mocks = vi.hoisted(() => {
       store.set(value.id, structuredClone(value));
       return 1;
     }),
-    delete: vi.fn(async () => undefined),
-    clear: vi.fn(async () => undefined),
+    delete: vi.fn(async (_table: string, key: number) => {
+      await delay();
+      store.delete(key);
+    }),
+    clear: vi.fn(async () => {
+      await delay();
+      store.clear();
+    }),
   };
 
   return {
@@ -164,5 +170,54 @@ describe("B-11：下载历史读改写竞态", () => {
     // 每次都应恰好读一次、写一次——若链头泄漏或被复用，读次数会偏离。
     expect(mocks.db.get).toHaveBeenCalledTimes(20);
     expect(mocks.db.put).toHaveBeenCalledTimes(20);
+  });
+
+  it("删除进入同一 id 链：在途 patch 写回后仍会被删除（不复活记录）", async () => {
+    const { patchDownloadHistory, deleteDownloadHistoryById } = await loadModule();
+    mocks.store.set(1, { id: 1, downloadStatus: "pending" });
+
+    // 让删除比 patch 的写回更快：旧实现下 delete 先完成、patch 随后把记录写回
+    mocks.db.delete.mockImplementationOnce(async (_table: string, key: number) => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      mocks.store.delete(key);
+    });
+
+    const patch = patchDownloadHistory(1, { downloadStatus: "completed" });
+    // 等 patch 读完旧值、进入写回阶段
+    await new Promise((resolve) => setTimeout(resolve, 6));
+    await deleteDownloadHistoryById(1);
+    await patch;
+
+    expect(mocks.store.has(1)).toBe(false);
+  });
+
+  it("清空等待所有在途 patch 后再执行：多条在途读改写不得把记录写回", async () => {
+    const { patchDownloadHistory, clearDownloadHistory } = await loadModule();
+    mocks.store.set(11, { id: 11, downloadStatus: "pending" });
+    mocks.store.set(12, { id: 12, downloadStatus: "pending" });
+
+    mocks.db.clear.mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      mocks.store.clear();
+    });
+
+    const first = patchDownloadHistory(11, { downloadStatus: "completed" });
+    const second = patchDownloadHistory(12, { downloadStatus: "failed" });
+    // 等两个 patch 都读完旧值、进入写回阶段
+    await new Promise((resolve) => setTimeout(resolve, 6));
+    await clearDownloadHistory();
+    await Promise.all([first, second]);
+
+    expect(mocks.store.size).toBe(0);
+  });
+
+  it("清空之后到达的 patch 不会复活记录", async () => {
+    const { patchDownloadHistory, clearDownloadHistory } = await loadModule();
+    mocks.store.set(21, { id: 21, downloadStatus: "pending" });
+
+    await clearDownloadHistory();
+    await patchDownloadHistory(21, { downloadStatus: "completed" });
+
+    expect(mocks.store.has(21)).toBe(false);
   });
 });

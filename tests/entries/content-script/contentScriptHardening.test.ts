@@ -298,10 +298,28 @@ describe("A-9 · 复制/下载动作", () => {
       expect(body, `${name} 应有 try/finally`).toContain("finally");
       expect(body, `${name} 复位语句应在 finally 之后`).toMatch(/finally \{[\s\S]*?\.value = false/);
       // 发送必须被 await（fire-and-forget 会让 loading 在发送完成前复位）；
-      // SiteListPage 用 allSettled 以便区分部分失败
-      expect(body, `${name} 应 await 发送结果`).toMatch(/await Promise\.all(Settled)?\(/);
+      // 批量动作走 allSettled 或有并发上限的 mapWithConcurrency（都保留每条结果，避免全有或全无）
+      expect(body, `${name} 应 await 发送结果`).toMatch(/await (?:mapWithConcurrency|Promise\.allSettled)\(/);
       expect(body).toContain(status);
     }
+  });
+
+  it("批量复制/下载保留部分成功结果：有限并发 + 不把 downloadStatus=failed 当成成功", () => {
+    const dialog = readSource("src/entries/content-script/app/components/AdvanceListModuleDialog.vue");
+    const listPage = readSource("src/entries/content-script/app/pages/SiteListPage.vue");
+
+    for (const source of [dialog, listPage]) {
+      expect(source).toMatch(/function mapWithConcurrency/);
+      // 并发上限 3~5，避免一次向 offscreen 投递过多任务
+      expect(source).toMatch(/await mapWithConcurrency\((?:torrents|selectedTorrents\.value), [3-5],/);
+      // 部分成功时仍复制已成功的链接，并复用现有提示组合
+      expect(source).toContain("contentScript.copyLinkSuccess");
+      expect(source).toContain("contentScript.copyLinkFailed");
+    }
+
+    // downloadTorrent 失败通常不 reject，而是返回 { downloadStatus: "failed" }
+    expect(dialog).toContain('downloadStatus === "failed"');
+    expect(dialog).toContain("contentScript.localDownloadPartial");
   });
 });
 

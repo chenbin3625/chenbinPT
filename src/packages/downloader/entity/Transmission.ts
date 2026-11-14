@@ -412,6 +412,15 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     return `${sessionData.version}, RPC ${sessionData["rpc-version"]}`;
   }
 
+  /**
+   * 当前服务器的 RPC 版本号。
+   * `getClientVersion()` 在基类里缓存 session-get 结果，因此本方法不会每次请求都拉一次 session。
+   */
+  private async getRpcVersion(): Promise<number> {
+    const clientVersion = await this.getClientVersion();
+    return parseInt(clientVersion.match(/RPC (\d+)/)?.[1] || "0", 10);
+  }
+
   override async getClientStatus(): Promise<TorrentClientStatus> {
     const retStatus: TorrentClientStatus = await super.getClientStatus();
 
@@ -465,8 +474,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         paused: options.addAtPaused ?? false,
       };
 
-      const clientVersion = await this.getClientVersion();
-      const supportLabelAtAdd = parseInt(clientVersion.match(/RPC (\d+)/)?.[1] || "0", 10) >= 17;
+      const supportLabelAtAdd = (await this.getRpcVersion()) >= 17;
 
       // 处理链接
       if (url.startsWith("magnet:") || !options.localDownload) {
@@ -773,6 +781,12 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   // 设置单个种子的标签
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
     try {
+      // labels 字段从 RPC 17（Transmission 3.00）起才支持；低版本发送会被静默忽略，
+      // 与其它方法保持一致直接返回 false，同时避免一次无意义的 torrent-set 请求。
+      if ((await this.getRpcVersion()) < 17) {
+        return false;
+      }
+
       const args = {
         ids: id,
         labels: [label],

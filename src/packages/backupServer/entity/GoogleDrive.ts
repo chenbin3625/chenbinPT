@@ -100,6 +100,9 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
   private rootFolderName = "PTD Backup";
   private ApiEndpoint = "https://www.googleapis.com/drive/v3/files";
 
+  /** Drive multipart upload 的硬上限是 5 MB，留出余量后用 4 MiB 作为安全阈值 */
+  private static readonly MULTIPART_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+
   private async fetchAccessToken(): Promise<AuthInformation> {
     if (this.accessInformation === undefined || this.accessInformation.expired_at < Date.now()) {
       const { data } = await axios.post<AuthInformationResponse>(
@@ -216,15 +219,59 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       parents: [await this.getParentId()],
     };
 
+    const zipBlob = await this.backupDataToZipBlob(file);
+
+    // Drive 的 multipart 上传上限为 5 MB；加密备份是 STORE + base64，体积很容易超过它。
+    // 超过安全阈值时改走 resumable upload：先创建会话，再 PUT 整个 blob。
+    if (zipBlob.size > GoogleDrive.MULTIPART_UPLOAD_MAX_BYTES) {
+      return await this.addFileResumable(metadata, zipBlob);
+    }
+
     const form = new FormData();
     form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
-    form.append("file", await this.backupDataToZipBlob(file));
+    form.append("file", zipBlob);
 
     const { data } = await this.request<File>({
       method: "post",
       url: "https://www.googleapis.com/upload/drive/v3/files",
       params: { uploadType: "multipart" },
       data: form,
+    });
+
+    return !!data.id;
+  }
+
+  /**
+   * 大文件走 resumable upload（Drive 对 multipart 有 5 MB 上限）。
+   *
+   * 第一步 POST `uploadType=resumable` 只发送 JSON metadata，响应头 Location 是预授权的
+   * 会话上传地址；第二步把整个 blob 单次 PUT 到该地址即可。两步都复用 this.request，
+   * 因而保留统一的鉴权、超时与限流重试。
+   */
+  private async addFileResumable(metadata: { name: string; parents: string[] }, blob: Blob): Promise<boolean> {
+    const contentType = blob.type || "application/zip";
+    const initResponse = await this.request<File>({
+      method: "post",
+      url: "https://www.googleapis.com/upload/drive/v3/files",
+      params: { uploadType: "resumable" },
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Type": contentType,
+      },
+      data: metadata,
+    });
+
+    const responseHeaders = initResponse.headers as Record<string, string | undefined>;
+    const uploadUrl = responseHeaders["location"] ?? responseHeaders["Location"];
+    if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
+      throw new Error("Google Drive resumable upload failed: missing Location header in init response");
+    }
+
+    const { data } = await this.request<File>({
+      method: "put",
+      url: uploadUrl,
+      headers: { "Content-Type": contentType },
+      data: blob,
     });
 
     return !!data.id;

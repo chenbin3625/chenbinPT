@@ -423,6 +423,22 @@ describe("SITECORE-5：Rartracker passkey 的实例级记忆", () => {
   });
 });
 
+describe("Unit3D list URL 模式：查询串里的 `?` 必须转义", () => {
+  const list = (Unit3DSchema as any).list[0] as { urlPattern: string[]; excludeUrlPattern: string[] };
+  const anyMatch = (patterns: string[], url: string) => patterns.some((pattern) => new RegExp(pattern, "i").test(url));
+
+  it.each(["card", "grouped", "poster"])("excludeUrlPattern 能命中 /torrents?view=%s", (view) => {
+    // 未转义时 `s?` 是可选的 s，真正的 `?` 永远匹配不到
+    expect(anyMatch(list.excludeUrlPattern, `https://unit3d.example/torrents?view=${view}`)).toBe(true);
+  });
+
+  it("urlPattern 与 excludeUrlPattern 只作用于查询串本身，不误伤详情页", () => {
+    expect(anyMatch(list.urlPattern, "https://unit3d.example/torrents?page=2")).toBe(true);
+    expect(anyMatch(list.excludeUrlPattern, "https://unit3d.example/torrents?page=2")).toBe(false);
+    expect(anyMatch(list.excludeUrlPattern, "https://unit3d.example/torrents/12")).toBe(false);
+  });
+});
+
 describe("SITECORE-6：详情页 title 的兜底选择器必须真正命中", () => {
   function headTitleDoc(title: string, url: string): Document {
     const doc = new DOMParser().parseFromString(

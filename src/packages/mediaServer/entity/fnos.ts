@@ -63,6 +63,9 @@ export const mediaServerConfig: IFnOSConfig = {
   timeout: 5000,
 };
 
+/** 单张海报的体积上限（与 emby 一致）：超过直接放弃，避免把超大原图转成 data URL 常驻内存 */
+const MAX_POSTER_BYTES = 5 * 1024 * 1024;
+
 interface IFnOSSystemInfo {
   ServerName: string;
   Version: string;
@@ -499,6 +502,10 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
         params: { tag: primaryTag, maxHeight: 400 },
         responseType: "blob",
       });
+      // 体积上限：与 emby 的 getPoster 保持一致，超大响应直接降级为空海报
+      if ((response.data?.size ?? 0) > MAX_POSTER_BYTES) {
+        return "";
+      }
       const posterDataUrl = await blobToDataUrl(response.data);
 
       this.setPosterCache(cacheKey, posterDataUrl);
@@ -826,7 +833,8 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       }
 
       const items = Array.from(this.dedupeSearchItems(mergedItems).values());
-      result.items = await Promise.all(items.map((item) => this.buildMediaItem(item)));
+      // 海报需要带认证头逐张拉取，限并发（4）避免一次搜索同时打出数十个图片请求
+      result.items = await mapWithConcurrency(items, 4, (item) => this.buildMediaItem(item));
       result.options = config;
       result.status = EResultParseStatus.success;
     } catch (e) {

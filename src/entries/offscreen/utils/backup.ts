@@ -47,11 +47,12 @@ export const storageKey = [
  * 这些字段一旦明文进入远端存储就等于交出账号：
  *   - `cookies`：全部已配置站点的登录会话（含 httpOnly）；
  *   - `metadata`：下载器/媒体服务器密码、站点 inputSetting/runtimeSettings 里的 passkey/token；
- *   - `downloadHistory`：历史记录里的 `torrent.link`/`downloadRequestConfig` 可能带 passkey。
+ *   - `downloadHistory`：历史记录里的 `torrent.link`/`downloadRequestConfig` 可能带 passkey；
+ *   - `config`：含 `config.socialSite.bangumi.apikey` 等第三方服务凭据（见 social/types.ts）。
  *
  * 旧实现（以及审查报告 OS-2）只是「建议提示」，但自动备份完全不经过 UI，提示等于不存在。
  * 现在改为 fail-closed：**上传远端**时没有密钥就拒绝导出这些字段，错误消息里给出可操作的修复入口。
- * 其它无凭据字段（config/userInfo/searchResultSnapshot/keepUploadTask）仍允许明文导出。
+ * 其它无凭据字段（userInfo）仍允许明文导出。
  *
  * 复检 RB-1/H-2 修订：**本地导出**（`backupServerId === "local"`，写用户自己的磁盘、不经过任何
  * 第三方）不再 fail-closed —— 强制加密会破坏「导出明文 zip 迁移/离线保存」这一既有能力，且与
@@ -68,13 +69,15 @@ export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = [
   // 很多站点定义把 passkey 直接拼在里面（见 hdbits.ts 等）。
   "keepUploadTask",
   "searchResultSnapshot",
+  // config 会整份导出，其中 config.socialSite.bangumi.apikey 是 Bangumi 的 API Key
+  "config",
 ];
 
 /** 无密钥 + 敏感字段时的提示文案（remote 拒绝用错误、local 仅告警） */
 function buildPlaintextSensitiveMessage(blockedFields: TBackupFields[]): string {
   return (
     `备份包含敏感字段（${blockedFields.join("、")}）但未设置备份加密密钥。` +
-    `上传到远端存储会被拒绝（避免明文交出 cookies/passkey）；` +
+    `上传到远端存储会被拒绝（避免明文交出 cookies/passkey/API Key）；` +
     `请先在 设置 → 基础设置 → 备份 中生成/填写加密密钥，或取消勾选这些字段。`
   );
 }
@@ -822,6 +825,9 @@ export async function restoreBackupData(
     clearSiteInstanceCache();
 
     // 最后替换 IndexedDB 历史：该操作自身是原子事务，失败时上面的 storage 写入仍可回滚。
+    // 只有真正写入的字段才算「已恢复」：downloadHistory 的 restore 返回 false 时只记 skipped，
+    // 不能因为「尝试过」就让整次恢复报告成功。
+    let downloadHistoryRestored = false;
     if (restoreFields.includes("downloadHistory")) {
       const db = await ptdIndexDb;
       const restored = await replaceDownloadHistory(
@@ -830,6 +836,7 @@ export async function restoreBackupData(
       );
       if (restored) {
         report.restored.push("downloadHistory");
+        downloadHistoryRestored = true;
       } else {
         report.skipped.push({ field: "downloadHistory", reason: "invalid data in backup, local history kept" });
         logger({
@@ -843,11 +850,11 @@ export async function restoreBackupData(
      * 之前这里无视 `report.restored` 直接置 `success = true`：UI 侧即便封住了「零勾选」，
      * 只要调用方传进来的字段与备份 manifest 没有交集、或字段值全为空/全部未通过校验，
      * 用户仍会看到「恢复成功」而实际上什么都没发生。这里只拦「本次没有任何可写入内容」；
-     * downloadHistory 的既有跳过语义保持不变。cookies 需要先进入后续逐条恢复阶段，
-     * 最终再依据是否真的写入过 cookie 决定 cookies-only 恢复是否成功。
+     * downloadHistory 只有真正替换成功（downloadHistoryRestored）才算恢复，仅「尝试过」不算。
+     * cookies 需要先进入后续逐条恢复阶段，最终再依据是否真的写入过 cookie 决定
+     * cookies-only 恢复是否成功。
      */
-    const downloadHistoryAttempted = restoreFields.includes("downloadHistory");
-    if (report.restored.length > 0 || cookiesToRestore || downloadHistoryAttempted) {
+    if (report.restored.length > 0 || cookiesToRestore || downloadHistoryRestored) {
       report.success = true;
     } else {
       report.skipped.push({

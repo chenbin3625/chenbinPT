@@ -496,7 +496,9 @@ async function createSearchMenu(baseMenuId: string, options: ICreateSearchMenuOp
       onclick: (info) => {
         openOptionsPage({
           path: "/search-entity",
-          query: { search: info.selectionText, plan: `site:${thisTabSiteId}`, flush: 1 },
+          // 该菜单项可能继承 extraCreateMenuProperties 的 contexts:["link"]（豆瓣/IMDb），
+          // 链接上下文没有选中文本，必须与同文件其它搜索项一致走 selectionTextFilterFn。
+          query: { search: selectionTextFilterFn(info), plan: `site:${thisTabSiteId}`, flush: 1 },
         });
       },
     });
@@ -594,7 +596,7 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
         title: chrome.i18n.getMessage("contextMenuSearch"),
         contexts: ["selection"],
       });
-      await createSearchMenu(baseSearchMenusId);
+      await createSearchMenu(baseSearchMenusId, { thisTabSiteId });
     }
 
     // 创建社交链接搜索菜，所有页面可用
@@ -607,6 +609,7 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
         targetUrlPatterns: ["*://movie.douban.com/subject/*"],
       });
       await createSearchMenu(donbanMenuId, {
+        thisTabSiteId,
         extraCreateMenuProperties: {
           contexts: ["link"],
           targetUrlPatterns: ["*://movie.douban.com/subject/*"],
@@ -630,6 +633,7 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
       });
 
       await createSearchMenu(imdbMenuId, {
+        thisTabSiteId,
         extraCreateMenuProperties: {
           contexts: ["link"],
           targetUrlPatterns: ["*://www.imdb.com/title/tt*"],

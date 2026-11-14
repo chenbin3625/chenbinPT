@@ -95,17 +95,66 @@ async function handleLocalDownloadMulti() {
 }
 
 const linkCopyMultiStatus = ref<boolean>(false);
+
+/**
+ * 以有限并发执行任务并保留每一项的 settle 结果。
+ * 批量复制/下载不能因为一条失败就丢弃其余已成功的结果（Promise.all 的全有或全无）。
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let cursor = 0;
+  const run = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      try {
+        results[index] = { status: "fulfilled", value: await worker(items[index]!) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => run()));
+  return results;
+}
+
 async function handleLinkCopyMulti() {
   linkCopyMultiStatus.value = true;
 
   try {
     const { torrents } = await parseListPage();
-    const downloadUrls = await Promise.all(torrents.map((torrent) => sendMessage("getTorrentDownloadLink", torrent)));
+    if (torrents.length === 0) return;
+
+    // 并发上限 4：一条链接获取失败不影响其余条目，先复制成功的部分
+    const results = await mapWithConcurrency(torrents, 4, (torrent) => sendMessage("getTorrentDownloadLink", torrent));
+    const downloadUrls = results
+      .filter((result): result is PromiseFulfilledResult<string> => result.status === "fulfilled" && !!result.value)
+      .map((result) => result.value);
+    const failed = results.length - downloadUrls.length;
+
+    if (downloadUrls.length === 0) {
+      runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
+      return;
+    }
 
     const copied = await copyTextToClipboard(downloadUrls.join("\n").trim());
-    runtimeStore.showSnackbar(copied ? t("contentScript.copyLinkSuccess") : t("contentScript.copyLinkFailed"), {
-      color: copied ? "success" : "error",
-    });
+    if (!copied) {
+      runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
+      return;
+    }
+
+    if (failed > 0) {
+      // 部分成功：复用现有两条提示组合展示，不新增 i18n key
+      runtimeStore.showSnackbar(
+        `${t("contentScript.copyLinkSuccess")} (${downloadUrls.length}/${results.length}) / ${t("contentScript.copyLinkFailed")} (${failed}/${results.length})`,
+        { color: "warning" },
+      );
+    } else {
+      runtimeStore.showSnackbar(t("contentScript.copyLinkSuccess"), { color: "success" });
+    }
   } catch (e) {
     runtimeStore.showSnackbar(t("contentScript.copyLinkFailed"), { color: "error" });
   } finally {

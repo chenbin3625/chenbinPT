@@ -66,12 +66,16 @@ import SearchStatusDialog from "./SearchStatusDialog.vue";
 import SaveSnapshotDialog from "./SaveSnapshotDialog.vue";
 
 // 主要助手方法
-import { getActiveTagFilterNames, tableCustomFilter, toggleTagFilter } from "./utils/filter";
+import { getActiveTagFilterNames, tableCustomFilter, toggleTagFilter, updateTableFilterNow } from "./utils/filter";
 import {
   cancelSearchQueue,
+  captureSearchTaskEpoch,
   doSearch,
   invalidateSearchTasks,
   isFlushQuery,
+  isSearchExpansionCurrent,
+  isSearchQueueIdle,
+  isSearchTaskCurrent,
   normalizeRouteQueryValue,
   pauseSearchQueue as pauseSearchQueueState,
   reconcileRestoredSearchState,
@@ -326,13 +330,18 @@ function showSearchError(error: unknown) {
  * 用户以为看到的是完整结果。这里等队列真正 idle（所有任务结束、`idle` 收尾已执行）再摘 flush。
  */
 async function runSearch(search: string, plan: string) {
+  let expansionToken: number | undefined;
   try {
-    await doSearch(search, plan, true);
+    expansionToken = await doSearch(search, plan, true);
   } catch (error) {
     showSearchError(error);
   } finally {
     await waitForSearchQueueIdle();
-    removeFlushFromRoute();
+    // 等队列期间可能已经开始了新一轮搜索：过期的这一轮不能再把新一轮的 flush 从地址上摘掉。
+    // doSearch 抛错（没有拿到本轮 token）时保持原有收尾行为。
+    if (expansionToken === undefined || isSearchExpansionCurrent(expansionToken)) {
+      removeFlushFromRoute();
+    }
   }
 }
 
@@ -355,7 +364,9 @@ reconcileRestoredSearchState();
  */
 {
   const restoredInterrupted = consumeRuntimeRestoreInterruption("search");
-  const reconciledInterrupted = reconcileRuntimeInFlightState(runtimeStore).search;
+  // 队列里仍有真实任务时（从别的页面切回搜索页），这些 waiting/working 计划是在途搜索而非残留，
+  // 不能把 isSearching 置 false、计划改写成 userCancel，否则会把正在运行的搜索标成「已中断」。
+  const reconciledInterrupted = isSearchQueueIdle() ? reconcileRuntimeInFlightState(runtimeStore).search : false;
   if (restoredInterrupted || reconciledInterrupted) {
     runtimeStore.showSnackbar(t("SearchEntity.index.alert.searchInterrupted"), { color: "warning" });
   }
@@ -363,17 +374,28 @@ reconcileRestoredSearchState();
 
 watch(
   () => route.query,
-  (newParams, oldParams) => {
+  async (newParams, oldParams) => {
     const snapshotId = normalizeRouteQueryValue(newParams.snapshot);
+    // 本次路由变化的过期令牌：await 水合期间可能又发生了新的导航（含快照切换）
+    const loadToken = ++snapshotLoadToken;
 
     if (snapshotId) {
-      const loadToken = ++snapshotLoadToken;
       const flush = isFlushQuery(newParams.flush);
 
       // V-15：切到快照视图前先让在途/排队的实时搜索任务失效并清空队列，
       // 否则它们会继续往被替换掉的 runtimeStore.search.* 里写入，把实时结果污染到快照视图上。
       invalidateSearchTasks();
       cancelSearchQueue();
+      const taskEpoch = captureSearchTaskEpoch();
+
+      // 冷启动时 metadata store 可能尚未从 chrome.storage 水合完成，
+      // getSearchSnapshotData 会同步查 state.snapshots 并误判「快照不存在」。
+      await metadataStore.$onReady();
+
+      // await 之后重新校验：加载令牌 / 路由仍指向同一快照 / 搜索轮次未被新一轮搜索取代
+      if (loadToken !== snapshotLoadToken) return;
+      if (normalizeRouteQueryValue(route.query.snapshot) !== snapshotId) return;
+      if (!isSearchTaskCurrent(taskEpoch)) return;
 
       void metadataStore
         .getSearchSnapshotData(snapshotId)
@@ -381,6 +403,7 @@ watch(
           // 过期响应 / 用户已切到别的快照 / 已离开快照视图：直接丢弃
           if (loadToken !== snapshotLoadToken) return;
           if (normalizeRouteQueryValue(route.query.snapshot) !== snapshotId) return;
+          if (!isSearchTaskCurrent(taskEpoch)) return;
 
           if (!data) {
             // F3：快照已被删除（从 sessionStorage 还原的 search.snapshot 或回退到 ?snapshot=）。
@@ -394,12 +417,16 @@ watch(
           // 在进入 Pinia store 之前对普通对象做一次归一，避免逐条 mutation 触发 sessionStorage 全量写入
           normalizeSnapshotPromotions(data.searchResult);
           runtimeStore.search = { ...data, snapshot: snapshotId };
+          // 打开快照不应沿用上一轮实时搜索的站点筛选（否则新快照会看起来「没有结果」）
+          tableCustomFilter.advanceFilterDictRef.value.site = { required: [], exclude: [] };
+          updateTableFilterNow();
           buildAdvanceItemPropsFn();
         })
         .catch((error) => {
           // F13：快照读取失败（offscreen 不可用 / IndexedDB 数据缺失）原先没有任何 catch，
           // 页面停在旧数据上一声不响。这里清空并明确提示。
           if (loadToken !== snapshotLoadToken) return;
+          if (!isSearchTaskCurrent(taskEpoch)) return;
           runtimeStore.resetSearchData();
           runtimeStore.showSnackbar(t("SearchResultSnapshot.notFound"), { color: "error" });
           clearSnapshotRoute();
@@ -410,8 +437,10 @@ watch(
       return;
     }
 
-    // 离开快照视图：让在途的快照响应失效
-    snapshotLoadToken++;
+    // 离开快照视图 & 普通搜索：同样先等 metadata 水合（随后 runSearch 里会读取搜索方案）
+    await metadataStore.$onReady();
+    if (loadToken !== snapshotLoadToken) return;
+    if (normalizeRouteQueryValue(route.query.snapshot) !== undefined) return;
 
     const decision = resolveRouteSearchDecision({
       query: newParams as Record<string, unknown>,
@@ -552,15 +581,19 @@ const filteredTableBooleanControlKeys = computed(() => {
   ) as (keyof typeof configStore.searchEntifyControl)[];
 });
 
-const hiddenTagNamesText = computed({
-  get: () => configStore.searchEntifyControl.hiddenTagNames.join("\n"),
-  set: (val: string) => {
-    configStore.searchEntifyControl.hiddenTagNames = val
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  },
+// 隐藏标签文本域的本地草稿：受控写入 store 时不能在每次输入就 trim/split（会吞掉换行与空格，
+// 用户无法正常换行输入）；打开弹层时用 store 值初始化，失焦时再统一 split/trim 写回并落盘。
+const hiddenTagNamesDraft = ref<string>("");
+watch(showDisplayPreferences, (open) => {
+  if (open) hiddenTagNamesDraft.value = configStore.searchEntifyControl.hiddenTagNames.join("\n");
 });
+function saveHiddenTagNames() {
+  configStore.searchEntifyControl.hiddenTagNames = hiddenTagNamesDraft.value
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  saveSearchControl();
+}
 
 // 相同大小种子分组色条（ #1411 ），len 为 8，按 size 升序循环，保证相邻分组不同色。
 // 前四个是语义色（跟随主题变化），后四个没有 antd 语义 token 可对应，固定为四种易区分的色相：
@@ -589,7 +622,8 @@ const sizeGroupColors = computed(() => {
   }
 
   const groups = new Map<string, { size: number; count: number }>();
-  for (const item of runtimeStore.search.searchResult) {
+  // 只按表格当前实际展示（经过筛选）的结果分组：被筛掉的行不应影响色条分组与编号
+  for (const item of filteredTableData.value) {
     if (!item.size) continue;
     const key = getSizeKey(item.size);
     const group = groups.get(key);
@@ -780,10 +814,10 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
             <a-list-item v-if="configStore.searchEntifyControl.showTorrentTag" style="margin-top: 8px">
               <a-form-item :label="t('SetBase.searchEntity.hiddenTagNames')"
                 ><a-textarea
-                  v-model:value="hiddenTagNamesText"
+                  v-model:value="hiddenTagNamesDraft"
                   :rows="5"
                   allow-clear
-                  @blur="saveSearchControl"
+                  @blur="saveHiddenTagNames"
                 ></a-textarea
               ></a-form-item>
             </a-list-item>

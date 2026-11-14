@@ -49,6 +49,26 @@ const failCounts = new Map<string, number>();
 const refreshTimers = new Map<string, number>();
 
 /**
+ * 页面级会话状态（模块级，跨路由/跨页面实例复用）。
+ *
+ * 定时器回调 `await` 期间用户可能已经离开 MyClient 页面：卸载时虽然 clearAllTimers() 清掉了
+ * 当前定时器，但**已经进入回调、正在等请求返回**的那次刷新会在 await 之后无条件调用
+ * scheduleDownloaderRefresh()，把定时器重新挂上 —— 离开页面后仍在轮询。
+ *
+ * 因此用「页面 epoch + 是否激活」双重判定：卸载时递增 epoch 并置为未激活，回调保存发起时的
+ * epoch，await 后不匹配就直接结束。重新进入页面时 beginPageRefresh() 再次递增并激活，
+ * 旧页面遗留的在途回调依然因 epoch 不同而失效。
+ */
+let pageRefreshActive = false;
+let pageRefreshEpoch = 0;
+
+/**
+ * 每个下载器的取消代际。`clearDownloaderTimer()` 会递增它，在途回调据此判断自己是否已被取消
+ * （例如下载器被移出当前筛选、被暂停刷新），避免请求返回后又把定时器重新挂上。
+ */
+const refreshGenerations = new Map<string, number>();
+
+/**
  * 种子的全局唯一键。
  *
  * 同一 info hash 的种子可能同时存在于多个下载器上（qBittorrent 的 id 就是 info hash），
@@ -222,11 +242,31 @@ export function useClientRefresh() {
   );
 
   function clearDownloaderTimer(id: string) {
+    // 先让该下载器所有在途回调失效（见 refreshGenerations），再清实际定时器：
+    // 回调可能在 clearTimeout 之前就已经进入 await，仅清定时器无法阻止它稍后重新挂上。
+    refreshGenerations.set(id, (refreshGenerations.get(id) ?? 0) + 1);
     const tid = refreshTimers.get(id);
     if (tid !== undefined) {
       clearTimeout(tid);
       refreshTimers.delete(id);
     }
+  }
+
+  /** 下载器仍然存在且启用才值得刷新（删除/停用后不再发请求，也不再重挂定时器） */
+  function isRefreshableDownloader(id: string): boolean {
+    return metadataStore.downloaders[id]?.enabled === true;
+  }
+
+  /** 进入 MyClient 页面：激活刷新会话并让上一页面遗留的在途回调失效 */
+  function beginPageRefresh() {
+    pageRefreshEpoch++;
+    pageRefreshActive = true;
+  }
+
+  /** 离开 MyClient 页面：让所有在途回调失效（不清 autoRefreshRunning，见 D2-06） */
+  function endPageRefresh() {
+    pageRefreshEpoch++;
+    pageRefreshActive = false;
   }
 
   async function loadSingleDownloader(id: string): Promise<void> {
@@ -255,12 +295,21 @@ export function useClientRefresh() {
 
   function scheduleDownloaderRefresh(id: string) {
     if (!autoRefreshRunning.value) return;
+    if (!pageRefreshActive) return; // 页面已卸载：在途请求不得重新挂上定时器
     if (suspendedDownloaders.value.has(id)) return;
+    if (!isRefreshableDownloader(id)) return; // 下载器已删除/停用
     if (globalRefreshInterval.value <= 0) return;
 
     clearDownloaderTimer(id);
+    // clearDownloaderTimer 刚递增过的代际就是本次定时器的身份（见 refreshGenerations）
+    const generation = refreshGenerations.get(id) ?? 0;
+    const epoch = pageRefreshEpoch;
     const tid = window.setTimeout(async () => {
       await loadSingleDownloader(id);
+      // await 期间可能已卸载页面 / 取消该下载器 / 停用下载器：任一情况都不再续订
+      if (epoch !== pageRefreshEpoch || !pageRefreshActive) return;
+      if ((refreshGenerations.get(id) ?? 0) !== generation) return;
+      if (!isRefreshableDownloader(id)) return;
       scheduleDownloaderRefresh(id);
     }, globalRefreshInterval.value * 1000);
     refreshTimers.set(id, tid);
@@ -333,5 +382,7 @@ export function useClientRefresh() {
     startAutoRefresh,
     stopAutoRefresh,
     toggleAutoRefresh,
+    beginPageRefresh,
+    endPageRefresh,
   };
 }

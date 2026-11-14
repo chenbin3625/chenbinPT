@@ -362,7 +362,8 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
   list: [
     {
       urlPattern: ["/torrents(?:/?$|\\?\[\^/\]*$)"],
-      excludeUrlPattern: ["/torrents?view=card", "/torrents?view=grouped", "/torrents?view=poster"],
+      // `?` 必须转义：未转义时 `s?` 是「可选 s」量词，永远匹配不到真正的查询串
+      excludeUrlPattern: ["/torrents\\?view=card", "/torrents\\?view=grouped", "/torrents\\?view=poster"],
     },
     {
       urlPattern: ["/torrents/similar/"],

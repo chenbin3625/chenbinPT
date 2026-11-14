@@ -317,11 +317,10 @@ export abstract class MediaBrowser<
     let truncated = false;
 
     while (scanned < maxItems) {
-      const { url, requestConfig } = this.buildOverviewRequest(
-        scanned,
-        Math.min(pageSize, maxItems - scanned),
-        this.overviewFields,
-      );
+      // 最后一页可能不足 pageSize：结束判断必须与「本次实际请求的 limit」比较，
+      // 否则非整除时 items.length < pageSize 会提前 break，跳过下面的 truncated 计算。
+      const limit = Math.min(pageSize, maxItems - scanned);
+      const { url, requestConfig } = this.buildOverviewRequest(scanned, limit, this.overviewFields);
       const response = await this.request<IEmbyQueryResult<TQueryItem>>(url, requestConfig);
       if (response.status !== 200) break;
 
@@ -333,7 +332,7 @@ export abstract class MediaBrowser<
       }
       scanned += items.length;
 
-      if (items.length < pageSize) break;
+      if (items.length < limit) break;
       if (scanned >= maxItems) {
         // 服务器给了总数时以总数为准，避免「库恰好有 maxItems 条」被误标为截断
         const total = response.data?.TotalRecordCount;

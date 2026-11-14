@@ -93,4 +93,29 @@ describe("WebDAV.getFile / deleteFile：路径清理（M-9）", () => {
     expect(sanitizeWebdavPath("..%25252f..%25252fetc%25252fpasswd")).toBe("etc/passwd");
     expect(sanitizeWebdavPath("a%2520b/PTD_backup.zip")).toBe("a b/PTD_backup.zip");
   });
+
+  it("超过旧上限（5 层）的多重编码仍能解码到不动点", () => {
+    // 8 层编码：旧实现解码 5 次后残留 `..%2f..%2fetc%2fpasswd`，会被服务端再解码成 `../../etc/passwd`
+    const deeplyEncoded = encodeNTimes("../../etc/passwd", 8);
+    expect(sanitizeWebdavPath(deeplyEncoded)).toBe("etc/passwd");
+  });
+
+  it("超过解码上限（10 层）时 fail-closed 返回空串，而不是放行未收敛的路径", async () => {
+    const bomb = encodeNTimes("../../etc/passwd", 12);
+    expect(sanitizeWebdavPath(bomb)).toBe("");
+
+    // getFile 收到被拒绝的路径时只会请求根目录，不会把未收敛内容交给服务端
+    const { server, client } = createServer();
+    await server.getFile(bomb);
+    expect(client.getFileContents.mock.calls[0]![0]).toBe("/");
+  });
 });
+
+/** 连续应用 N 次 encodeURIComponent（每次都会把上一层的 `%` 再编码成 `%25`） */
+function encodeNTimes(value: string, times: number): string {
+  let encoded = value;
+  for (let i = 0; i < times; i++) {
+    encoded = encodeURIComponent(encoded);
+  }
+  return encoded;
+}

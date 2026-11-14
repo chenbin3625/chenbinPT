@@ -64,6 +64,14 @@ export const searchQueuePaused = ref<boolean>(false);
  */
 let searchTaskEpoch = 0;
 let searchExpansionToken = 0;
+/**
+ * 最后一次入队任务所属的轮次。
+ *
+ * 取消 / 新一轮搜索会让 epoch 失效，但在途任务结束后队列仍会触发一次 idle；
+ * 用该值可以识别「这次 idle 属于已经过期的轮次」，避免它把新一轮的 isSearching / endAt /
+ * 高级筛选词覆盖掉（cancelSearchQueue 已经写过终态）。
+ */
+let lastEnqueuedTaskEpoch = searchTaskEpoch;
 
 /** 让当前所有在途/排队的搜索任务失效（调用方通常还会 `searchQueue.clear()` 清掉尚未开始的任务） */
 export function invalidateSearchTasks() {
@@ -78,6 +86,11 @@ export function isSearchTaskCurrent(taskEpoch: number): boolean {
   return taskEpoch === searchTaskEpoch;
 }
 
+/** 判断某次 doSearch 是否仍是最新一轮（新一轮搜索会递增展开令牌） */
+export function isSearchExpansionCurrent(expansionToken: number): boolean {
+  return expansionToken === searchExpansionToken;
+}
+
 export function pauseSearchQueue(): void {
   searchQueue.pause();
   searchQueuePaused.value = true;
@@ -86,6 +99,11 @@ export function pauseSearchQueue(): void {
 export function startSearchQueue(): void {
   searchQueue.start();
   searchQueuePaused.value = false;
+}
+
+/** 队列里是否已没有任何排队 / 在途任务（恢复对账与 flush 收尾共用这一判断） */
+export function isSearchQueueIdle(): boolean {
+  return searchQueue.size === 0 && searchQueue.pending === 0;
 }
 
 export function cancelSearchQueue(): void {
@@ -129,7 +147,7 @@ export function cancelSearchQueue(): void {
  */
 export function reconcileRestoredSearchState(): boolean {
   if (!runtimeStore.search.isSearching) return false;
-  if (searchQueue.size > 0 || searchQueue.pending > 0) return false;
+  if (!isSearchQueueIdle()) return false;
 
   for (const plan of Object.values(runtimeStore.search.searchPlan)) {
     if (plan?.status === EResultParseStatus.waiting || plan?.status === EResultParseStatus.working) {
@@ -174,7 +192,7 @@ export function isFlushQuery(value: unknown): boolean {
  * 因此 await 返回时 store 已处于终态。
  */
 export function waitForSearchQueueIdle(): Promise<void> {
-  if (searchQueue.size === 0 && searchQueue.pending === 0) {
+  if (isSearchQueueIdle()) {
     return Promise.resolve();
   }
   return searchQueue.onIdle();
@@ -293,6 +311,10 @@ searchQueue.on("idle", () => {
   // （endAt / 高级筛选词都属于实时结果的状态）。
   if (isSnapshotView()) return;
 
+  // 取消 / 新一轮搜索已使该轮任务失效：旧任务结束时触发的 idle 不能覆盖新一轮的状态
+  // （cancelSearchQueue 已经写过 isSearching / endAt 终态）。
+  if (!isSearchTaskCurrent(lastEnqueuedTaskEpoch)) return;
+
   runtimeStore.search.isSearching = false;
   runtimeStore.search.endAt = Date.now();
 
@@ -340,8 +362,13 @@ export const searchPlanStatus = computed<ISearchPlanStatusMap>(() => {
 
 export async function raiseSearchPriority(solutionKey: TSearchSolutionKey) {
   const currentPriority = runtimeStore.search.searchPlan[solutionKey]?.queuePriority ?? 1;
+  const nextPriority = currentPriority + 1;
   try {
-    searchQueue.setPriority(solutionKey, currentPriority + 1);
+    searchQueue.setPriority(solutionKey, nextPriority);
+    // 回写计划里的优先级：连续点击「上移」时要基于上一次调整后的值继续上移，
+    // 否则第二次点击仍用旧值，队列顺序不会继续变化（看起来像按钮失效）。
+    const plan = runtimeStore.search.searchPlan[solutionKey];
+    if (plan) plan.queuePriority = nextPriority;
   } catch {
     // D2-01：恢复出来 / 已经结束的计划在队列里没有对应任务，`setPriority` 会抛
     // `No promise function with the id "..." exists in the queue.` —— 原实现是未处理的 rejection。
@@ -361,6 +388,12 @@ export async function doSearchEntity(
     // console 日志在本仓库是需要逐条豁免的（eslint no-console），这里静默忽略即可；
     // 视图侧对应入口已禁用，正常用户操作不会走到这里。
     return;
+  }
+
+  // 暂停状态下入队会让任务永远停在 waiting（页面却显示搜索中）：
+  // 单方案重搜 / 重试失败与 doSearch 的 flush 分支保持一致，先恢复队列再入队。
+  if (searchQueue.isPaused || searchQueuePaused.value) {
+    startSearchQueue();
   }
 
   const solutionKey = `${siteId}|$|${searchEntryName}` as TSearchSolutionKey;
@@ -409,6 +442,8 @@ export async function doSearchEntity(
 
   // V-15：捕获入队时的搜索轮次，任务开始/写入前校验（见 searchTaskEpoch 的说明）
   const taskEpoch = searchTaskEpoch;
+  // 记录队尾任务所属轮次，供 idle 收尾判断这次空闲是否属于已过期的轮次
+  lastEnqueuedTaskEpoch = taskEpoch;
 
   void searchQueue
     .add(
@@ -513,11 +548,15 @@ export async function doSearchEntity(
     });
 }
 
-export async function doSearch(search?: string | null, plan?: string | null, flush: boolean = true) {
+export async function doSearch(
+  search?: string | null,
+  plan?: string | null,
+  flush: boolean = true,
+): Promise<number | undefined> {
   // D2-04：非 flush 的「补搜/重试」在快照视图下一律拒绝（flush 表示用户明确发起新一轮实时搜索，
   // 下面的 resetSearchData 会清掉快照标记，属于「先清理快照标记」的正确语义）。
   if (isSnapshotView() && !flush) {
-    return;
+    return undefined;
   }
 
   const expansionToken = ++searchExpansionToken;
@@ -554,13 +593,18 @@ export async function doSearch(search?: string | null, plan?: string | null, flu
   runtimeStore.search.searchPlanKey = searchPlanKey;
   const taskEpoch = searchTaskEpoch;
 
+  // 冷启动时 metadata store 的 chrome.storage 水合尚未完成，直接 getSearchSolution 只会读到空方案，
+  // 搜索会静默变成「方案不存在」。先等水合，再重新校验本轮是否仍有效（期间可能已有新搜索 / 取消）。
+  await metadataStore.$onReady();
+  if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return expansionToken;
+
   // Expand search plan
   const searchSolution = await metadataStore.getSearchSolution(searchPlanKey);
-  if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return;
+  if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return expansionToken;
 
   if (!searchSolution) {
     runtimeStore.showSnackbar(i18n.t("SearchEntity.searchSolutionNotFound", [searchPlanKey]), { color: "error" });
-    return;
+    return expansionToken;
   }
 
   runtimeStore.search.searchPlanKey = searchSolution.id; // 重写 searchPlanKey 为实际的 id
@@ -568,7 +612,7 @@ export async function doSearch(search?: string | null, plan?: string | null, flu
 
   if (searchSolution.solutions.length === 0) {
     runtimeStore.showSnackbar(i18n.t("SearchEntity.noSiteToSearch"), { color: "error" });
-    return;
+    return expansionToken;
   }
 
   runtimeStore.search.startAt = Date.now();
@@ -576,10 +620,12 @@ export async function doSearch(search?: string | null, plan?: string | null, flu
 
   for (const { siteId, searchEntries } of searchSolution.solutions) {
     for (const [searchEntryName, searchEntry] of Object.entries(searchEntries)) {
-      if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return;
+      if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return expansionToken;
       await doSearchEntity(siteId, searchEntryName, searchEntry);
     }
   }
+
+  return expansionToken;
 }
 
 export async function retrySearch(retryStatus: EResultParseStatus[] = defaultErrorSearchPlanStatus) {
@@ -596,6 +642,12 @@ export async function retrySearch(retryStatus: EResultParseStatus[] = defaultErr
     return;
   }
   console.log("Retrying search plans: ", shouldRetrySearchPlan);
+
+  // 暂停状态下重试同样要恢复队列，否则任务只会停在 waiting（doSearchEntity 内部也会兜底恢复）
+  if (searchQueue.isPaused || searchQueuePaused.value) {
+    startSearchQueue();
+  }
+
   for (const plan of shouldRetrySearchPlan) {
     await doSearchEntity(plan.siteId, plan.searchEntryName, plan.searchEntry, true);
   }

@@ -81,6 +81,40 @@ describe("Transmission：torrent-set 限速键名（B-5）", () => {
   });
 });
 
+describe("Transmission：setTorrentLabel 的 RPC 版本门控", () => {
+  it("rpc-version < 17 时返回 false，且不发送无意义的 torrent-set", async () => {
+    const { client, requestMock } = createClient();
+    (client as any).clientVersion = "2.77, RPC 16";
+
+    await expect(client.setTorrentLabel("HASH-A", "tv")).resolves.toBe(false);
+    expect(requestMock).not.toHaveBeenCalled();
+  });
+
+  it("rpc-version >= 17 时正常发送 labels", async () => {
+    const { client, requestMock } = createClient();
+    (client as any).clientVersion = "4.0.5, RPC 17";
+
+    await expect(client.setTorrentLabel("HASH-A", "tv")).resolves.toBe(true);
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(requestMock.mock.calls[0]).toEqual(["torrent-set", { ids: "HASH-A", labels: ["tv"] }]);
+  });
+
+  it("多次调用只拉取一次 session-get（复用基类版本缓存）", async () => {
+    const { client, requestMock } = createClient();
+    requestMock.mockImplementation(async (method: string) =>
+      method === "session-get"
+        ? { data: { result: "success", arguments: { version: "4.0.5", "rpc-version": 17 } } }
+        : { data: { result: "success" } },
+    );
+
+    await client.setTorrentLabel("HASH-A", "a");
+    await client.setTorrentLabel("HASH-A", "b");
+
+    expect(requestMock.mock.calls.filter(([method]) => method === "session-get")).toHaveLength(1);
+    expect(requestMock.mock.calls.filter(([method]) => method === "torrent-set")).toHaveLength(2);
+  });
+});
+
 describe("Transmission：torrent-duplicate 视为成功（D-5）", () => {
   /** rpc-version 16 < 17，因此标签需要在添加后补一次 torrent-set */
   function duplicateResponse() {

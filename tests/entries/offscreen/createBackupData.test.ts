@@ -261,6 +261,8 @@ describe("exportBackupData：自动备份链路的字段装配不被放宽（TES
     mocks.getBackupServer.mockResolvedValue({ setEncryptionKey: vi.fn(), addFile });
 
     await expect(exportBackupData("srv", ["cookies", "metadata", "config"])).rejects.toThrow(/未设置备份加密密钥/);
+    // config 会整份导出，其中含 config.socialSite.bangumi.apikey
+    await expect(exportBackupData("srv", ["config"])).rejects.toThrow(/config/);
     await expect(exportBackupData("srv", ["downloadHistory"])).rejects.toThrow(/downloadHistory/);
     // 种子收藏保存了完整的 ITorrent（含 link），与 downloadHistory 同样可能带 passkey
     await expect(exportBackupData("srv", ["torrentFavorite"])).rejects.toThrow(/torrentFavorite/);
@@ -301,7 +303,9 @@ describe("exportBackupData：自动备份链路的字段装配不被放宽（TES
     const addFile = vi.fn(async () => true);
     mocks.getBackupServer.mockResolvedValue({ setEncryptionKey: vi.fn(), addFile });
 
-    await expect(exportBackupData("srv", ["config", "userInfo"])).resolves.toBe(true);
+    // config 现已被视为敏感字段（含 Bangumi API Key），无密钥时只能导出 userInfo
+    await expect(exportBackupData("srv", ["config", "userInfo"])).rejects.toThrow(/config/);
+    await expect(exportBackupData("srv", ["userInfo"])).resolves.toBe(true);
     expect(addFile).toHaveBeenCalledTimes(1);
   });
 

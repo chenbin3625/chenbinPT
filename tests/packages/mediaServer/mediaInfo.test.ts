@@ -307,6 +307,23 @@ describe("MediaBrowser（Emby / Jellyfin）条目映射", () => {
     expect(overview?.byResolution[0]).toMatchObject({ key: "4K", count: 4 });
     expect(axiosMock.request.mock.calls.every(([config]) => config.responseType !== "blob")).toBe(true);
   });
+
+  it("概览：最后一页不足 pageSize 时按本次实际 limit 判断，非整除也能标记截断", async () => {
+    const server = new EmbyCtor(mediaBrowserConfig("emby"));
+    axiosMock.request.mockImplementation(async (config: any) => {
+      const start = config.params.startIndex as number;
+      const limit = config.params.Limit as number;
+      const items = Array.from({ length: limit }, (_, i) => embyItem({ Id: `item-${start + i}` }));
+      return { status: 200, data: { Items: items, TotalRecordCount: 6 } };
+    });
+
+    const overview = await server.getLibraryOverview({ pageSize: 2, maxItems: 5 });
+
+    expect(overview?.totalItems).toBe(5);
+    expect(overview?.truncated).toBe(true);
+    // 最后一页只请求 1 条（maxItems - scanned），不能被 "1 < pageSize(2)" 误判为遍历结束
+    expect(axiosMock.request.mock.calls.at(-1)![0].params.Limit).toBe(1);
+  });
 });
 
 describe("Plex", () => {

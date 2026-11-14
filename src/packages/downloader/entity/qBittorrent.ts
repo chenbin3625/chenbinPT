@@ -716,7 +716,9 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
 
   async getAllTorrents(): Promise<QbittorrentTorrent[]> {
     const { torrents } = await this.getSyncData();
-    return Object.entries(torrents!).map(([hash, torrent]) => {
+    // full_update 或空列表时 sync/maindata 可能不带 torrents（同步响应里的可选字段），
+    // 此时应返回空列表，而不是对 undefined 调 Object.entries 抛 TypeError。
+    return Object.entries(torrents ?? {}).map(([hash, torrent]) => {
       let state = CTorrentState.unknown;
 
       switch (torrent.state) {

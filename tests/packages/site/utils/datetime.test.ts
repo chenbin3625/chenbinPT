@@ -131,6 +131,26 @@ describe("parseTimeWithZone", () => {
     expect(parseTimeWithZone(0)).toBe(0);
   });
 
+  it("形态明确的 10 位秒 / 13 位毫秒才按 Unix 时间戳处理", () => {
+    expect(parseTimeWithZone("1710000000")).toBe(1710000000000);
+    expect(parseTimeWithZone("1710000000000")).toBe(1710000000000);
+    // 9 / 12 位只要换算后落在合理年份区间也兼容（早年秒级 / 毫秒级时间戳）
+    expect(parseTimeWithZone("946684800")).toBe(946684800000); // 2000-01-01
+    expect(parseTimeWithZone("946684800000")).toBe(946684800000);
+  });
+
+  it("4–7 位纯数字无法确定语义时判为解析失败，不产出 1970 年", () => {
+    for (const value of ["2024", "12345", "123456", "1234567"]) {
+      expect(parseTimeWithZone(value, "+0800")).toBe(0);
+    }
+    // 非法紧凑日期（8 位）也不再回落成 Unix 秒
+    expect(parseTimeWithZone("20241301", "+0800")).toBe(0);
+  });
+
+  it("8 位紧凑日期 yyyyMMdd 仍按站点时区的墙上日期解析", () => {
+    expect(parseTimeWithZone("20240301", "+0800")).toBe(Date.parse("2024-03-01T00:00:00+08:00"));
+  });
+
   it("墙上时间按给定偏移换算为绝对时间戳（不依赖运行主机时区）", () => {
     expect(parseTimeWithZone("2024-03-01 10:00:00", "+0800")).toBe(+new Date("2024-03-01T10:00:00+08:00"));
     expect(parseTimeWithZone("2024-03-01 10:00:00", "+0000")).toBe(+new Date("2024-03-01T10:00:00Z"));

@@ -23,10 +23,34 @@ import axios from "axios";
 import { extractMagnetHash, getRemoteTorrentFile, sanitizeDownloadUrlForLog } from "../utils";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 
-/** uTorrent WebUI 在 token 失效时返回 400 invalid request（部分版本 401/403） */
+/**
+ * uTorrent WebUI 在 token 失效时返回 400 invalid request（部分版本 401/403）。
+ *
+ * 400 也可能是业务性参数错误（例如非法的 add 参数），不能一概当成鉴权失败：
+ * 只有响应体/错误信息明确是 `invalid request`（token 失效的语义）时才重登重试。
+ */
 function isUtorrentAuthError(error: unknown): boolean {
-  const status = (error as { response?: { status?: number } } | undefined)?.response?.status;
-  return status === 400 || status === 401 || status === 403;
+  const response = (error as { response?: { status?: number; data?: unknown } } | undefined)?.response;
+  const status = response?.status;
+
+  if (status === 401 || status === 403) {
+    return true;
+  }
+  if (status !== 400) {
+    return false;
+  }
+
+  const data = response?.data;
+  let bodyText = "";
+  if (typeof data === "string") {
+    bodyText = data;
+  } else if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    bodyText = `${record.error ?? ""} ${record.message ?? ""}`;
+  }
+  // 兼容 mock/部分环境下错误信息本身携带 invalid request 的情况
+  const message = error instanceof Error ? error.message : "";
+  return /invalid request/i.test(`${bodyText} ${message}`);
 }
 
 export const clientConfig: TorrentClientConfig = {

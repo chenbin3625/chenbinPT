@@ -585,14 +585,48 @@ jobs.scheduleJob({
  * locales 尚未补齐时回落到英文模板，保证通知仍然可读（key 由 Lead 统一补 src/locales）。
  */
 const AUTO_BACKUP_NOTIFY_DEDUPE_MS = 30 * 60 * 1000;
+/**
+ * 去重时间戳也必须跨 SW 回收存活：只放内存 Map 时，SW 被回收后清空，
+ * 持续失败会变成每 10 分钟（或每次 SW 重启）都通知一次。
+ * session storage 不可用时自动退回内存 Map。
+ */
+const AUTO_BACKUP_NOTIFY_STORAGE_KEY = "autoBackupFailureNotifyAt";
 const autoBackupFailureNotifyAt = new Map<string, number>();
 
-function notifyAutoBackupFailure(serverId: string, serverName: string, reason: string): void {
+/** 合并 session 中的去重时间戳（与内存取较新值）；storage 不可用时保留内存 Map */
+async function loadAutoBackupFailureNotifyAt(): Promise<void> {
+  try {
+    const stored = await chrome.storage?.session?.get(AUTO_BACKUP_NOTIFY_STORAGE_KEY);
+    const value = stored?.[AUTO_BACKUP_NOTIFY_STORAGE_KEY] as Record<string, unknown> | undefined;
+    if (!value || typeof value !== "object") return;
+    for (const [serverId, at] of Object.entries(value)) {
+      if (typeof at === "number" && at > (autoBackupFailureNotifyAt.get(serverId) ?? 0)) {
+        autoBackupFailureNotifyAt.set(serverId, at);
+      }
+    }
+  } catch {
+    // session storage 不可用时只靠内存去重
+  }
+}
+
+async function persistAutoBackupFailureNotifyAt(): Promise<void> {
+  try {
+    await chrome.storage?.session?.set({
+      [AUTO_BACKUP_NOTIFY_STORAGE_KEY]: Object.fromEntries(autoBackupFailureNotifyAt),
+    });
+  } catch {
+    // session storage 不可用时不阻塞备份主流程
+  }
+}
+
+async function notifyAutoBackupFailure(serverId: string, serverName: string, reason: string): Promise<void> {
+  await loadAutoBackupFailureNotifyAt();
   const now = Date.now();
   if (now - (autoBackupFailureNotifyAt.get(serverId) ?? 0) < AUTO_BACKUP_NOTIFY_DEDUPE_MS) {
     return;
   }
   autoBackupFailureNotifyAt.set(serverId, now);
+  await persistAutoBackupFailureNotifyAt();
 
   const localized = chrome.i18n?.getMessage?.("notificationAutoBackupFailure", [serverName, reason]);
   showNotificationSafely({
@@ -601,6 +635,12 @@ function notifyAutoBackupFailure(serverId: string, serverName: string, reason: s
     title: chrome.i18n?.getMessage?.("extName") || "PT Depiler",
     message: localized || `Auto backup failed for [${serverName}]: ${reason}`,
   });
+}
+
+/** 成功一次后清理该服务器的去重记录（内存 + session），之后再失败会重新通知 */
+async function clearAutoBackupFailureNotifyAt(serverId: string): Promise<void> {
+  autoBackupFailureNotifyAt.delete(serverId);
+  await persistAutoBackupFailureNotifyAt();
 }
 
 /**
@@ -667,17 +707,17 @@ function autoBackup() {
             sendMessage("logger", {
               msg: `Auto-backup failed for [${serverConfig.name}] (returned false)`,
             }).catch(onLoggerSendFailed);
-            notifyAutoBackupFailure(serverId, serverConfig.name ?? serverId, reason);
+            await notifyAutoBackupFailure(serverId, serverConfig.name ?? serverId, reason);
           } else {
             // 成功一次即清空去重记录：之后再失败应重新提示
-            autoBackupFailureNotifyAt.delete(serverId);
+            await clearAutoBackupFailureNotifyAt(serverId);
           }
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
           sendMessage("logger", {
             msg: `Auto-backup failed for [${serverConfig.name}]: ${errMsg}`,
           }).catch(onLoggerSendFailed);
-          notifyAutoBackupFailure(serverId, serverConfig.name ?? serverId, errMsg);
+          await notifyAutoBackupFailure(serverId, serverConfig.name ?? serverId, errMsg);
         }
       }
     } finally {

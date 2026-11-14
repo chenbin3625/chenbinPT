@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import { definedFilters, normalizeNumericField, toFiniteNumber, tryToNumber } from "@ptd/site/utils/filter.ts";
+import { parseSizeString } from "@ptd/site/utils/filesize.ts";
 
 const parseSize = definedFilters.parseSize as (query: unknown) => number;
 const parseNumber = definedFilters.parseNumber as (query: unknown) => number;
@@ -28,6 +29,28 @@ describe("parseSize（E01：贪婪正则 / E02：单位大小写 / E03：逗号�
     expect(parseSize("2.5TB / Blu-ray")).toBe(2.5 * TB);
     expect(parseSize("1.44GB / 2.5GB")).toBe(1.44 * GB);
     expect(parseSize("Size: 1.44 GB")).toBe(1.44 * GB);
+  });
+
+  it("只匹配一个连续数值 + 单位，不跨分辨率/日期/其它数字片段", () => {
+    // 旧正则会把 "1080 1.5" / "01 1.5" 整段当成数字，分别得到 10801.5 GB / 11.5 GB
+    expect(parseSize("1920x1080 1.5 GB")).toBe(1.5 * GB);
+    expect(parseSize("2024-01-01 1.5 GB")).toBe(1.5 * GB);
+    expect(parseSize("[3] 1.5 GB")).toBe(1.5 * GB);
+    // 后一段数字也不能被前一段吞掉
+    expect(parseSize("1920x1080 123 GB")).toBe(123 * GB);
+    // 逗号 + 空格仍在同一个数值片段内，语义与 parseSizeString 保持一致
+    expect(parseSize("Size: 1, 234 GB")).toBe(parseSizeString("1, 234 GB"));
+  });
+
+  it("纯裸字节计数兜底不受影响", () => {
+    expect(parseSize("1,610,612,736")).toBe(1610612736);
+    expect(parseSize("1 234")).toBe(1234);
+  });
+
+  it("NBSP / 窄 NBSP 作为千分位或数字与单位之间的分隔符仍可解析", () => {
+    expect(parseSize("1 234 MB")).toBe(1234 * MB);
+    expect(parseSize("1 234 MiB")).toBe(1234 * MB);
+    expect(parseSize("1.5 GB")).toBe(1.5 * GB);
   });
 
   it("单位大小写不敏感（E02）", () => {

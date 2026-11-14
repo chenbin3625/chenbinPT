@@ -1342,28 +1342,49 @@ export async function setDownloadHistory(data: ITorrentDownloadMetadata) {
  */
 const downloadHistoryPatchChain = new Map<TTorrentDownloadKey, Promise<unknown>>();
 
-export async function patchDownloadHistory(downloadId: TTorrentDownloadKey, data: Partial<ITorrentDownloadMetadata>) {
+/**
+ * `clearDownloadHistory` 的全局屏障。
+ *
+ * 清空不能只和「某一个 id 的 patch 链」串行：调用清空时可能同时存在多个 id 的在途读改写，
+ * 它们稍后写回就会让刚清空的记录复活。清空先等待**所有**当前 id 链 settle，再执行 clear；
+ * 清空开始之后到达的 patch / delete 则通过 `enqueueDownloadHistoryWrite` 等待该屏障，
+ * 因此不会落在 clear 与旧写入之间。
+ */
+let downloadHistoryClearBarrier: Promise<unknown> | null = null;
+
+/**
+ * 把一次下载历史写操作（读改写 / 删除）排进串行链。
+ *
+ * - 同一 downloadId 的操作按调用顺序执行（后一个重新读取，见 patchDownloadHistory 的说明）；
+ * - 清空进行中时，新操作先等清空完成，避免「清空后又被在途 patch 写回」；
+ * - 链尾在排空后删除，避免 Map 无界增长。
+ */
+function enqueueDownloadHistoryWrite<T>(downloadId: TTorrentDownloadKey, task: () => Promise<T>): Promise<T> {
+  const barrier = downloadHistoryClearBarrier;
   const previous = downloadHistoryPatchChain.get(downloadId) ?? Promise.resolve();
-  const current = previous
+  const current = Promise.resolve(barrier)
     // 前一次失败不应阻塞后一次（各自的失败由各自的调用方处理）
     .catch(() => undefined)
-    .then(async () => {
-      const allowedSave = await isAllowedSaveDownloadHistory();
-      const downloadHistory = await getDownloadHistoryById(downloadId);
-      if (allowedSave && downloadHistory) {
-        await setDownloadHistory({ ...downloadHistory, ...data });
-      }
-    });
+    .then(() => previous.catch(() => undefined))
+    .then(task);
 
   downloadHistoryPatchChain.set(downloadId, current);
-  try {
-    await current;
-  } finally {
+  return current.finally(() => {
     // 只有自己仍是链尾时才清理，否则会把后来者接上的链断掉
     if (downloadHistoryPatchChain.get(downloadId) === current) {
       downloadHistoryPatchChain.delete(downloadId);
     }
-  }
+  });
+}
+
+export async function patchDownloadHistory(downloadId: TTorrentDownloadKey, data: Partial<ITorrentDownloadMetadata>) {
+  await enqueueDownloadHistoryWrite(downloadId, async () => {
+    const allowedSave = await isAllowedSaveDownloadHistory();
+    const downloadHistory = await getDownloadHistoryById(downloadId);
+    if (allowedSave && downloadHistory) {
+      await setDownloadHistory({ ...downloadHistory, ...data });
+    }
+  });
 }
 
 async function setDownloadStatus(
@@ -1382,13 +1403,26 @@ onMessage("setDownloadHistoryStatus", async ({ data: { downloadId, status } }) =
 });
 
 export async function deleteDownloadHistoryById(downloadId: TTorrentDownloadKey) {
-  return await (await ptdIndexDb).delete("download_history", downloadId);
+  // 与 patch 走同一 id 链：先让在途读改写结束，再删除；之后到达的 patch 因读不到记录而不会写回
+  return await enqueueDownloadHistoryWrite(
+    downloadId,
+    async () => await (await ptdIndexDb).delete("download_history", downloadId),
+  );
 }
 
 onMessage("deleteDownloadHistoryById", async ({ data: downloadId }) => await deleteDownloadHistoryById(downloadId));
 
-export async function clearDownloadHistory() {
-  return await (await ptdIndexDb).clear("download_history");
+export function clearDownloadHistory() {
+  // 捕获调用时所有在途的 id 链（清空之后到达的操作会等待下面的全局屏障）
+  const pending = [...downloadHistoryPatchChain.values()];
+  const task = Promise.allSettled(pending).then(async () => await (await ptdIndexDb).clear("download_history"));
+
+  downloadHistoryClearBarrier = task;
+  return task.finally(() => {
+    if (downloadHistoryClearBarrier === task) {
+      downloadHistoryClearBarrier = null;
+    }
+  });
 }
 
 onMessage("clearDownloadHistory", clearDownloadHistory);

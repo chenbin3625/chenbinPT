@@ -137,4 +137,48 @@ describe("OUI-2：恢复出的「上次搜索被中断」必须给出可见提�
       second.unmount();
     }
   });
+
+  it("队列里仍有在途任务时，进入搜索页不会把运行中的搜索标成「已中断」", async () => {
+    sessionStorage.clear();
+    vi.resetModules();
+    const pinia = prepareOptionsPinia();
+    const { sendMessage } = await import("@/messages.ts");
+    let releaseResponse!: (value: unknown) => void;
+    vi.mocked(sendMessage).mockImplementation((type: unknown) => {
+      if (type === "getSiteSearchResult") {
+        return new Promise((resolve) => (releaseResponse = resolve)) as any;
+      }
+      return Promise.resolve(undefined) as any;
+    });
+
+    const { EResultParseStatus } = await import("@ptd/site");
+    const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+    const runtimeStore = useRuntimeStore(pinia);
+    const snackbar = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
+    const { doSearchEntity, searchQueue } = await import("@/options/views/Overview/SearchEntity/utils/search.ts");
+
+    await doSearchEntity("site-a", "default", {} as any);
+    await vi.waitFor(() =>
+      expect(runtimeStore.search.searchPlan["site-a|$|default"]?.status).toBe(EResultParseStatus.working),
+    );
+    runtimeStore.search.isSearching = true;
+
+    const { default: SearchEntityView } = await import("@/options/views/Overview/SearchEntity/Index.vue");
+    const view = mountOptionsView(SearchEntityView, { pinia, router: true });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      expect(runtimeStore.search.isSearching, "在途搜索不能被标成已结束").toBe(true);
+      expect(runtimeStore.search.searchPlan["site-a|$|default"]?.status).toBe(EResultParseStatus.working);
+
+      const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+      const interruptedText = i18nInstance.global.t("SearchEntity.index.alert.searchInterrupted");
+      expect(snackbar.mock.calls.filter(([text]) => text === interruptedText)).toHaveLength(0);
+    } finally {
+      releaseResponse({ status: EResultParseStatus.success, data: [] });
+      await searchQueue.onIdle();
+      view.unmount();
+      snackbar.mockRestore();
+    }
+  });
 });

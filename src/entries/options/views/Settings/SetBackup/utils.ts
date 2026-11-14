@@ -22,6 +22,8 @@ export const PLAINTEXT_UNSAFE_BACKUP_FIELDS: TBackupFields[] = [
   // 辅种任务 / 搜索快照里的种子下载链接可能带 passkey（与 backup.ts 的列表保持同步）
   "keepUploadTask",
   "searchResultSnapshot",
+  // config 里含 config.socialSite.bangumi.apikey 等第三方凭据（与 backup.ts 的列表保持同步）
+  "config",
 ];
 
 /**

@@ -99,6 +99,8 @@ const {
   resumeDownloaderRefresh,
   startAutoRefresh,
   toggleAutoRefresh,
+  beginPageRefresh,
+  endPageRefresh,
 } = useClientRefresh();
 
 // ── state ──────────────────────────────────────────────────────────────────
@@ -356,6 +358,8 @@ onMounted(async () => {
   mounted = true;
   await Promise.all([metadataStore.$onReady(), configStore.$onReady()]);
   if (!mounted) return;
+  // 激活页面级刷新会话：离开页面后，旧的在途请求回调会因 epoch 不匹配而不再续订定时器
+  beginPageRefresh();
   // 支持从 SetDownloader 等页面通过 ?downloader=<id> 预选单个下载服务器
   const queryDownloaderId = route.query.downloader as string | undefined;
   let hasQueryDownloader = false;
@@ -389,7 +393,9 @@ onMounted(async () => {
 onUnmounted(() => {
   mounted = false;
   initialized = false;
-  // 只清定时器：保留「是否运行 / 用户是否主动停止」的模块级选择，供下次进入页面恢复（D2-06）。
+  // 先让在途请求回调失效（否则它们会在 await 之后重新挂上定时器），再清定时器；
+  // 保留「是否运行 / 用户是否主动停止」的模块级选择，供下次进入页面恢复（D2-06）。
+  endPageRefresh();
   clearAllTimers();
 });
 

@@ -54,12 +54,34 @@ function redactUrlPath(path: string): string {
     .join("/");
 }
 
-/** 抹掉单个 URL 的 userinfo、query 值与路径中的凭据段，保留 host、path 结构、query 键名与 hash */
+/** 把 `k=v&k2=v2` 形式的值替换为 `***`，保留键名与分隔符；不含 `=` 的片段原样保留 */
+function redactKeyValuePairs(text: string): string {
+  return text
+    .split("&")
+    .map((pair) => {
+      const equalIndex = pair.indexOf("=");
+      return equalIndex < 0 ? pair : `${pair.slice(0, equalIndex)}=***`;
+    })
+    .join("&");
+}
+
+/**
+ * 抹掉 fragment 里 `k=v` 片段的值（如 `#access_token=…`），保留 `#`、键名与其它不含 `=` 的片段。
+ *
+ * 部分站点把 token 放在 hash 里（OAuth implicit flow / SPA 路由），只处理 query 会让它原样进日志。
+ */
+function redactUrlHash(url: string): string {
+  const hashIndex = url.indexOf("#");
+  if (hashIndex < 0) return url;
+  return `${url.slice(0, hashIndex)}#${redactKeyValuePairs(url.slice(hashIndex + 1))}`;
+}
+
+/** 抹掉单个 URL 的 userinfo、query/fragment 值与路径中的凭据段，保留 host、path 结构、键名与 hash */
 function redactUrlQuery(url: string): string {
   const safeUrl = redactUrlUserInfo(url);
   const queryIndex = safeUrl.indexOf("?");
   if (queryIndex < 0) {
-    return redactUrlPath(safeUrl);
+    return redactUrlHash(redactUrlPath(safeUrl));
   }
 
   const path = redactUrlPath(safeUrl.slice(0, queryIndex));
@@ -68,15 +90,7 @@ function redactUrlQuery(url: string): string {
   const hash = hashIndex >= 0 ? rawQuery.slice(hashIndex) : "";
   const query = hashIndex >= 0 ? rawQuery.slice(0, hashIndex) : rawQuery;
 
-  const redactedQuery = query
-    .split("&")
-    .map((pair) => {
-      const equalIndex = pair.indexOf("=");
-      return equalIndex < 0 ? pair : `${pair.slice(0, equalIndex)}=***`;
-    })
-    .join("&");
-
-  return `${path}?${redactedQuery}${hash}`;
+  return redactUrlHash(`${path}?${redactKeyValuePairs(query)}${hash}`);
 }
 
 /** 把文本里所有 URL 的 userinfo / query 值 / 路径凭据段替换为 `***` */

@@ -180,6 +180,54 @@ describe("右键菜单：搜索项 id 确定性（A3）", () => {
   });
 });
 
+describe("右键菜单：链接上下文的本站搜索", () => {
+  it("豆瓣链接上下文的「在本站搜索」使用 selectionTextFilterFn 解析链接（而非空的 selectionText）", async () => {
+    mocks.currentTabUrl = "https://mteam.example/browse";
+    mocks.openOptionsPage.mockReset();
+
+    const originalImpl = mocks.getExtStorageCached.getMockImplementation();
+    mocks.getExtStorageCached.mockImplementation(async (key: string) => {
+      if (key === "config") {
+        return {
+          contextMenus: {
+            enabled: true,
+            allowSelectionTextSearch: true,
+            allowSocialLinkSearch: true,
+            allowLinkDownloadPush: false,
+          },
+          download: { allowDownloaderFilterForSite: false },
+        };
+      }
+      return {
+        solutions: { default: { id: "default", name: "默认方案", enabled: true, sort: 1 } },
+        sites: { mteam: { isOffline: false, allowSearch: true, sortIndex: 10 } },
+        downloaders: {},
+      };
+    });
+
+    try {
+      await loadFreshModule();
+
+      const thisSiteMenuId = "chenbinPT-Context-Menus**SearchByDoubanLink**Search-In-This-Site";
+      expect(mocks.createdMenus.map((menu) => String(menu.id))).toContain(thisSiteMenuId);
+
+      // 链接上下文只有 linkUrl、没有 selectionText
+      mocks.onClickedListeners[0]!(
+        { menuItemId: thisSiteMenuId, linkUrl: "https://movie.douban.com/subject/12345/" },
+        { id: 1, url: mocks.currentTabUrl },
+      );
+      await flushBuild();
+
+      expect(mocks.openOptionsPage).toHaveBeenCalledWith({
+        path: "/search-entity",
+        query: { search: "douban|12345", plan: "site:mteam", flush: 1 },
+      });
+    } finally {
+      if (originalImpl) mocks.getExtStorageCached.mockImplementation(originalImpl);
+    }
+  });
+});
+
 describe("右键菜单：建议目录去重与创建失败可见（N3）", () => {
   beforeEach(() => {
     mocks.currentTabUrl = "https://mteam.example/browse";

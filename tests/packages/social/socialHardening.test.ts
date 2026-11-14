@@ -107,6 +107,14 @@ describe("C2-S-3：海报 URL 校验", () => {
     ["http://172.16.3.4/x.jpg", false],
     ["http://169.254.169.254/latest/meta-data/", false],
     ["http://[::1]/x.jpg", false],
+    // IPv4-mapped IPv6：点分与十六进制两种写法都要按 IPv4 私网规则拦截
+    ["http://[::ffff:127.0.0.1]/x.jpg", false],
+    ["http://[::ffff:7f00:1]/x.jpg", false],
+    ["http://[::ffff:192.168.1.10]/x.jpg", false],
+    ["http://[::ffff:c0a8:10a]/x.jpg", false],
+    ["http://[::ffff:169.254.169.254]/x.jpg", false],
+    // 公网地址不受影响
+    ["http://[::ffff:8.8.8.8]/x.jpg", true],
     ["not a url", false],
   ])("%s → %s", (url, expected) => {
     const normalized = normalizeSocialPosterUrl(url);

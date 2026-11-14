@@ -156,10 +156,14 @@ export function runSiteOperation<T>(siteId: string, task: () => Promise<T>): Pro
 export async function getSiteFavicon(site: TSiteID | getFaviconMetadata, flush: boolean = false): Promise<string> {
   const siteId = typeof site === "string" ? site : site.id;
   let siteFavicon = (await (await ptdIndexDb).get("favicon", siteId)) ?? false;
+  // 历史版本可能把 NO_IMAGE 写进缓存；把它当作「无缓存」，否则该站点会永久显示空白且不再重试
+  if (siteFavicon === NO_IMAGE) {
+    siteFavicon = false;
+  }
   if (flush || !siteFavicon) {
     try {
       const siteInstance = await getSiteInstance(siteId);
-      siteFavicon = await getFavicon({
+      const fetchedFavicon = await getFavicon({
         id: siteId,
         urls: uniq([siteInstance.url, ...(siteInstance.metadata.urls ?? [])].filter(Boolean)),
         // D2-N8：把 legacyUrls 一并交给 site 包，参与 favicon 可信 host/候选判定
@@ -168,7 +172,12 @@ export async function getSiteFavicon(site: TSiteID | getFaviconMetadata, flush: 
         favicon: siteInstance.metadata.favicon,
       });
 
-      await (await ptdIndexDb).put("favicon", siteFavicon, siteId);
+      // getFavicon 抓取失败时返回的 NO_IMAGE 也是非空字符串，不能写入缓存：
+      // 否则下次会直接命中这条「假图标」，站点永久空白且没有重试机会。
+      if (fetchedFavicon !== NO_IMAGE) {
+        await (await ptdIndexDb).put("favicon", fetchedFavicon, siteId);
+      }
+      siteFavicon = fetchedFavicon;
     } catch (e) {
       // D2-N8：站点定义缺失/getSiteInstance 失败时不能把整条消息 reject（调用方 SiteFavicon
       // 组件是按「拿不到图标」降级展示的）。这里回落到 NO_IMAGE 且**不写缓存**，下次仍可重试。

@@ -276,6 +276,44 @@ describe("我的下载器页面自动刷新", () => {
 
     view.unmount();
   });
+
+  it("卸载后在途请求返回时不会重新挂上自动刷新定时器", async () => {
+    const { pinia } = await setupStores();
+    utils.globalRefreshInterval.value = 0.01; // 10ms，便于让定时器回调进入在途状态
+
+    const pending: Array<(value: unknown) => void> = [];
+    sendMessageMock.mockImplementation((type: string) => {
+      if (type === "getClientTorrents") {
+        return new Promise((resolve) => pending.push(resolve));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const view = mountOptionsView(MyClientView, { pinia, router: true });
+    try {
+      // 等首次加载发出，并再等一个定时器周期，让自动刷新请求也进入在途
+      await vi.waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(1));
+      await view.settle(25);
+      await vi.waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(2));
+
+      const callsAtUnmount = sendMessageMock.mock.calls.filter(([type]) => type === "getClientTorrents").length;
+      view.unmount();
+
+      // 所有在途请求此时才返回：旧实现会在 await 之后无条件续订定时器
+      for (const resolve of pending.splice(0)) {
+        resolve(JSON.parse(JSON.stringify(TORRENTS_FROM_CLIENT)));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      expect(
+        sendMessageMock.mock.calls.filter(([type]) => type === "getClientTorrents").length,
+        "离开页面后不得因在途请求重新挂上定时器",
+      ).toBe(callsAtUnmount);
+    } finally {
+      view.unmount();
+      utils.globalRefreshInterval.value = utils.DEFAULT_CLIENT_REFRESH_INTERVAL_SECONDS;
+    }
+  });
 });
 
 describe("我的下载器进度列展示", () => {

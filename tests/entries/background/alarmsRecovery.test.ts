@@ -519,4 +519,31 @@ describe("alarms：自动备份失败通知（H-2）", () => {
     await execute();
     expect(mocks.notificationsCreate, "成功一次后再次失败应重新通知").toHaveBeenCalledTimes(2);
   });
+
+  it("SW 回收（模块内存清空）后仍按 session 去重，持续失败不重复通知", async () => {
+    vi.resetModules();
+    await import("@/background/utils/alarms.ts");
+    mocks.getExtStoragePathCached.mockImplementation(async (key: string, path: string) =>
+      key === "metadata" && path === "backupServers"
+        ? { server: { enabled: true, backupInterval: 1, lastBackupAt: 0, name: "backup-1" } }
+        : undefined,
+    );
+    mocks.sendMessage.mockImplementation(async (name: string) => {
+      if (name === "exportBackupData") throw new Error("boom");
+      if (name === "getDownloadHistory") return [];
+      return undefined;
+    });
+
+    await mocks.jobs.get("autoBackup")!.execute();
+    expect(mocks.notificationsCreate).toHaveBeenCalledTimes(1);
+    // 去重时间戳已写入 session（跨 SW 回收存活）
+    expect(mocks.sessionStore.get("autoBackupFailureNotifyAt")).toMatchObject({ server: expect.any(Number) });
+
+    // 模拟 SW 被回收：模块级 Map 随模块重新求值清空
+    vi.resetModules();
+    await import("@/background/utils/alarms.ts");
+    await mocks.jobs.get("autoBackup")!.execute();
+
+    expect(mocks.notificationsCreate, "SW 回收后仍应在 30 分钟去重窗口内").toHaveBeenCalledTimes(1);
+  });
 });

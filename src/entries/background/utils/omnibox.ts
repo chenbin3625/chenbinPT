@@ -39,13 +39,30 @@ async function getSearchSolution(getAll = false) {
   return solutionsList;
 }
 
+/**
+ * Chrome 的 omnibox suggestion description 必须是合法 XML：搜索词含 `&`/`<`
+ * （如 "Fast & Furious"）时未转义会导致建议项被浏览器丢弃、不显示。
+ * Firefox 接受纯文本，保持原样以免把转义实体直接展示给用户。
+ */
+export function escapeOmniboxDescription(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+const escapeDescription = __BROWSER__ === "chrome" ? escapeOmniboxDescription : (text: string) => text;
+
 chrome.omnibox?.onInputChanged.addListener(async (text, suggest) => {
   if (!text) return;
 
   const solutions = await getSearchSolution();
   let result: chrome.omnibox.SuggestResult[] = solutions.map((x) => ({
     content: `${x.name}${splitString}${text}`,
-    description: chrome.i18n.getMessage("omniboxSearch", [x.name, text]),
+    // i18n 模板原样保留，只对模板里的动态参数做转义
+    description: chrome.i18n.getMessage("omniboxSearch", [escapeDescription(x.name), escapeDescription(text)]),
   }));
 
   suggest(result);

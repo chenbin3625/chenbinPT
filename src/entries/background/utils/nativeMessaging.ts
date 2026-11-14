@@ -8,6 +8,14 @@ const ENABLED_KEY = "ptd_native_bridge_enabled";
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+/**
+ * 连接稳定存活多久后才把 reconnectAttempt 清零。
+ *
+ * 宿主「连上即退」（崩溃、配置错误、立即退出）时，若在 hello 成功后就立即清零，
+ * onDisconnect 里的退避计数每次都从 0 开始，MAX_RECONNECT_ATTEMPTS 永远达不到：
+ * 每 ~2s spawn 一个宿主进程并让 SW 常驻。只有连接稳定存活超过该窗口才视为真正恢复。
+ */
+const CONNECTION_STABLE_MS = 30000;
 /** 长延迟重连改用 alarms：可跨 service worker 回收存活（见 docs/performance-audit.md P1-8） */
 const RECONNECT_ALARM_NAME = "nativeBridgeReconnect";
 
@@ -199,6 +207,8 @@ export function validateBridgeParams(method: string, params: unknown): string | 
 
 let port: chrome.runtime.Port | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+/** 当前连接「稳定存活」计时器：到点前断开仍按退避累计 reconnectAttempt */
+let connectionStableTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
 /**
  * A4：默认**关闭**。桥接只在用户显式开启（options 页面开关）并授予 `nativeMessaging` 权限后才连接；
@@ -285,11 +295,33 @@ function clearReconnectTimer() {
   }
 }
 
+function clearConnectionStableTimer() {
+  if (connectionStableTimer !== null) {
+    clearTimeout(connectionStableTimer);
+    connectionStableTimer = null;
+  }
+}
+
+/**
+ * 连接建立后启动稳定期计时：只有持续存活 CONNECTION_STABLE_MS 才把退避计数清零。
+ * 稳定期内断开则保留现有 reconnectAttempt，交给 scheduleReconnect 正常累计。
+ */
+function scheduleConnectionStableReset(currentPort: chrome.runtime.Port) {
+  clearConnectionStableTimer();
+  connectionStableTimer = setTimeout(() => {
+    connectionStableTimer = null;
+    if (port !== currentPort || state !== "connected") return;
+    reconnectAttempt = 0;
+    void saveBridgeState();
+  }, CONNECTION_STABLE_MS);
+}
+
 // ── Lifecycle ────────────────────────────────────────────────────────
 
 function disconnect(intentional: boolean) {
   intentionalDisconnect = intentional;
   clearReconnectTimer();
+  clearConnectionStableTimer();
   try {
     chrome.alarms?.clear(RECONNECT_ALARM_NAME);
   } catch {
@@ -310,6 +342,7 @@ function disconnect(intentional: boolean) {
 
 function scheduleReconnect() {
   clearReconnectTimer();
+  clearConnectionStableTimer();
   reconnectAttempt++;
 
   if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
@@ -354,6 +387,7 @@ function connect() {
   }
 
   clearReconnectTimer();
+  clearConnectionStableTimer();
   state = "connecting";
   lastError = undefined;
   intentionalDisconnect = false;
@@ -394,7 +428,9 @@ function connect() {
       }
 
       state = "connected";
-      reconnectAttempt = 0;
+      // 不在这里清零 reconnectAttempt：宿主可能「连上即退」，需等连接稳定存活后才清零
+      // （见 scheduleConnectionStableReset / CONNECTION_STABLE_MS）。
+      scheduleConnectionStableReset(currentPort);
     })
     .catch((e: any) => {
       if (port !== currentPort) return;
@@ -461,6 +497,8 @@ function connect() {
     if (port !== currentPort) return;
 
     port = null;
+    // 稳定期内断开：保留 reconnectAttempt，由 scheduleReconnect 正常累计退避
+    clearConnectionStableTimer();
 
     if (intentionalDisconnect) {
       return;

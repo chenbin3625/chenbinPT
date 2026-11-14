@@ -310,7 +310,7 @@ describe("OPTIONSSETTINGS-6：restoreBackupData 在什么都没写成时不得�
     expect(report.skipped.some((item: any) => item.field === "restore")).toBe(true);
   });
 
-  it("兼容既有语义：仅请求 downloadHistory 但数据非法时仍是 success=true（跳过不算失败）", async () => {
+  it("仅请求 downloadHistory 但数据非法时 success=false（仅尝试过不算恢复成功）", async () => {
     const handler = await loadBackupModule();
     mocks.replaceDownloadHistory.mockResolvedValueOnce(false);
 
@@ -324,10 +324,14 @@ describe("OPTIONSSETTINGS-6：restoreBackupData 在什么都没写成时不得�
       },
     });
 
-    expect(report.success).toBe(true);
+    expect(report.success).toBe(false);
     expect(report.restored).toEqual([]);
     expect(report.skipped).toEqual([
       { field: "downloadHistory", reason: "invalid data in backup, local history kept" },
+      {
+        field: "restore",
+        reason: "没有恢复任何字段：所选字段与备份内容没有交集，或全部未通过校验",
+      },
     ]);
   });
 

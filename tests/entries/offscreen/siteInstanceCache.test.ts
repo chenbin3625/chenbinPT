@@ -262,6 +262,31 @@ describe("D2-N8：getSiteFavicon 传 legacyUrls 且失败时回落 NO_IMAGE", ()
     await expect(getSiteFavicon("missing-site")).resolves.toBe("no-image");
     expect(mocks.db.put).not.toHaveBeenCalled();
   });
+
+  it("getFavicon 返回 NO_IMAGE（抓取失败）时不写入缓存，下次仍可重试", async () => {
+    const { getSiteFavicon } = await loadSiteModule();
+    mocks.siteConfigs.a = { url: "https://a.example.com/" };
+    mocks.getFavicon.mockResolvedValueOnce("no-image").mockResolvedValueOnce("data:image/png;base64,z");
+
+    await expect(getSiteFavicon("a")).resolves.toBe("no-image");
+    expect(mocks.db.put).not.toHaveBeenCalled();
+
+    // 没有缓存「假图标」，第二次调用仍会重新抓取
+    await expect(getSiteFavicon("a")).resolves.toBe("data:image/png;base64,z");
+    expect(mocks.getFavicon).toHaveBeenCalledTimes(2);
+    expect(mocks.db.put).toHaveBeenCalledWith("favicon", "data:image/png;base64,z", "a");
+  });
+
+  it("历史缓存中的 NO_IMAGE 视为未缓存并重新抓取", async () => {
+    const { getSiteFavicon } = await loadSiteModule();
+    mocks.siteConfigs.a = { url: "https://a.example.com/" };
+    mocks.db.get.mockResolvedValue("no-image");
+    mocks.getFavicon.mockResolvedValueOnce("data:image/png;base64,y");
+
+    await expect(getSiteFavicon("a")).resolves.toBe("data:image/png;base64,y");
+    expect(mocks.getFavicon).toHaveBeenCalledTimes(1);
+    expect(mocks.db.put).toHaveBeenCalledWith("favicon", "data:image/png;base64,y", "a");
+  });
 });
 
 describe("OS-5：缓存 key 稳定序列化（2026-10-24 P2-7）", () => {

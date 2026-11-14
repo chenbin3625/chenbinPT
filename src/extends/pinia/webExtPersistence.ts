@@ -4,6 +4,7 @@
 import type { Ref } from "vue";
 import { getCurrentScope, onScopeDispose, ref, unref } from "vue";
 import { MutationType, PiniaPluginContext } from "pinia";
+import { cloneDeep } from "es-toolkit";
 import { message } from "ant-design-vue";
 
 import { toSerializable } from "@/shared/messagesSerializable.ts";
@@ -106,6 +107,24 @@ function isPlain(value: any): value is Record<string, any> {
   }
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
+}
+
+/**
+ * 复制一段「要写入 store」的值，使其与基线（syncedSnapshot）/ 合并结果（toWrite）不共享可变子树。
+ *
+ * 为什么必须复制（持久化回灌别名）：
+ * - `onChanged` 收到的 `newValue` 会原样成为新的基线；
+ * - `mergeBeforeWrite` 的 `merged` 会作为本次落盘内容（`toWrite`）成为基线；
+ * - 若把其中的子树直接塞进 store，用户随后对 store 的**就地修改**会同时改掉基线。
+ *   下一次 `$save()` 计算「基线 → 本地」差异时看到两边相同，改动被当成「没有变化」而不落盘，
+ *   表现为「回灌后就地修改再保存会被回退」。
+ *
+ * 只复制受影响的 path 值（leaf patch / 外部变更值），不做整状态深拷贝：
+ * `toWriteSnapshot()` 已经为快照做过一次完整序列化，这里再整份复制会白白翻倍开销。
+ * `cloneDeep` 保留 Date / Map / Set / RegExp 等类型，且不是 Vue 代理，可直接写进 store。
+ */
+function cloneForStore<T>(value: T): T {
+  return cloneDeep(value);
 }
 
 /**
@@ -355,7 +374,8 @@ function buildMinimalPatch(
         changed = true;
       }
     } else {
-      patchOut[key] = nextValue;
+      // 复制后写入：见 cloneForStore（避免 store 与新基线共享同一棵可变子树）
+      patchOut[key] = cloneForStore(nextValue);
       changed = true;
     }
   }
@@ -492,20 +512,28 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
   let syncedSnapshot: any = null;
 
   beforeRestore?.(context);
+  // restore 是否已经 settle（成功或失败）。用于水合前 $save 的排队判定：
+  // 若 restore 链本身异常、`$ready` 永远不会置 true，仅凭 `$ready` 判断会让排队调用无限自我重排。
+  // afterRestore 回调执行时 `$ready` 已为 true，因此它内部的 $save 不会等待尚未 settle 的 restorePromise。
+  let restoreSettled = false;
   let restorePromise = restore(key, {
     initialValue: store.$state,
     storage: storageArea,
     writeDefaults: writeDefaultState,
     onError: onRestoreError,
-  }).then((value) => {
-    // 建立「storage 现值」基线：`restore()` 返回的就是 storage 里的内容
-    // （storage 为空时返回初始值，此刻 writeDefaults 刚好把它写进去）。
-    // B-10 的三方合并依赖这条基线来判断"本地改了什么、外部改了什么"。
-    syncedSnapshot = toWriteSnapshot(value);
-    store.$patch(value as unknown as typeof store.$state);
-    $ready.value = true;
-    afterRestore?.(context);
-  });
+  })
+    .then((value) => {
+      // 建立「storage 现值」基线：`restore()` 返回的就是 storage 里的内容
+      // （storage 为空时返回初始值，此刻 writeDefaults 刚好把它写进去）。
+      // B-10 的三方合并依赖这条基线来判断"本地改了什么、外部改了什么"。
+      syncedSnapshot = toWriteSnapshot(value);
+      store.$patch(value as unknown as typeof store.$state);
+      $ready.value = true;
+      afterRestore?.(context);
+    })
+    .finally(() => {
+      restoreSettled = true;
+    });
 
   const $onReady = async (callback?: () => void) => {
     const promise = restorePromise || Promise.resolve();
@@ -565,7 +593,7 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
           patch[topKey] = nestedPatch;
         }
       } else {
-        patch[topKey] = next;
+        patch[topKey] = cloneForStore(next);
       }
     }
 
@@ -730,7 +758,8 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
         if (change.remove) {
           delete container[last];
         } else {
-          container[last] = change.value;
+          // 只复制这条路径的值：store 不得与 previousBase / merged(toWrite) 共享可变子树
+          container[last] = cloneForStore(change.value);
         }
       }
     });
@@ -974,6 +1003,15 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
   }
 
   const $save = (newState = store.$state, options: { skipMerge?: boolean } = {}): Promise<void> => {
+    if (!restoreSettled && !$ready.value) {
+      // 水合完成前禁止落盘：此时 syncedSnapshot 尚无基线，doWrite 会退回整份写，
+      // 用 store 的默认值覆盖 storage 里已有的配置（例如 App.vue 的缩放提示在水合前就能点关闭）。
+      // restore() 内部写默认值走的是 persistent()（整份写），不经过 $save，因此不会反过来等待这里而死锁；
+      // 水合完成前排队的所有调用都会在 restorePromise 结束后按原有「单飞 + 尾部合并」语义执行。
+      // 同时用 restoreSettled 兜底：restore 链异常时只会放行一次，不会无限自我重排。
+      return restorePromise.catch(() => undefined).then(() => $save(newState, options));
+    }
+
     const skipMerge = options.skipMerge === true;
     if (inFlight) {
       // 已有写入在飞行中：只登记最新状态，等它结束后合并补写一次

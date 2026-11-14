@@ -753,6 +753,8 @@
     "snackbar": {
       "failure": "备份失败",
       "failureWithReason": "备份失败：{reason}",
+      "noBackupFields": "未选择任何备份内容，未上传。",
+      "serverNotFound": "该备份服务器已不存在。",
       "encryptionKeyRequiredHint": "未设置备份加密密钥时，远端备份不能包含 cookies / metadata / downloadHistory。可前往「基础设置 → 备份」生成密钥、取消勾选这些字段，或改用「导出到本地」。",
       "success": "备份成功",
       "successWithRetention": "备份成功，已清理过期备份"
@@ -1069,7 +1071,9 @@
       "warningLine2": "绝大多数公开媒体服务器并不允许这种整库遍历，可能被判定为滥用，导致账号被限速、甚至封禁。请只在你自建或有明确授权的服务器上使用。",
       "warningLine3": "确认后才会开始遍历与聚合；遍历在后台进行，中途关闭弹窗只会丢弃结果，不会中止已开始的遍历。",
       "warningTitle": "开始前请确认：整库遍历可能违反服务器规则",
-      "watch": "观看情况"
+      "watch": "观看情况",
+      "watched": "已观看",
+      "unwatched": "未观看"
     }
   },
   "SetNativeBridge": {
@@ -1109,6 +1113,7 @@
       "requestConfig": "请求配置",
       "requestConfigHint": "请按JSON格式配置请求参数",
       "requestConfigJsonError": "必须是合法的JSON格式",
+      "requestConfigUnsafeFields": "请求配置只能包含 \"params\" / \"data\"，请移除：{fields}",
       "solutionName": "方案名称",
       "title": "自定义搜索方案"
     },
@@ -1131,6 +1136,7 @@
       "missingSites": "导入的方案引用了 {count} 个尚未添加的站点，请先添加后再搜索",
       "invalidJson": "导入搜索方案时 JSON 格式无效",
       "readFailed": "读取导入的搜索方案文件失败",
+      "sanitizedRequestConfig": "已从导入的方案中移除不安全的请求配置字段：{fields}",
       "noSolutions": "没有可导出的搜索方案",
       "unnamed": "（未命名）",
       "moreFailures": "（另有 {count} 个）",
@@ -1141,6 +1147,8 @@
         "solutionNotObject": "solutions[{index}] 不是对象",
         "missingSiteId": "solutions[{index}] 缺少 siteId",
         "missingSearchEntries": "solutions[{index}] 缺少 searchEntries",
+        "invalidRequestConfig": "solutions[{index}].searchEntries[*].requestConfig 无效",
+        "invalidSearchEntry": "solutions[{index}].searchEntries 包含无效条目",
         "invalidSelectedCategories": "solutions[{index}] 的 selectedCategories 无效"
       }
     },

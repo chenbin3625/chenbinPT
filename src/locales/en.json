@@ -753,6 +753,8 @@
     "snackbar": {
       "failure": "Backup failed",
       "failureWithReason": "Backup failed: {reason}",
+      "noBackupFields": "No backup content selected; nothing was uploaded.",
+      "serverNotFound": "This backup server no longer exists.",
       "encryptionKeyRequiredHint": "Without a backup encryption key, remote backups cannot include cookies / metadata / downloadHistory. Generate a key under Settings → Basic → Backup, uncheck these fields, or use local export.",
       "success": "Backup successful",
       "successWithRetention": "Backup successful, expired backups cleaned up"
@@ -1069,7 +1071,9 @@
       "warningLine2": "Most public media servers do not allow this kind of full-library traversal — it may be treated as abuse and get your account rate-limited or even banned. Only use it on servers you host yourself or are explicitly allowed to scan.",
       "warningLine3": "The traversal only starts after you confirm. It runs in the background: closing the dialog only discards the result and does not stop a traversal that has already started.",
       "warningTitle": "Please confirm first: a full-library scan may violate server rules",
-      "watch": "Watch status"
+      "watch": "Watch status",
+      "watched": "Watched",
+      "unwatched": "Unwatched"
     }
   },
   "SetNativeBridge": {
@@ -1109,6 +1113,7 @@
       "requestConfig": "Request Config",
       "requestConfigHint": "Please configure request parameters in JSON format",
       "requestConfigJsonError": "Must be valid JSON format",
+      "requestConfigUnsafeFields": "Request config may only contain \"params\" / \"data\". Remove: {fields}",
       "solutionName": "Plan Name",
       "title": "Custom Search Plan"
     },
@@ -1131,6 +1136,7 @@
       "missingSites": "Imported solutions reference {count} site(s) that are not added yet; add them before searching",
       "invalidJson": "Invalid JSON format when importing search solutions",
       "readFailed": "Failed to read the imported search solution file",
+      "sanitizedRequestConfig": "Removed unsafe request config fields from imported solutions: {fields}",
       "noSolutions": "No solutions to export",
       "unnamed": "(unnamed)",
       "moreFailures": " (+{count} more)",
@@ -1141,6 +1147,8 @@
         "solutionNotObject": "solutions[{index}] is not an object",
         "missingSiteId": "solutions[{index}] missing siteId",
         "missingSearchEntries": "solutions[{index}] missing searchEntries",
+        "invalidRequestConfig": "solutions[{index}].searchEntries[*].requestConfig is invalid",
+        "invalidSearchEntry": "solutions[{index}].searchEntries contains an invalid entry",
         "invalidSelectedCategories": "solutions[{index}] invalid selectedCategories"
       }
     },

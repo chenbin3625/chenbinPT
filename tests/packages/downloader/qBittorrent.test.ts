@@ -283,6 +283,13 @@ describe("qBittorrent：sync/maindata 缓存一致性（M-2 / L-3）", () => {
 
     expect((await (client as any).getSyncData()).tags).toEqual(["a", "b", "c", "d"]);
   });
+
+  it("sync/maindata 未返回 torrents 时 getAllTorrents 返回空列表，而不是抛 TypeError", async () => {
+    const client = createClient({ username: "", password: "qbt_api_key" });
+    axiosMock.request.mockResolvedValue({ data: { rid: 1, full_update: true } });
+
+    await expect(client.getAllTorrents()).resolves.toEqual([]);
+  });
 });
 
 /** C1 修复轮回归：QB-1 / QB-2 / QB-3 / QB-4 / QB-5 / N-5 */

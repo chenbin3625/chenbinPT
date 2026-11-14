@@ -10,6 +10,22 @@ const runtimeStore = useRuntimeStore();
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 
+// 滑块步进会产出 0.35000000000000003 这类浮点噪声，生成过滤词时统一保留两位小数
+const decimalRangeFormat = {
+  parse: (value: number | string) => Number(value),
+  build: (value: number | string) => String(Math.round(Number(value) * 100) / 100),
+};
+
+/**
+ * seeders / leechers / completed 的范围值来自筛选串时是字符串，而 `stringifyFilterDictFn`
+ * 用 `Number.isFinite` 判断边界是否有效 —— 字符串 "10" 会被当成「未设置」而静默丢弃，
+ * chip 也会退回 0~∞。这里显式 parse 成 number（不能直接复用 "number" 格式，它的 parse 仍返回字符串）。
+ */
+const countRangeFormat = {
+  parse: (value: number | string) => Number(value),
+  build: (value: number | string) => String(value),
+};
+
 export const tableCustomFilter = useTableCustomFilter({
   parseOptions: {
     keywords: ["site", "tags", "status"],
@@ -28,15 +44,11 @@ export const tableCustomFilter = useTableCustomFilter({
     },
     time: "date",
     size: "size",
-    // 滑块步进会产出 0.35000000000000003 这类浮点噪声，生成过滤词时统一保留两位小数
-    downloadVolumeFactor: {
-      parse: (value: number | string) => Number(value),
-      build: (value: number | string) => String(Math.round(Number(value) * 100) / 100),
-    },
-    uploadVolumeFactor: {
-      parse: (value: number | string) => Number(value),
-      build: (value: number | string) => String(Math.round(Number(value) * 100) / 100),
-    },
+    seeders: countRangeFormat,
+    leechers: countRangeFormat,
+    completed: countRangeFormat,
+    downloadVolumeFactor: decimalRangeFormat,
+    uploadVolumeFactor: decimalRangeFormat,
   },
 });
 

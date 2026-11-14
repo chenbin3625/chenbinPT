@@ -12,21 +12,80 @@ import {
 } from "date-fns";
 import { i18n } from "@/options/plugins/i18n.ts";
 
+/**
+ * 深度解代理：把 reactive / ref 包裹的纯数据结构复制成普通对象。
+ *
+ * 修复的缺陷：
+ * - 旧实现对 `RefImpl` 调 `toRaw()`，返回值仍是同一个 Ref（`isRef()` 依旧为 true）→ 无限递归；
+ * - Date / Map / Set / RegExp 等对象被 `Object.keys()` 归约成 `{}`（丢失类型与内容）。
+ *
+ * 现在的规则：
+ * - ref 先取 `.value`；reactive/proxy 先 `toRaw()`；
+ * - Date / RegExp / Map / Set / URL / Error / ArrayBuffer / 类型化数组（含 DataView）等特殊对象
+ *   原样返回（它们不是「可展开的普通数据」，也不应该被改写成普通对象）；
+ * - 普通对象 / 数组复制一层，并用 WeakMap 记录已访问对象，遇到循环引用时直接复用结果；
+ * - 原始值 / 函数原样返回。
+ *
+ * 纯数据（MyData 的 userInfo）的输出与旧实现逐字段一致，只是不再有递归/特殊类型问题。
+ */
 export function deepToRaw<T extends Record<string, any>>(sourceObj: T): T {
+  const seen = new WeakMap<object, any>();
+
+  function isSpecialObject(value: object): boolean {
+    return (
+      value instanceof Date ||
+      value instanceof RegExp ||
+      value instanceof Map ||
+      value instanceof Set ||
+      value instanceof Error ||
+      (typeof URL !== "undefined" && value instanceof URL) ||
+      value instanceof ArrayBuffer ||
+      ArrayBuffer.isView(value)
+    );
+  }
+
   const objectIterator = (input: any): any => {
-    if (Array.isArray(input)) {
-      return input.map((item) => objectIterator(item));
+    if (input === null || typeof input !== "object") {
+      return input;
     }
-    if (isRef(input) || isReactive(input) || isProxy(input)) {
-      return objectIterator(toRaw(input));
+
+    if (isRef(input)) {
+      if (seen.has(input)) {
+        return seen.get(input);
+      }
+      const unwrapped = objectIterator(input.value);
+      seen.set(input, unwrapped);
+      return unwrapped;
     }
-    if (input && typeof input === "object") {
-      return Object.keys(input).reduce((acc, key) => {
-        acc[key as keyof typeof acc] = objectIterator(input[key]);
-        return acc;
-      }, {} as T);
+
+    // reactive / readonly / shallowReactive 等代理：先拿到原始对象再展开，
+    // 否则复制出来仍是代理对象（或触发无意义的依赖追踪）。
+    const raw = isReactive(input) || isProxy(input) ? toRaw(input) : input;
+
+    if (seen.has(raw)) {
+      return seen.get(raw);
     }
-    return input;
+
+    if (isSpecialObject(raw)) {
+      seen.set(raw, raw);
+      return raw;
+    }
+
+    if (Array.isArray(raw)) {
+      const out: any[] = new Array(raw.length);
+      seen.set(raw, out);
+      for (let i = 0; i < raw.length; i++) {
+        out[i] = objectIterator(raw[i]);
+      }
+      return out;
+    }
+
+    const out = {} as Record<string, any>;
+    seen.set(raw, out);
+    for (const key of Object.keys(raw)) {
+      out[key] = objectIterator(raw[key]);
+    }
+    return out;
   };
 
   return objectIterator(sourceObj);

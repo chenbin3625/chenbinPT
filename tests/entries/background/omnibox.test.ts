@@ -25,6 +25,8 @@ vi.mock("@/background/utils/base.ts", () => ({
   openOptionsPage: mocks.openOptionsPage,
 }));
 
+vi.stubGlobal("__BROWSER__", "chrome");
+
 vi.stubGlobal("chrome", {
   omnibox: {
     onInputChanged: {
@@ -50,7 +52,7 @@ mocks.getExtStoragePathCached.mockImplementation(async (key: string, path: unkno
   return undefined;
 });
 
-const { splitOmniboxInput } = await import("@/background/utils/omnibox.ts");
+const { splitOmniboxInput, escapeOmniboxDescription } = await import("@/background/utils/omnibox.ts");
 
 async function flushAsync() {
   for (let i = 0; i < 10; i++) {
@@ -72,6 +74,27 @@ describe("splitOmniboxInput（N4）", () => {
 
   it("搜索词为空时保留空串（不丢方案名）", () => {
     expect(splitOmniboxInput("默认方案 → ")).toEqual({ solutionName: "默认方案", key: "" });
+  });
+});
+
+describe("omnibox 建议项 XML 转义", () => {
+  it("Chrome 下对动态搜索词做 XML 转义（& < > \" '）", async () => {
+    expect(mocks.onInputChangedListeners.length).toBeGreaterThan(0);
+
+    let results: any[] = [];
+    mocks.onInputChangedListeners[0]!(`Fast & Furious <x> "q" 'a'`, (value) => {
+      results = value;
+    });
+    await flushAsync();
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.description).toContain("Fast &amp; Furious &lt;x&gt; &quot;q&quot; &apos;a&apos;");
+    // content 是纯文本，不需要转义
+    expect(results[0]!.content).toContain(`Fast & Furious <x> "q" 'a'`);
+  });
+
+  it("escapeOmniboxDescription 覆盖五个 XML 字符", () => {
+    expect(escapeOmniboxDescription(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&apos;");
   });
 });
 

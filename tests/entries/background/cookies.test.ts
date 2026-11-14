@@ -9,7 +9,7 @@
  *
  * 修复：同名未过期时，只要值不同、或新过期时间更晚就覆盖；值相同且不更晚时跳过（此时跳过是等价的）。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   onMessage: vi.fn(),
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   cookiesGet: vi.fn(),
   cookiesGetAll: vi.fn(),
   cookiesSet: vi.fn(),
+  cookiesRemove: vi.fn(),
   storageGetItem: vi.fn(),
 }));
 
@@ -32,11 +33,18 @@ vi.stubGlobal("chrome", {
     get: mocks.cookiesGet,
     getAll: mocks.cookiesGetAll,
     set: mocks.cookiesSet,
+    remove: mocks.cookiesRemove,
   },
 });
 vi.stubGlobal("__BROWSER__", "chrome");
 
 const { setCookie } = await import("@/background/utils/cookies.ts");
+
+/** 消息处理器在模块求值时注册；测试默认会清理 mock 调用记录，需在导入后立即抓取 */
+const handlers = new Map<string, (message: { data: any }) => Promise<any>>();
+for (const [type, handler] of mocks.onMessage.mock.calls) {
+  handlers.set(type as string, handler as (message: { data: any }) => Promise<any>);
+}
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
@@ -59,6 +67,7 @@ describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
     mocks.cookiesGet.mockReset();
     mocks.cookiesGetAll.mockReset();
     mocks.cookiesSet.mockReset();
+    mocks.cookiesRemove.mockReset();
     mocks.logBackgroundError.mockReset();
     mocks.cookiesSet.mockResolvedValue(undefined);
   });
@@ -174,5 +183,59 @@ describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
     expect(mocks.cookiesSet).toHaveBeenCalledTimes(1);
     expect(mocks.cookiesSet.mock.calls[0]![0]).not.toHaveProperty("domain");
     expect(mocks.cookiesSet.mock.calls[0]![0].url).toBe("https://site.example/");
+  });
+});
+
+describe("Firefox sameSite 与 storeId 语义", () => {
+  beforeEach(() => {
+    mocks.cookiesGet.mockReset();
+    mocks.cookiesGet.mockResolvedValue(null);
+    mocks.cookiesSet.mockReset();
+    mocks.cookiesSet.mockResolvedValue({ name: "cf_clearance", value: "new-value" });
+    mocks.cookiesRemove.mockReset();
+    mocks.cookiesRemove.mockResolvedValue({ name: "cf_clearance", url: "https://site.example/" });
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("__BROWSER__", "chrome");
+  });
+
+  it("Firefox：unspecified + secure → no_restriction", async () => {
+    vi.stubGlobal("__BROWSER__", "firefox");
+
+    await setCookie(newCookie({ secure: true, sameSite: "unspecified" }));
+
+    expect(mocks.cookiesSet.mock.calls[0]![0].sameSite).toBe("no_restriction");
+  });
+
+  it("Firefox：unspecified + 非 secure → 不传 sameSite（避免 None 必须 secure 的设置失败）", async () => {
+    vi.stubGlobal("__BROWSER__", "firefox");
+
+    await setCookie(newCookie({ secure: false, sameSite: "unspecified", url: "http://site.example/" }));
+
+    expect(mocks.cookiesSet.mock.calls[0]![0]).not.toHaveProperty("sameSite");
+  });
+
+  it("Chrome：unspecified 原样透传", async () => {
+    await setCookie(newCookie({ secure: false, sameSite: "unspecified", url: "http://site.example/" }));
+
+    expect(mocks.cookiesSet.mock.calls[0]![0].sameSite).toBe("unspecified");
+  });
+
+  function removeHandler() {
+    return handlers.get("removeCookie")!;
+  }
+
+  it('removeCookie 未提供 storeId 时省略（不传 Chrome 专属默认值 "0"）', async () => {
+    await removeHandler()({ data: { name: "cf_clearance", url: "https://site.example/" } });
+
+    expect(mocks.cookiesRemove).toHaveBeenCalledTimes(1);
+    expect(mocks.cookiesRemove.mock.calls[0]![0]).not.toHaveProperty("storeId");
+  });
+
+  it("removeCookie 明确提供 storeId 时原样透传", async () => {
+    await removeHandler()({ data: { name: "cf_clearance", url: "https://site.example/", storeId: "1" } });
+
+    expect(mocks.cookiesRemove.mock.calls[0]![0]).toMatchObject({ storeId: "1" });
   });
 });

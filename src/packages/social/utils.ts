@@ -10,6 +10,42 @@ export function commonParseFactory(urlPatterns: (string | RegExp)[]): (query: st
   };
 }
 
+/** 本机 / 私网 / 链路本地 / CGNAT 的 IPv4 地址 */
+function isPrivateOrLocalIPv4(host: string): boolean {
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+
+  const a = Number(ipv4[1]);
+  const b = Number(ipv4[2]);
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true; // link-local
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+
+  return false;
+}
+
+/**
+ * 把 IPv4-mapped IPv6 地址归一成点分 IPv4，便于复用 IPv4 私网规则。
+ *
+ * 支持 URL 解析后常见的十六进制写法（`::ffff:7f00:1`）与原始文本里的点分写法
+ * （`::ffff:127.0.0.1`）；不是 mapped 地址时返回 `null`。
+ */
+function normalizeIPv4MappedHost(host: string): string | null {
+  const mapped = /^::ffff:(.+)$/.exec(host);
+  if (!mapped) return null;
+
+  const tail = mapped[1];
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) return tail;
+
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
+  if (!hex) return null;
+  const high = parseInt(hex[1], 16);
+  const low = parseInt(hex[2], 16);
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
 /** 本机 / 私网 / 链路本地 / CGNAT 地址（用于拒绝把社交海报 URL 指向内网，见 C2-S-3） */
 function isPrivateOrLocalHostname(hostname: string): boolean {
   const host = hostname
@@ -22,18 +58,10 @@ function isPrivateOrLocalHostname(hostname: string): boolean {
   if (/^f[cd][0-9a-f]{2}:/.test(host)) return true; // IPv6 ULA fc00::/7
   if (/^fe[89ab][0-9a-f]:/.test(host)) return true; // IPv6 link-local fe80::/10
 
-  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4) {
-    const a = Number(ipv4[1]);
-    const b = Number(ipv4[2]);
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 169 && b === 254) return true; // link-local
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  }
-
-  return false;
+  // IPv4-mapped IPv6（::ffff:127.0.0.1 / ::ffff:7f00:1）归一后复用 IPv4 规则，
+  // 否则 `::ffff:127.0.0.1` 能绕过 127.0.0.0/8 的拦截。
+  const mappedIPv4 = normalizeIPv4MappedHost(host);
+  return isPrivateOrLocalIPv4(mappedIPv4 ?? host);
 }
 
 /**

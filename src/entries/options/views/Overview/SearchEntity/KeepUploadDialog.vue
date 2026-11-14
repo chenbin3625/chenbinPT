@@ -24,6 +24,10 @@ import { useConfigStore } from "@/options/stores/config.ts";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
 import { confirmModal } from "../utils/antdConfirm.ts";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
+import { mapWithConcurrency } from "./utils/concurrency.ts";
+
+/** 批量拉取种子信息的并发上限（避免一次打开大量站点请求） */
+const VERIFY_CONCURRENCY = 4;
 
 const showDialog = defineModel<boolean>();
 const { torrentItems } = defineProps<{
@@ -118,6 +122,7 @@ function startVerification() {
     ? remembered?.label || ""
     : metadataStore.defaultDownloader?.tags || "";
 
+  const pending: { item: ITorrent; id: string }[] = [];
   torrentItems.forEach((item) => {
     const id = crypto.randomUUID();
 
@@ -132,14 +137,16 @@ function startVerification() {
       error: false,
     });
     verifiedItemsOrder.value.push(id);
+    pending.push({ item, id });
+  });
 
-    getTorrent(item, id)
-      .then((result) => {
-        verification(result, id);
-      })
-      .catch(() => {
-        verification(null, id);
-      });
+  // 限并发拉取：避免选中大量种子时一次性打出几百个消息请求
+  void mapWithConcurrency(pending, VERIFY_CONCURRENCY, async ({ item, id }) => {
+    try {
+      verification(await getTorrent(item, id), id);
+    } catch {
+      verification(null, id);
+    }
   });
 }
 
@@ -268,9 +275,10 @@ function restartVerification() {
   baseTorrent.value = null;
   verifiedCount.value = 0;
 
-  for (const id of [...verifiedItemsOrder.value]) {
+  // 与首次校验一致限制并发；新 index 0 仍是第一个被取到的条目（worker 按下标顺序领取任务）
+  void mapWithConcurrency([...verifiedItemsOrder.value], VERIFY_CONCURRENCY, async (id) => {
     const item = verifiedItems.value.get(id);
-    if (!item) continue;
+    if (!item) return;
 
     item.loading = true;
     item.verified = false;
@@ -278,10 +286,12 @@ function restartVerification() {
     item.error = false;
     item.status = "downloading";
 
-    getTorrent(item.data, id)
-      .then((result) => verification(result, id))
-      .catch(() => verification(null, id));
-  }
+    try {
+      verification(await getTorrent(item.data, id), id);
+    } catch {
+      verification(null, id);
+    }
+  });
 }
 
 function removeVerifiedItem(id: string) {
@@ -413,7 +423,7 @@ async function createKeepUploadTask() {
             </template>
             <template #title>
               <a-typography-link
-                :href="verifiedItems.get(id)!.data.link"
+                :href="verifiedItems.get(id)!.data.url"
                 target="_blank"
                 rel="noopener noreferrer nofollow"
               >

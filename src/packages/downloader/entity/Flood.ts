@@ -291,7 +291,11 @@ export default class Flood extends AbstractBittorrentClient {
       };
 
       let state = CTorrentState.unknown;
-      if (statusInclude(["downloading"])) {
+      // error 优先于其它状态：Flood 的状态是数组，失败的任务可能同时带 downloading/seeding/stopped，
+      // 若把它放在最后会被前面的分支吞掉，导致错误任务永远显示为下载中/做种/已暂停。
+      if (statusInclude(["error"])) {
+        state = CTorrentState.error;
+      } else if (statusInclude(["downloading"])) {
         state = CTorrentState.downloading;
       } else if (statusInclude(["seeding"])) {
         state = CTorrentState.seeding;
@@ -302,8 +306,6 @@ export default class Flood extends AbstractBittorrentClient {
         state = CTorrentState.seeding;
       } else if (statusInclude(["checking"])) {
         state = CTorrentState.checking;
-      } else if (statusInclude(["error"])) {
-        state = CTorrentState.error;
       }
 
       return {

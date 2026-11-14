@@ -40,6 +40,7 @@ let permsOnAdded: AnyFn;
 let permsOnRemoved: AnyFn;
 let connectNative: AnyFn;
 let sessionGet: AnyFn;
+let sessionSet: AnyFn;
 let localGet: AnyFn;
 let runtimeMock: any;
 let createdPorts: any[];
@@ -68,6 +69,7 @@ function installChromeMock(options: { sessionState?: any; permission?: boolean; 
   createdPorts = [];
   connectNative = vi.fn(() => createPort());
   sessionGet = vi.fn(() => Promise.resolve(options.sessionState ? { nativeBridgeState: options.sessionState } : {}));
+  sessionSet = vi.fn(() => Promise.resolve());
   localGet = vi.fn(() =>
     Promise.resolve(options.enabled === undefined ? {} : { ptd_native_bridge_enabled: options.enabled }),
   );
@@ -92,7 +94,7 @@ function installChromeMock(options: { sessionState?: any; permission?: boolean; 
     },
     storage: {
       local: { get: localGet, set: vi.fn(() => Promise.resolve()) },
-      session: { get: sessionGet, set: vi.fn(() => Promise.resolve()) },
+      session: { get: sessionGet, set: sessionSet },
     },
     runtime: runtimeMock,
   });
@@ -102,6 +104,13 @@ async function flushAsync() {
   for (let i = 0; i < 20; i++) {
     await Promise.resolve();
   }
+}
+
+function lastSavedBridgeState(): { reconnectAttempt?: number; state?: string } | undefined {
+  const calls = sessionSet.mock.calls.filter(
+    ([items]) => items && typeof items === "object" && "nativeBridgeState" in (items as Record<string, unknown>),
+  );
+  return calls.at(-1)?.[0].nativeBridgeState;
 }
 
 async function importNativeMessaging() {
@@ -173,6 +182,49 @@ describe("nativeMessaging 启动流程", () => {
 
     expect(alarmsOnAlarm).toHaveBeenCalledTimes(1);
     expect(connectNative).toHaveBeenCalledTimes(1);
+  });
+
+  it("宿主连上即退时不会清零退避计数：稳定期内的断开继续累计", async () => {
+    installChromeMock({
+      permission: true,
+      enabled: true,
+      // 已有多轮退避记录：connect 成功不能把它抹掉
+      sessionState: { reconnectAttempt: 4, enabled: true, state: "connecting" },
+    });
+    await importNativeMessaging();
+    expect(connectNative).toHaveBeenCalledTimes(1);
+
+    // hello 已发送，但 30s 稳定期未到就立即断开
+    createdPorts[0]!.onDisconnectHandler();
+    await flushAsync();
+    expect(lastSavedBridgeState()?.reconnectAttempt).toBe(5);
+
+    // 通过长延迟档位（alarm）重连后再次立即断开，计数继续累计而不是回到 0
+    alarmsOnAlarm.mock.calls[0]![0]({ name: "nativeBridgeReconnect" });
+    await flushAsync();
+    expect(connectNative).toHaveBeenCalledTimes(2);
+    createdPorts[1]!.onDisconnectHandler();
+    await flushAsync();
+    expect(lastSavedBridgeState()?.reconnectAttempt).toBe(6);
+  });
+
+  it("连接稳定存活超过 30s 后才清零退避计数", async () => {
+    vi.useFakeTimers();
+    try {
+      installChromeMock({
+        permission: true,
+        enabled: true,
+        sessionState: { reconnectAttempt: 4, enabled: true, state: "connecting" },
+      });
+      await importNativeMessaging();
+      expect(lastSavedBridgeState()?.reconnectAttempt).toBe(4);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await flushAsync();
+      expect(lastSavedBridgeState()?.reconnectAttempt).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

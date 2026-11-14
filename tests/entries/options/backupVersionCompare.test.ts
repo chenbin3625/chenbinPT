@@ -4,7 +4,11 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { compareVersion, extractVersion } from "@/options/views/Settings/SetBackup/utils.ts";
+import {
+  compareVersion,
+  extractVersion,
+  needsBackupEncryptionKeyHint,
+} from "@/options/views/Settings/SetBackup/utils.ts";
 
 describe("SetBackup 版本比较", () => {
   it("能解析现行三段版本与旧的四段版本", () => {
@@ -28,5 +32,17 @@ describe("SetBackup 版本比较", () => {
 
   it("任一版本无法解析时返回 null", () => {
     expect(compareVersion(undefined, "v0.0.10+bbb")).toBeNull();
+  });
+});
+
+describe("SetBackup 明文导出提示（H-2）", () => {
+  it("config 也被视为敏感字段（含 Bangumi API Key），无密钥时提示", () => {
+    expect(needsBackupEncryptionKeyHint(["config"], "")).toBe(true);
+    expect(needsBackupEncryptionKeyHint(["config", "userInfo"], "")).toBe(true);
+  });
+
+  it("设置密钥后不再提示；仅无凭据字段时也不提示", () => {
+    expect(needsBackupEncryptionKeyHint(["config"], "key")).toBe(false);
+    expect(needsBackupEncryptionKeyHint(["userInfo"], "")).toBe(false);
   });
 });

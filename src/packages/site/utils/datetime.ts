@@ -384,6 +384,24 @@ function expandCompactYmd(value: string): string | null {
 }
 
 /**
+ * 纯数字字符串 → Unix 毫秒时间戳；无法可靠判定时返回 null（由调用方按解析失败处理）。
+ *
+ * 只接受形态明确的 10 位秒 / 13 位毫秒；9/11/12 位仅在换算结果落在合理年份区间
+ * （1970–2100）时兼容，避免把 `"2024"` 这类 4–7 位数字静默乘成 1970 年。
+ */
+function parseUnixTimestampDigits(value: string): number | null {
+  if (![9, 10, 11, 12, 13].includes(value.length)) {
+    return null;
+  }
+  const timestamp = normalizeUnixTimestamp(Number(value));
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return null;
+  }
+  const year = new Date(timestamp).getUTCFullYear();
+  return year >= 1970 && year <= 2100 ? timestamp : null;
+}
+
+/**
  * 将时间解析为时间戳。
  *
  * timezoneOffset 表示**输入时间所采用的时区**，即站点本地时间相对 UTC 的偏移：
@@ -416,11 +434,13 @@ export function parseTimeWithZone(
     return 0;
   }
 
-  // 纯数字字符串：8 位 `yyyyMMdd` 按站点时区的墙上日期解析（N2），其余按 Unix 时间戳
+  // 纯数字字符串：8 位 `yyyyMMdd` 按站点时区的墙上日期解析（N2）；
+  // 其余只有在形态明确为 Unix 时间戳时才接受。4–7 位（如 "2024"）无法区分「年份」
+  // 「紧凑日期片段」等语义，返回 0 走解析失败路径，绝不静默乘成 1970 年的时间。
   if (/^\d+$/.test(time)) {
     const compactYmd = expandCompactYmd(time);
     if (compactYmd === null) {
-      return normalizeUnixTimestamp(Number(time));
+      return parseUnixTimestampDigits(time) ?? 0;
     }
     time = compactYmd;
   }

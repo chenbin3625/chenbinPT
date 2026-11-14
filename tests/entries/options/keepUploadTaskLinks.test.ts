@@ -41,6 +41,39 @@ describe("KeepUploadTask 页面链接", () => {
   });
 });
 
+describe("KeepUploadDialog 标题链接", () => {
+  it("标题指向种子详情页（url），而不是下载链接（link）", async () => {
+    sendMessageMock.mockReset().mockResolvedValue(undefined);
+    const { default: KeepUploadDialog } = await import("@/options/views/Overview/SearchEntity/KeepUploadDialog.vue");
+    const view = mountOptionsView(KeepUploadDialog, {
+      pinia: prepareOptionsPinia(),
+      props: {
+        modelValue: true,
+        torrentItems: [
+          {
+            site: "s1",
+            id: "1",
+            title: "detail-link-item",
+            url: "https://example.com/detail/1",
+            link: "https://example.com/download/1",
+          },
+        ],
+      },
+    });
+
+    try {
+      await view.settle(80);
+      const anchor = Array.from(document.querySelectorAll<HTMLAnchorElement>(".ant-list-item a")).find((item) =>
+        item.textContent?.includes("detail-link-item"),
+      );
+      expect(anchor, "应渲染出标题链接").not.toBeUndefined();
+      expect(anchor!.getAttribute("href"), "ITorrent.url 才是详情页").toBe("https://example.com/detail/1");
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
 // ── F4（N11 / N12 / N13）：辅种批量发送、基准种子与选中集 ───────────────────
 
 const { showSnackbarMock } = vi.hoisted(() => ({ showSnackbarMock: vi.fn() }));

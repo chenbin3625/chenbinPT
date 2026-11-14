@@ -36,29 +36,47 @@ export const serverMetaData: IBackupMetadata<WebDAVConfig> = {
  *
  * 旧实现只删字面 `..`，`%2e%2e%2f` 这类编码形式仍可能在服务端解码后跳出备份根目录；
  * 只解码一次也挡不住多重编码（`..%252f..%252fetc` 解码一次变成 `..%2f..%2fetc`，服务端/客户端
- * 再解码一次就变成 `../../etc`）。这里**循环解码到不动点**（上限 5 次防解压炸弹式的超长编码），
+ * 再解码一次就变成 `../../etc`）。这里**循环解码到不动点**（上限 10 次防解压炸弹式的超长编码），
  * 再逐段过滤 `.`/`..`/空段；反斜杠也按分隔符处理（部分服务端兼容 Windows 路径）。
+ *
+ * fail-closed：达到解码上限时若内容仍可继续解码（服务端二次解码后可能重新出现 `..`/分隔符），
+ * 直接返回空串拒绝该路径，而不是把未收敛的内容交给客户端。
  */
 export function sanitizeWebdavPath(path: string): string {
+  // 双斜杠、..、. 等逐段过滤；反斜杠同样按分隔符处理
+  const filterSegments = (value: string) =>
+    value
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter((segment) => segment !== "" && segment !== "." && segment !== "..")
+      .join("/");
+
   let decoded = path;
-  for (let i = 0; i < 5; i++) {
-    let next = decoded;
+  for (let i = 0; i < 10; i++) {
+    let next: string;
     try {
       next = decodeURIComponent(decoded);
     } catch {
-      break; // 非法百分号编码：停止解码，按当前内容过滤
+      // 非法百分号编码：无法继续解码，按当前内容过滤
+      return filterSegments(decoded);
     }
     if (next === decoded) {
-      break; // 已到不动点
+      // 已到不动点
+      return filterSegments(decoded);
     }
     decoded = next;
   }
 
-  return decoded
-    .replace(/\\/g, "/")
-    .split("/")
-    .filter((segment) => segment !== "" && segment !== "." && segment !== "..")
-    .join("/");
+  // 达到上限后仍在变化：再试探一次，若仍能解码出新的内容则拒绝该路径
+  try {
+    if (decodeURIComponent(decoded) !== decoded) {
+      return "";
+    }
+  } catch {
+    // 非法编码：与循环内一致，按当前内容过滤
+  }
+
+  return filterSegments(decoded);
 }
 
 export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {

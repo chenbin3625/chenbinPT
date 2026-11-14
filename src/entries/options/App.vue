@@ -38,9 +38,13 @@ watch(
 
 // 页面缩放（devicePixelRatio）异常提示
 const { pixelRatio } = useDevicePixelRatio();
-function setIgnoreWrongPixelRatio() {
+async function setIgnoreWrongPixelRatio() {
+  // 双保险：该提示可能在水合完成前就渲染出来，先等 configStore 恢复完成，
+  // 避免 $save() 用默认值整份覆盖 storage（插件侧也已把 $save 串行到 restorePromise 之后）。
+  await configStore.$onReady();
   configStore.ignoreWrongPixelRatio = true;
-  configStore.$save();
+  // 保存失败由持久化插件统一提示，这里避免产生未处理的 rejection
+  await configStore.$save().catch(() => undefined);
 }
 </script>
 

@@ -562,7 +562,7 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
     console.log("IRestoreReport JSON =", JSON.stringify(roundTripped));
   });
 
-  it("保持既有行为：下载历史非法时不清空本机历史（replaceDownloadHistory 返回 false 时只记跳过）", async () => {
+  it("下载历史非法时不清空本机历史，且仅「尝试过」不再报告恢复成功", async () => {
     const { handler } = await loadBackupModule();
     mocks.replaceDownloadHistory.mockResolvedValueOnce(false);
 
@@ -576,9 +576,13 @@ describe("restoreBackupData：S-1 写入侧防护 + L-10 事务性", () => {
       },
     })) as any;
 
-    expect(report.success).toBe(true);
+    expect(report.success).toBe(false);
     expect(report.skipped).toEqual([
       { field: "downloadHistory", reason: "invalid data in backup, local history kept" },
+      {
+        field: "restore",
+        reason: "没有恢复任何字段：所选字段与备份内容没有交集，或全部未通过校验",
+      },
     ]);
     expect(mocks.replaceDownloadHistory).toHaveBeenCalledTimes(1);
     const logMessages = mocks.logger.mock.calls.map(([item]) => item.msg).join("\n");

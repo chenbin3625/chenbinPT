@@ -77,8 +77,10 @@ export function buildUserManifest({ target, version, versionName }: IManifestBui
             },
           },
           content_security_policy: {
-            // 显式放行 img-src，否则 Firefox 下站点图标（http 资源）会被 CSP 拦掉（上游 #1657）
-            extension_pages: "script-src 'self'; img-src 'self'",
+            // 显式放行 img-src，否则 Firefox 下站点图标（http 资源）会被 CSP 拦掉（上游 #1657）。
+            // data: 也必须放行：getFavicon 会把图标转成 data URL（失败时回落 NO_IMAGE，同样是 data:image/gif），
+            // 媒体海报（socialRecommendations）也以 data URL 返回；只写 'self' 会让这些图片全部被 CSP 拦截。
+            extension_pages: "script-src 'self'; img-src 'self' data:",
           },
         }
       : {}),

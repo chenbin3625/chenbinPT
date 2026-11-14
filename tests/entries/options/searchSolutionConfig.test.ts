@@ -127,4 +127,77 @@ describe("E2-06：多个分组交叉写同一字段时必须合并而不是覆�
   it("没有任何选择时返回空配置", () => {
     expect(buildSearchSolutionFromCategories([crossCategory("a", [1])], {} as any).requestConfig).toEqual({});
   });
+
+  describe("cross 分类收到标量值（导入/旧方案允许标量）", () => {
+    it("brackets：标量归一为单元素数组，不再抛 TypeError", () => {
+      const categories = [crossCategory("categories", [1, 4])];
+      const result = buildSearchSolutionFromCategories(categories, { categories: 4 } as any);
+      expect(result.requestConfig).toEqual({ requestConfig: { data: { categories: [4] } } });
+    });
+
+    it("comma：标量按一个值处理（不重复、不加多余逗号）", () => {
+      const categories = [crossCategory("cat", ["401", "402"], { crossKey: "cat", mode: "comma" })];
+      const result = buildSearchSolutionFromCategories(categories, { cat: "402" } as any);
+      expect(result.requestConfig).toEqual({ requestConfig: { data: { cat: "402" } } });
+    });
+
+    it("append：标量只展开一个选项键", () => {
+      const categories = [crossCategory("cat", [401, 402], { crossKey: "c", mode: "append" })];
+      const result = buildSearchSolutionFromCategories(categories, { cat: 401 } as any);
+      expect(result.requestConfig).toEqual({ requestConfig: { data: { c401: 1 } } });
+    });
+
+    it("appendQuote：标量只生成一个对象键", () => {
+      const categories = [crossCategory("tag", ["a", "b"], { crossKey: "tags", mode: "appendQuote" })];
+      const result = buildSearchSolutionFromCategories(categories, { tag: "b" } as any);
+      expect(result.requestConfig).toEqual({ requestConfig: { data: { tags: { b: 1 } } } });
+    });
+
+    it("标量与数组分组交叉写同一 key 时仍正确合并", () => {
+      const categories = [crossCategory("groupA", [1, 2]), crossCategory("groupB", [2, 3])];
+      const result = buildSearchSolutionFromCategories(categories, { groupA: 1, groupB: [2, 3] } as any);
+      expect(result.requestConfig).toEqual({ requestConfig: { data: { categories: [1, 2, 3] } } });
+    });
+
+    it("cross + generateRequestConfig（custom 模式）：标量归一为数组后再交给生成函数", () => {
+      const categories: ISearchCategories[] = [
+        {
+          name: "标签",
+          key: "tag",
+          options: [
+            { name: "a", value: "a" },
+            { name: "b", value: "b" },
+          ],
+          cross: { mode: "custom" },
+          generateRequestConfig: (value) => ({
+            requestConfig: { params: { tags: (value as string[]).join(",") } },
+          }),
+        } as ISearchCategories,
+      ];
+
+      const result = buildSearchSolutionFromCategories(categories, { tag: "b" } as any);
+      // 旧实现会进入 generateRequestConfig 前仍是标量 → `(value as string[]).forEach` 抛 TypeError
+      expect(result.requestConfig).toEqual({ requestConfig: { params: { tags: "b" } } });
+      expect(result.selectedCategories).toEqual({ tag: ["b"] });
+    });
+
+    it("非 cross 的 generateRequestConfig 仍收到原始标量（不改变单值语义）", () => {
+      const received: unknown[] = [];
+      const categories: ISearchCategories[] = [
+        {
+          name: "分类",
+          key: "cat",
+          options: [{ name: "电影", value: 4010 }],
+          generateRequestConfig: (value) => {
+            received.push(value);
+            return { requestConfig: { params: { cat: value } } };
+          },
+        } as ISearchCategories,
+      ];
+
+      const result = buildSearchSolutionFromCategories(categories, { cat: 4010 } as any);
+      expect(received).toEqual([4010]);
+      expect(result.requestConfig).toEqual({ requestConfig: { params: { cat: 4010 } } });
+    });
+  });
 });

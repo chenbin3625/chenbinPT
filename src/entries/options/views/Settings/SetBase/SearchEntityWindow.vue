@@ -19,6 +19,12 @@ const infoIconColor = resolveColor("info");
  * F2-N1：清空「上一次搜索筛选词」是保存时才生效的副作用（与 SetBase 的显式保存语义一致）。
  */
 async function beforeSave() {
+  // 文本域输入期间只按行拆分、不做 trim/过滤（否则用户按回车新增的空行会被立即吞掉，
+  // 无法逐行录入标签）；真正写入配置前再统一规范化。
+  config.value.searchEntifyControl.hiddenTagNames = config.value.searchEntifyControl.hiddenTagNames
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   if (!config.value.searchEntity.saveLastFilter) {
     await metadataStore.setLastSearchFilter("");
   }
@@ -38,11 +44,10 @@ const promotionDisplayOptions = computed(() => [
 
 const hiddenTagNamesText = computed({
   get: () => config.value.searchEntifyControl.hiddenTagNames.join("\n"),
+  // 不在每次输入时 trim/过滤空行：那样用户一按回车，新行就被吞掉，无法录入第二条标签。
+  // 这里只按行拆分，规范化统一放到 beforeSave（见上）。
   set: (val: string) => {
-    config.value.searchEntifyControl.hiddenTagNames = val
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    config.value.searchEntifyControl.hiddenTagNames = val.split("\n");
   },
 });
 </script>

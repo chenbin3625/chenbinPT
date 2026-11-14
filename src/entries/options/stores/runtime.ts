@@ -23,6 +23,7 @@
  */
 
 import { defineStore } from "pinia";
+import { watch } from "vue";
 import { message } from "ant-design-vue";
 import type { EResultParseStatus } from "@ptd/site";
 import type { IRuntimePiniaStorageSchema, ISearchData, SnackbarMessageOptions } from "@/shared/types.ts";
@@ -427,12 +428,40 @@ export const useRuntimeStore = defineStore("runtime", {
  * （options 与 content-script 都存在这个问题）。
  */
 export function setupRuntimeStorePersistence(store: ReturnType<typeof useRuntimeStore>) {
-  store.$subscribe(
-    () => {
-      schedulePersist(() => store.$state as IRuntimePiniaStorageSchema);
-    },
-    { detached: true, flush: "post" },
+  const schedule = () => schedulePersist(() => store.$state as IRuntimePiniaStorageSchema);
+
+  // pinia 的 `$subscribe` 默认 deep:true，会对整个 state（含 5 万条 searchResult）做深遍历；
+  // 这里改为 shallow（deep:false）：只负责「顶层整体替换」（resetSearchData 等）。
+  // 其余需要持久化的切片用下面的显式 watch 触发，避免每次 push 都全树遍历。
+  store.$subscribe(schedule, { detached: true, flush: "post", deep: false });
+
+  // 标量切片：分组到一个 getter 里，依赖只有这几个字段（不触碰 searchResult）。
+  watch(
+    () => [
+      store.search.searchKey,
+      store.search.startAt,
+      store.search.endAt,
+      store.search.searchPlanKey,
+      store.search.isSearching,
+      store.search.snapshot,
+      store.mediaServerSearch.searchKey,
+      store.mediaServerSearch.isSearching,
+    ],
+    schedule,
+    { flush: "post" },
   );
+
+  // 这两个是小对象（每站点一条），深订阅的代价可忽略；搜索结果不在这里。
+  watch(() => store.search.searchPlan, schedule, { deep: true, flush: "post" });
+  watch(() => store.mediaServerSearch.searchStatus, schedule, { deep: true, flush: "post" });
+  watch(() => store.userInfo.flushPlan, schedule, { deep: true, flush: "post" });
+
+  // 搜索结果只会 push / 整体替换，监听 length 即可；监听整个数组/元素会退化成深遍历。
+  watch(() => store.search.searchResult.length, schedule, { flush: "post" });
+  watch(() => store.mediaServerSearch.searchResult.length, schedule, { flush: "post" });
+  // 整体替换可能长度不变（例如重新搜索前过滤结果），再监听一次引用（非 deep，不遍历元素）。
+  watch(() => store.search.searchResult, schedule, { flush: "post" });
+  watch(() => store.mediaServerSearch.searchResult, schedule, { flush: "post" });
 }
 
 /**

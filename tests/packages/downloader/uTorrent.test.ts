@@ -232,6 +232,85 @@ describe("uTorrent：操作接口在 HTTP 200 + {error} 时返回 false", () => 
 });
 
 /**
+ * 复检：400 不再一律视为鉴权失败 —— 只有响应确认 token 失效（invalid request）才重登重试，
+ * 业务性 400 直接按普通错误处理，避免掩盖真实原因并多一次登录。
+ */
+describe("uTorrent：400 的鉴权判定", () => {
+  beforeEach(() => {
+    axiosMock.get.mockReset();
+    axiosMock.post.mockReset();
+  });
+
+  it("400 + 业务错误体（invalid file）不重登，按普通错误抛出", async () => {
+    let tokenCalls = 0;
+    let businessCalls = 0;
+    axiosMock.get.mockImplementation(async (url: string) => {
+      if (url === "/token.html") {
+        tokenCalls++;
+        return { data: `<div id="token">TOKEN-${tokenCalls}</div>` };
+      }
+      businessCalls++;
+      throw Object.assign(new Error("Request failed with status code 400"), {
+        response: { status: 400, data: { error: "invalid file" } },
+      });
+    });
+
+    const client = new UTorrent({ address: "http://127.0.0.1:8080/gui/", username: "u", password: "p" });
+    await expect(client.request("getsettings")).rejects.toThrow(/400/);
+
+    expect(tokenCalls).toBe(1); // 没有重新取 token
+    expect(businessCalls).toBe(1); // 没有重试
+  });
+
+  it("400 + 响应体为 invalid request 时仍重登并重试一次", async () => {
+    let tokenCalls = 0;
+    let businessCalls = 0;
+    axiosMock.get.mockImplementation(async (url: string) => {
+      if (url === "/token.html") {
+        tokenCalls++;
+        return { data: `<div id="token">TOKEN-${tokenCalls}</div>` };
+      }
+      businessCalls++;
+      if (businessCalls === 1) {
+        throw Object.assign(new Error("Request failed with status code 400"), {
+          response: { status: 400, data: "invalid request" },
+        });
+      }
+      return { data: { build: 1 } };
+    });
+
+    const client = new UTorrent({ address: "http://127.0.0.1:8080/gui/", username: "u", password: "p" });
+    await expect(client.request("getsettings")).resolves.toMatchObject({ build: 1 });
+
+    expect(tokenCalls).toBe(2);
+    expect(businessCalls).toBe(2);
+  });
+
+  it("addTorrent 遇到业务性 400 时不重登，且只提交一次", async () => {
+    let tokenCalls = 0;
+    axiosMock.get.mockImplementation(async (url: string) => {
+      if (url === "/token.html") {
+        tokenCalls++;
+        return { data: `<div id="token">TOKEN-${tokenCalls}</div>` };
+      }
+      return { data: { build: 1 } };
+    });
+    axiosMock.post.mockRejectedValue(
+      Object.assign(new Error("Request failed with status code 400"), {
+        response: { status: 400, data: { error: "invalid file" } },
+      }),
+    );
+
+    const client = new UTorrent({ address: "http://127.0.0.1:8080/gui/", username: "u", password: "p" });
+    const result = await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {});
+
+    expect(result.success).toBe(false);
+    expect(axiosMock.post).toHaveBeenCalledTimes(1);
+    expect(tokenCalls).toBe(1);
+  });
+});
+
+/**
  * 复检 P2（I）：`ping()` 必须走 token 单飞（getSessionId），不能在并发登录时另起一次 /token.html。
  */
 describe("uTorrent：ping 走 token 单飞", () => {

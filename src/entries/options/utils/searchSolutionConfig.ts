@@ -52,9 +52,19 @@ export function buildSearchSolutionFromCategories(
   let requestConfig: IAdvancedSearchRequestConfig = {};
 
   for (const category of siteMetaCategory) {
-    const field = cloneDeep(selectCategory[category.key]);
+    let field = cloneDeep(selectCategory[category.key]);
     if (typeof field === "undefined" || typeof field === "symbol" || (Array.isArray(field) && field.length === 0)) {
       continue;
+    }
+
+    // cross 分类是多选语义，但导入/历史方案（以及 sanitizeSolutionSelectedCategories 对
+    // 无 options 分类的宽松校验）允许标量通过。这里在入口统一归一为数组：
+    // - generateRequestConfig 的 cross 自定义实现（pter/iptorrents 等）会直接 `.forEach`；
+    // - 展开逻辑（append/appendQuote/comma/brackets）会对值迭代 / map。
+    // 旧实现对标量直接迭代 → 数字/字符串不可迭代，整条方案的搜索直接崩溃。
+    // 归一后单值仍是「一个值」：comma 仍输出 "值"、brackets 为 `[值]`、append 只展开一个键。
+    if (category.cross && !Array.isArray(field)) {
+      field = [field as string | number];
     }
 
     selectedCategories[category.key] = field;
@@ -74,20 +84,22 @@ export function buildSearchSolutionFromCategories(
       if (typeof category.cross.key !== "undefined") {
         fieldKey = category.cross.key as string;
       }
+      // 入口已把 cross 分类的标量归一为数组（见上方说明），这里再做一次防御式收窄。
+      const crossValues: (string | number)[] = Array.isArray(field) ? field : [field as string | number];
       if (category.cross.mode === "append") {
-        for (const option of field as (string | number)[]) {
+        for (const option of crossValues) {
           set(requestConfig, `${updatePath}.${fieldKey}${option}`, 1);
         }
       } else if (category.cross.mode === "appendQuote") {
-        const options = Object.fromEntries((field as (string | number)[]).map((option) => [option, 1]));
+        const options = Object.fromEntries(crossValues.map((option) => [option, 1]));
         // 同一 cross.key 被多个分组使用时合并对象而不是覆盖
         mergeIntoObjectPath(requestConfig, `${updatePath}.${fieldKey}`, options);
       } else if (category.cross.mode === "comma") {
         // 同一 cross.key 被多个分组使用时把逗号串拼起来（去重，保持稳定顺序）
-        mergeIntoCommaPath(requestConfig, `${updatePath}.${fieldKey}`, field as (string | number)[]);
+        mergeIntoCommaPath(requestConfig, `${updatePath}.${fieldKey}`, crossValues);
       } else if (category.cross.mode === "brackets") {
         // 同一 cross.key 被多个分组使用时合并数组（去重，保持稳定顺序）
-        mergeIntoArrayPath(requestConfig, `${updatePath}.${fieldKey}`, field as (string | number)[]);
+        mergeIntoArrayPath(requestConfig, `${updatePath}.${fieldKey}`, crossValues);
       } else {
         set(requestConfig, `${updatePath}.${fieldKey}`, field);
       }

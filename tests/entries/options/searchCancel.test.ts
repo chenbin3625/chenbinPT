@@ -10,6 +10,7 @@ const runtimeState = {
     snapshot: undefined as string | undefined,
     searchKey: "test",
     searchResult: [] as any[],
+    endAt: undefined as number | undefined,
     searchPlan: {
       "site-a|$|default": {
         status: 1,
@@ -29,7 +30,10 @@ vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => ({ searchEntity: { queueConcurrency: 1, treatTTQueryAsImdbSearch: false } }),
 }));
 const getSearchSolution = vi.hoisted(() => vi.fn());
-vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => ({ getSearchSolution }) }));
+const onReady = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@/options/stores/metadata.ts", () => ({
+  useMetadataStore: () => ({ getSearchSolution, $onReady: onReady }),
+}));
 vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", () => ({
   tableCustomFilter: {
     advanceFilterDictRef: { value: {} },
@@ -47,6 +51,7 @@ async function loadSearchModule() {
 describe("搜索取消：必须使在途任务失效", () => {
   beforeEach(() => {
     vi.mocked(sendMessage).mockReset();
+    onReady.mockReset().mockResolvedValue(undefined);
     runtimeState.search.snapshot = undefined;
     runtimeState.search.searchResult = [];
     runtimeState.search.isSearching = true;
@@ -207,13 +212,14 @@ describe("搜索取消：必须使在途任务失效", () => {
     const old = new Promise<any>((resolve) => {
       resolveOld = resolve;
     });
-    getSearchSolution
-      .mockReset()
-      .mockReturnValueOnce(old)
-      .mockResolvedValueOnce({
-        id: "new",
-        solutions: [{ siteId: "site-b", searchEntries: { default: {} } }],
-      });
+    getSearchSolution.mockReset().mockImplementation((key: string) =>
+      key === "old"
+        ? old
+        : Promise.resolve({
+            id: "new",
+            solutions: [{ siteId: "site-b", searchEntries: { default: {} } }],
+          }),
+    );
     runtimeState.resetSearchData.mockImplementation(() => {
       runtimeState.search.searchPlan = {} as any;
       runtimeState.search.searchResult = [];
@@ -221,6 +227,8 @@ describe("搜索取消：必须使在途任务失效", () => {
     vi.mocked(sendMessage).mockResolvedValue({ status: EResultParseStatus.success, data: [] } as any);
     const { doSearch, searchQueue } = await loadSearchModule();
     const first = doSearch("old", "old");
+    // 让旧方案通过水合后的轮次校验并真正开始读取方案（模拟「方案展开很慢」）
+    await vi.waitFor(() => expect(getSearchSolution).toHaveBeenCalledWith("old"));
     await doSearch("new", "new");
     resolveOld({ id: "old", solutions: [{ siteId: "site-a", searchEntries: { default: {} } }] });
     await first;
@@ -320,9 +328,127 @@ describe("D2-03：路由变化决定是否真正发起搜索", () => {
   });
 });
 
+describe("冷启动水合、过期轮次与暂停态恢复", () => {
+  beforeEach(() => {
+    vi.mocked(sendMessage).mockReset();
+    onReady.mockReset().mockResolvedValue(undefined);
+    getSearchSolution.mockReset();
+    runtimeState.search.snapshot = undefined;
+    runtimeState.search.searchResult = [];
+    runtimeState.search.isSearching = false;
+    runtimeState.search.endAt = 0;
+    runtimeState.search.searchPlan = {} as any;
+  });
+
+  it("冷启动：doSearch 等 metadata $onReady 完成后才读取搜索方案", async () => {
+    let releaseReady!: () => void;
+    onReady.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseReady = resolve)));
+    getSearchSolution.mockResolvedValue({
+      id: "default",
+      solutions: [{ siteId: "site-b", searchEntries: { default: {} } }],
+    });
+    vi.mocked(sendMessage).mockResolvedValue({ status: EResultParseStatus.success, data: [] } as any);
+
+    const { doSearch, searchQueue } = await loadSearchModule();
+    const pending = doSearch("kw", "default", true);
+
+    // doSearch 在第一个 await 处就调用了 $onReady；水合完成前不得读取方案
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(getSearchSolution).not.toHaveBeenCalled();
+
+    releaseReady();
+    await pending;
+    await searchQueue.onIdle();
+
+    expect(getSearchSolution).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(sendMessage).mock.calls.filter(([type]) => type === "getSiteSearchResult"),
+      "水合完成后搜索请求必须真正发出",
+    ).toHaveLength(1);
+  });
+
+  it("取消后旧任务结束触发的 idle 不会覆盖新一轮的 isSearching / endAt", async () => {
+    let releaseResponse!: (value: unknown) => void;
+    vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((resolve) => (releaseResponse = resolve)) as any);
+    const { cancelSearchQueue, doSearchEntity, searchQueue } = await loadSearchModule();
+
+    await doSearchEntity("site-a", "default", {} as any);
+    await vi.waitFor(() =>
+      expect(runtimeState.search.searchPlan["site-a|$|default"].status).toBe(EResultParseStatus.working),
+    );
+
+    cancelSearchQueue();
+    // 模拟取消后立刻开始的新一轮（epoch 已经前进）
+    runtimeState.search.isSearching = true;
+    runtimeState.search.endAt = 12345;
+
+    releaseResponse({ status: EResultParseStatus.success, data: [] });
+    await searchQueue.onIdle();
+
+    expect(runtimeState.search.isSearching, "旧 idle 不能把新一轮标成已结束").toBe(true);
+    expect(runtimeState.search.endAt, "旧 idle 不能覆盖新一轮的 endAt").toBe(12345);
+  });
+
+  it("暂停状态下重试失败方案会先恢复队列再入队", async () => {
+    runtimeState.search.searchPlan = {
+      "site-a|$|default": {
+        siteId: "site-a",
+        searchEntryName: "default",
+        searchEntry: {},
+        status: EResultParseStatus.unknownError,
+        queuePriority: 1,
+      },
+    } as any;
+    vi.mocked(sendMessage).mockResolvedValue({ status: EResultParseStatus.success, data: [] } as any);
+
+    const { pauseSearchQueue, retrySearch, searchQueuePaused, searchQueue } = await loadSearchModule();
+    pauseSearchQueue();
+    await retrySearch();
+    await searchQueue.onIdle();
+
+    expect(searchQueuePaused.value, "重试失败必须恢复队列，否则任务停在 waiting").toBe(false);
+    expect(vi.mocked(sendMessage).mock.calls.filter(([type]) => type === "getSiteSearchResult")).toHaveLength(1);
+  });
+
+  it("暂停状态下单方案重搜也会先恢复队列", async () => {
+    vi.mocked(sendMessage).mockResolvedValue({ status: EResultParseStatus.success, data: [] } as any);
+
+    const { pauseSearchQueue, doSearchEntity, searchQueuePaused, searchQueue } = await loadSearchModule();
+    pauseSearchQueue();
+    await doSearchEntity("site-a", "default", {} as any);
+    await searchQueue.onIdle();
+
+    expect(searchQueuePaused.value).toBe(false);
+    expect(vi.mocked(sendMessage).mock.calls.filter(([type]) => type === "getSiteSearchResult")).toHaveLength(1);
+  });
+
+  it("上移队列成功后回写 queuePriority，连续点击继续生效", async () => {
+    (runtimeState.search.searchPlan as any)["site-a|$|default"] = { queuePriority: 1 };
+    const { raiseSearchPriority, searchQueue } = await loadSearchModule();
+    let releaseBlocker!: () => void;
+
+    const blocker = searchQueue.add(() => new Promise<void>((resolve) => (releaseBlocker = resolve)), {
+      priority: 10,
+      id: "blocker",
+    });
+    const queued = searchQueue.add(() => Promise.resolve(), { priority: 1, id: "site-a|$|default" });
+
+    try {
+      await raiseSearchPriority("site-a|$|default" as any);
+      expect((runtimeState.search.searchPlan as any)["site-a|$|default"].queuePriority).toBe(2);
+      await raiseSearchPriority("site-a|$|default" as any);
+      expect((runtimeState.search.searchPlan as any)["site-a|$|default"].queuePriority).toBe(3);
+    } finally {
+      releaseBlocker();
+      await Promise.all([blocker, queued]);
+    }
+  });
+});
+
 describe("OUI-2 / E / F：搜索真正结束的时机、nonce 清理、暂停态自动恢复", () => {
   beforeEach(() => {
     vi.mocked(sendMessage).mockReset();
+    onReady.mockReset().mockResolvedValue(undefined);
     runtimeState.search.snapshot = undefined;
     runtimeState.search.searchResult = [];
     runtimeState.search.isSearching = true;
