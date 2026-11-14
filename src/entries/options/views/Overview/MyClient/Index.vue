@@ -649,7 +649,7 @@ function onToolbarSecondaryAction(key: string) {
 
 <template>
   <a-card>
-    <div class="my-client-toolbar">
+    <div class="my-client-toolbar" :class="{ 'my-client-toolbar--selected': selectedTorrents.length > 0 }">
       <div class="my-client-toolbar__actions">
         <!-- 主操作常显；次操作（重新校验 / 批量限速 / 批量标签 / 刷新）见 toolbarSecondaryItems -->
         <ToolbarActions :items="toolbarSecondaryItems" @select="onToolbarSecondaryAction">
@@ -663,40 +663,46 @@ function onToolbarSecondaryAction(key: string) {
               ><span class="my-client-toolbar__label">{{ t("MyClient.pushToDownloader.navBtn") }}</span></a-button
             >
 
-            <a-button
-              :disabled="selectedTorrents.length === 0 || !!pendingCommand"
-              :loading="pendingCommand === 'resume'"
-              :title="t('MyClient.resumeSelected')"
-              :aria-label="t('MyClient.resumeSelected')"
-              @click="() => resumeTorrents(selectedTorrents)"
-              type="link"
-              ><template #icon><PlayCircleOutlined /></template
-              ><span class="my-client-toolbar__label">{{ t("MyClient.resumeSelected") }}</span></a-button
-            >
+            <template v-if="selectedTorrents.length > 0">
+              <a-button
+                :disabled="!!pendingCommand"
+                :loading="pendingCommand === 'resume'"
+                :title="t('MyClient.resumeSelected')"
+                :aria-label="t('MyClient.resumeSelected')"
+                @click="() => resumeTorrents(selectedTorrents)"
+                type="link"
+                ><template #icon><PlayCircleOutlined /></template
+                ><span class="my-client-toolbar__label">{{ t("MyClient.resumeSelected") }}</span></a-button
+              >
 
-            <a-button
-              :disabled="selectedTorrents.length === 0 || !!pendingCommand"
-              :loading="pendingCommand === 'pause'"
-              :title="t('MyClient.pauseSelected')"
-              :aria-label="t('MyClient.pauseSelected')"
-              @click="() => pauseTorrents(selectedTorrents)"
-              type="text"
-              ><template #icon><PauseOutlined /></template
-              ><span class="my-client-toolbar__label">{{ t("MyClient.pauseSelected") }}</span></a-button
-            >
+              <a-button
+                :disabled="!!pendingCommand"
+                :loading="pendingCommand === 'pause'"
+                :title="t('MyClient.pauseSelected')"
+                :aria-label="t('MyClient.pauseSelected')"
+                @click="() => pauseTorrents(selectedTorrents)"
+                type="text"
+                ><template #icon><PauseOutlined /></template
+                ><span class="my-client-toolbar__label">{{ t("MyClient.pauseSelected") }}</span></a-button
+              >
 
-            <a-button
-              :disabled="selectedTorrents.length === 0 || !!pendingCommand"
-              :title="t('MyClient.deleteSelected')"
-              :aria-label="t('MyClient.deleteSelected')"
-              @click="() => openDeleteDialog(selectedTorrents)"
-              type="text"
-              danger
-              ><template #icon><DeleteOutlined /></template
-              ><span class="my-client-toolbar__label">{{ t("MyClient.deleteSelected") }}</span></a-button
-            >
+              <a-button
+                :disabled="!!pendingCommand"
+                :title="t('MyClient.deleteSelected')"
+                :aria-label="t('MyClient.deleteSelected')"
+                @click="() => openDeleteDialog(selectedTorrents)"
+                type="text"
+                danger
+                ><template #icon><DeleteOutlined /></template
+                ><span class="my-client-toolbar__label">{{ t("MyClient.deleteSelected") }}</span></a-button
+              >
+            </template>
           </template>
         </ToolbarActions>
+
+        <span v-if="selectedTorrents.length > 0" class="my-client-selection-count">
+          {{ t("MyClient.selectedCount", [selectedTorrents.length]) }}
+        </span>
 
         <!-- auto-refresh controls -->
         <a-popover placement="bottom" trigger="click">
@@ -745,7 +751,6 @@ function onToolbarSecondaryAction(key: string) {
           :title="t('MyClient.clientStatusDialog.openBtn')"
           class="status-btn"
           @click="showClientStatusDialog = true"
-          type="primary"
           size="small"
         >
           <span class="status-btn__item"> {{ allTorrents.length }}<DatabaseOutlined class="ptd-icon-sm" /> </span>
@@ -799,7 +804,7 @@ function onToolbarSecondaryAction(key: string) {
         fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
-      class="table-stripe"
+      class="table-stripe table-header-no-wrap"
       @change="onTableChange"
     >
       <template #bodyCell="{ column, record }">
@@ -1044,6 +1049,18 @@ function onToolbarSecondaryAction(key: string) {
   justify-content: space-between;
   gap: 8px 16px;
   min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.08));
+  border-radius: var(--ptd-radius-lg, 8px);
+  background: var(--ptd-surface, #fff);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.my-client-toolbar--selected {
+  border-color: var(--ptd-primary-border, rgba(22, 119, 255, 0.45));
+  background: var(--ptd-primary-soft, rgba(22, 119, 255, 0.1));
 }
 
 .my-client-toolbar__actions,
@@ -1081,6 +1098,19 @@ function onToolbarSecondaryAction(key: string) {
 
 .my-client-toolbar__auto-refresh {
   margin-left: 4px;
+}
+
+.my-client-selection-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--ptd-surface, #fff);
+  color: var(--ptd-primary, #1677ff);
+  font-size: var(--ptd-font-size-sm);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .my-client-toolbar__downloader-avatar {

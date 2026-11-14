@@ -136,7 +136,7 @@ function selectSearchPlan({ key }: { key: string | number }) {
     <a-space-compact class="ptd-search-input">
       <!-- 搜索方案选择框 -->
       <a-dropdown :trigger="['click']">
-        <a-button aria-haspopup="menu" class="ptd-search-plan-btn" type="primary" :title="searchPlanLabel">
+        <a-button aria-haspopup="menu" class="ptd-search-plan-btn" :title="searchPlanLabel">
           <span class="ptd-search-plan-label">{{ searchPlanLabel }}</span>
           <DownOutlined />
         </a-button>
@@ -209,6 +209,7 @@ function selectSearchPlan({ key }: { key: string | number }) {
         :loading="searchBusy"
         :aria-label="t('common.search')"
         :title="t('common.search')"
+        type="primary"
         @click="startSearchEntity"
       >
         <template #icon><SearchOutlined /></template>

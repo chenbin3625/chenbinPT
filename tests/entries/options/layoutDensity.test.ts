@@ -124,8 +124,8 @@ describe("options 页面紧凑布局密度", () => {
     const scope = popup.root;
 
     expect(computedStyle(scope.querySelector(".ant-table-wrapper")!, "margin-top")).toBe("12px");
-    expect(computedStyle(scope.querySelector(".ant-table-thead > tr > th")!, "padding")).toBe("2px 6px");
-    expect(computedStyle(scope.querySelector(".ant-table-tbody > tr > td")!, "padding")).toBe("2px 6px");
+    expect(computedStyle(scope.querySelector(".ant-table-thead > tr > th")!, "padding")).toBe("4px 8px");
+    expect(computedStyle(scope.querySelector(".ant-table-tbody > tr > td")!, "padding")).toBe("4px 8px");
     // 表头与单元格同一字号（13px），修复此前「表头 12px 比单元格 13px 还小」的倒挂
     expect(computedStyle(scope.querySelector(".ant-table-thead > tr > th")!, "font-size")).toBe("13px");
     expect(computedStyle(scope.querySelector(".ant-table-tbody > tr > td")!, "font-size")).toBe("13px");

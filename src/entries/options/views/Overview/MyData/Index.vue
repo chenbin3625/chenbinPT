@@ -179,6 +179,30 @@ const lastUpdateErrorStatusValues = [
   EResultParseStatus.noUserInput,
 ].map((item) => String(item));
 
+const myDataSummary = computed(() => {
+  let uploaded = 0;
+  let downloaded = 0;
+  let seedingSize = 0;
+  let errorSites = 0;
+
+  for (const record of tableData.value) {
+    if (record.status === EResultParseStatus.success) {
+      if (Number.isFinite(record.uploaded)) uploaded += Number(record.uploaded);
+      if (Number.isFinite(record.downloaded)) downloaded += Number(record.downloaded);
+      if (Number.isFinite(record.seedingSize)) seedingSize += Number(record.seedingSize);
+    }
+    if (lastUpdateErrorStatusValues.includes(String(record.status))) errorSites++;
+  }
+
+  return { uploaded, downloaded, seedingSize, errorSites };
+});
+
+function filterErrorSites() {
+  if (myDataSummary.value.errorSites === 0) return;
+  advanceFilterDictRef.value.status.required = [...lastUpdateErrorStatusValues];
+  updateTableFilterValueFn();
+}
+
 const tableColumns = computed(() =>
   // 操作列位置 / 固定（#1598）：先按可见列过滤（props.disabled 的列常显）→ toAntdColumns，
   // 最后再调整操作列位置，避免操作列被可见列过滤逻辑影响
@@ -314,6 +338,47 @@ function goToSiteSettings() {
 
 <template>
   <a-card>
+    <section
+      v-if="!isTableLoading && tableData.length > 0"
+      class="my-data-summary"
+      :aria-label="t('MyData.summary.label')"
+    >
+      <div class="my-data-summary__item">
+        <span class="my-data-summary__label">
+          <UpOutlined class="my-data-icon-success" />
+          {{ t("MyData.summary.uploaded") }}
+        </span>
+        <strong>{{ formatSize(myDataSummary.uploaded) }}</strong>
+      </div>
+      <div class="my-data-summary__item">
+        <span class="my-data-summary__label">
+          <DownOutlined class="my-data-icon-danger" />
+          {{ t("MyData.summary.downloaded") }}
+        </span>
+        <strong>{{ formatSize(myDataSummary.downloaded) }}</strong>
+      </div>
+      <div class="my-data-summary__item">
+        <span class="my-data-summary__label">
+          <FundOutlined />
+          {{ t("MyData.summary.seedingSize") }}
+        </span>
+        <strong>{{ formatSize(myDataSummary.seedingSize) }}</strong>
+      </div>
+      <button
+        type="button"
+        class="my-data-summary__item my-data-summary__item--action"
+        :class="{ 'my-data-summary__item--warning': myDataSummary.errorSites > 0 }"
+        :disabled="myDataSummary.errorSites === 0"
+        @click="filterErrorSites"
+      >
+        <span class="my-data-summary__label">
+          <WarningOutlined />
+          {{ t("MyData.summary.errorSites") }}
+        </span>
+        <strong>{{ myDataSummary.errorSites }}</strong>
+      </button>
+    </section>
+
     <a-flex class="page-toolbar" align="center" :gap="8">
       <!-- 刷新，取消刷新 -->
       <NavButton
@@ -797,6 +862,71 @@ function goToSiteSettings() {
 .my-data-toolbar-divider {
   margin-right: 8px;
   margin-left: 8px;
+}
+
+.my-data-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.my-data-summary__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.08));
+  border-radius: var(--ptd-radius-lg, 8px);
+  background: var(--ptd-surface-soft, rgba(0, 0, 0, 0.02));
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+  text-align: left;
+}
+
+.my-data-summary__item strong {
+  flex: none;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  line-height: 24px;
+}
+
+.my-data-summary__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+  font-size: var(--ptd-font-size-sm, 12px);
+  white-space: nowrap;
+}
+
+.my-data-summary__item--action {
+  font: inherit;
+  cursor: pointer;
+}
+
+.my-data-summary__item--action:disabled {
+  cursor: default;
+}
+
+.my-data-summary__item--warning .my-data-summary__label,
+.my-data-summary__item--warning strong {
+  color: var(--ptd-warning, #faad14);
+}
+
+@media (max-width: 960px) {
+  .my-data-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .my-data-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .my-data-settings-button {

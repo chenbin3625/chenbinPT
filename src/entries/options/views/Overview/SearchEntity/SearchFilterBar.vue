@@ -96,6 +96,12 @@ function clearField(field: FilterField) {
   updateTableFilterValueFn();
 }
 
+function clearAllFilters() {
+  fields.forEach((field) => clearField(field));
+  tableWaitFilterRef.value = "";
+  updateTableFilterValueFn();
+}
+
 function dateStart(preset: DatePreset): number {
   const now = new Date();
   return {
@@ -214,6 +220,8 @@ function extraCount(field: FilterField) {
   }
   return 0;
 }
+
+defineExpose({ clearAllFilters });
 </script>
 
 <template>

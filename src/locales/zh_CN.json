@@ -148,6 +148,7 @@
     }
   },
   "MyClient": {
+    "pageDescription": "集中查看下载任务、实时速度和批量操作状态。",
     "action": {
       "delete": "删除",
       "detail": "详情",
@@ -270,6 +271,7 @@
     "refresh": "刷新",
     "resumeSelected": "开始",
     "searchPlaceholder": "搜索种子名称、Hash、标签、路径",
+    "selectedCount": "已选择 {0} 个任务",
     "sitePublic": "公网种子",
     "sitePublicTip": "公网种子：客户端标记为公开种子，或其 tracker 仅匹配到公开站点",
     "siteUnmatched": "未匹配",
@@ -344,6 +346,14 @@
     }
   },
   "MyData": {
+    "pageDescription": "汇总各站账户数据，快速定位更新异常和配额风险。",
+    "summary": {
+      "downloaded": "下载量",
+      "errorSites": "异常站点",
+      "label": "数据概览",
+      "seedingSize": "做种量",
+      "uploaded": "上传量"
+    },
     "HistoryDataView": {
       "action": {
         "viewRaw": "查看原始数据"
@@ -537,7 +547,9 @@
         "snapshot": "搜索快照",
         "searchInterrupted": "上次搜索被中断，当前显示的是部分结果，请重新搜索"
       },
+      "clearFilters": "清除筛选",
       "clearSelection": "取消选择",
+      "filteredNoData": "当前筛选条件下没有匹配结果，请调整条件后重试。",
       "filterLabel": "过滤搜索结果",
       "filters": {
         "atLeast": "至少 {0}",
@@ -563,6 +575,8 @@
         "time": "日期"
       },
       "noData": "暂无搜索结果，请在上方输入关键词或选择搜索方案后开始搜索",
+      "pageDescription": "跨站检索资源，集中比较体积、活跃度、发布时间和下载成本。",
+      "resultList": "当前显示 {0} / {1} 条结果",
       "highlightSameSizeTorrent": "按大小排序时标记相同大小的种子",
       "limitTorrentTitleTdWidth": "限制种子标题宽度",
       "selectedTorrents": "已选择 {0} 个种子",
@@ -778,6 +792,8 @@
     }
   },
   "SetBase": {
+    "pageDescription": "调整界面外观、搜索、下载和数据处理等全局偏好。",
+    "unsavedChanges": "有未保存的更改",
     "download": {
       "allowDirectSendToClient": "是否允许直接将链接（而不是种子文件）发送到下载服务器（如非必要请勿启用）",
       "enableSiteFilter": "启用站点过滤器（启用后可在下载器设置中配置每个下载器可使用的站点）",

@@ -115,6 +115,7 @@ body {
   padding: 0 12px;
   background: var(--ptd-surface, #fff);
   border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   line-height: normal;
 }
 
@@ -426,8 +427,46 @@ body {
   margin-bottom: 12px;
 }
 
+#ptd-main > .ant-card {
+  border-color: var(--ptd-border, rgba(5, 5, 5, 0.08));
+  border-radius: var(--ptd-radius-lg, 8px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.025);
+}
+
 #ptd-main .ant-card > .ant-card-body {
   padding: 12px;
+}
+
+/* ── 页面标题 ─────────────────────────────────────────────────────────── */
+
+.ptd-page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-height: 42px;
+  margin: 0 0 12px;
+  padding: 2px 4px 0;
+}
+
+.ptd-page-heading__content {
+  min-width: 0;
+}
+
+.ptd-page-heading h1 {
+  margin: 0;
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: -0.01em;
+}
+
+.ptd-page-heading p {
+  max-width: 760px;
+  margin: 2px 0 0;
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+  font-size: var(--ptd-font-size-sm, 12px);
+  line-height: 18px;
 }
 
 /* ── 列表页工具条 ─────────────────────────────────────────────────────── */
@@ -654,7 +693,7 @@ body {
 }
 
 /*
- * 统一紧凑单元格。
+ * 统一数据表单元格。
  *
  * 作用域刻意不写 `#ptd-main`：弹层（我的数据历史 / 客户端详情 / 路径标签说明）里的表格
  * 没有 #ptd-main 祖先，此前吃 antd 默认内边距，行高明显比页面内表格大。
@@ -664,20 +703,31 @@ body {
  * - 表头 / 表体字号都取 `var(--ptd-font-size)`（最终 token 13px），不再手写 12/13 造成
  *   表头比单元格还小的倒挂；内边距同时覆盖 size="middle"/"small" 的表格
  *   （antd 的大小类规则在 :where() 里，权重为 0）。
+ *
+ * 行高从早期的 2px 垂直内边距调整到 4px：保留高信息密度，同时让标题、副标题和
+ * 双行数据不再挤在一起。表头使用轻量底色，滚动后仍能快速定位列。
  */
 .ant-table-wrapper .ant-table-thead > tr > th {
-  padding: 2px 6px;
+  padding: 4px 8px;
+  background: var(--ptd-surface-soft, var(--ptd-stripe, rgba(0, 0, 0, 0.02)));
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
   font-size: var(--ptd-font-size, 13px);
-  line-height: 16px;
+  font-weight: 600;
+  line-height: 18px;
   overflow-wrap: anywhere;
 }
 
 .ant-table-wrapper .ant-table-tbody > tr > td {
-  padding: 2px 6px;
+  padding: 4px 8px;
   font-size: var(--ptd-font-size, 13px);
-  line-height: 1.3;
+  line-height: 1.4;
+  vertical-align: middle;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+.ant-table-wrapper .ptd-table-cell--numeric {
+  font-variant-numeric: tabular-nums;
 }
 
 /*
@@ -796,7 +846,12 @@ body {
 
 /* 表头不折行：用元素选择器直接命中 th，避免写 antd 内部类 */
 .table-header-no-wrap th {
+  min-width: 56px;
   white-space: nowrap;
+}
+
+.table-header-no-wrap th.ant-table-selection-column {
+  min-width: 32px;
 }
 
 /* ── 应用内组件类 ─────────────────────────────────────────────────────── */
@@ -882,7 +937,7 @@ body {
 .search-filter-bar {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 0;
 }
 
@@ -896,7 +951,7 @@ body {
   flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 6px 8px;
   min-width: 0;
 }
 
@@ -921,19 +976,28 @@ body {
   align-items: center;
   gap: 5px;
   max-width: min(240px, 100%);
-  height: 30px;
-  padding: 0 8px;
+  height: 32px;
+  padding: 0 11px;
   border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.12));
-  border-radius: 4px;
+  border-radius: 999px;
   background: var(--ptd-surface, #fff);
   color: var(--ptd-text, rgba(0, 0, 0, 0.88));
   cursor: pointer;
   font: inherit;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
-.search-filter-chip:hover,
+.search-filter-chip:hover {
+  border-color: var(--ptd-primary-border, rgba(22, 119, 255, 0.45));
+  background: var(--ptd-hover, rgba(0, 0, 0, 0.04));
+}
+
 .search-filter-chip--active {
   border-color: var(--ptd-primary, #1677ff);
+  background: var(--ptd-primary-soft, rgba(22, 119, 255, 0.1));
   color: var(--ptd-primary, #1677ff);
 }
 
@@ -946,8 +1010,8 @@ body {
 
 .search-filter-count {
   flex: none;
-  padding: 1px 5px;
-  border-radius: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
   background: var(--ptd-primary, #1677ff);
   color: #fff;
   font-size: 11px;

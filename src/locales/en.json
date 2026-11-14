@@ -148,6 +148,7 @@
     }
   },
   "MyClient": {
+    "pageDescription": "Review download tasks, live transfer rates, and batch actions in one place.",
     "action": {
       "delete": "Delete",
       "detail": "Details",
@@ -270,6 +271,7 @@
     "refresh": "Refresh",
     "resumeSelected": "Resume",
     "searchPlaceholder": "Search by name, hash, label, or path",
+    "selectedCount": "{0} tasks selected",
     "sitePublic": "Public",
     "sitePublicTip": "Public torrent: marked as public by the client, or its tracker only matches a public site",
     "siteUnmatched": "Unmatched",
@@ -344,6 +346,14 @@
     }
   },
   "MyData": {
+    "pageDescription": "Summarize account data across sites and spot update or quota risks quickly.",
+    "summary": {
+      "downloaded": "Downloaded",
+      "errorSites": "Error Sites",
+      "label": "Data Summary",
+      "seedingSize": "Seeding Size",
+      "uploaded": "Uploaded"
+    },
     "HistoryDataView": {
       "action": {
         "viewRaw": "View Raw Data"
@@ -537,7 +547,9 @@
         "snapshot": "Search Snapshot",
         "searchInterrupted": "The previous search was interrupted; showing partial results. Please search again."
       },
+      "clearFilters": "Clear Filters",
       "clearSelection": "Clear Selection",
+      "filteredNoData": "No results match the current filters. Adjust the filters and try again.",
       "filterLabel": "Filter search results",
       "filters": {
         "atLeast": "At least {0}",
@@ -563,6 +575,8 @@
         "time": "Date"
       },
       "noData": "No search results yet. Enter a keyword or pick a search plan above to start.",
+      "pageDescription": "Search across sites and compare size, activity, publish time, and download cost.",
+      "resultList": "Showing {0} / {1} results",
       "highlightSameSizeTorrent": "Mark same-size torrents when sorted by size",
       "limitTorrentTitleTdWidth": "Limit torrent title column width",
       "selectedTorrents": "Selected {0} torrents",
@@ -778,6 +792,8 @@
     }
   },
   "SetBase": {
+    "pageDescription": "Configure global preferences for appearance, search, downloads, and data handling.",
+    "unsavedChanges": "Unsaved changes",
     "download": {
       "myClientTitle": "My Downloader",
       "allowDirectSendToClient": "Allow sending links directly (instead of torrent files) to the download server (Do not enable unless necessary)",

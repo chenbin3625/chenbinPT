@@ -269,9 +269,15 @@ export function buildThemeVars(dark: boolean): Record<string, string> {
     "--ptd-text-secondary": token.colorTextSecondary,
     "--ptd-text-tertiary": token.colorTextTertiary,
     "--ptd-border": token.colorBorderSecondary,
+    "--ptd-border-strong": token.colorBorder,
     "--ptd-hover": token.colorFillTertiary,
     "--ptd-stripe": token.colorFillQuaternary,
+    "--ptd-surface-soft": token.colorFillQuaternary,
     "--ptd-table-highlight": token.colorFillSecondary,
+    "--ptd-primary-soft": token.colorPrimaryBg,
+    "--ptd-primary-border": token.colorPrimaryBorder,
+    "--ptd-radius": `${token.borderRadius}px`,
+    "--ptd-radius-lg": `${token.borderRadiusLG}px`,
     // 基础排版：options 页面与 content-script overlay 共用同一份定义（此前 overlay 手抄了
     // 一遍字体栈，options 侧则完全没有基准排版，裸文本落到 reset.css 的 `sans-serif` + 16px）。
     // 这里输出的是**最终生效**的 token（见 resolveAntdToken）：fontSize 13、lineHeight 1.5，

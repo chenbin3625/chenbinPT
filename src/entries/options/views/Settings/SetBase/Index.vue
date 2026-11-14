@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CheckCircleOutlined } from "@ant-design/icons-vue";
-import { cloneDeep } from "es-toolkit";
+import { cloneDeep, isEqual } from "es-toolkit";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -93,6 +93,7 @@ const activeTab = computed({
 const showSaveButton = computed(() => {
   return route.meta?.usesGlobalSave !== false;
 });
+const hasUnsavedChanges = computed(() => !isEqual(configDraft.value, configDraftBaseline.value));
 const isSaving = ref(false);
 
 async function save() {
@@ -130,6 +131,10 @@ async function save() {
 
       <!-- 保存按钮与页签同一行、贴行尾：与对话框页脚保持一致的原生 antd 按钮层级（主操作 = 实心 primary） -->
       <template v-if="showSaveButton" #rightExtra>
+        <span v-if="hasUnsavedChanges" class="set-base-unsaved" aria-live="polite">
+          <span class="set-base-unsaved__dot" />
+          {{ t("SetBase.unsavedChanges") }}
+        </span>
         <a-button class="set-base-save" type="primary" :loading="isSaving" @click="save">
           <template #icon>
             <CheckCircleOutlined />
@@ -146,8 +151,43 @@ async function save() {
   margin-bottom: 0;
 }
 
+.set-base-tabs :deep(.ant-tabs-nav) {
+  position: sticky;
+  top: -12px;
+  z-index: 4;
+  background: var(--ptd-surface, #fff);
+  box-shadow: 0 5px 8px -8px rgba(0, 0, 0, 0.28);
+}
+
 /* 保存按钮给一个稳定的最小宽度，避免只随文案变化 */
 .set-base-save {
   min-width: 96px;
+}
+
+.set-base-unsaved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-end: 8px;
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+  font-size: var(--ptd-font-size-sm, 12px);
+  white-space: nowrap;
+}
+
+.set-base-unsaved__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ptd-warning, #faad14);
+}
+
+@media (max-width: 840px) {
+  .set-base-tabs :deep(.ant-tabs-nav) {
+    top: -8px;
+  }
+
+  .set-base-unsaved {
+    display: none;
+  }
 }
 </style>

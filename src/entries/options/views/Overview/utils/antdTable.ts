@@ -153,6 +153,7 @@ export function toAntdColumns(
         dataIndex: key,
         key,
         align,
+        className: align === "right" ? "ptd-table-cell--numeric" : undefined,
         width: h.width,
         minWidth: h.minWidth,
         sorter: h.sortable === false ? undefined : makeSorter(key, options.multiSort),
