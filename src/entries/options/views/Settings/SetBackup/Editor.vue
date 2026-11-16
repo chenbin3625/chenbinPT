@@ -33,6 +33,16 @@ const hasRetention = computed(() => hasBackupRetentionToApply(clientConfig.value
  */
 const revealedConfigFields = ref<Set<string>>(new Set());
 
+// 编辑对话框会复用同一个 Editor 实例：切换到另一个备份服务器时清除上一台的明文显示状态，
+// 避免新服务器的凭据在一打开时就以明文渲染。
+watch(
+  clientConfig,
+  () => {
+    revealedConfigFields.value = new Set();
+  },
+  { immediate: true, deep: false },
+);
+
 /** 该字段在 metaField 中被显式标记为凭据（密码 / 令牌 / 密钥） */
 function isSecretConfigField(metaField: { secret?: boolean }): boolean {
   return metaField.secret === true;

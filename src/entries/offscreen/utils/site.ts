@@ -21,12 +21,15 @@ import { ptdIndexDb } from "../adapter/indexdb.ts";
 
 export async function getSiteUserConfig(siteId: TSiteID, flush = false) {
   // 只取当前站点的用户配置，避免整份 metadata 跨上下文往返（见 docs/performance-audit.md P0-2）
-  const storedSiteUserConfig =
+  const stored =
     ((await sendMessage("getExtStoragePath", {
       key: "metadata",
       path: ["sites", siteId],
       defaultValue: {},
     })) as ISiteUserConfig) ?? {};
+  // 下面的 `??=` 会原地写默认值。Firefox 的消息通道可能复用 background 读缓存中的同一对象，
+  // 直接改它会让默认值只存在于缓存、不被持久化（其它读取方也会看到被污染的对象）。
+  const storedSiteUserConfig: ISiteUserConfig = { ...stored };
 
   const siteMetaData = await getDefinedSiteMetadata(siteId);
 
@@ -89,14 +92,25 @@ onMessage("getSiteList", async () => {
     })) as IMetadataPiniaStorageSchema["siteNameMap"]) ?? {};
   return Promise.all(
     Object.entries(sites).map(async ([id, config]) => {
-      const siteMetaData = await getDefinedSiteMetadata(id as TSiteID);
-      const isDead = siteMetaData.isDead ?? false;
-      return {
-        id,
-        name: nameMap[id] ?? config.merge?.name ?? id,
-        url: config.url ?? "",
-        offline: (isDead || config.isOffline) ?? false,
-      };
+      try {
+        const siteMetaData = await getDefinedSiteMetadata(id as TSiteID);
+        const isDead = siteMetaData.isDead ?? false;
+        return {
+          id,
+          name: nameMap[id] ?? config?.merge?.name ?? id,
+          url: config?.url ?? "",
+          offline: (isDead || config?.isOffline) ?? false,
+        };
+      } catch (e) {
+        // 单站点定义缺失/恢复数据损坏不应让整个 getSiteList 失败（否则内容脚本/搜索入口
+        // 会完全拿不到站点列表）。返回最小占位并标记 offline，让调用方跳过即可。
+        logger({
+          msg: `Failed to read site metadata for ${id} in getSiteList`,
+          level: "warn",
+          data: { error: e instanceof Error ? e.message : String(e) },
+        });
+        return { id, name: nameMap[id] ?? id, url: config?.url ?? "", offline: true };
+      }
     }),
   );
 });
@@ -104,6 +118,9 @@ onMessage("getSiteList", async () => {
 export type TCreateSiteInstanceResult<TYPE extends "private" | "public"> = Awaited<
   ReturnType<typeof createSiteInstance<TYPE>>
 >;
+
+/** 同一 cacheKey 的建实例过程去重：首次并发会重复 cloneDeep/动态 import，后完成者还会覆盖缓存。 */
+const siteInstanceInFlight = new Map<string, Promise<unknown>>();
 
 export async function getSiteInstance<TYPE extends "private" | "public">(
   siteId: TSiteID,
@@ -123,13 +140,29 @@ export async function getSiteInstance<TYPE extends "private" | "public">(
     return cached;
   }
 
+  const inFlight = siteInstanceInFlight.get(cacheKey);
+  if (inFlight) {
+    return (await inFlight) as TCreateSiteInstanceResult<TYPE>;
+  }
+
   logger({ msg: `getSiteInstance for ${siteId}`, data: { url: storedSiteUserConfig.url } });
-  const instance = await createSiteInstance<TYPE>(siteId, storedSiteUserConfig);
-  return setCachedSiteInstance<TCreateSiteInstanceResult<TYPE>>(
-    siteId,
-    cacheKey,
-    instance as TCreateSiteInstanceResult<TYPE>,
-  );
+  const pending = (async () => {
+    const instance = await createSiteInstance<TYPE>(siteId, storedSiteUserConfig);
+    return setCachedSiteInstance<TCreateSiteInstanceResult<TYPE>>(
+      siteId,
+      cacheKey,
+      instance as TCreateSiteInstanceResult<TYPE>,
+    );
+  })();
+
+  siteInstanceInFlight.set(cacheKey, pending);
+  try {
+    return (await pending) as TCreateSiteInstanceResult<TYPE>;
+  } finally {
+    if (siteInstanceInFlight.get(cacheKey) === pending) {
+      siteInstanceInFlight.delete(cacheKey);
+    }
+  }
 }
 
 /**

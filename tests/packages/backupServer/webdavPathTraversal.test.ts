@@ -104,10 +104,13 @@ describe("WebDAV.getFile / deleteFile：路径清理（M-9）", () => {
     const bomb = encodeNTimes("../../etc/passwd", 12);
     expect(sanitizeWebdavPath(bomb)).toBe("");
 
-    // getFile 收到被拒绝的路径时只会请求根目录，不会把未收敛内容交给服务端
+    // getFile 收到被拒绝的路径时必须直接抛错：`urlJoin("/", "")` 会得到根目录 "/"，
+    // 旧行为会读取/删除整个 WebDAV 根目录。
     const { server, client } = createServer();
-    await server.getFile(bomb);
-    expect(client.getFileContents.mock.calls[0]![0]).toBe("/");
+    await expect(server.getFile(bomb)).rejects.toThrow(/Invalid WebDAV file path/);
+    await expect(server.deleteFile(bomb)).rejects.toThrow(/Invalid WebDAV file path/);
+    expect(client.getFileContents).not.toHaveBeenCalled();
+    expect(client.deleteFile).not.toHaveBeenCalled();
   });
 });
 

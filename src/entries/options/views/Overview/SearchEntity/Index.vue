@@ -339,6 +339,10 @@ function showSearchError(error: unknown) {
  */
 async function runSearch(search: string, plan: string) {
   let expansionToken: number | undefined;
+  // doSearch 抛错时拿不到本轮 expansion token；用「调用前捕获的 task epoch」判断这期间
+  // 是否已经开始了新一轮搜索。旧实现在 token 为 undefined 时无条件摘 flush，
+  // 会把新一轮搜索的 flush 从地址上删掉。
+  const taskEpochBeforeSearch = captureSearchTaskEpoch();
   try {
     expansionToken = await doSearch(search, plan, true);
   } catch (error) {
@@ -346,8 +350,11 @@ async function runSearch(search: string, plan: string) {
   } finally {
     await waitForSearchQueueIdle();
     // 等队列期间可能已经开始了新一轮搜索：过期的这一轮不能再把新一轮的 flush 从地址上摘掉。
-    // doSearch 抛错（没有拿到本轮 token）时保持原有收尾行为。
-    if (expansionToken === undefined || isSearchExpansionCurrent(expansionToken)) {
+    const stillCurrent =
+      expansionToken === undefined
+        ? isSearchTaskCurrent(taskEpochBeforeSearch)
+        : isSearchExpansionCurrent(expansionToken);
+    if (stillCurrent) {
       removeFlushFromRoute();
     }
   }

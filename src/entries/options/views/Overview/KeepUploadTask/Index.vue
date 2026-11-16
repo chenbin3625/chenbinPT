@@ -87,8 +87,10 @@ const columns = computed(() =>
 const { rowSelectionFixed, expandFixed } = useTableActionColumnLayout();
 
 const tablePagination = computed(() =>
-  toPagination(configStore.tableBehavior.KeepUploadTask?.itemsPerPage ?? 10, (v) =>
-    configStore.updateTableBehavior("KeepUploadTask", "itemsPerPage", v),
+  toPagination(
+    configStore.tableBehavior.KeepUploadTask?.itemsPerPage ?? 10,
+    (v) => configStore.updateTableBehavior("KeepUploadTask", "itemsPerPage", v),
+    { allowUnpaginated: false },
   ),
 );
 
@@ -378,10 +380,19 @@ async function sendAllTorrents(task: IKeepUploadTask) {
 
 // 复制下载链接
 async function copyLinksToClipboard(task: IKeepUploadTask) {
-  const urls = task.items.map((item) => item.url).join("\n");
+  // 部分任务项可能没有下载链接（校验时未能解析 link）：不能把它们当成空行复制，
+  // 否则用户会得到一份夹杂空行的“成功”剪贴板内容。
+  const urls = task.items
+    .map((item) => (typeof item.url === "string" ? item.url.trim() : ""))
+    .filter((url) => url.length > 0);
+  if (urls.length === 0) {
+    runtimeStore.showSnackbar(t("KeepUploadTask.copyError"), { color: "error" });
+    return;
+  }
+
   try {
-    await navigator.clipboard.writeText(urls);
-    runtimeStore.showSnackbar(t("KeepUploadTask.copySuccess", { count: task.items.length }), { color: "success" });
+    await navigator.clipboard.writeText(urls.join("\n"));
+    runtimeStore.showSnackbar(t("KeepUploadTask.copySuccess", { count: urls.length }), { color: "success" });
   } catch (e) {
     runtimeStore.showSnackbar(t("KeepUploadTask.copyError"), { color: "error" });
   }

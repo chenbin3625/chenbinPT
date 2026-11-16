@@ -841,8 +841,22 @@ export default class BittorrentSite {
 
       // D1-6：用户信息路径不允许把「selector 零命中」回落出来的 "" 当成真实值写入
       // （否则页面改版/软错误页会把数字字段覆盖成空串，破坏 IUserInfo 的数字契约）。
-      if (options.dropEmptyMisses === true && value === "" && !this.hasFieldMatch(element, selector)) {
-        continue;
+      if (options.dropEmptyMisses === true) {
+        const rawValue = this.getRawFieldValue(element, selector);
+        const matched = rawValue !== "" && rawValue !== null && typeof rawValue !== "undefined";
+
+        if (!matched) {
+          if (value === "") continue;
+        } else if (value === "" || value === 0) {
+          /**
+           * 命中了元素、原始文本也非空，但过滤器把它解析成了空串 / 0（站点改版、单位格式变化、
+           * 软错误页）。这类「解析失败」不能覆盖用户信息里的真实数字：只有原始文本本身就是 0
+           * （如 "0"、"0 B"）时才认为 0 是真实值。
+           */
+          const rawIsZero =
+            typeof rawValue === "number" ? rawValue === 0 : /^0(?:\.0+)?\s*[a-z]*$/i.test(String(rawValue).trim());
+          if (!rawIsZero) continue;
+        }
       }
 
       retRecord[key] = value;
@@ -992,15 +1006,19 @@ export default class BittorrentSite {
    * 判据看原始值而不是「选中了元素」：`:self` + elementProcess 的字段永远能选中元素，真正的命中与否在 elementProcess 的返回值里。
    * 没有 selector、只靠 `text` 给常量的字段不算命中。
    */
-  protected hasFieldMatch(element: Element | object, elementQuery: IElementQuery): boolean {
-    if (!elementQuery.selector) return false;
+  protected getRawFieldValue(element: Element | object, elementQuery: IElementQuery): unknown {
+    if (!elementQuery.selector) return undefined;
 
-    const raw = this.getFieldData(element, {
+    return this.getFieldData(element, {
       ...elementQuery,
       filters: undefined,
       switchFilters: undefined,
       text: undefined,
     });
+  }
+
+  protected hasFieldMatch(element: Element | object, elementQuery: IElementQuery): boolean {
+    const raw = this.getRawFieldValue(element, elementQuery);
     return raw !== "" && raw !== null && typeof raw !== "undefined";
   }
 
@@ -1121,7 +1139,27 @@ export default class BittorrentSite {
 
     for (const tr of trs) {
       try {
-        torrents.push((await this.parseWholeTorrentFromRow({}, tr, searchConfig)) as ITorrent);
+        const parsed = (await this.parseWholeTorrentFromRow({}, tr, searchConfig)) as ITorrent;
+        /**
+         * 行选择器命中了、但所有字段选择器都零命中时，`parseWholeTorrentFromRow` 不会抛错，
+         * 只会返回 `title/id/link/url` 全空的对象。这种「空壳种子」进入结果列表后既无法展示、
+         * 也无法推送/下载，还会让 `torrents.length > 0` 掩盖整体解析失败。
+         * 没有任何身份字段时按解析失败计数（全部行如此会走下面的 all rows failed 分支）。
+         */
+        const hasIdentity = Object.entries(parsed).some(([key, value]) => {
+          // site 是引擎补的、status 是默认值，不能作为「解析到了内容」的证据
+          if (key === "site" || key === "status") return false;
+          if (value === undefined || value === null || value === "") return false;
+          if (Array.isArray(value)) return value.length > 0;
+          if (typeof value === "number") return value !== 0;
+          if (typeof value === "object") return Object.keys(value).length > 0;
+          return true;
+        });
+        if (!hasIdentity) {
+          failedRows++;
+          continue;
+        }
+        torrents.push(parsed);
       } catch (e) {
         failedRows++;
         // B-1：单行解析失败（典型场景是时间单元格为空 / "昨天" / "01.03.2024 10:00" 这类

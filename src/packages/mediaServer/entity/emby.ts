@@ -495,7 +495,11 @@ export abstract class MediaBrowser<
       description: item.Overview ?? "",
       format: item.Container,
       size: this.getItemSize(item),
-      duration: item.RunTimeTicks / 10000000, // 10000 ticks = 1 ms, 10000 ms = 1 s
+      // 10000 ticks = 1 ms, 10000 ms = 1 s；缺少 RunTimeTicks 时不能用 NaN 污染 UI/排序
+      duration:
+        typeof item.RunTimeTicks === "number" && Number.isFinite(item.RunTimeTicks)
+          ? item.RunTimeTicks / 10000000
+          : undefined,
       poster: "",
       tags: item.GenreItems?.map((tag) => ({
         name: tag.Name,

@@ -518,6 +518,12 @@ async function sanitizeRestoredMetadata(
   }
 
   for (const [restoredId, restoredServer] of Object.entries(restoredServers)) {
+    // "local" 是本地导出（浏览器下载）的保留标识，不是真实服务器；恢复后它既不会上传，
+    // 「立即备份」也会静默走本地导出。不可信备份不能占用这个 id。
+    if (restoredId === "local") {
+      report.sanitized.push(`backupServers["local"]: 已丢弃（"local" 是保留标识）`);
+      continue;
+    }
     if (!isPlainObject(restoredServer)) {
       report.sanitized.push(`backupServers["${restoredId}"]: 已丢弃（条目不是对象）`);
       continue;
@@ -587,6 +593,41 @@ async function sanitizeRestoredMetadata(
   }
 
   return { ...restoredMetadata, backupServers: mergedServers };
+}
+
+/**
+ * 以本机 config 为骨架补齐备份里缺失的配置子树。
+ *
+ * 备份里显式存在的值优先（包括数组整体替换）；只有备份缺少该 key、或对象子树被写成了
+ * 非对象（不可信输入）时，才沿用本机值。这样旧版本备份不会因为缺少新配置项而把 store 里的
+ * 子树整个删掉（设置页会直接解引用 `configStore.backup.*` 等）。
+ */
+function fillMissingConfigKeys(
+  local: Record<string, unknown>,
+  restored: Record<string, unknown>,
+  report: IRestoreReport,
+): IConfigPiniaStorageSchema {
+  const merged: Record<string, unknown> = { ...restored };
+  for (const [key, localValue] of Object.entries(local)) {
+    const restoredValue = restored[key];
+    if (restoredValue === undefined) {
+      merged[key] = localValue;
+      continue;
+    }
+    if (isPlainObject(localValue)) {
+      if (isPlainObject(restoredValue)) {
+        merged[key] = fillMissingConfigKeys(
+          localValue as Record<string, unknown>,
+          restoredValue as Record<string, unknown>,
+          report,
+        );
+      } else {
+        merged[key] = localValue;
+        report.sanitized.push(`config.${key}: 形状不合法（期望对象），已沿用本机配置`);
+      }
+    }
+  }
+  return merged as unknown as IConfigPiniaStorageSchema;
 }
 
 /**
@@ -696,14 +737,41 @@ export async function restoreBackupData(
       // 都会用这把密钥加密 —— 配合任何一条上传通道，对方就能解开本机凭据。本机未设置时保持未设置。
       const localConfig = (await sendMessage("getExtStorage", "config")) as IConfigPiniaStorageSchema | undefined;
       const restoredConfig = fieldData as IConfigPiniaStorageSchema;
-      const backupKey = restoredConfig?.backup?.encryptionKey;
-      const localKey = localConfig?.backup?.encryptionKey;
-      if (isPlainObject(restoredConfig?.backup) && backupKey !== localKey) {
+
+      /**
+       * M-2：旧备份可能缺少新版本才有的配置子树（`backup` / `download` / `contentScript` ...）。
+       * webExtPersistence 的最小 diff 会把「恢复数据里没有的 key」从 store 中删除，随后设置页
+       * 直接解引用 `configStore.backup.*` 会抛 TypeError。这里以本机 config 为骨架补齐缺失字段：
+       * 备份里显式存在的值仍然优先，只有缺失/类型不匹配的子树才回落到本机值。
+       */
+      let restoredWithLocalDefaults = restoredConfig;
+      if (isPlainObject(localConfig) && isPlainObject(restoredConfig)) {
+        restoredWithLocalDefaults = fillMissingConfigKeys(
+          localConfig as unknown as Record<string, unknown>,
+          restoredConfig as unknown as Record<string, unknown>,
+          report,
+        );
+      }
+
+      const restoredBackup = restoredWithLocalDefaults?.backup;
+      const backupKey = isPlainObject(restoredBackup) ? restoredBackup.encryptionKey : undefined;
+      const localBackup = isPlainObject(localConfig?.backup) ? localConfig.backup : undefined;
+      const localKey = localBackup?.encryptionKey;
+
+      // 只有「备份里原本有 backup 子树」或「本机有 backup 配置」时才写回：
+      // 两边都没有时凭空补一个 `{ encryptionKey: "" }` 会改变 config 形状（历史测试/调用方
+      // 期望恢复结果与本机一致）。只要任一侧存在，就必须用本机密钥覆盖备份里的值（M-19）。
+      if (isPlainObject(restoredBackup) || localBackup) {
         fieldData = {
-          ...restoredConfig,
-          backup: { ...restoredConfig.backup, encryptionKey: localKey ?? "" },
+          ...restoredWithLocalDefaults,
+          backup: {
+            ...(isPlainObject(restoredBackup) ? restoredBackup : {}),
+            encryptionKey: localKey ?? "",
+          },
         } as IExtensionStorageSchema[typeof field];
-        report.sanitized.push("config.backup.encryptionKey：沿用本机的备份加密密钥，未采用备份文件中的值");
+        if (backupKey !== localKey) {
+          report.sanitized.push("config.backup.encryptionKey：沿用本机的备份加密密钥，未采用备份文件中的值");
+        }
       }
     }
 

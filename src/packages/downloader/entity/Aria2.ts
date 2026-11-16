@@ -291,7 +291,14 @@ export default class Aria2 extends AbstractBittorrentClient {
    * 连接关闭后由 `_getOpenWsClient()` 再次调用以重建，因此这里不做「一次性」假设。
    */
   private _connect(): Promise<WebSocket> {
-    const ws = new WebSocket(this._wsUrl);
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(this._wsUrl);
+    } catch (e) {
+      // 非法协议 / 地址会在构造 WebSocket 时同步抛 DOMException。这里转成 rejected promise，
+      // 让错误在请求阶段以可读信息返回，而不是让 new Aria2() 直接抛出。
+      return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+    }
     this._wsClient = ws;
 
     // 单例监听器：只随连接注册一次
@@ -357,7 +364,10 @@ export default class Aria2 extends AbstractBittorrentClient {
       const state = this._wsClient?.readyState;
       // 需要重建连接：建连失败 / 已关闭 / 正在关闭（close 事件可能尚未派发）
       if (ready === null || state === WS_CLOSING || state === WS_CLOSED) {
+        // 必须写回 `_wsReady`：否则两个并发请求都会看到 null 并各自 `_connect()`，
+        // 先创建的 socket 失去引用，其 close 事件还会因 target 不匹配被忽略。
         ready = this._connect();
+        this._wsReady = ready;
       }
 
       try {

@@ -185,6 +185,9 @@ export function pruneBackupFiles(
    * 候选。无法判断时间时**一律保留**（宁可多留一份备份，也不能误删用户唯一的历史备份）。
    */
   files.filter((file) => !Number.isFinite(file.time)).forEach(keep);
+  // 时间在未来的备份（服务端时钟偏差 / 文件名解析异常）落不进任何历史窗口 bucket，
+  // 会被当成过期删除。无法用「过去」的保留策略判断时一律保留。
+  files.filter((file) => Number.isFinite(file.time) && file.time > now).forEach(keep);
 
   for (const plan of plans) {
     if (plan.type === "age") {
@@ -507,6 +510,22 @@ export function validateBackupPayload(key: string, value: unknown): string | nul
       return isPlainObject(value) ? null : "cookies 不是对象";
     case "downloadHistory":
       return Array.isArray(value) ? null : "downloadHistory 不是数组";
+    case "torrentFavorite": {
+      if (!isPlainObject(value)) return "torrentFavorite 不是对象";
+      for (const [id, item] of Object.entries(value)) {
+        // 收藏项必须能被读取侧按 `createdAt` 排序；null / 非对象会让整个收藏页抛 TypeError。
+        if (
+          !isPlainObject(item) ||
+          typeof item.key !== "string" ||
+          typeof item.site !== "string" ||
+          typeof item.createdAt !== "number" ||
+          !Number.isFinite(item.createdAt)
+        ) {
+          return `torrentFavorite.${id} 不是合法的收藏项`;
+        }
+      }
+      return null;
+    }
     default:
       // 未知字段不判断形状（保持前向兼容），但仍会经过 decryptData 的 __proto__ 剥离
       return null;
@@ -697,6 +716,22 @@ export interface IDownloadHistoryTransaction {
     put(value: any): Promise<unknown>;
   };
   done: Promise<unknown>;
+  /** IndexedDB 事务的中止入口；任何写入异常都必须显式 abort，不能依赖「未捕获的 request error」。 */
+  abort?(): void;
+}
+
+/**
+ * 下载历史记录的 key 是自增数字 id（见 `download_history` 的 `{ keyPath: "id", autoIncrement: true }`）。
+ *
+ * 不可信备份里的 `null`、对象 id 等会让 `IDBObjectStore.put` 在**同步阶段**抛 DataError：
+ * 此时 clear 请求已经排队并会随事务提交，导致本机历史被清空却没有任何记录写入。
+ * 因此必须在开启事务前把整份数据校验完（任一非法 → 放弃整次恢复并保留本机历史）。
+ */
+function isValidDownloadHistoryRecord(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const id = (value as { id?: unknown }).id;
+  // 缺省 id 由 autoIncrement 生成；显式 id 必须是非负安全整数
+  return id === undefined || (typeof id === "number" && Number.isSafeInteger(id) && id >= 0);
 }
 
 /**
@@ -719,9 +754,24 @@ export async function replaceDownloadHistory(
     return false;
   }
 
+  // 先整体校验，再碰数据库：任何一条非法都不开启事务，本机历史原样保留。
+  if (!downloadHistory.every(isValidDownloadHistoryRecord)) {
+    return false;
+  }
+
   const tx = openTransaction();
-  await Promise.all([tx.store.clear(), ...downloadHistory.map((item) => tx.store.put(item)), tx.done]);
-  return true;
+  try {
+    await Promise.all([tx.store.clear(), ...downloadHistory.map((item) => tx.store.put(item)), tx.done]);
+    return true;
+  } catch (error) {
+    // 写入阶段仍可能出现 DataCloneError 等同步异常：显式 abort，确保 clear 不会随事务提交。
+    try {
+      tx.abort?.();
+    } catch {
+      // abort 本身失败时事务已不可控，交给调用方的错误处理
+    }
+    throw error;
+  }
 }
 
 export function localSort(files: IBackupFileInfo[], options: IBackupFileListOption): IBackupFileInfo[] {

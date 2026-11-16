@@ -53,8 +53,14 @@ async function pruneExpiredSocialInformation(cacheDay: number): Promise<void> {
   socialCachePruneStarted = true;
   try {
     const db = await ptdIndexDb;
-    const keys = await db.getAllKeys("social_information");
-    const values = (await db.getAll("social_information")) as ISocialInformation[];
+    // keys / values 必须来自同一个只读事务：两次独立读取之间可能有新条目写入，
+    // 导致按下标配对错位、误删刚写入的缓存。
+    const readTx = db.transaction("social_information");
+    const [keys, values] = await Promise.all([
+      readTx.store.getAllKeys(),
+      readTx.store.getAll() as Promise<ISocialInformation[]>,
+    ]);
+    await readTx.done;
     const cutoff = Date.now() - 86_400_000 * Math.max(cacheDay, 0);
     const expiredKeys = keys.filter((_key, index) => (values[index]?.createAt ?? 0) < cutoff);
     if (expiredKeys.length === 0) return;
@@ -129,9 +135,21 @@ export async function setSocialInformation(
   return await (await ptdIndexDb).put("social_information", val, key);
 }
 
-export async function deleteSocialInformation(site: TSupportSocialSite$1, sid: string) {
-  const key = `${site}:${sid}`;
-  return await (await ptdIndexDb).delete("social_information", key);
+export async function deleteSocialInformation(site: TSupportSocialSite$1, sid: string, fingerprint: string = "") {
+  const db = await ptdIndexDb;
+  if (fingerprint) {
+    return await db.delete("social_information", getSocialInformationStorageKey(site, sid, fingerprint));
+  }
+
+  // 未指定 fingerprint 时删除该 sid 的全部缓存：只删 `${site}:${sid}` 命不中
+  // 实际以 `${site}:${sid}:${fingerprint}` 存储的条目。
+  const prefix = `${site}:${sid}`;
+  const keys = await db.getAllKeys("social_information");
+  const targetKeys = keys.filter((key) => key === prefix || key.startsWith(`${prefix}:`));
+  if (targetKeys.length === 0) return;
+  const tx = db.transaction("social_information", "readwrite");
+  await Promise.all(targetKeys.map((key) => tx.store.delete(key)));
+  await tx.done;
 }
 
 export async function clearSocialInformation() {

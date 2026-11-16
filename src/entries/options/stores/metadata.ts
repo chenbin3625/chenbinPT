@@ -869,8 +869,8 @@ export const useMetadataStore = defineStore("metadata", {
       }
     },
 
-    async removeSite(siteId: TSiteID, options?: { reBuildMap?: boolean }) {
-      const { reBuildMap = true } = options ?? {};
+    async removeSite(siteId: TSiteID, options?: { reBuildMap?: boolean; cascadeSolutions?: boolean }) {
+      const { reBuildMap = true, cascadeSolutions = true } = options ?? {};
 
       delete this.sites[siteId];
       getSiteMapRebuildState(this).version++; // V-7：见 addSite
@@ -883,24 +883,28 @@ export const useMetadataStore = defineStore("metadata", {
       // I（REVIEW-FINDINGS stores-6）：`solution.solutions` 来自导入/备份恢复，形状可能被破坏
       // （null / 非数组 / 元素非对象）。旧实现裸调 `.filter` 会抛 TypeError，中断后面所有级联清理
       // （lastUserInfo / 排除站点 / 时间线 / flushPlan 全部残留）。这里逐条防御，坏数据直接重置为 []。
-      for (const solution of Object.values(this.solutions)) {
-        if (!solution || typeof solution !== "object") continue;
-        const items = Array.isArray(solution.solutions) ? solution.solutions : [];
-        solution.solutions = items.filter(
-          (solutionItem) => !!solutionItem && typeof solutionItem === "object" && solutionItem.siteId !== siteId,
-        );
+      if (cascadeSolutions) {
+        for (const solution of Object.values(this.solutions)) {
+          if (!solution || typeof solution !== "object") continue;
+          const items = Array.isArray(solution.solutions) ? solution.solutions : [];
+          solution.solutions = items.filter(
+            (solutionItem) => !!solutionItem && typeof solutionItem === "object" && solutionItem.siteId !== siteId,
+          );
+        }
       }
       delete this.lastUserInfo[siteId];
 
-      // F1（原 D1-Medium-06）：被清空的方案若正是默认方案，回退到 "default" ——
-      // 否则用户下次搜索会选中一个空方案，静默返回 0 结果。
-      for (const [solutionId, solution] of Object.entries(this.solutions)) {
-        if (
-          Array.isArray(solution?.solutions) &&
-          solution.solutions.length === 0 &&
-          this.defaultSolutionId === solutionId
-        ) {
-          this.defaultSolutionId = "default";
+      if (cascadeSolutions) {
+        // F1（原 D1-Medium-06）：被清空的方案若正是默认方案，回退到 "default" ——
+        // 否则用户下次搜索会选中一个空方案，静默返回 0 结果。
+        for (const [solutionId, solution] of Object.entries(this.solutions)) {
+          if (
+            Array.isArray(solution?.solutions) &&
+            solution.solutions.length === 0 &&
+            this.defaultSolutionId === solutionId
+          ) {
+            this.defaultSolutionId = "default";
+          }
         }
       }
 

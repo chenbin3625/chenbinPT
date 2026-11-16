@@ -189,7 +189,7 @@ export function toSerializable(value: any, seen: WeakMap<object, any> = new Weak
     seen.set(raw, out);
     for (let i = 0; i < raw.length; i++) {
       const item = toSerializable(raw[i], seen);
-      out[i] = item === undefined || typeof item === "function" ? null : item;
+      out[i] = item === undefined || typeof item === "function" || typeof item === "symbol" ? null : item;
     }
     return out;
   }

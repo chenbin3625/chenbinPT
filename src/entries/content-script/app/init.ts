@@ -113,7 +113,15 @@ export function mountApp(document: Document, data: any = {}) {
   const app = createApp(Root).use(pinia).use(i18n).use(antd);
   const configStore = useConfigStore(pinia);
   const metadataStore = useMetadataStore(pinia);
-  void Promise.all([configStore.$onReady(), metadataStore.$onReady()]).then(() => {
+  /**
+   * 两个 store 都水合并把 bootstrap 注入的 config/metadata patch 完成之后才 resolve。
+   *
+   * 旧实现把这个 Promise 丢在一边（`void ...then`），App.vue 里只等 `configStore.$onReady()`：
+   * config 单独水合完成时回调就执行，此时 `data.config` 还没 patch 进来，读到的全是默认值
+   * （`defaultOpenSpeedDial`、悬浮球位置等）。这些值随后只写进普通 ref，不会重新求值。
+   * 这里把该 Promise 提供给 App.vue，让它等「水合 + patch」都完成后再初始化。
+   */
+  const dataReady = Promise.all([configStore.$onReady(), metadataStore.$onReady()]).then(() => {
     if (data.config && typeof data.config === "object") {
       configStore.$patch(data.config);
     }
@@ -122,6 +130,7 @@ export function mountApp(document: Document, data: any = {}) {
     }
   });
   app.provide("ptd_data", data); // 提供数据给 Vue 应用
+  app.provide("ptd_data_ready", dataReady);
   app.mount(appMountElement);
 
   // 防止某些网站动态修改 body，从而移除我们的 contentRoot，因此使用 MutationObserver 监听 body 的变化

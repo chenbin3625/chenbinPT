@@ -130,15 +130,17 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       const commits = listReq.data ?? [];
 
       for (const datum of commits) {
-        // 假定了 每次更新记录 都会产生 deletions， 如果 deletions = 0 则说明是 第一次创建，应该过滤掉 （实际并不一定）
-        if (datum.change_status?.deletions > 0) {
-          retFileList.push({
-            filename: datum.version,
-            path: datum.version,
-            time: new Date(datum.committed_at).getTime(),
-            size: "N/A",
-          });
-        }
+        /**
+         * 每个 commit 都是完整的一份备份快照。旧实现只保留 `deletions > 0` 的 commit，
+         * 于是首次创建（纯新增、deletions = 0）永远不会出现在历史/恢复列表里 ——
+         * 而它对「刚配置好 gist 就想恢复」的用户恰恰是唯一可用的备份。
+         */
+        retFileList.push({
+          filename: datum.version,
+          path: datum.version,
+          time: new Date(datum.committed_at).getTime(),
+          size: "N/A",
+        });
       }
 
       if (commits.length < PER_PAGE) break;

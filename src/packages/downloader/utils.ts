@@ -114,6 +114,52 @@ export function sanitizeDownloadUrlForLog(url: unknown): string {
 /** 单个种子文件的最大允许体积（PKG-3）：防止把明显不是种子的超大响应读进内存 */
 const MAX_TORRENT_FILE_SIZE = 50 * 1024 * 1024;
 
+/**
+ * 解码 `data:` URI 形式的种子。
+ *
+ * 「推送到下载器」的文件模式会把用户选择的 .torrent 读成 data URL。不同浏览器/适配器对
+ * XHR 打开 data: URI 的支持并不一致（responseType=arraybuffer 时还可能拿到字符串），
+ * 这里直接本地解码，确保文件推送不依赖底层适配器行为。
+ */
+function decodeTorrentDataUrl(url: string): { data: ArrayBuffer; contentType: string } {
+  const match = /^data:([^,]*),(.*)$/s.exec(url);
+  if (!match) {
+    throw new Error("Invalid Torrent From Server");
+  }
+
+  const meta = match[1];
+  const payload = match[2];
+  const isBase64 = /;base64(?:;|$)/i.test(meta);
+  const contentType = meta.split(";")[0]?.trim() || "application/x-bittorrent";
+
+  let bytes: Uint8Array;
+  if (isBase64) {
+    try {
+      const binary = atob(payload);
+      bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+    } catch {
+      throw new Error("Invalid Torrent From Server");
+    }
+  } else {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(payload);
+    } catch {
+      throw new Error("Invalid Torrent From Server");
+    }
+    bytes = new TextEncoder().encode(decoded);
+  }
+
+  if (bytes.byteLength > MAX_TORRENT_FILE_SIZE) {
+    throw new Error("Invalid Torrent From Server (response too large)");
+  }
+
+  return { data: bytes.buffer as ArrayBuffer, contentType };
+}
+
 export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Promise<ParsedTorrent> {
   const controller = new AbortController();
   let abortedForSize = false;
@@ -126,26 +172,34 @@ export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Pr
     }
   }
 
-  let req;
-  try {
-    req = await axios.request({
-      ...options,
-      responseType: "arraybuffer", // 统一以 ArrayBuffer 形式获取，方便后面转化
-      signal: controller.signal,
-      // PKG-3：只在下完整个响应后检查体积等于没有检查 —— 超大响应会先被完整读进内存。
-      // 传输过程中一旦超过上限就中止（浏览器适配器支持 signal）。
-      onDownloadProgress: (event) => {
-        if (event.loaded > MAX_TORRENT_FILE_SIZE) {
-          abortedForSize = true;
-          controller.abort();
-        }
-      },
-    });
-  } catch (e) {
-    if (abortedForSize) {
-      throw new Error("Invalid Torrent From Server (response too large)");
+  let req: { data: any; headers: any };
+  if (typeof options.url === "string" && /^data:/i.test(options.url)) {
+    const decoded = decodeTorrentDataUrl(options.url);
+    req = {
+      data: decoded.data,
+      headers: { "content-type": decoded.contentType, "content-length": String(decoded.data.byteLength) },
+    };
+  } else {
+    try {
+      req = await axios.request({
+        ...options,
+        responseType: "arraybuffer", // 统一以 ArrayBuffer 形式获取，方便后面转化
+        signal: controller.signal,
+        // PKG-3：只在下完整个响应后检查体积等于没有检查 —— 超大响应会先被完整读进内存。
+        // 传输过程中一旦超过上限就中止（浏览器适配器支持 signal）。
+        onDownloadProgress: (event) => {
+          if (event.loaded > MAX_TORRENT_FILE_SIZE) {
+            abortedForSize = true;
+            controller.abort();
+          }
+        },
+      });
+    } catch (e) {
+      if (abortedForSize) {
+        throw new Error("Invalid Torrent From Server (response too large)");
+      }
+      throw e;
     }
-    throw e;
   }
 
   // 兜底：进度事件缺失（或服务器谎报长度）时仍按最终体积拒绝

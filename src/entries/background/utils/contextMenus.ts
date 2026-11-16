@@ -284,8 +284,9 @@ async function clearContextMenus(): Promise<void> {
         }
         resolve();
       });
-      // 兜底：极少数环境既不调用 callback 也不返回 Promise 时，不让后续重建永久挂起
-      setTimeout(resolve, 0);
+      // 兜底：极少数环境既不调用 callback 也不返回 Promise 时，不让后续重建永久挂起。
+      // 不能是 0ms —— 那会在 removeAll 真正完成前就 resolve，随后 create 仍可能撞 duplicate id。
+      setTimeout(resolve, 1000);
     } catch (e) {
       logBackgroundError("Failed to clear context menus", e);
       resolve();
@@ -324,7 +325,6 @@ async function downloadLinkPush(
   const torrent: Partial<ITorrent> = {
     link,
     title,
-    url,
   };
 
   // 尝试从 link 中解出site
@@ -338,6 +338,16 @@ async function downloadLinkPush(
       const matchedSite = Object.hasOwn(siteHostMap, host) ? siteHostMap[host] : undefined;
       if (matchedSite) {
         torrent.site = matchedSite;
+        /**
+         * `url` 是右键时所在的标签页地址，不一定是 `link` 所属站点（论坛、搜索页、豆瓣等）。
+         * offscreen 会校验 `torrent.url` 必须属于 `torrent.site` 的 host 白名单，
+         * 直接写入会让「在非 PT 页面上右键推送 PT 下载链接」整次被拒绝。
+         * 只有标签页本身也属于同一个站点时才保留它作为详情页 URL。
+         */
+        const tabHost = typeof url === "string" ? getHostFromUrl(url) : undefined;
+        if (tabHost && Object.hasOwn(siteHostMap, tabHost) && siteHostMap[tabHost] === matchedSite) {
+          torrent.url = url;
+        }
       }
     } catch (error) {
       console.warn("[PTD] Failed to get metadata store for site detection:", error);

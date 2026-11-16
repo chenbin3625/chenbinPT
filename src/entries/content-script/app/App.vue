@@ -30,6 +30,7 @@ import {
   installPageTypeUrlWatcher,
   pageType,
   resolveDroppedTorrents,
+  snapshotDataTransfer,
   updatePageType,
   type IPtdData,
 } from "./utils.ts";
@@ -96,8 +97,18 @@ window.addEventListener("resize", handleWindowResize);
 // 由于App.vue是整个应用的根组件，此时 configStore 等 pinia store 可能还未初始化完成，所以需要监听 $onReady
 let stopUrlWatcher: (() => void) | undefined;
 
-void configStore
-  .$onReady(() => {
+const dataReady = inject<Promise<void> | undefined>("ptd_data_ready", undefined);
+
+void (async () => {
+  // H-7：必须等 bootstrap 把 data.config patch 进来之后再读配置。只等 configStore.$onReady()
+  // 会在 patch 之前触发，defaultOpenSpeedDial / position 读到的都是默认值。
+  if (dataReady) {
+    await dataReady;
+  } else {
+    await configStore.$onReady();
+  }
+
+  {
     openSpeedDial.value = configStore.contentScript?.defaultOpenSpeedDial ?? false;
 
     if (openSpeedDial.value) {
@@ -119,8 +130,8 @@ void configStore
     y.value = storeY <= 0 || storeY > clientHeight - 50 ? clientHeight - 100 : storeY; // Default to bottom
     rightX.value = clientWidth - x.value;
     bottomY.value = clientHeight - y.value;
-  })
-  .catch(() => runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }));
+  }
+})().catch(() => runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }));
 
 const remoteDownloadDialogData = shallowReactive<IRemoteDownloadDialogData>({
   show: false,
@@ -173,11 +184,14 @@ async function onDrop(event: DragEvent) {
   }
 
   try {
+    // DataTransfer 只在 drop 事件的同步派发阶段可读；下面要 await 站点实例化，因此必须先快照。
+    // 否则进入 protected mode 后 getData() 恒为空串，拖拽投放永远解析不到任何种子。
+    const dropData = snapshotDataTransfer(dataTransfer);
     const siteId = ptdData.siteId || "";
     const trustedHosts = await getTrustedLinkHosts(siteId);
     // S-2：拖拽内容完全由页面提供，必须在这里做形状 + 协议白名单 + 当前站点 host 校验，
     // 并强制把 site 改写为当前站点（校验失败时 resolveDroppedTorrents 会给出提示）
-    const { torrents } = resolveDroppedTorrents(dataTransfer, siteId, trustedHosts);
+    const { torrents } = resolveDroppedTorrents(dropData, siteId, trustedHosts);
 
     if (torrents.length > 0) {
       remoteDownloadDialogData.torrents = torrents;

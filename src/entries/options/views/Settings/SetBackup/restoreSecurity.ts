@@ -21,6 +21,7 @@ export const SENSITIVE_BACKUP_FIELDS: TBackupFields[] = [
   "userInfo",
   "searchResultSnapshot",
   "keepUploadTask",
+  "torrentFavorite",
   "downloadHistory",
 ];
 

@@ -22,6 +22,14 @@
  */
 const URL_WITH_QUERY_PATTERN = /(?:https?:\/\/|\/)[^\s"'<>\\]+/g;
 
+/**
+ * 没有前导斜杠的相对下载链接（`download.php?passkey=...`）。
+ *
+ * 前一个字符不能是 `:`（协议）、`/`（已被上面的模式覆盖）或 URL 字符；
+ * 只在出现 `?` 时匹配，避免把普通英文文本当 URL。
+ */
+const RELATIVE_URL_WITH_QUERY_PATTERN = /(^|[^:\w/])((?:[\w.~%-]+\/)*[\w.~%-]+\?[^\s"'<>\\]+)/g;
+
 /** 自然语言标点不属于 URL：匹配后把它们留在原位，避免改写日志文本本身 */
 const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?)\]}'"]+$/;
 
@@ -93,11 +101,18 @@ function redactUrlQuery(url: string): string {
   return redactUrlHash(`${path}?${redactKeyValuePairs(query)}${hash}`);
 }
 
+function redactMatchedUrl(matched: string): string {
+  const trailing = TRAILING_PUNCTUATION_PATTERN.exec(matched)?.[0] ?? "";
+  const url = trailing ? matched.slice(0, -trailing.length) : matched;
+  return redactUrlQuery(url) + trailing;
+}
+
 /** 把文本里所有 URL 的 userinfo / query 值 / 路径凭据段替换为 `***` */
 export function redactSensitiveUrls(text: string): string {
-  return text.replace(URL_WITH_QUERY_PATTERN, (matched) => {
-    const trailing = TRAILING_PUNCTUATION_PATTERN.exec(matched)?.[0] ?? "";
-    const url = trailing ? matched.slice(0, -trailing.length) : matched;
-    return redactUrlQuery(url) + trailing;
-  });
+  return text
+    .replace(URL_WITH_QUERY_PATTERN, redactMatchedUrl)
+    .replace(
+      RELATIVE_URL_WITH_QUERY_PATTERN,
+      (_matched, prefix: string, url: string) => prefix + redactMatchedUrl(url),
+    );
 }

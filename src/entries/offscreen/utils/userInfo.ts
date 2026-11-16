@@ -64,8 +64,11 @@ function isValidQueueConcurrency(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+/** 原生宿主/配置传入的并发上限：PQueue 会真的同时发起这么多个站点请求，不做上限等于允许打爆站点。 */
+const MAX_QUEUE_CONCURRENCY = 32;
+
 function setQueueConcurrency(queueConcurrency: number) {
-  const next = Math.floor(queueConcurrency);
+  const next = Math.min(Math.floor(queueConcurrency), MAX_QUEUE_CONCURRENCY);
   if (!isValidQueueConcurrency(next)) {
     return;
   }
@@ -238,7 +241,12 @@ export async function setSiteLastUserInfo(userData: IUserInfo) {
     // B1-12：只有解析成功的载荷才会走到写库，但 `updateAt` 可能来自恢复的历史数据/异常载荷
     // （非 number）。`date-fns.format` 对非法值会抛 `RangeError: Invalid time value`，
     // 使该站点之后每次刷新都在这里失败。统一兜底为当前时间，保证写入形状与后续刷新都正常。
-    if (!Number.isFinite(userData.updateAt as number)) {
+    // 仅校验 Number.isFinite 还不够：1e20 是有限数但超出 Date 可表示范围，
+    // date-fns.format 仍会抛 RangeError。这里直接用 Date 校验一次。
+    if (
+      !Number.isFinite(userData.updateAt as number) ||
+      !Number.isFinite(new Date(userData.updateAt as number).getTime())
+    ) {
       logger({
         msg: `Invalid updateAt for site ${site}, fallback to current time`,
         level: "warn",

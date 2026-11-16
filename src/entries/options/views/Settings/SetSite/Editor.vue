@@ -129,6 +129,9 @@ async function initSiteData(siteId: TSiteID, flush = false) {
 
   siteMetaData.value = siteMetadata;
   siteUserConfig.value = toMerged({ inputSetting: {}, url: siteMetadata.urls[0] }, siteUserConfigValue);
+  for (const inputMeta of siteMetadata.userInputSettingMeta ?? []) {
+    siteUserConfig.value.inputSetting![inputMeta.name] ??= "";
+  }
 
   // fix: customSiteUrl not show in Editor (#726)
   if (!siteMetaData.value.urls.includes(siteUserConfig.value.url)) {
@@ -150,6 +153,17 @@ function resetLocalState() {
   const currentUrl = siteUserConfig.value?.url ?? "";
   customSiteUrl.value = currentUrl && !officialUrls.includes(currentUrl as TSiteUrl) ? String(currentUrl) : "";
   revealedInputSettings.value = new Set();
+
+  // 同一站点第二次打开时 `siteId` 不变，`initSiteData` 不会重跑，也就缺失
+  // `toMerged({ inputSetting: {} }, ...)` 的默认值补齐。这里按当前站点定义补上，
+  // 保证模板里的 `siteUserConfig.inputSetting![name]` 始终有可写对象。
+  const userConfig = siteUserConfig.value;
+  if (userConfig) {
+    userConfig.inputSetting ??= {};
+    for (const inputMeta of siteMetaData.value.userInputSettingMeta ?? []) {
+      userConfig.inputSetting[inputMeta.name] ??= "";
+    }
+  }
 }
 
 defineExpose({

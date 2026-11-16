@@ -579,7 +579,17 @@ export default class AnimeBytes extends Gazelle {
       ],
     });
 
-    const baseUserInfo = { username: userName!, passkey: passKey! };
+    const baseUserInfo = {
+      username: String(userName ?? "").trim(),
+      passkey: String(passKey ?? "").trim(),
+    };
+    // 首页选择器失配时不能把空 passkey 缓存 12 小时：否则接下来所有 scrape 请求都会失败，
+    // 且要等到缓存过期才会重新解析。username 允许为空（RSS 链接可能只带 passkey，不影响鉴权），
+    // 但 passkey 是 scrape 的必要凭据，解析不到时直接报错。
+    if (!baseUserInfo.passkey) {
+      throw new Error("AnimeBytes: failed to resolve passkey from homepage (page layout changed or not logged in)");
+    }
+
     await this.storeRuntimeSettings(AnimeBytes.baseUserInfoCacheKey, {
       ...baseUserInfo,
       expiry: currentTime + AnimeBytes.baseUserInfoCacheTtl,

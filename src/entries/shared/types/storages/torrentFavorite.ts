@@ -17,6 +17,24 @@ export interface ITorrentFavoriteItem extends ITorrent {
 export type TTorrentFavoriteStorageSchema = Record<TTorrentFavoriteKey, ITorrentFavoriteItem>;
 
 /**
+ * 判断一个值是否具备收藏项的最小形状。
+ *
+ * 备份恢复是不可信输入：`torrentFavorite: { k: null }` 这类脏数据一旦落库，
+ * `getTorrentFavorites` 的 `b.createdAt - a.createdAt` 会抛 TypeError，收藏页持续加载失败。
+ * 这里与恢复侧共用同一份判据。
+ */
+export function isTorrentFavoriteItem(value: unknown): value is ITorrentFavoriteItem {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.key === "string" &&
+    typeof item.createdAt === "number" &&
+    Number.isFinite(item.createdAt) &&
+    typeof item.site === "string"
+  );
+}
+
+/**
  * 生成收藏项 key
  *
  * 与搜索结果的 uniqueId 保持一致，方便各处（搜索结果页 / 站点页面）对同一种子做去重；

@@ -10,8 +10,45 @@ export function commonParseFactory(urlPatterns: (string | RegExp)[]): (query: st
   };
 }
 
+/**
+ * 把 inet_aton 支持的旧式 IPv4 写法（`127.1`、`2130706433`、`0x7f000001`、`0177.0.0.1`）
+ * 展开成点分十进制；URL 解析通常会归一化，但这里是独立的安全判据，不能依赖调用方。
+ */
+function expandLegacyIPv4(host: string): string | null {
+  const legacyPart = "(?:0x[0-9a-f]+|[0-9]+)";
+  if (!new RegExp(`^${legacyPart}(?:\\.${legacyPart}){0,3}$`, "i").test(host)) {
+    return null;
+  }
+
+  const parts = host.split(".").map((part) => {
+    if (/^0x/i.test(part)) return parseInt(part, 16);
+    if (/^0[0-7]+$/.test(part)) return parseInt(part, 8);
+    return Number(part);
+  });
+  if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 0xffffffff)) {
+    return null;
+  }
+
+  let value: number;
+  if (parts.length === 1) {
+    value = parts[0];
+  } else if (parts.length === 2) {
+    if (parts[0] > 0xff || parts[1] > 0xffffff) return null;
+    value = (parts[0] << 24) | parts[1];
+  } else if (parts.length === 3) {
+    if (parts[0] > 0xff || parts[1] > 0xff || parts[2] > 0xffff) return null;
+    value = (parts[0] << 24) | (parts[1] << 16) | parts[2];
+  } else {
+    if (parts.some((part) => part > 0xff)) return null;
+    value = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+  }
+
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join(".");
+}
+
 /** 本机 / 私网 / 链路本地 / CGNAT 的 IPv4 地址 */
 function isPrivateOrLocalIPv4(host: string): boolean {
+  host = expandLegacyIPv4(host) ?? host;
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!ipv4) return false;
 

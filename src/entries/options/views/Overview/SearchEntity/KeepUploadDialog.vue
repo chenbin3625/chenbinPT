@@ -177,19 +177,19 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
   const isFirstItem = verifiedItemsOrder.value[0] === id;
 
   if (isFirstItem) {
-    // 第一个种子作为基准种子
-    if (!baseTorrent.value) {
-      baseTorrent.value = torrent;
-      item.loading = false;
+    // 第一个种子作为基准种子。重新校验（reDownload）也必须更新它：
+    // 旧实现只在 baseTorrent 为空时赋值，基准项重新下载失败后仍保留上一轮的 verified 标记。
+    baseTorrent.value = torrent;
+    item.loading = false;
 
-      if (torrent) {
-        item.torrent = torrent;
-        item.verified = true;
-        item.status = "downloaded";
-      } else {
-        item.verified = false;
-        item.status = "failed";
-      }
+    if (torrent) {
+      item.torrent = torrent;
+      item.verified = true;
+      item.status = "downloaded";
+    } else {
+      item.torrent = null;
+      item.verified = false;
+      item.status = "failed";
     }
   } else {
     // 等待基准种子下载完成
@@ -199,8 +199,12 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
       return;
     }
 
+    // 先无条件清掉上一轮的 verified：名称/大小/文件不匹配、下载失败或 torrent=null 时
+    // 都不能继续沿用旧结果，否则用户手动点过「+」后重新校验失败仍会被计入辅种任务。
     const result: Partial<IVerifiedItem> = {
       loading: false,
+      verified: false,
+      torrent: torrent ?? null,
     };
 
     if (!baseItem?.verified) {
@@ -313,6 +317,11 @@ function reDownload(id: string) {
   if (!item) return;
   item.loading = true;
   item.status = "downloading";
+  // 校验结果必须与上一轮彻底脱钩：否则下载失败/不匹配时旧的 verified:true 会残留。
+  item.verified = false;
+  item.error = false;
+  item.torrent = null;
+  recalcVerifiedCount();
 
   getTorrent(item.data, id)
     .then((result) => {

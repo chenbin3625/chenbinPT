@@ -166,8 +166,10 @@ const tableColumns = computed(() =>
 // 操作列固定在行首时，行首的选择列要一起固定
 const { rowSelectionFixed } = useTableActionColumnLayout();
 const tablePagination = computed(() =>
-  toPagination(configStore.tableBehavior["MyClient"]?.itemsPerPage ?? 25, (v) =>
-    configStore.updateTableBehavior("MyClient", "itemsPerPage", v),
+  toPagination(
+    configStore.tableBehavior["MyClient"]?.itemsPerPage ?? 25,
+    (v) => configStore.updateTableBehavior("MyClient", "itemsPerPage", v),
+    { allowUnpaginated: false },
   ),
 );
 function onSelectionChange(_keys: (string | number)[], rows: CTorrent[]) {

@@ -130,7 +130,7 @@ describe("V-14：下载状态轮询必须刷新列表", () => {
     expect(pollCount).toBe(1); // 轮询链已干净停止
   });
 
-  it("A-21：轮询请求 reject 时提示一次并停止轮询，不产生 unhandled rejection", async () => {
+  it("A-21：轮询请求 reject 时提示一次并继续重试，不产生 unhandled rejection", async () => {
     sendMessageMock.mockImplementation(async (type: string) => {
       if (type === "getDownloadHistory") {
         return [
@@ -158,7 +158,11 @@ describe("V-14：下载状态轮询必须刷新列表", () => {
 
     const pollCalls = sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length;
     await tick(5000);
-    expect(sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length).toBe(pollCalls); // 已停止轮询
+    // 单次失败不代表任务结束：轮询链以更长间隔继续重试，避免行永久停在「下载中」。
+    expect(sendMessageMock.mock.calls.filter((x) => x[0] === "getDownloadHistoryById").length).toBeGreaterThan(
+      pollCalls,
+    );
+    expect(showSnackbarMock).toHaveBeenCalledTimes(1); // 仍然只提示一次，不刷屏
   });
 });
 

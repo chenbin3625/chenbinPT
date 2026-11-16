@@ -279,7 +279,8 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
      * `/token.html`（uTorrent 新 token 可能顶掉旧 token，导致业务请求 400 再重试）。
      */
     this._sid = null;
-    this._sidPromise = null;
+    // 不要清空 `_sidPromise`：那会让并发请求另起一次 /token.html，旧 login 晚完成时
+    // 覆盖新 token。置空 `_sid` 后 getSessionId() 会等待在途 login，没有在途时才新建。
     try {
       await this.getSessionId();
       return true;

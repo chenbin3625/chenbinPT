@@ -146,11 +146,13 @@ onMessage("getMediaServerOverview", async ({ data: { mediaServerId, maxItems } }
  * 第 N 次保存需重新序列化前 N-1 份快照（O(N²) 写入）。
  */
 onMessage("getSearchResultSnapshotData", async ({ data: snapshotId }) => {
-  return (await sendMessage("getExtStoragePath", {
+  const snapshot = (await sendMessage("getExtStoragePath", {
     key: "searchResultSnapshot",
     path: [snapshotId],
     defaultValue: undefined,
-  })) as TSearchResultSnapshotStorageSchema[string];
+  })) as TSearchResultSnapshotStorageSchema[string] | undefined;
+  // 显式 null：undefined 经消息序列化也会变成 null，但类型契约必须如实反映。
+  return snapshot ?? null;
 });
 
 onMessage("saveSearchResultSnapshotData", async ({ data: { snapshotId, data } }) => {

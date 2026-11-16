@@ -37,8 +37,15 @@ async function editClientConfig() {
   if (!isFormValid.value || isSaving.value) return;
   isSaving.value = true;
   try {
+    const config = clientConfig.value;
+    if (!config) return;
+    // 编辑期间可能已经完成了一次备份：不要用对话框打开时的旧快照覆盖 store 里的最新时间。
+    const currentLastBackupAt = metadataStore.backupServers[config.id]?.lastBackupAt;
+    if (typeof currentLastBackupAt === "number") {
+      config.lastBackupAt = currentLastBackupAt;
+    }
     // F2-Medium-12：旧实现既不等 addBackupServer 完成、也没有 try/catch，保存失败会变成 unhandled rejection。
-    await metadataStore.addBackupServer(clientConfig.value as IBackupServerMetadata);
+    await metadataStore.addBackupServer(config as IBackupServerMetadata);
     showDialog.value = false;
   } catch {
     runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });

@@ -339,7 +339,9 @@ function normalizeDoubanSubjectCollection(
         title,
         titles: [title],
         sourceUrl: source.referer ?? source.url,
-        poster: normalizeDoubanImageUrl(item.pic?.large ?? item.pic?.normal),
+        // 该分支的图片地址同样来自第三方接口，必须走统一的协议 + 私网校验，
+        // 不能只做 `imgN` 域名归一后直接交给 offscreen 请求（SSRF）。
+        poster: normalizeSocialPosterUrl(normalizeDoubanImageUrl(item.pic?.large ?? item.pic?.normal)),
         summary: item.comment?.trim(),
         releaseYear: item.year?.trim() || cardSubtitleMetadata.releaseYear,
         region: cardSubtitleMetadata.region,

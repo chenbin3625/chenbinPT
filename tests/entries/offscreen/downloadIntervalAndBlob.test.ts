@@ -450,7 +450,7 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
     }
   });
 
-  it("B1-1：超过最长等待上限时强制释放 blob 并结束监听（避免僵尸下载占住内存）", async () => {
+  it("B1-1：超过最长等待上限后释放 blob，但继续监听真实终态（不把慢下载误判为失败）", async () => {
     vi.useFakeTimers();
     try {
       const handler = await loadDownloadModule();
@@ -466,6 +466,11 @@ describe("offscreen 下载链路（L-1 / L-5 / L-6）", () => {
       // 每次超时都会重新查询并 re-arm；推进到 60 分钟硬上限之后
       await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 10 * 60 * 1000);
       expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:test/torrent");
+      // 仍保留监听：稍后真正完成时还要更新下载历史并回滚/恢复站点间隔
+      expect(mocks.downloadStateListeners).toHaveLength(1);
+
+      mocks.searchDownload.mockResolvedValue([{ state: "complete" }]);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 10);
       expect(mocks.downloadStateListeners).toHaveLength(0);
     } finally {
       vi.useRealTimers();

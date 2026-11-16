@@ -292,7 +292,10 @@ async function loadPendingJobs(): Promise<Record<string, TStoredOnceJob>> {
 
 function pruneExpiredPendingJobs(jobs: Record<string, TStoredOnceJob>, now = Date.now()): void {
   for (const [alarmName, job] of Object.entries(jobs)) {
-    if (now - (job?.fireAt ?? 0) > PENDING_ONCE_JOB_TTL) {
+    // 运行中的任务心跳只更新 `at`，`fireAt` 停留在开始时刻。只看 fireAt 会让超长任务
+    // 的心跳记录在 24h 后被其他排程当作过期删除，随后被误判失败或重复重试。
+    const lastActivity = job?.kind === "running" ? Math.max(job.fireAt ?? 0, job.at ?? 0) : (job?.fireAt ?? 0);
+    if (now - lastActivity > PENDING_ONCE_JOB_TTL) {
       delete jobs[alarmName];
     }
   }
@@ -408,8 +411,11 @@ function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResu
 
     // 如果不是重试，则要检查是否满足刷新条件
     if (retryIndex === 0) {
-      // 检查当前时间是否在允许的刷新时间之后
-      const [afterHour, afterMinute] = afterTime.split(":").map((v) => parseInt(v));
+      // 检查当前时间是否在允许的刷新时间之后。清空输入框后 afterTime 可能是空串/非法文本：
+      // 旧实现会得到 NaN，比较恒为 false，等于静默把「允许时间」当成 00:00。这里显式回退。
+      const afterTimeMatch = /^(\d{1,2}):(\d{2})$/.exec(afterTime);
+      const afterHour = afterTimeMatch ? Math.min(Number(afterTimeMatch[1]), 23) : 0;
+      const afterMinute = afterTimeMatch ? Math.min(Number(afterTimeMatch[2]), 59) : 0;
       if (curDate.getHours() < afterHour || (curDate.getHours() === afterHour && curDate.getMinutes() < afterMinute)) {
         sendMessage("logger", {
           msg: `Auto-refreshing user information paused since current time is before the allowed refresh time.`,
@@ -722,7 +728,8 @@ function autoBackup() {
       }
     } finally {
       clearInterval(timer);
-      await heartbeat;
+      // 心跳链自身失败（storage 瞬时不可用）不能逃逸：否则不会释放锁，也会留下未处理的 rejection。
+      await heartbeat.catch((e) => logBackgroundError("Auto-backup heartbeat failed", e));
       await releaseLock("autoBackupLock", lockOwner);
     }
   };
@@ -936,7 +943,8 @@ async function runPendingOnceJob(alarmName: string): Promise<void> {
     }
   } finally {
     clearInterval(timer);
-    await heartbeat;
+    // 心跳链失败不能跳过下面的「消费墓碑」写入：否则已执行的任务会被 at-least-once 重放。
+    await heartbeat.catch((e) => logBackgroundError(`Pending job "${alarmName}" heartbeat failed`, e));
     if (!rescheduled) {
       await updateRunningJob(alarmName, owner, true);
     }

@@ -2,7 +2,7 @@ import urlJoin from "url-join";
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import AbstractBackupServer from "../AbstractBackupServer.ts";
-import { getBackupRequestTimeout } from "../utils.ts";
+import { getBackupRequestTimeout, localSort } from "../utils.ts";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
 import type { IBackupConfig, IBackupData, IBackupFileInfo, IBackupFileListOption, IBackupMetadata } from "../type";
 
@@ -140,9 +140,12 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
         throw new Error("OWSS list failed: data is not an array");
       }
 
-      return rawList.map(
-        ({ name: filename, time, size }) => ({ filename, time, size, path: filename }) as IBackupFileInfo,
-      );
+      // 目录不是备份文件：旧实现会把它展示为历史备份，删除时可能整目录删掉。
+      // 另外与 WebDAV/Gist 保持一致，返回前按调用方的排序选项统一排序。
+      const fileList = rawList
+        .filter((item) => item.type !== "directory")
+        .map(({ name: filename, time, size }) => ({ filename, time, size, path: filename }) as IBackupFileInfo);
+      return localSort(fileList, options);
     } catch (e) {
       this.logBackupFailure("list", e);
       throw e;

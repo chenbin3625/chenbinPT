@@ -667,10 +667,46 @@ export function getIDFromURL(url?: URL | null): string {
 }
 
 /**
+ * drop 事件的数据快照。
+ *
+ * `DataTransfer` 只在 drop 事件同步派发期间可读：一旦进入 `await` 之后（例如为了实例化站点、
+ * 收集可信 host 而等待），浏览器会把它切到 protected mode，`getData()` 统一返回空串。
+ * 因此调用方必须在事件回调里先同步取完数据，再交给异步流程做校验。
+ */
+export interface IDataTransferSnapshot {
+  readonly types: readonly string[];
+  getData(format: string): string;
+}
+
+/**
+ * 在 drop 事件同步阶段读取并保存所有可读的拖拽内容。
+ *
+ * 只读取 `types` 中声明的格式，不读取文件（种子文件不在当前拖拽功能支持范围内），
+ * 避免在 `getData` 上触发额外解析。
+ */
+export function snapshotDataTransfer(dataTransfer: DataTransfer): IDataTransferSnapshot {
+  const types = Array.from(dataTransfer.types);
+  const data = new Map<string, string>();
+  for (const type of types) {
+    try {
+      data.set(type, dataTransfer.getData(type));
+    } catch {
+      // 个别浏览器对某些类型会抛错：按「该类型不可用」处理
+      data.set(type, "");
+    }
+  }
+
+  return {
+    types,
+    getData: (format: string) => data.get(format) ?? "",
+  };
+}
+
+/**
  * 从非自定义 MIME 的拖拽内容里尽力提取链接（原 App.vue 内的实现，逻辑未变）。
  * 这里已经做过一次协议过滤，`resolveDroppedTorrents` 会再统一校验一次。
  */
-function extractLinksManually(dataTransfer: DataTransfer): string[] {
+function extractLinksManually(dataTransfer: IDataTransferSnapshot): string[] {
   // prefer types: uri-list > html > text
   // ref: [MDN - Recommended_drag_types](https://developer.mozilla.org/en-US/docs/Web/API/HTML_Drag_and_Drop_API/Recommended_drag_types#dragging_links)
   if (Array.from(dataTransfer.types).includes("text/uri-list")) {
@@ -772,7 +808,7 @@ export function parseCustomDragPayload(rawPayload: string, siteId = ""): IDropRe
 /**
  * 非自定义 MIME 的拖拽内容：逐条提取链接 + 协议白名单。
  */
-function parseManualDropPayload(dataTransfer: DataTransfer, siteId: string): IDropResolution {
+function parseManualDropPayload(dataTransfer: IDataTransferSnapshot, siteId: string): IDropResolution {
   const torrents: ITorrent[] = [];
   let rejectedCount = 0;
 
@@ -810,7 +846,7 @@ function filterDroppedTorrentsByTrustedHosts(
  * （静默丢弃只会让用户以为拖拽失灵）。
  */
 export function resolveDroppedTorrents(
-  dataTransfer: DataTransfer | null,
+  dataTransfer: IDataTransferSnapshot | null,
   siteId = "",
   trustedHosts?: Iterable<string>,
 ): IDropResolution {

@@ -235,6 +235,9 @@ function deleteDownloader(downloaderId: TDownloaderKey[]) {
     runtimeStore.showSnackbar(t("SetDownloader.index.remove.defaultNotDeleted", [skippedName]), { color: "warning" });
   }
 
+  // 只选中了默认下载器：没有可删除项，不要弹出「删除 0 项」的空确认框。
+  if (toDeleteIds.value.length === 0) return;
+
   showDeleteDialog.value = true;
 }
 
@@ -277,12 +280,14 @@ function pruneTableSelected() {
 
         <span style="flex: 1 1 auto" />
 
+        <!-- 每次输入都把当前筛选串同步进字典：只在清空时重建会让手输关键词停留在字符串里，
+             勾选快捷筛选项时 `updateTableFilterValueFn` 用旧字典覆盖输入框，关键词被静默丢弃。 -->
         <a-input
           v-model:value="tableWaitFilterRef"
           allow-clear
           :placeholder="t('common.search')"
           style="max-width: 500px"
-          @change="(e: any) => !e.target.value && buildFilterDictFn('')"
+          @change="(e: any) => buildFilterDictFn(String(e?.target?.value ?? ''))"
         >
           <template #prefix>
             <a-popover placement="bottom" trigger="click">

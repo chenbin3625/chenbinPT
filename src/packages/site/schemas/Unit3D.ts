@@ -522,7 +522,7 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
         // table.table-condensed:first
         selector: [
           ...userInfoTrans.averageSeedingTime.map((x) => `dt:contains('${x}') + dd`),
-          ...userInfoTrans.averageSeedingTime.map((x) => `td:contains('${x}') + dd span.badge-user`),
+          ...userInfoTrans.averageSeedingTime.map((x) => `td:contains('${x}') + td span.badge-user`),
         ],
         filters: [{ name: "parseDuration" }],
       },

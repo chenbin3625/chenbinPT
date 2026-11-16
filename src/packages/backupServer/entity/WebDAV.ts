@@ -114,6 +114,9 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
       (signal) => this.getServer().getDirectoryContents("/", { glob: "*.zip", signal }) as Promise<FileStat[]>,
     );
     fileList.forEach((item) => {
+      // 目录也可能命中 *.zip glob（例如名为 `backup.zip` 的集合）：
+      // 当成备份会进入历史/恢复列表，删除时还会递归删除整个集合。
+      if (item.type === "directory") return;
       retFileList.push({
         filename: item.basename,
         path: item.filename,
@@ -139,6 +142,11 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
 
   async getFile(path: string): Promise<IBackupData> {
     const safePath = sanitizeWebdavPath(path);
+    // sanitizeWebdavPath 返回空串表示拒绝该路径；urlJoin("/", "") 会得到根目录 "/"，
+    // 不检查就会读取 / 删除整个 WebDAV 根目录。
+    if (!safePath) {
+      throw new Error("Invalid WebDAV file path");
+    }
     const fileBuffer = await this.withRequestTimeout((signal) =>
       this.getServer().getFileContents(urlJoin("/", safePath), { signal }),
     );
@@ -149,6 +157,9 @@ export default class WebDAV extends AbstractBackupServer<WebDAVConfig> {
 
   async deleteFile(path: string): Promise<boolean> {
     const safePath = sanitizeWebdavPath(path);
+    if (!safePath) {
+      throw new Error("Invalid WebDAV file path");
+    }
     await this.withRequestTimeout((signal) => this.getServer().deleteFile(urlJoin("/", safePath), { signal }));
     return true;
   }

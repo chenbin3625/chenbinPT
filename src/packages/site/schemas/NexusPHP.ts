@@ -1210,21 +1210,36 @@ export default class NexusPHP extends PrivateSite {
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     // 如果没有 link 属性，则尝试以 (url->)id->link 的方式生成
     if (!torrent.link) {
-      if (!torrent.id && torrent.url) {
+      /**
+       * `parseWholeTorrentFromRow` 在 id 缺失时会把 `torrent.url`（可能是完整详情页 URL）
+       * 兜底写进 `torrent.id`，因此旧判断 `!torrent.id && torrent.url` 实际不可达，
+       * 最终拼出 `/download.php?id=details.php%3Fid%3D123` 这类无效链接。
+       * 这里只接受数字 id；否则从详情页 URL 的 `id` 参数中提取。
+       */
+      let numericId = "";
+      if (typeof torrent.id === "number" && Number.isFinite(torrent.id)) {
+        numericId = String(torrent.id);
+      } else if (typeof torrent.id === "string" && /^\d+$/.test(torrent.id)) {
+        numericId = torrent.id;
+      }
+
+      if (!numericId && torrent.url) {
         try {
           const urlMatch = new URL(torrent.url, this.url).searchParams.get("id");
-          if (urlMatch) {
-            torrent.id ??= urlMatch;
+          if (urlMatch && /^\d+$/.test(urlMatch)) {
+            numericId = urlMatch;
           }
         } catch {
           // Invalid detail URLs fall through to the existing URL-based identity fallback.
         }
       }
 
-      if (torrent.id) {
+      if (numericId) {
         const mockRequestConfig = torrent.url?.startsWith("http") ? { url: torrent.url } : { baseURL: this.url };
-        torrent.link = this.fixLink(`/download.php?id=${torrent.id}`, mockRequestConfig);
+        torrent.link = this.fixLink(`/download.php?id=${numericId}`, mockRequestConfig);
       }
+      // 拿不到数字 id 时不生成链接：super.getTorrentDownloadLink 会给出明确的解析失败错误，
+      // 而不是把无效 URL 发给下载器。
     }
 
     // 对 NPHP 站点，如果前端拖拽功能发来的种子链接是 details.php?id=123 的形式，

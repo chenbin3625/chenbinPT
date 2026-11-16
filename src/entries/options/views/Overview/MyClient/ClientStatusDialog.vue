@@ -38,12 +38,12 @@ function isDownloaderActive(id: string) {
 
 /** Toggle a downloader in/out of the torrent filter. */
 function toggleDownloaderFilter(id: string) {
-  const idx = selectedDownloaderIds.value.indexOf(id);
-  if (idx >= 0) {
-    selectedDownloaderIds.value.splice(idx, 1);
-  } else {
-    selectedDownloaderIds.value.push(id);
-  }
+  // 必须整体替换数组：MyClient 页面的 watcher 监听 `activeDownloaderIds`（computed），
+  // splice/push 原地修改时 computed 返回同一引用，watch 按 identity 比较不会触发，
+  // 新增/移除的下载器既不会加载数据也不会清理定时器。
+  selectedDownloaderIds.value = selectedDownloaderIds.value.includes(id)
+    ? selectedDownloaderIds.value.filter((item) => item !== id)
+    : [...selectedDownloaderIds.value, id];
 }
 
 function torrentCountFor(id: string) {

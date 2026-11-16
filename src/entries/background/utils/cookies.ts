@@ -61,7 +61,9 @@ export async function setCookie(cookie: CookieSetDetails, force: boolean = false
       "storeId",
     ] as (keyof chrome.cookies.SetDetails)[]
   ).forEach((key) => {
-    if (key == "sameSite" && cookie[key] && cookie[key].toLowerCase() == "unspecified" && __BROWSER__ === "firefox") {
+    // `sameSite` 在部分调用方可能是任意大小写；先归一化再比较，避免 toLowerCase 抛错。
+    const sameSite = typeof cookie.sameSite === "string" ? cookie.sameSite.toLowerCase() : undefined;
+    if (key == "sameSite" && sameSite === "unspecified" && __BROWSER__ === "firefox") {
       // Firefox 下 unspecified 会导致 cookie 无法设置；但 SameSite=None（no_restriction）要求 secure，
       // 非 HTTPS cookie 强设为 no_restriction 同样会失败。因此只在 secure=true 时映射为 no_restriction，
       // 非 secure 时**不传** sameSite，让浏览器按默认值（Lax）处理。
@@ -80,7 +82,20 @@ export async function setCookie(cookie: CookieSetDetails, force: boolean = false
   if (cookie.hostOnly) {
     delete new_cookie.domain;
   }
-  new_cookie.url = buildCookieUrl(cookie.secure!, cookie.domain!, cookie.path!);
+  /**
+   * 调用方显式提供 `url` 时优先使用（合法的 SetDetails 允许只传 url+name+value）；
+   * 否则才由 domain/path 拼装。两者都缺失时不拼出 `http://undefinedundefined`，
+   * 直接交给 chrome.cookies.set 报错并由下面的 try/catch 记录。
+   */
+  const cookieUrl =
+    typeof cookie.url === "string" && cookie.url.length > 0
+      ? cookie.url
+      : typeof cookie.domain === "string" && cookie.domain.length > 0
+        ? buildCookieUrl(cookie.secure === true, cookie.domain, cookie.path ?? "/")
+        : undefined;
+  if (cookieUrl) {
+    new_cookie.url = cookieUrl;
+  }
 
   let allowSet = false;
   const now = new Date().getTime() / 1000;
@@ -90,7 +105,7 @@ export async function setCookie(cookie: CookieSetDetails, force: boolean = false
     allowSet = true;
   } else {
     // 尝试获取当前站点已存在的Cookie
-    const exist_cookie = await chrome.cookies.get({ url: new_cookie.url, name: new_cookie.name! });
+    const exist_cookie = cookieUrl ? await chrome.cookies.get({ url: cookieUrl, name: new_cookie.name! }) : null;
     if (exist_cookie === null) {
       // 如果当前站点没有这个Cookies，则允许设置
       allowSet = true;

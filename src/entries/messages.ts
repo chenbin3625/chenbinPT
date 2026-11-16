@@ -181,7 +181,7 @@ interface ProtocolMap {
   getMediaServerItemDetail(data: { mediaServerId: IMediaServerId; itemId: string }): IMediaServerItem | null;
   /** 调研 C14 / C20：按需生成媒体库概览（整库遍历与聚合都在 offscreen 里完成，只回传统计结果） */
   getMediaServerOverview(data: { mediaServerId: IMediaServerId; maxItems?: number }): IMediaServerOverview | null;
-  getSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): ISearchData;
+  getSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): ISearchData | null;
   saveSearchResultSnapshotData(data: { snapshotId: TSearchSnapshotKey; data: ISearchData }): void;
   removeSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): void;
 
@@ -272,7 +272,7 @@ interface ProtocolMap {
 
   // 2.7 辅种任务 ( utils/keepUploadTask )
   getKeepUploadTasks(): IKeepUploadTask[];
-  getKeepUploadTaskById(taskId: TKeepUploadTaskKey): IKeepUploadTask;
+  getKeepUploadTaskById(taskId: TKeepUploadTaskKey): IKeepUploadTask | null;
   createKeepUploadTask(task: IKeepUploadTask): void;
   updateKeepUploadTask(task: IKeepUploadTask): void;
   deleteKeepUploadTask(taskId: TKeepUploadTaskKey): void;

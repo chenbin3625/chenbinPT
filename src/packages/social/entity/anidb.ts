@@ -1,4 +1,28 @@
 import axios from "axios";
+
+/**
+ * AniDB 的 HTTP API 是明文协议，且官方要求两次请求间隔至少 2 秒，超速会被临时封禁。
+ * 多个条目并发解析时必须串行化 + 限速，而不是让 axios 直接并发打出。
+ */
+const ANIDB_MIN_REQUEST_INTERVAL = 2000;
+let anidbRequestChain: Promise<unknown> = Promise.resolve();
+let anidbLastRequestAt = 0;
+
+function requestWithAniDbRateLimit<T>(task: () => Promise<T>): Promise<T> {
+  const next = anidbRequestChain.then(async () => {
+    const wait = Math.max(0, anidbLastRequestAt + ANIDB_MIN_REQUEST_INTERVAL - Date.now());
+    if (wait > 0) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+    try {
+      return await task();
+    } finally {
+      anidbLastRequestAt = Date.now();
+    }
+  });
+  anidbRequestChain = next.catch(() => undefined);
+  return next;
+}
 import { selectElements } from "../../site/utils/selector";
 import { uniq } from "es-toolkit";
 
@@ -59,11 +83,13 @@ export async function fetchInformation(
         clientver = parseInt(clientVersion, 10);
       }
 
-      const apiReq = await axios.get("http://api.anidb.net:9001/httpapi", {
-        params: { request: "anime", client, clientver, protover: 1, aid: realId },
-        timeout: config.timeout ?? 10e3,
-        responseType: "document",
-      });
+      const apiReq = await requestWithAniDbRateLimit(() =>
+        axios.get("http://api.anidb.net:9001/httpapi", {
+          params: { request: "anime", client, clientver, protover: 1, aid: realId },
+          timeout: config.timeout ?? 10e3,
+          responseType: "document",
+        }),
+      );
       resDict.title = uniq(
         selectElements("titles > title", apiReq.data)
           .map((x) => x.textContent)
@@ -79,7 +105,9 @@ export async function fetchInformation(
         resDict.ratingCount = parseInt(ratingAnother.getAttribute("count") ?? "0", 10);
       }
     } else {
-      const htmlReq = await axios.get(build(realId), { timeout: config.timeout ?? 10e3, responseType: "document" });
+      const htmlReq = await requestWithAniDbRateLimit(() =>
+        axios.get(build(realId), { timeout: config.timeout ?? 10e3, responseType: "document" }),
+      );
 
       resDict.title = pageParser$1(htmlReq.data).titles.join(" / ");
       resDict.poster =

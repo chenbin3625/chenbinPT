@@ -618,11 +618,24 @@ export async function doSearch(
   runtimeStore.search.startAt = Date.now();
   runtimeStore.search.isSearching = true;
 
+  let enqueuedTaskCount = 0;
   for (const { siteId, searchEntries } of searchSolution.solutions) {
     for (const [searchEntryName, searchEntry] of Object.entries(searchEntries)) {
       if (expansionToken !== searchExpansionToken || !isSearchTaskCurrent(taskEpoch)) return expansionToken;
       await doSearchEntity(siteId, searchEntryName, searchEntry);
+      enqueuedTaskCount++;
     }
+  }
+
+  /**
+   * 方案可能存在、但所有 `searchEntries` 都是空的（导入/恢复的半成品方案）。
+   * 此时一个任务都没入队，PQueue 不会触发 idle，`isSearching` 会永久停在 true，
+   * 页面卡在「搜索中」且无法再次搜索。这里显式收敛为空结果终态。
+   */
+  if (enqueuedTaskCount === 0 && expansionToken === searchExpansionToken && isSearchTaskCurrent(taskEpoch)) {
+    runtimeStore.search.isSearching = false;
+    runtimeStore.search.endAt = Date.now();
+    runtimeStore.showSnackbar(i18n.t("SearchEntity.noSiteToSearch"), { color: "error" });
   }
 
   return expansionToken;

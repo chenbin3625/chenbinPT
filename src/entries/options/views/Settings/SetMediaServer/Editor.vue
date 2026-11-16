@@ -47,6 +47,17 @@ function authFieldName(authField: string | { name: string }) {
 // B-31：媒体服务器凭据（fnOS 的 password、emby/jellyfin/plex 的 apikey ...）默认掩码显示，
 // 与 SetDownloader/Editor.vue 的密码框保持一致，可按字段切换明文。
 const revealedAuthFields = ref<Set<string>>(new Set());
+
+// 编辑对话框会复用同一个 Editor 实例：切换到另一个服务器时清除上一台的明文显示状态，
+// 避免新服务器的凭据在一打开时就以明文渲染。
+watch(
+  clientConfig,
+  () => {
+    revealedAuthFields.value = new Set();
+  },
+  { immediate: true, deep: false },
+);
+
 const SECRET_AUTH_FIELD_PATTERN = /passw|passwd|password|pwd|apikey|api[_-]?key|token|cookie|secret/i;
 
 function isSecretAuthField(authField: string | { name: string }): boolean {

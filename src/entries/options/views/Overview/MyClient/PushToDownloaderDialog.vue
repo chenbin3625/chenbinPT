@@ -130,6 +130,7 @@ async function submit() {
   <SentToDownloaderDialog
     v-model="showSentToDownloaderDialog"
     :torrent-items="pendingTorrentItems"
+    allow-site-less-link
     @done="() => (showDialog = false)"
   />
 </template>

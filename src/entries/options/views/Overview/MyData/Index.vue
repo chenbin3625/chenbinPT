@@ -152,7 +152,6 @@ const {
   advanceFilterDictRef,
   updateTableFilterValueFn,
   buildFilterDictFn,
-  toggleKeywordStateFn,
 } = useTableCustomFilter<IUserInfoItem>({
   parseOptions: {
     keywords: ["site", "status", "siteUserConfig.groups"],
@@ -200,6 +199,32 @@ const myDataSummary = computed(() => {
 function filterErrorSites() {
   if (myDataSummary.value.errorSites === 0) return;
   advanceFilterDictRef.value.status.required = [...lastUpdateErrorStatusValues];
+  updateTableFilterValueFn();
+}
+
+/**
+ * 站点分组三态筛选：未勾选 → 只保留（required）→ 排除（exclude）→ 未勾选。
+ *
+ * 旧实现同时挂 `@click`（改 exclude）与 `@update:checked`（改 required），点击三次只会在
+ * required ↔ exclude 之间循环，永远无法回到「不参与筛选」。这里由一个入口完整切换三态。
+ */
+function cycleSiteGroupFilter(group: string) {
+  const filter = advanceFilterDictRef.value["siteUserConfig.groups"] as {
+    required?: string[];
+    exclude?: string[];
+  };
+  const required = filter.required ?? [];
+  const exclude = filter.exclude ?? [];
+
+  if (required.includes(group)) {
+    filter.required = required.filter((value) => value !== group);
+    filter.exclude = [...exclude, group];
+  } else if (exclude.includes(group)) {
+    filter.exclude = exclude.filter((value) => value !== group);
+  } else {
+    filter.required = [...required, group];
+  }
+
   updateTableFilterValueFn();
 }
 
@@ -550,16 +575,7 @@ function goToSiteSettings() {
                   <a-checkbox
                     :checked="advanceFilterDictRef[`siteUserConfig.groups`].required.includes(index)"
                     :indeterminate="advanceFilterDictRef[`siteUserConfig.groups`].exclude.includes(index)"
-                    @click.stop="toggleKeywordStateFn(`siteUserConfig.groups`, index)"
-                    @update:checked="
-                      (checked: boolean) => {
-                        const current = advanceFilterDictRef[`siteUserConfig.groups`].required;
-                        advanceFilterDictRef[`siteUserConfig.groups`].required = checked
-                          ? Array.from(new Set([...current, index]))
-                          : current.filter((x: any) => x !== index);
-                        updateTableFilterValueFn();
-                      }
-                    "
+                    @click.stop.prevent="cycleSiteGroupFilter(index)"
                   >
                     {{ `${index} (${item.length})` }}
                   </a-checkbox>

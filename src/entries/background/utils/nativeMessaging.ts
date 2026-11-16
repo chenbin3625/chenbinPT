@@ -23,6 +23,8 @@ const RECONNECT_ALARM_NAME = "nativeBridgeReconnect";
 const FATAL_ERRORS = [
   "Specified native messaging host not found.",
   "Access to the specified native messaging host is forbidden.",
+  // Firefox 的等价文案（大小写可能不同，匹配时统一小写比较）
+  "No such native application",
 ];
 
 /**
@@ -84,6 +86,11 @@ const CREDENTIAL_LIKE_PATH_SEGMENT = /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d
 const URL_USERINFO_PATTERN = /^((?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)[^/?#\s]*@/g;
 
 function redactStringCredentials(text: string): string {
+  // data URL 的 base64 内容本身就含 `/` 与长字母数字串，按路径规则脱敏会把图片数据改坏
+  // （getSiteFavicon 等返回值会变成无法解码的 `***`）。data URL 不承载 URL 凭据，直接跳过。
+  if (/^data:/i.test(text)) {
+    return text;
+  }
   let res = text.replace(URL_USERINFO_PATTERN, "$1***@");
   if (res.includes("/")) {
     res = res.replace(/(?:https?:\/\/[^/?#\s]+)?\/[^\s?#]*/g, (path) => {
@@ -398,9 +405,17 @@ function connect() {
     currentPort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
     port = currentPort;
   } catch (e: any) {
+    const message = String(e?.message ?? e);
+    const lowerMessage = message.toLowerCase();
+    const isFatal = FATAL_ERRORS.some((fatal) => lowerMessage.includes(fatal.toLowerCase()));
     state = "error";
-    lastError = e?.message ?? String(e);
-    console.debug("[PTD] Native messaging host not available:", lastError);
+    lastError = message;
+    console.debug("[PTD] Native messaging host not available:", lastError, isFatal ? "" : "(will retry)");
+    // 非「宿主未安装」的同步失败（权限尚未生效、浏览器瞬时错误）同样要走退避重试，
+    // 否则一次 connectNative 抛错就让桥接永久停在 error 状态。
+    if (!isFatal) {
+      scheduleReconnect();
+    }
     return;
   }
 
@@ -508,7 +523,8 @@ function connect() {
       console.debug("[PTD] Native messaging disconnected:", errMsg);
     }
 
-    if (FATAL_ERRORS.some((e) => errMsg.includes(e))) {
+    const lowerErrMsg = errMsg.toLowerCase();
+    if (FATAL_ERRORS.some((e) => lowerErrMsg.includes(e.toLowerCase()))) {
       state = "error";
       lastError = errMsg;
       console.debug("[PTD] Native host not available, CLI bridge disabled.");

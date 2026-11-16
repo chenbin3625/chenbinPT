@@ -137,6 +137,9 @@ const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
 const tableData = computed<SearchSolutionTableRow[]>(() =>
   [...metadataStore.getSearchSolutions]
     .filter((solution) => {
+      // "default" 是内置「全站」方案的保留 key：备份/旧数据若把用户方案恢复成这个 id，
+      // 会与表格内置行产生重复 row-key（渲染错乱、操作命中错误行）。内置行已经代表它。
+      if (solution.id === "default") return false;
       if (!tableFilter.value) return true;
       return String(solution.name ?? "")
         .toLowerCase()
@@ -437,6 +440,8 @@ function promptSolutionName(defaultName: string): Promise<string | null> {
     const value = ref(defaultName);
     Modal.confirm({
       title: t("SetSearchSolution.newSolutionNamePrompt"),
+      okText: t("common.dialog.ok"),
+      cancelText: t("common.dialog.cancel"),
       content: () =>
         h(Input, {
           value: value.value,
@@ -563,7 +568,7 @@ async function copySearchSolution(solutionId: TSolutionKey) {
               :title="t('SetSearchSolution.copy')"
               size="small"
               type="primary"
-              @click="copySearchSolution('default')"
+              @click="copySearchSolution('all')"
             >
               <template #icon><CopyOutlined /></template>
             </a-button>

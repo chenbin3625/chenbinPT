@@ -136,7 +136,9 @@ export const siteMetadata: ISiteMetadata = {
 
         // remove dashes at the beginning of keywords as they exclude search strings (see Jackett/Jackett#3096)
         keywords = keywords.replace(/(^|\s)-/, "");
-        requestConfig!.url = urlJoin(baseUrl, `${keywords}`);
+        // 关键词作为路径段拼进 URL，必须编码：AC/DC、Spider-Man?、含 #/% 的关键词
+        // 否则会改变路径语义（截断、多出路径段、被当成 query/hash）。
+        requestConfig!.url = urlJoin(baseUrl, encodeURIComponent(keywords));
       }
 
       return requestConfig!;

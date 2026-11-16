@@ -113,8 +113,10 @@ const filteredTableData = computed(() =>
   downloadHistoryList.value.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
 );
 const tablePagination = computed(() =>
-  toPagination(configStore.tableBehavior.DownloadHistory.itemsPerPage, (v) =>
-    configStore.updateTableBehavior("DownloadHistory", "itemsPerPage", v),
+  toPagination(
+    configStore.tableBehavior.DownloadHistory.itemsPerPage,
+    (v) => configStore.updateTableBehavior("DownloadHistory", "itemsPerPage", v),
+    { allowUnpaginated: false },
   ),
 );
 

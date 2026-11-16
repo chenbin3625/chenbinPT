@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, watch, watchEffect } from "vue";
+import { computed, onMounted, watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useDevicePixelRatio } from "@vueuse/core";
 import { useRoute } from "vue-router";
+import { message } from "ant-design-vue";
 
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useAntdConfig } from "@/options/plugins/antd.ts";
+import { registerMessageApi } from "@/options/plugins/message.ts";
 
 import Navigation from "./views/Layout/Navigation.vue";
 import Topbar from "./views/Layout/Topbar.vue";
@@ -15,6 +17,10 @@ const route = useRoute();
 
 const configStore = useConfigStore();
 const { locale: antdLocale, themeConfig, themeVars } = useAntdConfig();
+
+// 把静态 message 重定向到 ConfigProvider 之下的实例（深色主题 / 语言一致）
+const [messageApi, messageContextHolder] = message.useMessage();
+onMounted(() => registerMessageApi(messageApi));
 
 const mainSectionName = computed(() => {
   const mainRoute = route.matched.find((item) => item.meta?.isMainMenu);
@@ -116,5 +122,8 @@ async function setIgnoreWrongPixelRatio() {
         </a-layout-content>
       </a-layout>
     </a-layout>
+
+    <!-- message.useMessage() 的 holder：让 runtimeStore.showSnackbar 等静态调用继承主题/语言 -->
+    <component :is="messageContextHolder" />
   </a-config-provider>
 </template>

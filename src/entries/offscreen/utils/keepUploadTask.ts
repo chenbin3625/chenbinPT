@@ -38,7 +38,8 @@ export async function getKeepUploadTaskById(taskId: TKeepUploadTaskKey): Promise
 
 onMessage("getKeepUploadTaskById", async ({ data: taskId }) => {
   const task = await getKeepUploadTaskById(taskId);
-  return task!;
+  // 消息序列化会把 undefined 变成 null；显式返回 null，避免调用方按非空类型解引用。
+  return task ?? null;
 });
 
 /**

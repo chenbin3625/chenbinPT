@@ -96,18 +96,31 @@ async function confirmDeleteBackupHistory(toDeleteId: string) {
   }
 }
 
+/**
+ * V-16：迟到的历史响应不能覆盖当前服务器的列表。
+ *
+ * 关闭 A 的历史对话框后立刻打开 B 时，同一个组件实例会复用：若 A 的请求后到，
+ * 表格会显示 A 的文件，而删除/恢复按钮用的是当前 `backupServerId`（B），可能误删 B 上的同名文件。
+ */
+let historyRequestToken = 0;
+
 async function loadBackupHistory() {
+  const requestToken = ++historyRequestToken;
+  const requestedServerId = backupServerId;
   isLoading.value = true;
   try {
-    backupHistory.value = await sendMessage("getBackupHistory", backupServerId);
+    const history = await sendMessage("getBackupHistory", requestedServerId);
+    if (requestToken !== historyRequestToken || requestedServerId !== backupServerId || !showDialog.value) return;
+    backupHistory.value = history;
   } catch (e) {
+    if (requestToken !== historyRequestToken || requestedServerId !== backupServerId || !showDialog.value) return;
     backupHistory.value = [];
     runtimeStore.showSnackbar(t("SetBackup.HistoryDialog.loadFailure", { error: getBackupHistoryErrorReason(e) }), {
       color: "error",
     });
     console.error("获取备份历史失败", e);
   } finally {
-    isLoading.value = false;
+    if (requestToken === historyRequestToken) isLoading.value = false;
   }
 }
 
@@ -117,8 +130,10 @@ async function dialogEnter() {
 }
 
 async function dialogLeave() {
+  historyRequestToken++; // 让所有在途请求失效
   backupHistory.value = [];
   tableSelected.value = [];
+  isLoading.value = false;
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。

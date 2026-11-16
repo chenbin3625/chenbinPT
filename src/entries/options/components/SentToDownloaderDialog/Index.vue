@@ -104,7 +104,9 @@ function restoreAddTorrentOptions(downloader?: IDownloaderMetadata) {
   addTorrentOptions.value.addAtPaused = !(downloader?.feature?.DefaultAutoStart ?? true);
   addTorrentOptions.value.savePath = "";
   addTorrentOptions.value.label = "";
-  addTorrentOptions.value.advanceAddTorrentOptions = downloader?.advanceAddTorrentOptions ?? {};
+  // 必须克隆：模板用 v-model:checked 直接写这个对象，直接引用 store 会让「取消」后
+  // 已保存的下载器高级设置也被永久改写。
+  addTorrentOptions.value.advanceAddTorrentOptions = { ...(downloader?.advanceAddTorrentOptions ?? {}) };
 }
 
 watch(selectedDownloader, (value) => {
@@ -174,7 +176,7 @@ function quickSendToDownloader(downloader: IDownloaderMetadata, path: string = "
   // 设置下载推送选项
   addTorrentOptions.value.localDownload = true;
   addTorrentOptions.value.addAtPaused = !(downloader.feature?.DefaultAutoStart ?? true);
-  addTorrentOptions.value.advanceAddTorrentOptions = downloader.advanceAddTorrentOptions ?? {};
+  addTorrentOptions.value.advanceAddTorrentOptions = { ...(downloader.advanceAddTorrentOptions ?? {}) };
 
   // V-2：必须**无条件**赋值。原来的 `if (path) savePath = path` / `if (label) label = label`
   // 让「默认路径」行（path 为空串）沿用上一次的保存路径与标签：

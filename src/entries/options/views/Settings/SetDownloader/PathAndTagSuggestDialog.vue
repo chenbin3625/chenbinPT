@@ -81,14 +81,37 @@ const noteDataSource = computed(() =>
  * `toEditDownloaderId`，反复操作同一个下载器时 `clientId` 不变 → 快照不刷新，保存时用整份旧快照
  * 覆盖掉期间在别处改过的地址 / 密码 / enabled；浅展开还会让 `feature` 等嵌套对象与 store 共用引用。
  */
+/**
+ * 输入框的原始文本。
+ *
+ * 不能做成「数组 ↔ 文本」的 writable computed：每次 set 都 `split("\n").filter(Boolean)`
+ * 再回写时，用户按回车产生的末尾空行会立刻被吞掉，永远无法逐行输入。
+ * 这里保留原始文本，只在保存/统计时切分。
+ */
+const suggestFolderInput = ref<string>("");
+const suggestTagInput = ref<string>("");
+
+function splitSuggestInput(value: string): string[] {
+  return value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+const suggestFolderCount = computed(() => splitSuggestInput(suggestFolderInput.value).length);
+const suggestTagCount = computed(() => splitSuggestInput(suggestTagInput.value).length);
+
 async function enterDialog() {
   if (!clientId) return;
-  clientConfig.value = cloneDeep({
+  const config = cloneDeep({
     suggestFolders: [],
     suggestTags: [],
     ...metadataStore.downloaders[clientId],
   }) as IDownloaderMetadata;
-  clientMetadata.value = await getDownloaderMetaData(clientConfig.value.type);
+  clientConfig.value = config;
+  suggestFolderInput.value = (config.suggestFolders ?? []).join("\n");
+  suggestTagInput.value = (config.suggestTags ?? []).join("\n");
+  clientMetadata.value = await getDownloaderMetaData(config.type);
 }
 
 watch(
@@ -107,58 +130,43 @@ watch(
   },
 );
 
-const suggestFolderInput = computed({
-  get: () => (clientConfig.value?.suggestFolders ?? []).join("\n"),
-  set: (value) => {
-    clientConfig.value!.suggestFolders = value
-      .split("\n")
-      .map((v) => v.trim())
-      .filter(Boolean);
-  },
-});
-
 const isLoadingClientFolders = ref<boolean>(false);
 async function loadClientFolders() {
   isLoadingClientFolders.value = true;
-  const client = await getDownloader(clientConfig.value!);
   try {
+    const client = await getDownloader(clientConfig.value!);
     const clientPaths = await client.getClientPaths();
+    const existing = new Set(splitSuggestInput(suggestFolderInput.value));
     for (const path of clientPaths) {
-      if ((clientConfig.value?.suggestFolders ?? []).includes(path)) continue; // 避免重复添加
+      if (existing.has(path)) continue; // 避免重复添加
+      existing.add(path);
       suggestFolderInput.value += "\n" + path;
     }
   } catch (e) {
     runtimeStore.showSnackbar(t("SetDownloader.PathAndTag.downloadPath.autoImportFail"), { color: "error" });
+  } finally {
+    // getDownloader 也可能抛错：旧实现把它放在 try 之外，失败时 loading 永远不复位。
+    isLoadingClientFolders.value = false;
   }
-
-  isLoadingClientFolders.value = false;
 }
-
-const suggestTagInput = computed({
-  get: () => (clientConfig.value?.suggestTags ?? []).join("\n"),
-  set: (value) => {
-    clientConfig.value!.suggestTags = value
-      .split("\n")
-      .map((v) => v.trim())
-      .filter(Boolean);
-  },
-});
 
 const isLoadingClientLabels = ref<boolean>(false);
 async function loadClientLabels() {
   isLoadingClientLabels.value = true;
-  const client = await getDownloader(clientConfig.value!);
   try {
+    const client = await getDownloader(clientConfig.value!);
     const clientLabels = await client.getClientLabels();
+    const existing = new Set(splitSuggestInput(suggestTagInput.value));
     for (const label of clientLabels) {
-      if ((clientConfig.value?.suggestTags ?? []).includes(label)) continue; // 避免重复添加
+      if (existing.has(label)) continue; // 避免重复添加
+      existing.add(label);
       suggestTagInput.value += "\n" + label;
     }
   } catch (e) {
     runtimeStore.showSnackbar(t("SetDownloader.PathAndTag.tags.autoImportFail"), { color: "error" });
+  } finally {
+    isLoadingClientLabels.value = false;
   }
-
-  isLoadingClientLabels.value = false;
 }
 
 /**
@@ -168,7 +176,8 @@ async function loadClientLabels() {
 async function saveClientConfig() {
   if (!clientConfig.value) return;
   try {
-    const { suggestFolders = [], suggestTags = [] } = clientConfig.value;
+    const suggestFolders = splitSuggestInput(suggestFolderInput.value);
+    const suggestTags = splitSuggestInput(suggestTagInput.value);
     await metadataStore.simplePatch("downloaders", clientId, "suggestFolders", suggestFolders);
     await metadataStore.simplePatch("downloaders", clientId, "suggestTags", suggestTags);
     showDialog.value = false;
@@ -193,8 +202,8 @@ async function saveClientConfig() {
           <a-flex align="center" :gap="8">
             {{ t("SetDownloader.PathAndTag.downloadPath.title") }}
             <span style="flex: 1 1 auto; min-width: 8px" />
-            <a-tag :color="(clientConfig?.suggestFolders?.length ?? 0) > 0 ? resolveColor('info') : undefined">
-              +{{ clientConfig?.suggestFolders?.length ?? 0 }}
+            <a-tag :color="suggestFolderCount > 0 ? resolveColor('info') : undefined">
+              +{{ suggestFolderCount }}
             </a-tag>
           </a-flex>
         </template>
@@ -242,9 +251,7 @@ async function saveClientConfig() {
           <a-flex align="center" :gap="8">
             {{ t("SetDownloader.PathAndTag.tags.title") }}
             <span style="flex: 1 1 auto; min-width: 8px" />
-            <a-tag :color="(clientConfig?.suggestTags?.length ?? 0) > 0 ? resolveColor('info') : undefined">
-              +{{ clientConfig?.suggestTags?.length ?? 0 }}
-            </a-tag>
+            <a-tag :color="suggestTagCount > 0 ? resolveColor('info') : undefined"> +{{ suggestTagCount }} </a-tag>
           </a-flex>
         </template>
         <a-typography-text style="display: block; margin-bottom: 4px">

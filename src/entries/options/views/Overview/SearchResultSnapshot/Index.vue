@@ -103,6 +103,17 @@ function onSelectionChange(keys: (string | number)[]) {
   tableSelected.value = keys as TSearchSnapshotKey[];
 }
 
+/**
+ * 只返回当前筛选结果中可见的已选项。
+ *
+ * `preserveSelectedRowKeys: true` 会保留被筛选隐藏的行 key，而删除没有回收站：
+ * 直接使用 `tableSelected` 会把用户看不见、以为没选中的快照一并删除。
+ */
+const visibleSelectedIds = computed(() => {
+  const visibleIds = new Set(tableData.value.map((item) => item.id));
+  return tableSelected.value.filter((id) => visibleIds.has(id));
+});
+
 // F4：删除（单条/批量/其他标签页）成功后，选择集里不能残留已不存在的 id；
 // 否则底部「移除」按钮仍可用，并对已删除的快照再次发送删除消息。
 watch(
@@ -153,11 +164,11 @@ async function confirmDeleteSearchSnapshot(searchSnapshotId: TSearchSnapshotKey)
   <a-card>
     <a-flex class="page-toolbar" align="center" :gap="8">
       <NavButton
-        :disabled="tableSelected.length === 0"
+        :disabled="visibleSelectedIds.length === 0"
         color="error"
         :icon="MinusOutlined"
         :text="t('common.remove')"
-        @click="tryToDeleteSearchSnapshot(tableSelected)"
+        @click="tryToDeleteSearchSnapshot(visibleSelectedIds)"
       />
 
       <div style="flex: 1 1 auto"></div>

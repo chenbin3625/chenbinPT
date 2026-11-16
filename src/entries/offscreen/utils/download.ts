@@ -161,7 +161,16 @@ export async function getDownloaderInstance(downloaderId: string): Promise<Downl
 
   const pending = (async (): Promise<DownloaderInstance | null> => {
     const downloaderConfig = await getDownloaderConfig(downloaderId);
-    if (!downloaderConfig.id) return null;
+    if (!downloaderConfig.id) {
+      // 下载器已被删除：释放并移除缓存实例（含 Aria2 的 WebSocket 长连接），
+      // 不能因为配置为空就直接 return，留下一个永远不会被回收的实例。
+      const cached = downloaderInstanceCache.get(downloaderId);
+      if (cached) {
+        downloaderInstanceCache.delete(downloaderId);
+        retireDownloaderInstance(cached.instance);
+      }
+      return null;
+    }
 
     const configKey = getDownloaderConfigKey(downloaderConfig);
     const cached = downloaderInstanceCache.get(downloaderId);
@@ -458,6 +467,75 @@ onMessage("setClientTorrentLabel", async ({ data: { downloaderId, id, label } })
  * - 本地 IndexedDB 的明文属于「re-download 需要重建链接」与「不留 passkey」之间的已知取舍，
  *   保留现状；日志侧已通过 `sanitizeDownloadUrlForLog`（含路径凭据段）统一脱敏。
  */
+/**
+ * 内容脚本传入的 torrent 只保留 ITorrent 声明过的字段并校验基础类型。
+ *
+ * 消息数据来自任意被注入的内容脚本页面：不投影会把任意额外字段（甚至函数/符号以外的
+ * 大体量数据）原样写进 IndexedDB 下载历史，错误类型也会破坏后续 UI 的数值/字符串契约。
+ */
+const CONTENT_SCRIPT_DOWNLOAD_TORRENT_FIELDS = [
+  "site",
+  "id",
+  "title",
+  "subTitle",
+  "url",
+  "link",
+  "time",
+  "size",
+  "author",
+  "seeders",
+  "leechers",
+  "completed",
+  "comments",
+  "category",
+  "tags",
+  "status",
+  "progress",
+] as const;
+
+function projectContentScriptDownloadTorrent(torrent: unknown): Partial<ITorrent> {
+  if (typeof torrent !== "object" || torrent === null || Array.isArray(torrent)) {
+    return {};
+  }
+
+  const source = torrent as Record<string, unknown>;
+  const projected: Record<string, unknown> = {};
+  for (const field of CONTENT_SCRIPT_DOWNLOAD_TORRENT_FIELDS) {
+    if (!Object.hasOwn(source, field)) continue;
+    const value = source[field];
+
+    if (field === "tags") {
+      if (!Array.isArray(value)) continue;
+      projected.tags = value
+        .filter((tag): tag is { name: string; color?: string } => {
+          if (typeof tag !== "object" || tag === null || Array.isArray(tag)) return false;
+          const name = (tag as { name?: unknown }).name;
+          return typeof name === "string";
+        })
+        .map((tag) => ({
+          name: tag.name,
+          ...(typeof tag.color === "string" ? { color: tag.color } : {}),
+        }));
+      continue;
+    }
+
+    if (field === "id" || field === "category" || field === "author") {
+      if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) {
+        projected[field] = value;
+      }
+      continue;
+    }
+
+    if (typeof value === "string") {
+      projected[field] = value;
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      projected[field] = value;
+    }
+  }
+
+  return projected as Partial<ITorrent>;
+}
+
 function buildDownloadHistory(downloadOption: IDownloadTorrentOption): ITorrentDownloadMetadata {
   const { torrent = {}, downloaderId = "local", addTorrentOptions, localDownloadMethod } = downloadOption;
   return {
@@ -876,6 +954,8 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
     // B1-3：downloadId 只能来自 background 的延迟重下重放或扩展页；content script 传入会按 id
     // 改写既有下载历史（patchDownloadHistory 按 id 合并）。这里直接丢弃，由本次调用新建记录。
     delete downloadOption.downloadId;
+    // 页面提供的 torrent 是不可信输入：先投影到声明字段，再进入站点绑定校验与历史写入。
+    downloadOption.torrent = projectContentScriptDownloadTorrent(downloadOption.torrent);
     const targetSite = downloadOption.torrent?.site;
     if (targetSite) {
       const siteInstance = await getSiteInstance<"public">(targetSite);
@@ -1123,6 +1203,11 @@ const BLOB_URL_RELEASE_TIMEOUT = 10 * 60 * 1000;
  * 避免「浏览器一直报 in_progress 的僵尸下载」把 blob 内存永久占住。
  */
 const BLOB_URL_RELEASE_MAX_WAIT = 60 * 60 * 1000;
+/**
+ * 超过硬上限后仍显示 in_progress 的下载，改为低频轮询：
+ * 不再占用 blob URL，但继续跟踪真实终态，避免把仍在进行的慢下载误判为失败。
+ */
+const BLOB_URL_RELEASE_LONG_POLL = 5 * 60 * 1000;
 
 type TDownloadTerminalState = "complete" | "interrupted";
 const remoteDownloadSettlements = new Map<
@@ -1226,30 +1311,37 @@ function watchDownloadSettled(
       },
       (e) => {
         logger({ msg: "Failed to check browser download state", level: "warn", data: getErrorMessage(e) });
-        if (afterTimeout) finish("interrupted");
+        if (!afterTimeout) return;
+        // 查询失败（offscreen/浏览器 API 瞬时不可用）时继续轮询，不能把仍在进行的下载判失败。
+        armTimeout();
       },
     );
   };
   const armTimeout = () => {
-    timer = setTimeout(() => {
-      timer = null;
-      // B1-1：超时后**先**判断状态再决定是否释放。早期实现无条件先 revoke，导致仍在进行中的
-      // 慢下载（例如几十 MB 的本地备份 zip）在 10 分钟处被自己吊销 blob URL 而中断。
-      if (Date.now() - startedAt >= BLOB_URL_RELEASE_MAX_WAIT) {
-        // 硬上限：无论状态如何都释放 blob 并结束监听，避免无限期占用内存。
-        logger({ msg: "Browser download did not settle in time, release blob URL anyway", level: "warn" });
-        finish("interrupted");
-        return;
-      }
-      if (typeof chromeDownloadId !== "number" || !getChromeApi()?.downloads?.search) {
-        // 拿不到下载 id / 没有查询能力：只能按兜底逻辑释放。
+    const overMaxWait = Date.now() - startedAt >= BLOB_URL_RELEASE_MAX_WAIT;
+    if (overMaxWait) {
+      // 硬上限：释放 blob URL 避免无限期占用内存，但**不**结束监听 / 不写 failed：
+      // 仍在 in_progress 的慢下载稍后可能真正完成，提前判失败会回滚站点下载间隔且无法恢复。
+      if (!blobReleased) {
+        logger({ msg: "Browser download exceeded max wait, release blob URL and keep polling", level: "warn" });
         releaseBlob();
-        cleanup();
-        return;
       }
-      // 终态事件丢失时主动查询；仍在下载则继续等待，不能把慢下载误报为失败。
-      checkCurrentState(true);
-    }, BLOB_URL_RELEASE_TIMEOUT);
+    }
+
+    timer = setTimeout(
+      () => {
+        timer = null;
+        if (typeof chromeDownloadId !== "number" || !getChromeApi()?.downloads?.search) {
+          // 拿不到下载 id / 没有查询能力：只能按兜底逻辑释放。
+          releaseBlob();
+          cleanup();
+          return;
+        }
+        // 终态事件丢失时主动查询；仍在下载则继续等待，不能把慢下载误报为失败。
+        checkCurrentState(true);
+      },
+      overMaxWait ? BLOB_URL_RELEASE_LONG_POLL : BLOB_URL_RELEASE_TIMEOUT,
+    );
     (timer as unknown as { unref?: () => void })?.unref?.();
   };
   armTimeout();
@@ -1301,9 +1393,12 @@ export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloa
   const downloads = getChromeApi()?.downloads;
   if (!downloads?.onChanged?.addListener || !downloads.search) {
     if (typeof chromeDownloadId === "number") {
-      void sendMessage("registerBlobDownloadTracking", { chromeDownloadId, blobUrl }).catch((error) =>
-        logger({ msg: "Failed to register browser blob tracking", level: "error", data: getErrorMessage(error) }),
-      );
+      void sendMessage("registerBlobDownloadTracking", { chromeDownloadId, blobUrl }).catch((error) => {
+        logger({ msg: "Failed to register browser blob tracking", level: "error", data: getErrorMessage(error) });
+        // 登记失败就没人会在下载完成时释放 URL：给下载留出读取时间后本地兜底回收，
+        // 不能让 blob URL 永久泄漏。
+        setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_URL_RELEASE_TIMEOUT);
+      });
     } else {
       URL.revokeObjectURL(blobUrl);
     }

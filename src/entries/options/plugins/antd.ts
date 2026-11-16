@@ -47,7 +47,8 @@ import {
   type ConfigProviderProps,
 } from "ant-design-vue";
 import { StyleProvider } from "ant-design-vue/es/_util/cssinjs";
-import type { MappingAlgorithm } from "ant-design-vue/es/config-provider/context";
+import { changeConfirmLocale } from "ant-design-vue/es/modal/locale";
+import type { MappingAlgorithm, Theme } from "ant-design-vue/es/config-provider/context";
 import type { MapToken } from "ant-design-vue/es/theme/interface";
 import zhCN from "ant-design-vue/es/locale/zh_CN";
 import enUS from "ant-design-vue/es/locale/en_US";
@@ -334,6 +335,21 @@ export function useAntdConfig() {
 
   /** 跟随 `uiTheme` 的 `--ptd-*`：由 options/App.vue 写到 document.documentElement */
   const themeVars = computed<Record<string, string>>(() => buildThemeVars(configStore.uiTheme === "dark"));
+
+  /**
+   * antd 的**静态** API（`Modal.confirm` / `message.open`）不走组件树的 ConfigProvider。
+   * 静态 Modal 会读取 `globalConfigForApi`，因此用 `ConfigProvider.config({ theme })` 同步主题；
+   * 静态确认框的按钮文案来自独立的 confirm locale，用 `changeConfirmLocale` 跟随语言切换。
+   * （`message` 的实例化通路另有 options/App.vue 的 `useMessage()` 注册，见 plugins/message.ts。）
+   */
+  watch(
+    [() => configStore.lang, themeConfig],
+    ([lang, theme]) => {
+      ConfigProvider.config({ theme: theme as unknown as Theme });
+      changeConfirmLocale(resolveLangItem(lang).locale?.Modal);
+    },
+    { immediate: true },
+  );
 
   return { locale, themeConfig, themeVars };
 }

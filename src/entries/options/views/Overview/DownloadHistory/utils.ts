@@ -52,7 +52,7 @@ function clearPollTimer(downloadHistoryId: TTorrentDownloadKey) {
   }
 }
 
-function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey, epoch: number = pollEpoch) {
+function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey, epoch: number = pollEpoch, delay: number = 1e3) {
   // 过期轮次：不再排新链（调用方可能是已被取代的旧加载）
   if (epoch !== pollEpoch) return;
   // 同一记录只允许一条链：先清掉可能存在的旧 handle，避免两个加载各排一条
@@ -68,11 +68,13 @@ function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey, epoch: num
       // 这里不删掉表格里的行——下载可能仍在进行，只是这一轮状态读不到；但要提示用户一次，
       // 否则这些行会永久停在「下载中」而用户毫不知情（options 侧没有可用的日志查看器，见审查报告 L-7）。
       if (epoch !== pollEpoch) return;
-      clearPollTimer(downloadHistoryId);
       if (!hasWarnedPollFailure) {
         hasWarnedPollFailure = true;
         useRuntimeStore().showSnackbar(i18n.t("DownloadHistory.pollingError"), { color: "error" });
       }
+      // 一次失败（例如 offscreen 瞬时不可用）不代表任务结束：以更长的间隔继续重试，
+      // 否则该行会永久停在「下载中」，只能手动刷新。
+      watchDownloadHistory(downloadHistoryId, epoch, 5e3);
       return;
     }
 

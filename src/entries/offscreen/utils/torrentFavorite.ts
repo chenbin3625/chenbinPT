@@ -15,6 +15,7 @@ import { onMessage, sendMessage } from "@/messages.ts";
 import {
   buildTorrentFavorite,
   getTorrentFavoriteKey,
+  isTorrentFavoriteItem,
   normalizeFavCategories,
   type ITorrentFavoriteItem,
   type ITorrentFavoriteStatus,
@@ -118,7 +119,11 @@ function toStringArray(value: unknown): string[] | undefined {
  */
 export async function getTorrentFavorites(): Promise<ITorrentFavoriteItem[]> {
   const favorites = await getStoredFavorites();
-  return Object.values(favorites).sort((a, b) => b.createdAt - a.createdAt);
+  // 防御性过滤：旧版本/被篡改的备份可能留下 null 或形状错误的条目，
+  // 直接排序会抛 TypeError 并让收藏页永久加载失败。
+  return Object.values(favorites)
+    .filter(isTorrentFavoriteItem)
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 onMessage("getTorrentFavorites", getTorrentFavorites);
@@ -217,6 +222,14 @@ onMessage("deleteTorrentFavorites", async ({ data: keys }) => {
  */
 export async function replaceTorrentFavorites(favorites: TTorrentFavoriteStorageSchema): Promise<void> {
   await enqueueMutation(async () => {
-    await writeFavorites(Object.assign(Object.create(null), favorites ?? {}));
+    // 恢复路径已在 backupServer/utils.ts 做过结构校验；这里再过滤一次，保证无论调用方是谁
+    // 都不会把 null / 非对象条目写进收藏表（读取侧同样有兜底）。
+    const safeFavorites: TTorrentFavoriteStorageSchema = Object.create(null);
+    for (const [key, value] of Object.entries(favorites ?? {})) {
+      if (isTorrentFavoriteItem(value)) {
+        safeFavorites[key] = value;
+      }
+    }
+    await writeFavorites(safeFavorites);
   });
 }

@@ -243,7 +243,8 @@ describe("OPTIONSSETTINGS-4：一键导入失败回滚临时写入的站点", ()
 
       // 标红为「添加失败」的站点不能留在 store 里（否则刷新后它其实已被添加）
       expect(meta.sites["site-a"], "导入失败后站点必须被回滚移除").toBeUndefined();
-      expect(meta.removeSite).toHaveBeenCalledWith("site-a", { reBuildMap: false });
+      // 回滚只移除临时写入的站点，不能级联删除搜索方案里对它的引用
+      expect(meta.removeSite).toHaveBeenCalledWith("site-a", { reBuildMap: false, cascadeSolutions: false });
 
       const instance = (view.app as any)._instance.subTree.component;
       expect(instance.setupState.importStatus.failed, "该站点应被标记为失败").toContain("site-a");

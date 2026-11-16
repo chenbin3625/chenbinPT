@@ -421,7 +421,9 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                   </a-checkbox>
                 </div>
               </template>
-              <FilterOutlined style="cursor: pointer" @click="buildFilterDictFn('')" />
+              <!-- 打开筛选面板时以当前筛选串重建字典：直接传空串会把手输关键词从字典里抹掉，
+                   之后勾选任一快捷筛选项会用空字典覆盖输入框。 -->
+              <FilterOutlined style="cursor: pointer" @click="buildFilterDictFn(tableWaitFilterRef)" />
             </a-popover>
           </template>
           <template #suffix>

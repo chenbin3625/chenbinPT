@@ -67,6 +67,9 @@ watch(
 watch(
   clientConfig,
   (config) => {
+    // 编辑对话框复用同一个 Editor 实例：切换到另一个下载器时必须把密码恢复为掩码，
+    // 否则上一个条目的「显示密码」状态会让新条目的凭据直接以明文渲染。
+    showPassword.value = false;
     if (config && !config.feature) config.feature = {};
   },
   { immediate: true, deep: false },

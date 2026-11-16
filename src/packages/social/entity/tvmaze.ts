@@ -80,8 +80,9 @@ export async function fetchInformation(
     });
 
     resDict.title = data.name;
-    resDict.poster = normalizeSocialPosterUrl(data.image.medium ?? data.image.original) ?? "";
-    resDict.ratingScore = data.rating.average ?? 0;
+    // API 在无海报时返回 `image: null`：旧实现直接解引用会在 catch 中丢掉后续评分字段。
+    resDict.poster = normalizeSocialPosterUrl(data.image?.medium ?? data.image?.original) ?? "";
+    resDict.ratingScore = data.rating?.average ?? 0;
   } catch (error) {
     console.warn(error);
   } finally {

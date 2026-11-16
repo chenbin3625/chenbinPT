@@ -105,9 +105,11 @@ async function save() {
 
     // 只把草稿中真正改动过的叶子写回 store（不覆盖草稿期间其它上下文对同一子树的改动）
     applySetBaseConfigDraft(configStore.$state, configDraft.value, configDraftBaseline.value);
-    configDraftBaseline.value = cloneDeep(configDraft.value);
 
     await configStore.$save();
+    // 保存成功后才推进 baseline：失败时 hasUnsavedChanges 必须仍为 true，
+    // 否则用户会看到「没有未保存修改」，无法再次点击保存重试。
+    configDraftBaseline.value = cloneDeep(configDraft.value);
     await runAllTabHooks("afterSave");
     runtimeStore.showSnackbar(t("common.saveSuccess"), { color: "success" });
   } catch {
