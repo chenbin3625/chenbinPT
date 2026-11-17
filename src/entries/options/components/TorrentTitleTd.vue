@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, computed } from "vue";
+import { reactive, ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { ArrowRightOutlined, SearchOutlined, SelectOutlined } from "@ant-design/icons-vue";
@@ -35,6 +35,18 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const router = useRouter();
 const configStore = useConfigStore();
+
+/** 种子自带封面的加载失败状态：失败后隐藏缩略图，避免留下破图占位 */
+const coverError = ref(false);
+watch(
+  () => item.cover,
+  () => {
+    coverError.value = false;
+  },
+);
+
+/** 是否展示种子自带封面（需要站点提供 cover，且用户开启展示） */
+const showCover = computed(() => !!item.cover && configStore.searchEntifyControl.showTorrentCover && !coverError.value);
 
 interface ISocialInformationData extends ISocialInformation {
   loading?: boolean;
@@ -184,200 +196,217 @@ function canAdvanceSearch(site: TSupportSocialSite) {
 </script>
 
 <template>
-  <div :style="{ maxWidth, minWidth: 0 }">
-    <!-- 种子主标题信息 -->
-    <a-flex align="center" wrap="nowrap">
-      <a-tooltip
-        :title="item.title ?? item.url ?? item.link"
-        placement="topLeft"
-        :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
-        :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
-      >
-        <span class="torrent-title__main">
-          <a-typography-link
-            :href="item.url"
-            rel="noopener noreferrer nofollow"
-            class="torrent-title__link"
-            target="_blank"
-          >
-            {{ item.title ?? item.url ?? item.link }}
-          </a-typography-link>
-        </span>
-      </a-tooltip>
+  <div class="torrent-title" :style="{ maxWidth, minWidth: 0 }">
+    <!-- 种子自带的封面：缩略图与标题/副标题同列，悬停显示大图 -->
+    <div v-if="showCover" class="torrent-title__cover-wrap">
+      <a-popover placement="right" trigger="hover">
+        <template #content>
+          <img :src="item.cover" alt="" class="torrent-title__cover-preview" />
+        </template>
+        <img :src="item.cover" alt="" class="torrent-title__cover" @error="coverError = true" />
+      </a-popover>
+    </div>
 
-      <!-- 种子的媒体信息 -->
-      <div class="torrent-title__social">
-        <template v-if="showSocial && configStore.searchEntifyControl.showSocialInformation">
-          <template v-for="(meta, key) in socialBuildUrlMap" :key="key">
-            <!--
+    <div class="torrent-title__content">
+      <!-- 种子主标题信息 -->
+      <a-flex align="center" wrap="nowrap">
+        <a-tooltip
+          :title="item.title ?? item.url ?? item.link"
+          placement="topLeft"
+          :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
+          :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
+        >
+          <span class="torrent-title__main">
+            <a-typography-link
+              :href="item.url"
+              rel="noopener noreferrer nofollow"
+              class="torrent-title__link"
+              target="_blank"
+            >
+              {{ item.title ?? item.url ?? item.link }}
+            </a-typography-link>
+          </span>
+        </a-tooltip>
+
+        <!-- 种子的媒体信息 -->
+        <div class="torrent-title__social">
+          <template v-if="showSocial && configStore.searchEntifyControl.showSocialInformation">
+            <template v-for="(meta, key) in socialBuildUrlMap" :key="key">
+              <!--
               不要移除 mouse-leave-delay：卡片里是可点击的（搜索 / 访问），而激活它的头像只有 20px，
               指针斜向移向卡片的过程中必然先离开头像；antd 默认 0.1s 后关闭，稍慢移动就会超时。
               这里留出 0.8s，指针进入卡片后即可取消关闭（上游 #1580 / #1582 同类问题）。
             -->
-            <a-dropdown v-if="item[`ext_${key}`]" :mouse-leave-delay="0.8" :trigger="['hover']" placement="bottomRight">
-              <a-avatar
-                :size="20"
-                :src="`/icons/social/${key}.png`"
-                shape="square"
-                class="torrent-title__social-avatar"
-                @click="
-                  () => {
-                    activateSocialMenu(key);
-                    loadSocialInformation(key as TSupportSocialSite);
-                  }
-                "
-                @mouseenter="
-                  () => {
-                    activateSocialMenu(key);
-                    loadSocialInformation(key as TSupportSocialSite);
-                  }
-                "
-              />
-              <template #overlay>
-                <a-card
-                  v-if="activatedSocialMenus[key]"
-                  :body-style="{ padding: '4px 8px' }"
-                  :bordered="false"
-                  class="torrent-title__card"
-                >
-                  <div class="torrent-title__card-inner">
-                    <a-typography-title
-                      v-if="socialInformation[key]?.loading === true"
-                      :level="5"
-                      class="torrent-title__card-heading"
-                    >
-                      Loading....
-                    </a-typography-title>
-                    <template v-else-if="socialInformation[key]?.id">
-                      <a-image
-                        :fallback="'/icons/movie_placeholder.png'"
-                        :height="225"
-                        :preview="false"
-                        :src="socialInformation[key]?.poster"
-                        class="torrent-title__poster"
-                        :width="150"
-                      >
-                        <template #placeholder>
-                          <a-skeleton active :paragraph="{ rows: 4 }" :title="false" />
-                        </template>
-                      </a-image>
+              <a-dropdown
+                v-if="item[`ext_${key}`]"
+                :mouse-leave-delay="0.8"
+                :trigger="['hover']"
+                placement="bottomRight"
+              >
+                <a-avatar
+                  :size="20"
+                  :src="`/icons/social/${key}.png`"
+                  shape="square"
+                  class="torrent-title__social-avatar"
+                  @click="
+                    () => {
+                      activateSocialMenu(key);
+                      loadSocialInformation(key as TSupportSocialSite);
+                    }
+                  "
+                  @mouseenter="
+                    () => {
+                      activateSocialMenu(key);
+                      loadSocialInformation(key as TSupportSocialSite);
+                    }
+                  "
+                />
+                <template #overlay>
+                  <a-card
+                    v-if="activatedSocialMenus[key]"
+                    :body-style="{ padding: '4px 8px' }"
+                    :bordered="false"
+                    class="torrent-title__card"
+                  >
+                    <div class="torrent-title__card-inner">
                       <a-typography-title
-                        v-if="socialInformation[key]?.title"
-                        :ellipsis="{ tooltip: socialInformation[key]?.title }"
+                        v-if="socialInformation[key]?.loading === true"
                         :level="5"
-                        :style="{ fontSize: '14px', margin: '8px 0' }"
+                        class="torrent-title__card-heading"
                       >
-                        {{ socialInformation[key]?.title.split(" / ")[0] }}
+                        Loading....
                       </a-typography-title>
-                      <a-typography-paragraph
-                        v-if="socialInformation[key]?.ratingScore"
-                        :style="{ fontSize: '12px', marginBottom: 0 }"
+                      <template v-else-if="socialInformation[key]?.id">
+                        <a-image
+                          :fallback="'/icons/movie_placeholder.png'"
+                          :height="225"
+                          :preview="false"
+                          :src="socialInformation[key]?.poster"
+                          class="torrent-title__poster"
+                          :width="150"
+                        >
+                          <template #placeholder>
+                            <a-skeleton active :paragraph="{ rows: 4 }" :title="false" />
+                          </template>
+                        </a-image>
+                        <a-typography-title
+                          v-if="socialInformation[key]?.title"
+                          :ellipsis="{ tooltip: socialInformation[key]?.title }"
+                          :level="5"
+                          :style="{ fontSize: '14px', margin: '8px 0' }"
+                        >
+                          {{ socialInformation[key]?.title.split(" / ")[0] }}
+                        </a-typography-title>
+                        <a-typography-paragraph
+                          v-if="socialInformation[key]?.ratingScore"
+                          :style="{ fontSize: '12px', marginBottom: 0 }"
+                        >
+                          {{ socialInformation[key].ratingScore }}
+                          <span v-if="socialInformation[key]?.ratingCount">
+                            from {{ socialInformation[key].ratingCount }} votes
+                          </span>
+                        </a-typography-paragraph>
+                      </template>
+                      <!-- V-4：请求失败时给出可重试的错误态，而不是永久停在 Loading.... -->
+                      <a-typography-title
+                        v-else-if="socialInformation[key]?.error"
+                        :level="5"
+                        class="torrent-title__card-heading torrent-title__card-heading--error"
                       >
-                        {{ socialInformation[key].ratingScore }}
-                        <span v-if="socialInformation[key]?.ratingCount">
-                          from {{ socialInformation[key].ratingCount }} votes
-                        </span>
-                      </a-typography-paragraph>
-                    </template>
-                    <!-- V-4：请求失败时给出可重试的错误态，而不是永久停在 Loading.... -->
-                    <a-typography-title
-                      v-else-if="socialInformation[key]?.error"
-                      :level="5"
-                      class="torrent-title__card-heading torrent-title__card-heading--error"
-                    >
-                      {{ t("MyClient.state.error") }}
-                    </a-typography-title>
-                    <a-typography-title v-else :level="5" class="torrent-title__card-heading">{{
-                      t("common.noInformation")
-                    }}</a-typography-title>
+                        {{ t("MyClient.state.error") }}
+                      </a-typography-title>
+                      <a-typography-title v-else :level="5" class="torrent-title__card-heading">{{
+                        t("common.noInformation")
+                      }}</a-typography-title>
 
-                    <template v-if="canAdvanceSearch(key as TSupportSocialSite)">
+                      <template v-if="canAdvanceSearch(key as TSupportSocialSite)">
+                        <a-divider class="torrent-title__divider" />
+                        <a-button
+                          block
+                          type="text"
+                          @click="doAdvanceSearch(key as TSupportSocialSite, item[`ext_${key}`] as string)"
+                        >
+                          <template #icon><SearchOutlined /></template>
+                          {{ t("common.search") }}
+                        </a-button>
+                      </template>
+
                       <a-divider class="torrent-title__divider" />
                       <a-button
                         block
+                        :href="meta(item[`ext_${key}`]! as string)"
+                        rel="noopener noreferrer nofollow"
+                        target="_blank"
+                        :title="`${key}: ${item[`ext_${key}`]}`"
                         type="text"
-                        @click="doAdvanceSearch(key as TSupportSocialSite, item[`ext_${key}`] as string)"
                       >
-                        <template #icon><SearchOutlined /></template>
-                        {{ t("common.search") }}
+                        <template #icon><SelectOutlined /></template>
+                        {{ t("common.visit") }}
                       </a-button>
-                    </template>
-
-                    <a-divider class="torrent-title__divider" />
-                    <a-button
-                      block
-                      :href="meta(item[`ext_${key}`]! as string)"
-                      rel="noopener noreferrer nofollow"
-                      target="_blank"
-                      :title="`${key}: ${item[`ext_${key}`]}`"
-                      type="text"
-                    >
-                      <template #icon><SelectOutlined /></template>
-                      {{ t("common.visit") }}
-                    </a-button>
-                    <a-divider class="torrent-title__divider" />
-                    <a-typography-paragraph :style="{ fontSize: '12px', marginTop: '4px' }">
-                      ( {{ key }}: {{ item[`ext_${key}`] }} )
-                    </a-typography-paragraph>
-                  </div>
-                </a-card>
-              </template>
-            </a-dropdown>
+                      <a-divider class="torrent-title__divider" />
+                      <a-typography-paragraph :style="{ fontSize: '12px', marginTop: '4px' }">
+                        ( {{ key }}: {{ item[`ext_${key}`] }} )
+                      </a-typography-paragraph>
+                    </div>
+                  </a-card>
+                </template>
+              </a-dropdown>
+            </template>
           </template>
-        </template>
-      </div>
-    </a-flex>
+        </div>
+      </a-flex>
 
-    <a-flex
-      v-if="configStore.searchEntifyControl.showTorrentTag || configStore.searchEntifyControl.showTorrentSubtitle"
-      align="center"
-      wrap="nowrap"
-    >
-      <!-- 种子标签信息 -->
-      <div class="torrent-title__tags">
-        <template v-if="configStore.searchEntifyControl.showTorrentTag && item.tags && item.tags.length > 0">
-          <!-- M-30：按标签自带颜色渲染（tags.ts 的 31 个预定义标签 + 站点页面抓到的真实底色），
+      <a-flex
+        v-if="configStore.searchEntifyControl.showTorrentTag || configStore.searchEntifyControl.showTorrentSubtitle"
+        align="center"
+        wrap="nowrap"
+      >
+        <!-- 种子标签信息 -->
+        <div class="torrent-title__tags">
+          <template v-if="configStore.searchEntifyControl.showTorrentTag && item.tags && item.tags.length > 0">
+            <!-- M-30：按标签自带颜色渲染（tags.ts 的 31 个预定义标签 + 站点页面抓到的真实底色），
                统一中性色会让免费/2x/H&R/官方等标签无法一眼区分 -->
-          <!-- 优惠标签：悬停给出「按 x% 计费 / 上传 ×2」的释义（非优惠标签没有释义，不额外挂 Tooltip 组件） -->
-          <template v-for="tag in displayedTags" :key="tag.name">
-            <a-tooltip v-if="tagTooltips[tag.name]" :title="tagTooltips[tag.name]" placement="top">
+            <!-- 优惠标签：悬停给出「按 x% 计费 / 上传 ×2」的释义（非优惠标签没有释义，不额外挂 Tooltip 组件） -->
+            <template v-for="tag in displayedTags" :key="tag.name">
+              <a-tooltip v-if="tagTooltips[tag.name]" :title="tagTooltips[tag.name]" placement="top">
+                <a-tag
+                  v-bind="tagFilterBindings(tag.name)"
+                  :color="resolveColor(tag.color) ?? 'default'"
+                  class="torrent-title__tag"
+                >
+                  {{ tag.name }}
+                </a-tag>
+              </a-tooltip>
               <a-tag
+                v-else
                 v-bind="tagFilterBindings(tag.name)"
                 :color="resolveColor(tag.color) ?? 'default'"
                 class="torrent-title__tag"
               >
                 {{ tag.name }}
               </a-tag>
-            </a-tooltip>
-            <a-tag
-              v-else
-              v-bind="tagFilterBindings(tag.name)"
-              :color="resolveColor(tag.color) ?? 'default'"
-              class="torrent-title__tag"
-            >
-              {{ tag.name }}
+            </template>
+            <a-tag v-if="hasMoreTags" color="default" class="torrent-title__tag" @click="tagsExpanded = true">
+              <template #icon><ArrowRightOutlined /></template>
+              {{ hiddenTagCount }}
             </a-tag>
           </template>
-          <a-tag v-if="hasMoreTags" color="default" class="torrent-title__tag" @click="tagsExpanded = true">
-            <template #icon><ArrowRightOutlined /></template>
-            {{ hiddenTagCount }}
-          </a-tag>
-        </template>
-      </div>
+        </div>
 
-      <!-- 种子副标题信息 -->
-      <a-tooltip
-        v-if="configStore.searchEntifyControl.showTorrentSubtitle && item.subTitle"
-        :title="item.subTitle"
-        placement="topLeft"
-        :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
-        :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
-      >
-        <span class="ptd-cell-ellipsis" :style="{ flex: '1 1 0', minWidth: 0, color: 'var(--ptd-text-secondary)' }">
-          {{ item.subTitle }}
-        </span>
-      </a-tooltip>
-    </a-flex>
+        <!-- 种子副标题信息 -->
+        <a-tooltip
+          v-if="configStore.searchEntifyControl.showTorrentSubtitle && item.subTitle"
+          :title="item.subTitle"
+          placement="topLeft"
+          :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
+          :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
+        >
+          <span class="ptd-cell-ellipsis" :style="{ flex: '1 1 0', minWidth: 0, color: 'var(--ptd-text-secondary)' }">
+            {{ item.subTitle }}
+          </span>
+        </a-tooltip>
+      </a-flex>
+    </div>
   </div>
 </template>
 
@@ -440,5 +469,41 @@ function canAdvanceSearch(site: TSupportSocialSite) {
 
 .torrent-title__tag {
   margin-right: 4px;
+}
+
+/* 种子自带封面：缩略图与内容列并排，悬停显示按视口高度缩放的大图 */
+.torrent-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.torrent-title__content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.torrent-title__cover-wrap {
+  flex: 0 0 auto;
+  margin-right: 6px;
+}
+
+/* 影视剧海报常见 2:3（876 × 1314）：高度固定 43px，宽度按比例计算并保证至少 30px */
+.torrent-title__cover {
+  display: block;
+  height: 43px;
+  width: calc(43px * 876 / 1314);
+  min-width: 30px;
+  object-fit: cover;
+  border-radius: 4px;
+  cursor: zoom-in;
+}
+
+.torrent-title__cover-preview {
+  display: block;
+  height: clamp(240px, 55vh, 720px);
+  width: auto;
+  max-width: 60vw;
+  object-fit: contain;
 }
 </style>
