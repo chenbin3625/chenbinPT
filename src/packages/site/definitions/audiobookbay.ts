@@ -4,7 +4,7 @@
 import { selectElements } from "../utils/selector";
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
-import { definedFilters } from "../utils";
+import { definedFilters, infoHashToMagnet } from "../utils";
 
 const titleSelector = { selector: "div.postTitle" };
 const categoryOptions = [
@@ -182,14 +182,15 @@ export const siteMetadata: ISiteMetadata = {
           const titleEl = selectElements(titleSelector.selector, doc)[0];
           const hashEl = selectElements("td:contains('Info Hash:') ~ td", doc)[0];
           // DEFS1-5：详情页版式变化时这两个选择器会 0 命中，旧代码直接对 undefined 取 textContent 会抛
-          // TypeError（详情页下载链接整段失败）；取不到就返回空串，infoHashToPublicMagnet 也会判空。
+          // TypeError（详情页下载链接整段失败）；取不到就返回空串，infoHashToMagnet 也会校验 infohash 格式。
           if (!titleEl || !hashEl) {
             return "";
           }
           const title = titleEl.textContent;
           const hash = hashEl.textContent;
           const trackers = selectElements("td:contains('Tracker:') ~ td", doc).map((td) => td.textContent);
-          return infoHashToPublicMagnet(hash, title, trackers) || "";
+          // 公共方法负责 xt / dn / tr 的拼装与 infohash 格式校验，取不到时置空
+          return infoHashToMagnet(hash, { dn: title, tr: trackers }) || "";
         },
       },
     },
@@ -221,17 +222,4 @@ export default class AudioBookBay extends BittorrentSite {
 
     return torrents;
   }
-}
-
-function infoHashToPublicMagnet(infoHash: string, title: string, trackers: string[]): string | null {
-  if (!infoHash.trim() || !title.trim()) {
-    return null;
-  }
-  const encodedTitle = encodeURIComponent(title);
-  const trackerParams = new URLSearchParams();
-  trackers.forEach((tr) => {
-    trackerParams.append("tr", tr);
-  });
-
-  return `magnet:?xt=urn:btih:${infoHash}&dn=${encodedTitle}&${trackerParams.toString()}`;
 }
