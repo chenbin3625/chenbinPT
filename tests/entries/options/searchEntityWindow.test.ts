@@ -92,7 +92,7 @@ describe("SetBase/SearchEntityWindow", () => {
 
       expect(view.$$(".ant-switch"), "应渲染搜索/筛选/标签/媒体库各分区的开关").toHaveLength(9);
       expect(view.$$(".ant-input-number"), "应渲染 4 个数字输入").toHaveLength(4);
-      expect(view.$$(".ant-select")).toHaveLength(1);
+      expect(view.$$(".ant-select"), "应渲染文字标签与标题展示方式两个下拉").toHaveLength(2);
       expect(view.$$("textarea")).toHaveLength(1);
 
       // 数字输入绑定到草稿默认值（两个「请求队列长度」文案相同，媒体服务器分区按区块取）
@@ -125,6 +125,12 @@ describe("SetBase/SearchEntityWindow", () => {
         rowFor(t("SetBase.searchEntity.promotionDisplay"), view.host)!.querySelector(".ant-select-selection-item")
           ?.textContent,
       ).toBe(t("SetBase.searchEntity.promotionDisplayOptions.tags"));
+
+      // 标题展示方式下拉默认显示「末端省略」（titleDisplayMode = end）
+      expect(
+        rowFor(t("SetBase.searchEntity.titleDisplayMode"), view.host)!.querySelector(".ant-select-selection-item")
+          ?.textContent,
+      ).toBe(t("SetBase.searchEntity.titleDisplayModeOptions.end"));
 
       // 文本域按「一行一个」展示草稿里的隐藏标签
       expect(view.$<HTMLTextAreaElement>("textarea")!.value).toBe("a\nb");
