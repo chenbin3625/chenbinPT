@@ -243,6 +243,43 @@ describe("Unit3D 搜索结果页：rows 选择器 + rows.filter 的 DOM 分支",
   });
 });
 
+describe("HDChina 搜索结果时间：两种「时间显示类型」都取到绝对时间（上游 352296f）", () => {
+  const searchPage = (timeCell: string) =>
+    makeHtmlDocument(`
+      <table class="torrent_list"><tbody>
+        <tr class="tab_header"><td>类型</td><td>标题</td><td>时间</td></tr>
+        <tr>
+          <td class="t_cat"><img class="catchs" alt="Movie"></td>
+          <td class="t_name"><h3><a href="details.php?id=1" title="A.Movie">A.Movie</a></h3><h4>sub</h4></td>
+          <td class="t_size">1 GB</td>
+          ${timeCell}
+          <td class="t_torrents">5</td><td class="t_leech">1</td><td class="t_completed">9</td>
+          <td class="act"><a href="download.php?hash=abc">dl</a></td>
+        </tr>
+      </tbody></table>
+    `);
+
+  // 上游 352296f 把 time 改成 elementProcess 时删掉了 selector；getFieldData 只在有 selector 时执行
+  // elementProcess，两种形态都会回落成 0。fork 保留 `selector: "td.t_time"`，这里守住它。
+  it.each([
+    [
+      "已去时间（span[title] 里是绝对时间）",
+      `<td class="t_time"><span title="2026-11-07 22:54:11">21时18分</span></td>`,
+    ],
+    ["发生时间（单元格文本就是绝对时间）", `<td class="t_time">2026-11-07 22:54:11</td>`],
+  ])("%s", async (_mode, timeCell) => {
+    const { default: HDChina, siteMetadata } = await import("@ptd/site/definitions/hdchina.ts");
+    const site: any = new HDChina(siteMetadata as any);
+    const torrents = (await site.transformSearchPage(searchPage(timeCell), {
+      searchEntry: (siteMetadata as any).search,
+      requestConfig: { url: "https://hdchina.org/torrents.php" },
+    })) as any[];
+
+    expect(torrents).toHaveLength(1);
+    expect(torrents[0].time).toBe(Date.parse("2026-11-07T22:54:11+08:00"));
+  });
+});
+
 describe("登录页判定：noLoginAssert.matchSelectors 的 Document 分支", () => {
   const loggedCheckArgs = (doc: Document) => ({
     status: 200,
