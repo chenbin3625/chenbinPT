@@ -23,6 +23,7 @@ import { useRouter } from "vue-router";
 import { isUndefined } from "es-toolkit/compat";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 import { EResultParseStatus, type ISiteUserConfig, type IUserInfo, type TSiteID } from "@ptd/site";
+import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -312,9 +313,30 @@ function viewHistoryData(siteId: TSiteID) {
   historyDataViewDialogSiteId.value = siteId;
 }
 
-async function multiOpen() {
-  for (const siteId of tableSelected.value) {
-    const siteUrl = await metadataStore.getSiteUrl(siteId);
+function multiOpen() {
+  let openSiteIds: TSiteID[] = tableSelected.value;
+
+  // #1663：未勾选站点时，按「是否处于筛选状态」决定打开范围，避免筛选后仍然打开全部站点
+  if (openSiteIds.length === 0) {
+    if (tableFilterRef.value.trim().length > 0) {
+      openSiteIds = filteredTableData.value.map((item) => item.site);
+      if (openSiteIds.length === 0) {
+        runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedCancelOpen"), { color: "warning" });
+        return;
+      }
+      runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedOpenFiltered", [openSiteIds.length]), {
+        color: "info",
+      });
+    } else {
+      openSiteIds = tableData.value.map((item) => item.site);
+      runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedOpenAll"), { color: "info" });
+    }
+  }
+
+  // NOTE: 这里必须同步取 URL，若在循环内 `await`，则第一个 `window.open` 之后用户手势即失效，
+  //       后续标签页会被浏览器拦截（表格数据均已挂载 `siteUserConfig`，无需再走异步查询）
+  for (const siteId of openSiteIds) {
+    const siteUrl = metadataStore.sites[siteId]?.url || siteMetadataIndex[siteId]?.urls?.[0];
     if (siteUrl) {
       window.open(siteUrl, "_blank", "noopener noreferrer");
     }
@@ -423,7 +445,7 @@ function goToSiteSettings() {
       />
 
       <NavButton
-        :disabled="tableSelected.length === 0"
+        :disabled="tableData.length === 0"
         color="indigo"
         :icon="ExportOutlined"
         :text="t('MyData.index.multiOpen')"
