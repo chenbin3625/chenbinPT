@@ -6,7 +6,13 @@ import { cloneDeep } from "es-toolkit";
 import { find } from "es-toolkit/compat";
 
 import { refDebounced } from "@vueuse/core";
-import { ClusterOutlined, SearchOutlined } from "@ant-design/icons-vue";
+import {
+  ClusterOutlined,
+  OrderedListOutlined,
+  SearchOutlined,
+  SortAscendingOutlined,
+  SortDescendingOutlined,
+} from "@ant-design/icons-vue";
 
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -59,10 +65,27 @@ const siteFilter = refDebounced(siteWaitFilter, 500); // 延迟搜索过滤词�
 
 const addedSiteInfo = shallowRef<Array<{ siteId: string; isDead: boolean; siteName: string; siteUrl: string }>>([]);
 
+// 每个站点在当前方案右侧已添加的方案数（同一站点允许以不同参数多次添加）
+const addedCountBySite = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {};
+  for (const s of solution.value.solutions) {
+    counts[s.siteId] = (counts[s.siteId] ?? 0) + 1;
+  }
+  return counts;
+});
+
+// 已添加次数排序：asc（未添加在前）-> desc（添加多的在前）-> 无（保持默认次序）循环切换
+type TAddedCountSort = "asc" | "desc" | null;
+const addedCountSort = ref<TAddedCountSort>(null);
+
+function cycleAddedCountSort() {
+  addedCountSort.value = addedCountSort.value === null ? "asc" : addedCountSort.value === "asc" ? "desc" : null;
+}
+
 const filteredSite = computed(() => {
   const filter = (siteFilter.value ?? "").toLowerCase();
 
-  return addedSiteInfo.value
+  const sites = addedSiteInfo.value
     .filter((item) => {
       const siteKey = [item.siteId, item.siteName, item.siteUrl]
         .filter(Boolean)
@@ -71,6 +94,27 @@ const filteredSite = computed(() => {
       return siteKey.includes(filter);
     })
     .map((item) => item.siteId);
+
+  if (addedCountSort.value) {
+    // 按已添加次数排序；次数相同时保持原有顺序（稳定排序）
+    const dir = addedCountSort.value === "asc" ? 1 : -1;
+    sites.sort((a, b) => ((addedCountBySite.value[a] ?? 0) - (addedCountBySite.value[b] ?? 0)) * dir);
+  }
+  return sites;
+});
+
+// 同一个筛选词也作用于右侧已添加方案列表：按站点 id / 名称 / URL 匹配（与左侧口径一致）
+const filteredSolutions = computed(() => {
+  const filter = (siteFilter.value ?? "").toLowerCase();
+  if (!filter) return solution.value.solutions;
+  return solution.value.solutions.filter((item) => {
+    const meta = metadataStore.sites[item.siteId];
+    const siteKey = [item.siteId, meta?.name, meta?.url]
+      .filter(Boolean)
+      .map((x: string) => x.toLowerCase())
+      .join("|");
+    return siteKey.includes(filter);
+  });
 });
 
 function addSolution(addSolution: ISearchSolution) {
@@ -95,6 +139,7 @@ function saveSolutionState() {
 }
 
 function dialogEnter() {
+  siteWaitFilter.value = ""; // 进入时清空筛选词，避免上次残留影响左右两侧显示
   // 生成站点列表
   Promise.all(
     metadataStore.getAddedSiteIds
@@ -162,14 +207,26 @@ watch(showDialog, (open) => {
       <a-row :gutter="16">
         <a-col :md="16" :xs="24">
           <a-form-item>
-            <a-input
-              v-model:value="siteWaitFilter"
-              allow-clear
-              :placeholder="t('SetSearchSolution.edit.filterPlaceholder')"
-            >
-              <template #prefix><ClusterOutlined /></template>
-              <template #suffix><SearchOutlined /></template>
-            </a-input>
+            <a-flex :gap="8">
+              <a-input
+                v-model:value="siteWaitFilter"
+                allow-clear
+                :placeholder="t('SetSearchSolution.edit.filterPlaceholder')"
+                style="flex: 1"
+              >
+                <template #prefix><ClusterOutlined /></template>
+                <template #suffix><SearchOutlined /></template>
+              </a-input>
+              <a-tooltip :title="t('SetSearchSolution.edit.sortByAddedCount')">
+                <a-button :type="addedCountSort ? 'primary' : 'default'" @click="cycleAddedCountSort">
+                  <template #icon>
+                    <SortAscendingOutlined v-if="addedCountSort === 'asc'" />
+                    <SortDescendingOutlined v-else-if="addedCountSort === 'desc'" />
+                    <OrderedListOutlined v-else />
+                  </template>
+                </a-button>
+              </a-tooltip>
+            </a-flex>
           </a-form-item>
 
           <a-card :bordered="false" :style="{ height: 'calc(100vh - 340px)', overflowY: 'auto' }">
@@ -184,9 +241,17 @@ watch(showDialog, (open) => {
                 <template #header>
                   <a-flex align="center" :gap="8">
                     <SiteFavicon :site-id="site" :size="18" style="margin-right: 8px" />
-                    <a-tag color="green">
+                    <a-tag :color="addedCountBySite[site] ? 'green' : 'default'">
                       <SiteName :site-id="site" />
                     </a-tag>
+                    <a-tooltip
+                      v-if="addedCountBySite[site]"
+                      :title="t('SetSearchSolution.edit.siteAddedCount', [addedCountBySite[site]])"
+                    >
+                      <a-tag :color="addedCountBySite[site] === 1 ? 'success' : 'warning'">
+                        ×{{ addedCountBySite[site] }}
+                      </a-tag>
+                    </a-tooltip>
                   </a-flex>
                 </template>
                 <SiteCategoryPanel :site-id="site" @update:solution="addSolution" />
@@ -200,7 +265,13 @@ watch(showDialog, (open) => {
           </div>
 
           <a-card :bordered="false" :style="{ height: 'calc(100vh - 330px)', overflowY: 'auto' }">
-            <SolutionLabel closable column :solutions="solution.solutions" @remove:solution="removeSolution" />
+            <div
+              v-if="siteFilter && filteredSolutions.length === 0 && solution.solutions.length > 0"
+              style="color: var(--ptd-text-secondary); margin-bottom: 8px"
+            >
+              {{ t("SetSearchSolution.edit.noMatchInFilteredSolutions") }}
+            </div>
+            <SolutionLabel closable column :solutions="filteredSolutions" @remove:solution="removeSolution" />
           </a-card>
         </a-col>
       </a-row>
