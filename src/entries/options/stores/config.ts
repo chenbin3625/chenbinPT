@@ -318,6 +318,7 @@ export const useConfigStore = defineStore("config", {
       showTorrentTag: true,
       promotionDisplay: "tags",
       showTorrentSubtitle: true,
+      showTorrentCover: false,
       showSocialInformation: true,
       socialInformationSearchOnNewTab: true,
       uploadAtFormatAsAlive: false,
