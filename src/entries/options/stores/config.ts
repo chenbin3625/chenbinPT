@@ -108,6 +108,13 @@ export const useConfigStore = defineStore("config", {
           needsSave = true;
         }
 
+        // 标题显示方式只允许 end / middle / scroll（防止旧版本或手工改动写入非法值）
+        const titleDisplayMode = state.searchEntifyControl?.titleDisplayMode;
+        if (titleDisplayMode !== undefined && !["end", "middle", "scroll"].includes(titleDisplayMode)) {
+          state.searchEntifyControl.titleDisplayMode = "end";
+          needsSave = true;
+        }
+
         if (needsSave) {
           // `$save()` 自己已经记录失败并返回 rejected Promise；这里再兜一次，避免 afterRestore 产生 unhandled rejection
           void context.store.$save().catch(() => undefined);
@@ -319,6 +326,7 @@ export const useConfigStore = defineStore("config", {
       promotionDisplay: "tags",
       showTorrentSubtitle: true,
       showTorrentCover: false,
+      titleDisplayMode: "end",
       showSocialInformation: true,
       socialInformationSearchOnNewTab: true,
       uploadAtFormatAsAlive: false,
