@@ -250,9 +250,31 @@ const scrollDuration = computed(() => `${Math.min(5, Math.max(2, Math.round(titl
     <div v-if="showCover" class="torrent-title__cover-wrap">
       <a-popover placement="right" trigger="hover">
         <template #content>
-          <img :src="item.cover" alt="" class="torrent-title__cover-preview" />
+          <a-image
+            :src="item.cover"
+            :preview="false"
+            alt=""
+            class="torrent-title__cover-preview"
+            :style="{
+              display: 'block',
+              width: 'auto',
+              height: 'auto',
+              maxWidth: '60vw',
+              maxHeight: 'min(55vh, 720px)',
+              objectFit: 'contain',
+            }"
+          />
         </template>
-        <img :src="item.cover" alt="" class="torrent-title__cover" @error="coverError = true" />
+        <a-image
+          :src="item.cover"
+          :preview="false"
+          alt=""
+          class="torrent-title__cover"
+          :width="30"
+          :height="43"
+          :style="{ objectFit: 'cover', borderRadius: '4px' }"
+          @error="coverError = true"
+        />
       </a-popover>
     </div>
 
@@ -553,23 +575,15 @@ const scrollDuration = computed(() => `${Math.min(5, Math.max(2, Math.round(titl
   margin-right: 6px;
 }
 
-/* 影视剧海报常见 2:3（876 × 1314）：高度固定 43px，宽度按比例计算并保证至少 30px */
+/* 影视剧海报常见 2:3（876 × 1314）：高度固定 43px，宽度取比例与最小 30px 中的较大值。
+ * 尺寸与圆角通过 a-image 的 width/height/style 传入（落到内部 <img> 上），
+ * 避免被 antd 自带的 .ant-image-img { width: 100%; height: auto } 覆盖。 */
 .torrent-title__cover {
-  display: block;
-  height: 43px;
-  width: calc(43px * 876 / 1314);
-  min-width: 30px;
-  object-fit: cover;
-  border-radius: 4px;
   cursor: zoom-in;
 }
 
 .torrent-title__cover-preview {
   display: block;
-  height: clamp(240px, 55vh, 720px);
-  width: auto;
-  max-width: 60vw;
-  object-fit: contain;
 }
 
 /* 中间省略：开头可收缩并在末尾显示省略号，结尾（小组后缀）固定保留 */
