@@ -28,6 +28,15 @@ export const siteMetadata: ISiteMetadata = {
   schema: "Gazelle",
   urls: ["https://passthepopcorn.me/"],
 
+  noLoginAssert: {
+    matchSelectors: [
+      // 未登录时站点会直接返回 Gazelle 登录表单（URL 可能不变，无法靠 urlPatterns 判断）
+      "form#loginform",
+      "form[action*='login.php']",
+      "input#username[name='username']",
+    ],
+  },
+
   // 搜索分类
   category: [
     {
@@ -139,6 +148,7 @@ export const siteMetadata: ISiteMetadata = {
           "bonus",
           "bonusPerHour",
           "joinTime", // Gazelle 基础项
+          "lastAccessAt",
           "seeding",
           "seedingSize",
           "uploads",
@@ -194,6 +204,14 @@ export const siteMetadata: ISiteMetadata = {
         selector: ["div.panel__heading:contains('Stats') + div.panel__body > ul.list > li:contains('Joined:') > span"],
         elementProcess: (element: HTMLElement) => (element.getAttribute("title") || element.innerText).trim(),
         // SITECORE-1：elementProcess 里拿不到站点时区，解析交给具名 parseTime（args 传站点格式）
+        filters: [{ name: "parseTime", args: ["MMM dd yyyy, HH:mm"] }],
+      },
+      lastAccessAt: {
+        selector: [
+          "div.panel__heading:contains('Stats') + div.panel__body > ul.list > li:contains('Last Seen') > span",
+        ],
+        // fork：与 joinTime 一致（SITECORE-1），elementProcess 只取原文，由具名 parseTime 按站点时区换算
+        elementProcess: (element: HTMLElement) => (element.getAttribute("title") || element.innerText).trim(),
         filters: [{ name: "parseTime", args: ["MMM dd yyyy, HH:mm"] }],
       },
       seeding: {
