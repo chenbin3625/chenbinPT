@@ -124,6 +124,13 @@ const promotionDisplay = computed<"tags" | "factor" | "both" | "none">(() => {
 /** 是否显示「优惠」列（仅数值 / 标签 + 数值两种模式） */
 const showPromoColumn = computed(() => promotionDisplay.value === "factor" || promotionDisplay.value === "both");
 
+/** 种子标题超长时的显示方式（设置页与搜索页显示偏好共用同一配置） */
+const titleDisplayModeOptions = computed(() => [
+  { label: t("SearchEntity.index.titleDisplayModeOptions.end"), value: "end" },
+  { label: t("SearchEntity.index.titleDisplayModeOptions.middle"), value: "middle" },
+  { label: t("SearchEntity.index.titleDisplayModeOptions.scroll"), value: "scroll" },
+]);
+
 /**
  * 缓存每个种子的量系数：`promoSortRaw` 在排序时会被调用 O(n log n) 次，
  * 若每次都从 tags 反推（每条标签要跑一遍预定义正则），上万条结果时会直接把界面卡死。
@@ -591,7 +598,7 @@ function clearSearchFilters() {
   searchFilterBarRef.value?.clearAllFilters();
 }
 
-const tableNonBooleanControlKey = ["maxTagCountBeforeGroup", "hiddenTagNames", "promotionDisplay"];
+const tableNonBooleanControlKey = ["maxTagCountBeforeGroup", "hiddenTagNames", "promotionDisplay", "titleDisplayMode"];
 
 // 过滤出表格控制中非布尔类型的键
 const filteredTableBooleanControlKeys = computed(() => {
@@ -818,6 +825,18 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
         </a-button>
         <template #content>
           <a-list>
+            <a-list-item>
+              <div style="min-width: 220px">
+                <div style="margin-bottom: 4px">{{ t("SearchEntity.index.titleDisplayMode") }}</div>
+                <a-select
+                  v-model:value="configStore.searchEntifyControl.titleDisplayMode"
+                  :options="titleDisplayModeOptions"
+                  size="small"
+                  style="width: 100%"
+                  @change="() => configStore.$save()"
+                />
+              </div>
+            </a-list-item>
             <a-list-item v-for="item in filteredTableBooleanControlKeys" :key="item">
               <div class="display-preferences-item">
                 <!-- antd 的 a-switch 不渲染默认插槽，文案必须放在同级节点 -->

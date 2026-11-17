@@ -9,6 +9,7 @@ import { isPromotionTagName, tagsToPromotion, type ITorrent, type ITorrentTag } 
 import type { ISocialInformation, TSupportSocialSite } from "@ptd/social/types.ts";
 
 import { useConfigStore } from "@/options/stores/config.ts";
+import { useDisplay } from "@/options/composables/useDisplay.ts";
 import { resolveColor } from "@/shared/colors.ts";
 import { sendMessage } from "@/messages.ts";
 
@@ -35,6 +36,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const router = useRouter();
 const configStore = useConfigStore();
+const display = useDisplay();
 
 /** 种子自带封面的加载失败状态：失败后隐藏缩略图，避免留下破图占位 */
 const coverError = ref(false);
@@ -193,6 +195,53 @@ function doAdvanceSearch(site: TSupportSocialSite, sid: string) {
 function canAdvanceSearch(site: TSupportSocialSite) {
   return site !== "tmdb";
 }
+
+/** 标题的展示文本（通过 content-script 拖拽等方式获取的不完整种子可能只有 url / link） */
+const titleText = computed(() => item.title ?? item.url ?? item.link ?? "");
+
+/** 标题超长时的显示方式，见 设置 - 搜索 - 种子标题显示方式 */
+const titleDisplayMode = computed<"end" | "middle" | "scroll">(() => {
+  const mode = configStore.searchEntifyControl.titleDisplayMode;
+  return mode === "middle" || mode === "scroll" ? mode : "end";
+});
+
+/**
+ * 中间省略时尾部保留的字符数：尾部用于查看小组等后缀，宽屏多留一些；
+ * 窄屏下标题列只有 32vw，缩短尾部以免把标题开头挤没。
+ */
+const middleTailLength = computed(() => (display.smAndDown.value ? 14 : 24));
+
+/**
+ * 把标题切成「开头 + 结尾」两段，切点尽量落在分隔符上，避免把小组名等后缀切成两半。
+ * 空间充足时两段会原样拼回完整标题，不需要额外的省略号。
+ */
+const middleTitleParts = computed(() => {
+  const text = titleText.value;
+  const tailLength = middleTailLength.value;
+  if (text.length <= tailLength + 8) {
+    return { head: text, tail: "" };
+  }
+
+  let splitAt = text.length - tailLength;
+  const separatorOffset = text.slice(splitAt, splitAt + 8).search(/[\s._()[\]-]/);
+  if (separatorOffset !== -1) {
+    splitAt += separatorOffset;
+  }
+
+  // 两段是独立的 flex item，若切点落在空白上，普通空格会被 CSS 折叠掉（短标题不需省略时也会丢空格）。
+  // 把整段空白留给 head（配合 .torrent-title__title-head 的 white-space: pre 保留行尾空格），tail 从下一个非空白字符开始。
+  while (splitAt < text.length && /\s/.test(text[splitAt])) {
+    splitAt++;
+  }
+  if (splitAt >= text.length) {
+    return { head: text, tail: "" };
+  }
+
+  return { head: text.slice(0, splitAt), tail: text.slice(splitAt) };
+});
+
+/** 滚动模式的时长：标题越长滚得越久，但一次完整滚动控制在 2–5 秒内 */
+const scrollDuration = computed(() => `${Math.min(5, Math.max(2, Math.round(titleText.value.length / 20)))}s`);
 </script>
 
 <template>
@@ -211,7 +260,7 @@ function canAdvanceSearch(site: TSupportSocialSite) {
       <!-- 种子主标题信息 -->
       <a-flex align="center" wrap="nowrap">
         <a-tooltip
-          :title="item.title ?? item.url ?? item.link"
+          :title="titleText"
           placement="topLeft"
           :overlay-style="{ maxWidth: 'min(60vw, 600px)' }"
           :overlay-inner-style="{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }"
@@ -220,10 +269,26 @@ function canAdvanceSearch(site: TSupportSocialSite) {
             <a-typography-link
               :href="item.url"
               rel="noopener noreferrer nofollow"
+              :class="{
+                'torrent-title__link--middle': titleDisplayMode === 'middle' && !!middleTitleParts.tail,
+                'torrent-title__link--scroll': titleDisplayMode === 'scroll',
+              }"
               class="torrent-title__link"
               target="_blank"
             >
-              {{ item.title ?? item.url ?? item.link }}
+              <template v-if="titleDisplayMode === 'middle' && middleTitleParts.tail">
+                <span class="torrent-title__title-head">{{ middleTitleParts.head }}</span>
+                <span class="torrent-title__title-tail"
+                  ><bdi>{{ middleTitleParts.tail }}</bdi></span
+                >
+              </template>
+              <span
+                v-else-if="titleDisplayMode === 'scroll'"
+                class="torrent-title__title-scroll-inner"
+                :style="{ animationDuration: scrollDuration }"
+                >{{ titleText }}</span
+              >
+              <template v-else>{{ titleText }}</template>
             </a-typography-link>
           </span>
         </a-tooltip>
@@ -505,5 +570,77 @@ function canAdvanceSearch(site: TSupportSocialSite) {
   width: auto;
   max-width: 60vw;
   object-fit: contain;
+}
+
+/* 中间省略：开头可收缩并在末尾显示省略号，结尾（小组后缀）固定保留 */
+.torrent-title__link--middle {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.torrent-title__title-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.torrent-title__title-tail {
+  flex: 0 0 auto;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+.torrent-title__title-tail > bdi {
+  direction: ltr;
+}
+
+/* 滚动：默认隐藏超出部分，悬停时按标题长度往返滚动 */
+.torrent-title__link--scroll {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  container-type: inline-size;
+}
+
+.torrent-title__title-scroll-inner {
+  display: inline-block;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.torrent-title__link--scroll:hover .torrent-title__title-scroll-inner {
+  animation: torrent-title-scroll 12s linear infinite alternate;
+}
+
+@keyframes torrent-title-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% + 100cqw));
+  }
+}
+
+/* 尊重系统的「减少动态效果」：不滚动，退回末端省略 */
+@media (prefers-reduced-motion: reduce) {
+  .torrent-title__link--scroll {
+    text-overflow: ellipsis;
+  }
+
+  .torrent-title__link--scroll:hover .torrent-title__title-scroll-inner {
+    animation: none;
+  }
+
+  .torrent-title__title-scroll-inner {
+    display: inline;
+    min-width: 0;
+    animation: none;
+  }
 }
 </style>
