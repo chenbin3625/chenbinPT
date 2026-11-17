@@ -238,6 +238,16 @@ function getRecommendationPosterSrc(item: ISocialRecommendationItem) {
   return item.poster;
 }
 
+/**
+ * 评分来自社交信息（可能还有旧版本缓存下来的字符串），统一按数字格式化：
+ * 非数字时退回「暂无评分」，避免在这里抛错——评分在 a-list-item 的默认插槽里求值，一旦抛错
+ * 整条推荐（海报、标题与评分）都会被 Vue 换成空注释，表现就是「标题莫名消失」。
+ */
+function formatRecommendationRating(value: unknown) {
+  const score = Number(value);
+  return score > 0 ? score.toFixed(1) : t("layout.header.hotRecommendations.noRating");
+}
+
 watch(isRecommendationMenuOpen, (isOpen) => {
   if (isOpen) {
     void loadRecommendations();
@@ -333,11 +343,7 @@ watch(isRecommendationMenuOpen, (isOpen) => {
                       <span class="hot-recommendation-title">{{ item.title }}</span>
                       <span class="hot-recommendation-rating">
                         <StarFilled :style="{ color: resolveColor('amber-darken-2'), fontSize: '12px' }" />
-                        {{
-                          item.ratingScore
-                            ? item.ratingScore.toFixed(1)
-                            : t("layout.header.hotRecommendations.noRating")
-                        }}
+                        {{ formatRecommendationRating(item.ratingScore) }}
                       </span>
                     </div>
 
