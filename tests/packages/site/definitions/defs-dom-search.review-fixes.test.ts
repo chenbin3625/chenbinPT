@@ -292,13 +292,14 @@ describe("登录页判定：noLoginAssert.matchSelectors 的 Document 分支", (
     const { default: Karagarga, siteMetadata } = await import("@ptd/site/definitions/karagarga.ts");
     const site: any = new Karagarga(siteMetadata as any);
 
-    // matchSelectors: ["form[action='takelogin.php']"]（src/packages/site/definitions/karagarga.ts）
-    expect((site.metadata.noLoginAssert?.matchSelectors ?? []).length).toBeGreaterThan(0);
+    // matchSelectors: ["form[name='login']"]（src/packages/site/definitions/karagarga.ts，上游 2322e7f 跟进登录改版）
+    expect(site.metadata.noLoginAssert?.matchSelectors).toEqual(["form[name='login']"]);
 
+    // 改版后的登录页：`<form name="login" method="post">` + `login[username]` / `login[password]` 字段
     const loginPage = makeHtmlDocument(
-      `<form action="takelogin.php" method="post"><input name="username"><input name="password"></form>`,
+      `<form name="login" method="post"><input name="login[username]"><input name="login[password]"></form>`,
     );
-    // 旧行为：res.data instanceof Document 为 false → 走 has(doc, "form[action='takelogin.php']") → 恒 false
+    // 旧行为：res.data instanceof Document 为 false → 走 has(doc, "form[name='login']") → 恒 false
     // → 登录页被当成正常页（返回 true），用户信息抓取会静默解析出空值
     expect(site.loggedCheck(loggedCheckArgs(loginPage))).toBe(false);
 
