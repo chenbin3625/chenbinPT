@@ -272,18 +272,20 @@ describe("hhanclub 用户时间（NexusPHP，站点 +0800）", () => {
 });
 
 describe("passthepopcorn 用户时间（Gazelle，站点 +0000）", () => {
-  itAcrossTimezones("joinTime 的 elementProcess 原样返回，具名 parseTime 按站点时区换算", async () => {
+  itAcrossTimezones("joinTime / lastAccessAt 的 elementProcess 原样返回，具名 parseTime 按站点时区换算", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/passthepopcorn.ts");
-    const joinTime = (siteMetadata.userInfo!.selectors as any).joinTime;
+    const selectors = siteMetadata.userInfo!.selectors as any;
 
     const cell = document.createElement("span");
     cell.setAttribute("title", "Jan 02 2024, 03:04");
 
-    expect(joinTime.elementProcess(cell)).toBe("Jan 02 2024, 03:04");
-    expect(joinTime.filters).toEqual([{ name: "parseTime", args: ["MMM dd yyyy, HH:mm"] }]);
-
     const probe = await makeProbe(siteMetadata);
-    expect(probe.run("Jan 02 2024, 03:04", joinTime.filters)).toBe(Date.parse("2024-01-02T03:04:00Z"));
+    // lastAccessAt 来自上游 0245ea0，fork 按 joinTime 的口径改为具名 parseTime（不在 elementProcess 里按宿主时区解析）
+    for (const key of ["joinTime", "lastAccessAt"]) {
+      expect(selectors[key].elementProcess(cell)).toBe("Jan 02 2024, 03:04");
+      expect(selectors[key].filters).toEqual([{ name: "parseTime", args: ["MMM dd yyyy, HH:mm"] }]);
+      expect(probe.run("Jan 02 2024, 03:04", selectors[key].filters)).toBe(Date.parse("2024-01-02T03:04:00Z"));
+    }
   });
 });
 
