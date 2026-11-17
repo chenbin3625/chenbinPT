@@ -195,6 +195,12 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
       subTitle: {
         text: "", // Unit3D 并不在种子列表页显示副标题，或者说他们就没有副标题的设计
       },
+      // 仅当用户开启 show_poster 时存在；缺失海报会回退到 via.placeholder.com，按无封面处理
+      cover: {
+        selector: "img.torrent-search--list__poster-img",
+        attr: "src",
+        filters: [(src: string) => (src.includes("via.placeholder.com") ? "" : src)],
+      },
       url: {
         selector: ["a.view-torrent", "a.torrent-search--list__name"],
         attr: "href",

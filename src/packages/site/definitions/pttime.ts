@@ -91,6 +91,7 @@ export const siteMetadata: ISiteMetadata = {
         filters: [{ name: "querystring", args: ["id"] }],
       },
       link: baseLinkQuery,
+      cover: { selector: "td.torrentimg img", data: "src" },
       url: {
         ...baseLinkQuery,
         filters: [

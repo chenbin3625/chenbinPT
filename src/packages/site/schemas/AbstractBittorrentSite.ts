@@ -1253,6 +1253,7 @@ export default class BittorrentSite {
     }
     typeof torrent.url != "undefined" && (torrent.url = this.fixLink(torrent.url as string, requestConfig!));
     typeof torrent.link != "undefined" && (torrent.link = this.fixLink(torrent.link as string, requestConfig!));
+    typeof torrent.cover != "undefined" && (torrent.cover = this.fixLink(torrent.cover as string, requestConfig!));
     if (typeof (torrent.size as unknown) === "string") {
       torrent.size = parseSizeString(torrent.size as unknown as string);
     }

@@ -483,6 +483,8 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
         text: "",
         elementProcess: subTitleRemoveExtraElement(["a, span, img"], true),
       },
+      // 仅当站点为当前搜索框开启「列表显示封面」时才存在
+      cover: { selector: "table.torrentname img.nexus-lazy-load", data: "src" },
       progress: {
         ...baseTitleQuery,
         elementProcess: (element) => {
