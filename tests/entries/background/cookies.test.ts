@@ -239,3 +239,36 @@ describe("Firefox sameSite 与 storeId 语义", () => {
     expect(mocks.cookiesRemove.mock.calls[0]![0]).toMatchObject({ storeId: "1" });
   });
 });
+
+/**
+ * chrome.cookies.get 未找到 Cookie 时可能 resolve 为 undefined 而不是 null
+ * （@types/chrome 0.3.7 起返回类型为 Cookie | null | undefined）。
+ * 只认 `=== null` 时，undefined 会落到读取 expirationDate 的分支并抛 TypeError；
+ * getCookie 消息也会把 undefined 原样回给调用方，偏离协议声明的 Cookie | null。
+ */
+describe("chrome.cookies.get 返回 undefined 时按「无此 Cookie」处理", () => {
+  beforeEach(() => {
+    mocks.cookiesGet.mockReset();
+    mocks.cookiesSet.mockReset();
+    mocks.logBackgroundError.mockReset();
+    mocks.cookiesGet.mockResolvedValue(undefined);
+    mocks.cookiesSet.mockResolvedValue({ name: "cf_clearance", value: "new-value" });
+  });
+
+  it("setCookie 照常写入并返回 true，而不是读取 undefined.expirationDate 抛 TypeError", async () => {
+    await expect(setCookie(newCookie())).resolves.toBe(true);
+
+    expect(mocks.cookiesSet).toHaveBeenCalledTimes(1);
+  });
+
+  it("getCookie 消息：未找到时回包归一为 null，找到时原样返回", async () => {
+    const getCookieHandler = handlers.get("getCookie")!;
+    const detail = { url: "https://site.example/", name: "cf_clearance" };
+
+    await expect(getCookieHandler({ data: detail })).resolves.toBeNull();
+
+    const found = { name: "cf_clearance", value: "value", domain: "site.example" };
+    mocks.cookiesGet.mockResolvedValue(found);
+    await expect(getCookieHandler({ data: detail })).resolves.toBe(found);
+  });
+});
