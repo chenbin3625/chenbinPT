@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { DeleteOutlined, DownOutlined, ExportOutlined, EyeOutlined, UpOutlined } from "@ant-design/icons-vue";
-import { applyTableActionColumn, toAntdColumns, toPagination, useTableActionColumnLayout } from "../utils/antdTable.ts";
+import {
+  applyTableActionColumn,
+  toAntdColumns,
+  toPagination,
+  toSortBy,
+  useTableActionColumnLayout,
+} from "../utils/antdTable.ts";
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { saveAs } from "@/options/utils/saveAs.ts";
 import { type IUserInfo, type TSiteID } from "@ptd/site";
-import type { DataTableHeader } from "@/options/types/dataTable.ts";
+import type { DataTableHeader, DataTableSortItem } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
 import { formatSize, formatDate } from "@/options/utils.ts";
@@ -57,17 +63,22 @@ const tableHeader = computed<DataTableHeader[]>(() => [
   { title: t("levelRequirement.bonus"), key: "bonus", align: "end", sortable: false },
   { title: t("common.action"), key: "action", align: "center", width: 90, sortable: false },
 ]);
+// 排序与每页条数都需要本地状态：antd 的 sortOrder / pagination 受控后，
+// 固定值会让表头点击和「每页条数」选择器看起来可点、实际不生效。
+const sortBy = ref<DataTableSortItem[]>([{ key: "date", order: "desc" }]);
+const pageSize = ref(10);
+
 const tableColumns = computed(() =>
   // 操作列位置 / 固定（#1598）：历史数据弹窗与主表共用同一套全局配置
-  applyTableActionColumn(toAntdColumns(tableHeader.value, { sortBy: [{ key: "date", order: "desc" }] })),
+  applyTableActionColumn(toAntdColumns(tableHeader.value, { sortBy: sortBy.value })),
 );
 // 操作列固定在行首时，行首的选择列要一起固定
 const { rowSelectionFixed } = useTableActionColumnLayout();
-const tablePagination = computed(() =>
-  toPagination(10, () => {
-    /* 固定每页 10 条 */
-  }),
-);
+const tablePagination = computed(() => toPagination(pageSize.value, (size) => (pageSize.value = size)));
+
+function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
+  sortBy.value = toSortBy(sorter as never);
+}
 function onSelectionChange(keys: (string | number)[]) {
   tableSelected.value = keys as string[];
 }
@@ -97,16 +108,17 @@ async function loadHistoryData() {
 }
 
 async function deleteSiteUserInfo(date: string[]) {
-  if (!(await confirmModal(t("MyData.HistoryDataView.deleteConfirm")))) return;
-
   // OPTIONSOVERVIEW-4：当天数据不允许删除（与行内删除按钮、复选框的判据一致），
   // 原实现只是静默地把当天日期过滤掉：只勾选当天记录时会以空数组调用后台，
   // 界面既不提示也没有任何变化。这里显式中止并给出可见反馈。
+  // 先过滤再二次确认：没有可删记录时不弹一个「确认删除 0 条」的空对话框。
   const removable = date.filter((d) => d != currentDate());
   if (removable.length === 0) {
     runtimeStore.showSnackbar(t("MyClient.detail.operatorFailed"), { color: "warning" });
     return;
   }
+
+  if (!(await confirmModal(t("common.dialog.deleteText", [String(removable.length)])))) return;
 
   try {
     // OPTIONSOVERVIEW-4：sendMessage 原先没有 catch/反馈，删除失败时列表不刷新、也没有任何提示
@@ -132,7 +144,8 @@ function exportSiteHistoryData() {
   }
 
   const exportedSolutionBlob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
-  saveAs(exportedSolutionBlob, `site-history-data-${siteId}.json`); // FIXME filename
+  // 文件名带上站点与导出日期，避免多次导出后只能靠浏览器追加 (1)(2) 区分
+  saveAs(exportedSolutionBlob, `site-history-data-${siteId}-${formatDate(+new Date(), "yyyy-MM-dd")}.json`);
 }
 
 function afterEnter() {
@@ -170,6 +183,7 @@ watch(showDialog, (open) => {
       }"
       :scroll="{ x: 'max-content' }"
       class="table-stripe"
+      @change="onTableChange"
     >
       <!-- -->
       <template #bodyCell="{ column, record }">

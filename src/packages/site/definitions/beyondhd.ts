@@ -703,23 +703,29 @@ export default class BeyondHD extends PrivateSite {
       rescue: { name: "Rescue" },
       reboot: { name: "Reboot" },
       tv_pack: { name: "完结" },
+      internal: { name: "官方", color: "blue" },
+      dv: { name: "DoVi", color: "indigo" },
+      hdr10: { name: "HDR10", color: "orange" },
+      "hdr10+": { name: "HDR10+", color: "deep-orange" },
+      hlg: { name: "HLG", color: "purple" },
+      commentary: { name: "评论音轨", color: "teal" },
     };
 
     for (const key of Object.keys(statusTags)) {
-      if (key in row && (row as Record<string, any>)[key] === 1) {
+      const flag = (row as unknown as Record<string, unknown>)[key];
+      if (flag === 1 || flag === true || flag === "1") {
         tags.push(statusTags[key as keyof typeof statusTags]);
       }
     }
 
-    // TODO: 增加更多中文化tag，与NPHP体验一致
     const languageRegex = /(Chinese|Cantonese)(\s*\(.*\))?/i;
-    const audioArray = row.audios?.split(", ").filter((item) => item.trim() !== "");
+    const audioArray = row.audios?.split(/\s*,\s*/).filter((item) => item.trim() !== "");
     if (audioArray?.some((audio) => languageRegex.test(audio))) {
-      tags.push({ name: "中配" });
+      tags.push({ name: "中配", color: "cyan" });
     }
-    const subtitleArray = row.subtitles?.split(", ").filter((item) => item.trim() !== "");
+    const subtitleArray = row.subtitles?.split(/\s*,\s*/).filter((item) => item.trim() !== "");
     if (subtitleArray?.some((subtitle) => languageRegex.test(subtitle))) {
-      tags.push({ name: "中字" });
+      tags.push({ name: "中字", color: "lime" });
     }
 
     // DEFS2-2 收尾（统一判据：站点是否全站 H&R，而非选择器形状）：

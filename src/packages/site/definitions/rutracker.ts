@@ -77,7 +77,7 @@ export const siteMetadata: ISiteMetadata = {
       link: { selector: "td.tor-size > a.tr-dl", attr: "href" },
       url: { selector: "td.t-title-col > div.t-title > a.tLink", attr: "href" },
       title: { selector: "td.t-title-col > div.t-title > a.tLink", filters: [{ name: "trim" }] },
-      // FIXME category 名过长，建议映射为通用分类名
+      // 保留论坛细分类原文，显示宽度由搜索结果表格限制。
       category: { selector: "td.f-name-col > div.f-name > a" },
       size: { selector: "td.tor-size", data: "ts_text" },
       seeders: { selector: "td:nth-child(7)", data: "ts_text" },

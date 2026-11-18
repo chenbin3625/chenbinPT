@@ -18,7 +18,11 @@ const runtimeStore = useRuntimeStore();
 const defaultSnapshotName = computed(
   () =>
     "[" +
-    getSearchSolutionDisplayName(runtimeStore.search.searchPlanKey, (key) => metadataStore.getSearchSolutionName(key)) +
+    getSearchSolutionDisplayName(
+      runtimeStore.search.searchPlanKey,
+      (key) => metadataStore.getSearchSolutionName(key),
+      (siteId) => metadataStore.siteNameMap?.[siteId],
+    ) +
     "] " +
     runtimeStore.search.searchKey +
     " (" +

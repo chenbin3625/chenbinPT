@@ -76,8 +76,7 @@ describe("PKG-3：getRemoteTorrentFile 的响应类型/体积校验", () => {
     axiosRequestMock.mockReset();
   });
 
-  function bencodedTorrent(): Buffer {
-    const pieces = Buffer.alloc(20, 0x61);
+  function bencodedTorrent(pieces = Buffer.alloc(20, 0x61)): Buffer {
     const info = Buffer.concat([
       Buffer.from("d6:lengthi1024e4:name4:test12:piece lengthi16384e6:pieces20:"),
       pieces,
@@ -130,6 +129,85 @@ describe("PKG-3：getRemoteTorrentFile 的响应类型/体积校验", () => {
       data: Buffer.alloc(64),
     });
     await expect(getRemoteTorrentFile({ url: "https://pt.example/big" })).rejects.toThrow(/too large/);
+  });
+
+  it.each(["base64", "percent"])("本地 %s data URL 保留种子元数据，且不发起网络请求", async (encoding) => {
+    const bytes = bencodedTorrent();
+    const url =
+      encoding === "base64"
+        ? `data:application/x-bittorrent;base64,${bytes.toString("base64")}`
+        : `data:,${encodeURIComponent(bytes.toString("utf8"))}`;
+
+    const parsed = await getRemoteTorrentFile({ url });
+
+    expect(parsed.name).toBe("test.torrent");
+    expect(parsed.info.length).toBe(1024);
+    expect(parsed.metadata.base64()).toBe(bytes.toString("base64"));
+    expect(new Uint8Array(await parsed.metadata.blob().arrayBuffer())).toEqual(new Uint8Array(bytes));
+    expect(axiosRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("base64 data URL 保留非 UTF-8 的二进制 pieces 字节", async () => {
+    const pieces = Buffer.alloc(20, 0xff);
+    pieces[0] = 0;
+    const bytes = bencodedTorrent(pieces);
+
+    const parsed = await getRemoteTorrentFile({
+      url: `data:application/x-bittorrent;base64,${bytes.toString("base64")}`,
+    });
+
+    expect(parsed.info.pieces).toEqual([pieces.toString("hex")]);
+    expect(parsed.metadata.base64()).toBe(bytes.toString("base64"));
+    expect(axiosRequestMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "data:application/x-bittorrent;base64",
+    "data:application/x-bittorrent;base64,%%%",
+    "data:application/x-bittorrent,%ZZ",
+    "data:application/x-bittorrent,not-a-torrent",
+    "data:text/html,%3Chtml%2F%3E",
+  ])("非法本地种子直接拒绝，不回退到网络请求：%s", async (url) => {
+    await expect(getRemoteTorrentFile({ url })).rejects.toThrow("Invalid Torrent From Server");
+    expect(axiosRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("下载进度超过上限时立即中止，并将取消错误转换为体积错误", async () => {
+    axiosRequestMock.mockImplementationOnce(async ({ signal, onDownloadProgress }) => {
+      onDownloadProgress({ loaded: 50 * 1024 * 1024 });
+      expect(signal.aborted).toBe(false);
+      onDownloadProgress({ loaded: 50 * 1024 * 1024 + 1 });
+      expect(signal.aborted).toBe(true);
+      throw new Error("adapter canceled");
+    });
+
+    await expect(getRemoteTorrentFile({ url: "https://pt.example/big" })).rejects.toThrow(
+      "Invalid Torrent From Server (response too large)",
+    );
+    expect(axiosRequestMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("调用方取消信号会传递到下载请求（预先取消：%s）", async (alreadyAborted) => {
+    const caller = new AbortController();
+    const cancellation = new Error("caller canceled");
+    if (alreadyAborted) caller.abort();
+    axiosRequestMock.mockImplementationOnce(async ({ signal }) => {
+      expect(signal.aborted).toBe(alreadyAborted);
+      caller.abort();
+      expect(signal.aborted).toBe(true);
+      throw cancellation;
+    });
+
+    await expect(getRemoteTorrentFile({ url: "https://pt.example/download", signal: caller.signal })).rejects.toBe(
+      cancellation,
+    );
+  });
+
+  it("普通网络失败保留原始错误", async () => {
+    const networkError = new Error("connection reset");
+    axiosRequestMock.mockRejectedValueOnce(networkError);
+
+    await expect(getRemoteTorrentFile({ url: "https://pt.example/download" })).rejects.toBe(networkError);
   });
 });
 

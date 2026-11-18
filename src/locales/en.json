@@ -386,16 +386,24 @@
       "title": "Export User Info"
     },
     "index": {
+      "clearSelection": "Clear selection",
       "exportData": "Export",
       "filter": {
+        "clear": "Clear filters",
+        "failed": "Refresh failed",
         "lastUpdateError": "Last update error",
+        "stale": "Not updated today",
         "todayNotUpdated": "Not updated today",
+        "unread": "Unread",
         "unreadMessage": "Unread messages"
       },
+      "flushAll": "Refresh all",
       "flushCancel": "Refresh canceled",
-      "flushSiteFailed": "Failed to refresh user info for site [{site}]",
-      "flushQueueCancelled": "The user info refresh queue was cancelled",
+      "flushFiltered": "Refresh filtered ({0})",
+      "flushQueueCancelled": "Refresh cancelled (completed {done} / {total})",
       "flushSelectSite": "Refresh selected",
+      "flushSelected": "Refresh selected ({0})",
+      "flushSiteFailed": "Failed to refresh user info for site [{site}]",
       "joinTimeFormat": "Display join time",
       "joinTimeFormatOptions": {
         "added": "Absolute Date",
@@ -404,11 +412,14 @@
       },
       "limitLevelNameTdWidth": "Limit level column width",
       "multiOpen": "Open in batch",
+      "noRefreshTarget": "No site available to refresh",
       "noSiteSelectedCancelRefresh": "No site selected, refresh cancelled",
       "noSiteSelectedRefreshAll": "No site selected, refreshing all sites by default",
       "normalizeLevelName": "Use Site-defined Level Name",
       "onlyShowUserLevelRequirement": "Only show the upgrade queue in level requirements",
-      "setting": "Settings",
+      "searchPlaceholder": "Search site / username, or use site:, status: filters",
+      "selectedCount": "{0} site(s) selected",
+      "setting": "Display preferences",
       "showBonusNeededInterval": "Show estimated bonus time in level requirements",
       "showHnR": "Show H&R",
       "showIntervalAsDate": "Display level requirement time as date format",
@@ -426,18 +437,27 @@
       "viewStatistic": "Data Chart",
       "viewTimeline": "Timeline"
     },
+    "refresh": {
+      "batchPartial": "Refresh completed: {success} succeeded, {failed} failed ({sites})",
+      "batchSuccess": "{count} site(s) refreshed",
+      "siteFailed": "Failed to refresh site [{site}]{reason}"
+    },
     "siteMetadataLoadFailed": "Failed to load site metadata: {sites}{more}. These sites were skipped.",
     "table": {
       "action": {
         "flushData": "Refresh Data",
         "viewHistoryData": "View History Data"
       },
+      "countLabel": "Showing {shown} / {total} sites",
+      "flushFailedTip": "Last refresh failed: {reason}. Showing the last successful data from {time}.",
       "invites": "Invites",
       "joinTime": "Join Time",
       "lastAccessAt": "Last Access At",
       "lastAccessDurationNote": "Not Access for {0} days",
       "levelName": "Level",
       "noData": "No user info yet. Add a site and allow querying user info in its settings.",
+      "noFilteredData": "No sites match the current filters",
+      "notFetched": "Not fetched yet",
       "trueUserData": "True Data",
       "updateAt": "Updated At",
       "userData": "Data"
@@ -523,27 +543,28 @@
         "retry": "Retry Search",
         "retryFailed": "Retry the failed search plans (such as @:resultParseStatus.unknownError , @:resultParseStatus.parseError , @:resultParseStatus.CFBlocked , @:resultParseStatus.needLogin)",
         "saveSnapshot": "Save Search Snapshot",
-        "start": "Start search queue"
+        "start": "Resume search queue"
       },
       "actionLabel": {
         "cancel": "Cancel",
         "displayPreferences": "Display",
         "pause": "Pause",
-        "retry": "Retry",
+        "retry": "Search Again",
         "retryFailed": "Retry Failed",
         "saveSnapshot": "Snapshot",
-        "start": "Start"
+        "start": "Resume"
       },
       "alert": {
-        "duration": "Duration: {0} seconds.",
+        "duration": "Duration: {0} seconds",
         "enterKeyword": "Enter a keyword or pick a search plan to start.",
         "keyword": "Keyword",
         "paused": "Search paused...",
         "plan": "Search Plan",
-        "results": "Total {0} results, ",
-        "searchProgress": "Received {0} results, search is still in progress...",
+        "results": "Total {0} results",
+        "searchProgress": "Completed {0}/{1} sites · {2} results received",
         "searchStatus": "Search Status",
         "searching": "Searching...",
+        "searchingHint": "Searching sites; results will appear as they arrive...",
         "snapshot": "Search Snapshot",
         "searchInterrupted": "The previous search was interrupted; showing partial results. Please search again."
       },
@@ -574,9 +595,19 @@
         "text": "Keyword",
         "time": "Date"
       },
+      "failedSites": {
+        "more": "and {0} more",
+        "title": "{0} site(s) failed to search"
+      },
+      "goToSites": "Add Sites",
       "noData": "No search results yet. Enter a keyword or pick a search plan above to start.",
+      "noResults": "No results for \"{0}\". Try another keyword.",
+      "noResultsNoKeyword": "The selected sites returned no results.",
+      "noResultsWithFailures": "No results, and {0} site(s) failed to search.",
+      "noSites": "No searchable sites yet. Add a site to start searching.",
       "pageDescription": "Search across sites and compare size, activity, publish time, and download cost.",
       "resultList": "Showing {0} / {1} results",
+      "viewSearchStatus": "View Search Status",
       "highlightSameSizeTorrent": "Mark same-size torrents when sorted by size",
       "limitTorrentTitleTdWidth": "Limit torrent title column width",
       "selectedTorrents": "Selected {0} torrents",
@@ -1362,6 +1393,7 @@
     "total": "TOT "
   },
   "common": {
+    "delimiter": ", ",
     "refreshPageHint": "Try refreshing the page and retry",
     "unexpectedError": "An unexpected error occurred",
 

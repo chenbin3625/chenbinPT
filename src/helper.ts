@@ -12,3 +12,19 @@ export const isDebug = !isProd;
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string" && reader.result.startsWith("data:")) {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Failed to read Blob as a data URL"));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read Blob"));
+    reader.onabort = () => reject(new Error("Blob read was aborted"));
+    reader.readAsDataURL(blob);
+  });
+}

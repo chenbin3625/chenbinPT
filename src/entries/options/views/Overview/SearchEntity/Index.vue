@@ -71,6 +71,7 @@ import { getActiveTagFilterNames, tableCustomFilter, toggleTagFilter, updateTabl
 import {
   cancelSearchQueue,
   captureSearchTaskEpoch,
+  defaultErrorSearchPlanStatus,
   doSearch,
   invalidateSearchTasks,
   isFlushQuery,
@@ -280,13 +281,71 @@ const hasSearchFilteredNoResults = computed(
     !runtimeStore.search.isSearching,
 );
 const searchFilterBarRef = ref<InstanceType<typeof SearchFilterBar> | null>(null);
-const tablePagination = computed(() =>
-  toPagination(
+
+/**
+ * 受控页码。
+ *
+ * antd Table 的 `innerPagination.current` 只在**渲染时**被钳制到有效范围：换一批数据（新一轮搜索、
+ * 筛选条件变化）后它仍指向上一次的页码。旧实现没有传 `current`，于是「在第 3 页重新搜索」会随着
+ * 结果流式写入一路跳回第 3 页，用户看到的是新搜索的第 3 页而不是第 1 页。这里显式接管页码：
+ * 新一轮搜索 / 筛选变化时回到第 1 页，结果变少时钳制到最后一页。
+ */
+const tableCurrentPage = ref(1);
+const tablePagination = computed(() => {
+  const pagination = toPagination(
     configStore.tableBehavior.SearchEntity.itemsPerPage,
     (v) => configStore.updateTableBehavior("SearchEntity", "itemsPerPage", v),
     { allowUnpaginated: false },
-  ),
+  );
+  if (!pagination) return pagination;
+
+  return {
+    ...pagination,
+    current: tableCurrentPage.value,
+    onChange: (page: number, pageSize: number) => {
+      const pageChanged = page !== tableCurrentPage.value;
+      tableCurrentPage.value = page;
+      pagination.onChange?.(page, pageSize);
+      if (pageChanged) scrollSearchTableToTop();
+    },
+  };
+});
+
+/** 翻页后把表格顶部滚回可视区域（#ptd-main 才是滚动容器，见 useMainTableSticky） */
+function scrollSearchTableToTop() {
+  const main = document.getElementById("ptd-main");
+  const table = document.getElementById("ptd-search-entity-table");
+  if (!main || !table) return;
+  const mainTop = main.getBoundingClientRect().top;
+  const tableTop = table.getBoundingClientRect().top;
+  // 表格顶部本来就可见时不滚动，避免无谓跳动
+  if (tableTop >= mainTop) return;
+  main.scrollTop += tableTop - mainTop;
+}
+
+// 新一轮搜索 / 切换快照：回到第一页（页码是「当前结果集」的浏览位置，不跨搜索记忆）
+watch(
+  [() => runtimeStore.search.startAt, () => runtimeStore.search.searchPlanKey, () => runtimeStore.search.snapshot],
+  () => {
+    tableCurrentPage.value = 1;
+  },
 );
+
+// 筛选条件变化：结果集换成另一批行，继续停在第 N 页没有意义
+watch(tableFilterRef, () => {
+  tableCurrentPage.value = 1;
+});
+
+// 结果变少 / 每页条数变化时把页码钳制到最后一页，避免停在空白页
+watch(
+  () => [filteredTableData.value.length, configStore.tableBehavior.SearchEntity.itemsPerPage] as const,
+  ([total, pageSize]) => {
+    const normalizedPageSize = Number(pageSize);
+    const maxPage = normalizedPageSize > 0 ? Math.max(1, Math.ceil(total / normalizedPageSize)) : 1;
+    if (tableCurrentPage.value > maxPage) tableCurrentPage.value = maxPage;
+  },
+);
+
 function onSelectionChange(_keys: (string | number)[], rows: ISearchResultTorrent[]) {
   tableSelectedRaw.value = rows;
 }
@@ -305,6 +364,123 @@ let snapshotLoadToken = 0;
 
 /** 是否处于搜索快照视图：快照数据不允许与实时搜索结果混用 */
 const inSnapshotView = computed(() => Boolean(runtimeStore.search.snapshot));
+
+/**
+ * 已添加站点：把「还没搜索」和「还没有可搜索的站点」区分成两种空状态。
+ *
+ * metadata 从 chrome.storage 水合是异步的：水合完成前 sites 一定是空的，直接判定会先闪一下
+ * 「没有站点」再把用户已经添加的站点显示出来。就绪前维持原「还没搜索」的引导。
+ */
+const metadataReady = ref(false);
+void metadataStore.$onReady(() => {
+  metadataReady.value = true;
+});
+const hasAddedSites = computed(() => metadataStore.getAddedSites.length > 0);
+
+/** 失败的展示原因：`i18n.*` 的 statusMsg 走翻译，其余（如站点返回的 HTTP 错误）原样展示 */
+function failureReason(status: EResultParseStatus, statusMsg?: string): string {
+  if (statusMsg?.startsWith("i18n.")) {
+    const key = `SearchEntity.SearchStatusDialog.statusMsg.${statusMsg.slice("i18n.".length)}`;
+    const translated = t(key);
+    if (translated !== key) return translated;
+  } else if (statusMsg) {
+    return statusMsg;
+  }
+  // enum 成员是数字（needLogin = 7），反向映射才能拿到 i18n key
+  return t(`resultParseStatus.${EResultParseStatus[status]}`).replace(/[!！]\s*$/, "");
+}
+
+/**
+ * 搜索失败的站点（按站点去重）。
+ *
+ * 状态行里的「2 ⚠」只能说明有失败，看不出是哪个站点、为什么失败；这些信息不应该只藏在
+ * 「搜索情况」弹窗里。同一站点可能有多个搜索入口失败，提示条里只需要出现一次。
+ */
+const failedSearchPlans = computed(() => {
+  const seen = new Set<string>();
+  const failed: Array<{ siteId: string; reason: string }> = [];
+  Object.values(runtimeStore.search.searchPlan ?? {}).forEach((plan) => {
+    if (!defaultErrorSearchPlanStatus.includes(plan.status) || seen.has(plan.siteId)) return;
+    seen.add(plan.siteId);
+    failed.push({ siteId: plan.siteId, reason: failureReason(plan.status, plan.statusMsg) });
+  });
+  return failed;
+});
+
+/**
+ * 失败提示条。
+ *
+ * 0 条结果时失败信息由空状态承担（那里直接给出重试入口），这里只负责「有结果、但有站点失败」
+ * —— 旧实现下用户只能从状态行一个很小的「⚠ 2」察觉结果并不完整。用户可以关闭提示条；
+ * 新一轮搜索会重新显示。
+ */
+const dismissedFailureAlert = ref(false);
+watch(
+  // 新一轮搜索（startAt）或本轮收尾（endAt）时重新展示：重试失败后若仍有失败，提示条应再次出现
+  [() => runtimeStore.search.startAt, () => runtimeStore.search.endAt],
+  () => {
+    dismissedFailureAlert.value = false;
+  },
+);
+const showFailureAlert = computed(
+  () =>
+    !inSnapshotView.value &&
+    !runtimeStore.search.isSearching &&
+    runtimeStore.search.startAt > 0 &&
+    runtimeStore.search.searchResult.length > 0 &&
+    failedSearchPlans.value.length > 0 &&
+    !dismissedFailureAlert.value,
+);
+const failureAlertSummary = computed(() => {
+  const limit = 3;
+  const parts = failedSearchPlans.value.slice(0, limit).map(({ siteId, reason }) => {
+    const siteName = metadataStore.siteNameMap?.[siteId] || siteId;
+    return `${siteName}（${reason}）`;
+  });
+  const rest = failedSearchPlans.value.length - parts.length;
+  if (rest > 0) parts.push(t("SearchEntity.index.failedSites.more", [rest]));
+  return parts.join("、");
+});
+
+/** 搜索进度：已完成 = 计划总数 - 排队中（passParse 的跳过项也计入「已完成」） */
+const searchPlanTotal = computed(() => Object.keys(runtimeStore.search.searchPlan ?? {}).length);
+const searchPlanDone = computed(() => Math.max(0, searchPlanTotal.value - searchPlanStatus.value.queued));
+
+type TSearchEmptyState = "never" | "noSites" | "searching" | "filtered" | "noResults" | "noResultsWithFailures";
+
+/**
+ * 空状态的唯一判定入口。
+ *
+ * 旧实现只有「有没有筛选」和「startAt === 0」两个分支：搜索进行中（0 条结果）与搜索完成后
+ * 0 条结果都落到「请在上方输入关键词……开始搜索」，等于在用户已经搜索过之后继续让他「开始搜索」。
+ */
+const searchEmptyState = computed<TSearchEmptyState>(() => {
+  if (runtimeStore.search.isSearching) return "searching";
+  if (hasSearchFilteredNoResults.value) return "filtered";
+  if (runtimeStore.search.startAt === 0) {
+    return !metadataReady.value || hasAddedSites.value ? "never" : "noSites";
+  }
+  return failedSearchPlans.value.length > 0 ? "noResultsWithFailures" : "noResults";
+});
+
+const emptyStateDescription = computed(() => {
+  switch (searchEmptyState.value) {
+    case "searching":
+      return t("SearchEntity.index.alert.searchingHint");
+    case "filtered":
+      return t("SearchEntity.index.filteredNoData");
+    case "noSites":
+      return t("SearchEntity.index.noSites");
+    case "noResultsWithFailures":
+      return t("SearchEntity.index.noResultsWithFailures", [failedSearchPlans.value.length]);
+    case "noResults":
+      return runtimeStore.search.searchKey
+        ? t("SearchEntity.index.noResults", [runtimeStore.search.searchKey])
+        : t("SearchEntity.index.noResultsNoKeyword");
+    default:
+      return t("SearchEntity.index.noData");
+  }
+});
 
 /**
  * D2-03：处理完 flush 后把它从 URL 上摘掉。
@@ -536,7 +712,11 @@ function saveSearchControl() {
 
 /** F12：`getSearchSolutionName("all")` 在 store 里硬编码中文「全站」，英文界面会中英混排 */
 function getSearchSolutionName(planKey: string) {
-  return getSearchSolutionDisplayName(planKey, (key) => metadataStore.getSearchSolutionName(key));
+  return getSearchSolutionDisplayName(
+    planKey,
+    (key) => metadataStore.getSearchSolutionName(key),
+    (siteId) => metadataStore.siteNameMap?.[siteId],
+  );
 }
 
 // 状态行与工具条都依赖这两个名字；抽成 computed 避免模板里重复调用 store 查询
@@ -585,6 +765,10 @@ function focusTopbarSearch() {
 
 function openSearchSolutionSettings() {
   void router.push({ name: "SetSearchSolution" });
+}
+
+function openSiteSettings() {
+  void router.push({ name: "SetSite" });
 }
 
 function clearSearchFilters() {
@@ -714,14 +898,17 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
             </a-tag>
           </span>
 
-          <!-- 搜索中显示「已接收 N 条」；结束后才显示结果总数与耗时 -->
-          <span
-            v-if="runtimeStore.search.isSearching && runtimeStore.search.searchResult.length > 0"
-            class="search-status__metric"
-          >
-            {{ t("SearchEntity.index.alert.searchProgress", [runtimeStore.search.searchResult.length]) }}
+          <!-- 搜索中显示站点进度与已接收条数；结束后显示结果总数与耗时 -->
+          <span v-if="runtimeStore.search.isSearching" class="search-status__metric">
+            {{
+              t("SearchEntity.index.alert.searchProgress", [
+                searchPlanDone,
+                searchPlanTotal,
+                runtimeStore.search.searchResult.length,
+              ])
+            }}
           </span>
-          <template v-else-if="!runtimeStore.search.isSearching">
+          <template v-else>
             <span class="search-status__metric">
               {{ t("SearchEntity.index.alert.results", [runtimeStore.search.searchResult.length]) }}
             </span>
@@ -765,40 +952,32 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       -->
       <ToolbarActions :items="toolbarActions" @select="onToolbarAction">
         <template #primary>
-          <!-- 搜索队列控制：文字按钮（title 保留完整说明作为悬停提示） -->
-          <a-flex align="center" :gap="4">
-            <!-- 启动/暂停 搜索队列 -->
+          <!--
+            队列控制只在搜索进行中出现：暂停/继续 + 取消。
+            「重新搜索」只在已经搜索过（startAt > 0）且不在快照视图时出现 —— 旧实现里它常驻且可用，
+            从未搜索时点它会发起一次空关键词搜索；暂停队列后它又被禁用，形成没有出路的死角。
+            doSearch / retrySearch 内部会先恢复暂停的队列，因此这里无需再按暂停态禁用。
+          -->
+          <a-flex v-if="runtimeStore.search.isSearching" align="center" :gap="4">
             <a-button
-              v-show="isSearchingParsed"
+              v-if="isSearchingParsed"
               :title="t('SearchEntity.index.action.start')"
-              @click="() => startSearchQueue()"
+              @click="startSearchQueue"
               type="primary"
               ><template #icon><PlayCircleOutlined /></template>
               {{ t("SearchEntity.index.actionLabel.start") }}
             </a-button>
-            <a-button
-              v-show="!isSearchingParsed"
-              :title="t('SearchEntity.index.action.pause')"
-              @click="() => pauseSearchQueue()"
-              type="primary"
+            <a-button v-else :title="t('SearchEntity.index.action.pause')" @click="pauseSearchQueue" type="primary"
               ><template #icon><PauseOutlined /></template>
               {{ t("SearchEntity.index.actionLabel.pause") }}
             </a-button>
-
-            <!-- 取消/重试 搜索队列 -->
-            <a-button
-              v-show="runtimeStore.search.isSearching"
-              :title="t('SearchEntity.index.action.cancel')"
-              @click="cancelSearchQueue"
-              danger
+            <a-button :title="t('SearchEntity.index.action.cancel')" @click="cancelSearchQueue" danger
               ><template #icon><StopOutlined /></template>
               {{ t("SearchEntity.index.actionLabel.cancel") }}
             </a-button>
-            <a-button
-              v-show="!runtimeStore.search.isSearching"
-              :disabled="isSearchingParsed || inSnapshotView"
-              :title="t('SearchEntity.index.action.retry')"
-              @click="() => doSearch()"
+          </a-flex>
+          <a-flex v-else-if="!inSnapshotView && runtimeStore.search.startAt > 0" align="center" :gap="4">
+            <a-button :title="t('SearchEntity.index.action.retry')" @click="() => doSearch()"
               ><template #icon><SyncOutlined /></template>
               {{ t("SearchEntity.index.actionLabel.retry") }}
             </a-button>
@@ -845,6 +1024,36 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       </a-popover>
     </a-flex>
 
+    <!--
+      有结果但有站点失败：旧实现只在状态行留下一个很小的「⚠ N」，用户很容易带着不完整的结果离开。
+      这里列出失败站点与原因，并给出「重试失败 / 查看搜索情况」两个动作；0 条结果时由空状态负责。
+    -->
+    <a-alert
+      v-if="showFailureAlert"
+      class="search-failure-alert"
+      type="warning"
+      show-icon
+      closable
+      @close="dismissedFailureAlert = true"
+    >
+      <template #message>
+        {{ t("SearchEntity.index.failedSites.title", [failedSearchPlans.length]) }}
+      </template>
+      <template #description>
+        <span class="search-failure-alert__list">{{ failureAlertSummary }}</span>
+      </template>
+      <template #action>
+        <a-space :size="4">
+          <a-button size="small" @click="() => retrySearch()">
+            {{ t("SearchEntity.index.actionLabel.retryFailed") }}
+          </a-button>
+          <a-button size="small" type="text" @click="showSearchStatusDialog = true">
+            {{ t("SearchEntity.index.viewSearchStatus") }}
+          </a-button>
+        </a-space>
+      </template>
+    </a-alert>
+
     <div class="search-entity-table-wrap">
       <SearchFilterBar ref="searchFilterBarRef" />
 
@@ -882,6 +1091,12 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
                 :site-id="record.site"
               />
             </div>
+          </template>
+
+          <template v-else-if="column.key === 'category'">
+            <span class="ptd-cell-ellipsis" style="max-width: 12rem" :title="record.category">
+              {{ record.category ?? "-" }}
+            </span>
           </template>
 
           <!-- 主标题，副标题，优惠及标签 -->
@@ -962,18 +1177,17 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
         </template>
 
         <template #emptyText>
-          <NoDataPlaceholder
-            compact
-            :description="
-              hasSearchFilteredNoResults ? t('SearchEntity.index.filteredNoData') : t('SearchEntity.index.noData')
-            "
-          >
-            <a-button v-if="hasSearchFilteredNoResults" @click="clearSearchFilters">
+          <!--
+            空状态按搜索阶段分派（见 searchEmptyState）：
+            搜索中不再提示「去开始搜索」；搜索完成后没有结果说明是「没找到」而不是「还没开始」；
+            失败时直接给出重试入口，不用让用户自己去状态弹窗里找。
+          -->
+          <NoDataPlaceholder compact :description="emptyStateDescription">
+            <a-button v-if="searchEmptyState === 'filtered'" @click="clearSearchFilters">
               <template #icon><FilterOutlined /></template>
               {{ t("SearchEntity.index.clearFilters") }}
             </a-button>
-            <!-- 尚未发起搜索时给出可执行入口；搜索过但无结果时仍只展示原描述 -->
-            <a-space v-else-if="runtimeStore.search.startAt === 0" :size="8" wrap>
+            <a-space v-else-if="searchEmptyState === 'never'" :size="8" wrap>
               <a-button type="primary" @click="focusTopbarSearch">
                 <template #icon><SearchOutlined /></template>
                 {{ t("common.search") }}
@@ -981,6 +1195,25 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
               <a-button @click="openSearchSolutionSettings">
                 <template #icon><SettingOutlined /></template>
                 {{ t("route.Settings.SetSearchSolution") }}
+              </a-button>
+            </a-space>
+            <a-space v-else-if="searchEmptyState === 'noSites'" :size="8" wrap>
+              <a-button type="primary" @click="openSiteSettings">
+                <template #icon><SettingOutlined /></template>
+                {{ t("SearchEntity.index.goToSites") }}
+              </a-button>
+              <a-button @click="openSearchSolutionSettings">
+                <template #icon><SettingOutlined /></template>
+                {{ t("route.Settings.SetSearchSolution") }}
+              </a-button>
+            </a-space>
+            <a-space v-else-if="searchEmptyState === 'noResultsWithFailures'" :size="8" wrap>
+              <a-button type="primary" @click="() => retrySearch()">
+                <template #icon><ExclamationCircleOutlined /></template>
+                {{ t("SearchEntity.index.actionLabel.retryFailed") }}
+              </a-button>
+              <a-button @click="showSearchStatusDialog = true">
+                {{ t("SearchEntity.index.viewSearchStatus") }}
               </a-button>
             </a-space>
           </NoDataPlaceholder>
@@ -1099,6 +1332,16 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 
 .search-entity-card :deep(.page-toolbar) {
   margin-bottom: 12px;
+}
+
+/* 失败提示条：与工具条 / 表格保持统一的 12px 垂直节奏 */
+.search-failure-alert {
+  margin-bottom: 12px;
+}
+
+/* 站点名 + 失败原因是用户内容，长错误信息允许在任意位置折行，避免撑破提示条 */
+.search-failure-alert__list {
+  overflow-wrap: anywhere;
 }
 
 .search-entity-table-wrap :deep(.ant-table-title) {

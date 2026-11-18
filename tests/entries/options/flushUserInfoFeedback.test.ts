@@ -42,6 +42,8 @@ async function loadFlushFn() {
   return {
     flushSiteLastUserInfo: mod.flushSiteLastUserInfo,
     reconcileFlushPlan: mod.reconcileFlushPlan,
+    perSiteLastUserData: mod.perSiteLastUserData,
+    isFlushFailed: mod.isFlushFailed,
     runtimeStore: runtime.useRuntimeStore(),
   };
 }
@@ -108,6 +110,95 @@ describe("刷新数据：失败必须给出用户反馈", () => {
       siteId: "testsite",
       queueConcurrency: 5,
     });
+  });
+});
+
+describe("刷新失败时保留上一次成功的数据", () => {
+  beforeEach(() => {
+    openMock.mockReset();
+    sendMessageMock.mockReset();
+  });
+
+  it("失败只挂 lastFlushFailure，不清空行内已展示的数据", async () => {
+    sendMessageMock.mockResolvedValue({ site: "testsite", status: 0, statusMsg: "timeout", updateAt: Date.now() });
+    const { flushSiteLastUserInfo, perSiteLastUserData } = await loadFlushFn();
+
+    // 模拟上一次成功刷新后的行
+    perSiteLastUserData.value["testsite" as never] = {
+      site: "testsite",
+      status: 3, // EResultParseStatus.success
+      statusMsg: "",
+      updateAt: 1_700_000_000_000,
+      uploaded: 100,
+      downloaded: 20,
+      seedingSize: 30,
+      siteUserConfig: {},
+      siteName: "testsite",
+    } as never;
+
+    flushSiteLastUserInfo(["testsite"]);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    const row = perSiteLastUserData.value["testsite" as never]!;
+    expect(row.status, "保持 success，汇总与成功数据不受影响").toBe(3);
+    expect(row.uploaded).toBe(100);
+    expect(row.updateAt).toBe(1_700_000_000_000);
+    expect(row.lastFlushFailure?.status).toBe(0);
+    expect(row.lastFlushFailure?.statusMsg).toBe("timeout");
+  });
+
+  it("下一次成功刷新会清掉失败标记", async () => {
+    const { flushSiteLastUserInfo, perSiteLastUserData } = await loadFlushFn();
+    perSiteLastUserData.value["testsite" as never] = {
+      site: "testsite",
+      status: 3,
+      updateAt: 1_700_000_000_000,
+      uploaded: 100,
+      siteUserConfig: {},
+      siteName: "testsite",
+      lastFlushFailure: { status: 0, statusMsg: "timeout", at: Date.now() },
+    } as never;
+
+    sendMessageMock.mockResolvedValue({
+      site: "testsite",
+      status: 3,
+      updateAt: 1_700_000_100_000,
+      uploaded: 200,
+    });
+
+    flushSiteLastUserInfo(["testsite"]);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    const row = perSiteLastUserData.value["testsite" as never]!;
+    expect(row.uploaded).toBe(200);
+    expect(row.lastFlushFailure).toBeUndefined();
+  });
+
+  it("同一站点已有在途请求时，重复刷新不会重复排队", async () => {
+    let resolve!: (value: unknown) => void;
+    sendMessageMock.mockImplementation(() => new Promise((res) => (resolve = res)));
+    const { flushSiteLastUserInfo } = await loadFlushFn();
+
+    flushSiteLastUserInfo(["testsite"]);
+    flushSiteLastUserInfo(["testsite"]);
+    await flushMicrotasks();
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+    resolve({ site: "testsite", status: 3, updateAt: Date.now() });
+    await flushMicrotasks();
+    await flushMicrotasks();
+  });
+
+  it("isFlushFailed 同时识别失败状态与保留数据时的失败标记", async () => {
+    const { isFlushFailed } = await loadFlushFn();
+
+    expect(isFlushFailed({ status: 3 })).toBe(false);
+    expect(isFlushFailed({ status: 3, lastFlushFailure: { status: 0, at: 1 } })).toBe(true);
+    expect(isFlushFailed({ status: 7 })).toBe(true); // needLogin
+    expect(isFlushFailed({ status: 3 })).toBe(false);
   });
 });
 

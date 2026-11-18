@@ -6,8 +6,8 @@ import {
   DownOutlined,
   ExclamationCircleOutlined,
   ExportOutlined,
-  FilterOutlined,
   FundOutlined,
+  GlobalOutlined,
   SettingOutlined,
   StopOutlined,
   SyncOutlined,
@@ -17,12 +17,12 @@ import {
   WarningOutlined,
 } from "@ant-design/icons-vue";
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { watchDebounced } from "@vueuse/core";
+import { useIntervalFn, watchDebounced } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { isUndefined } from "es-toolkit/compat";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
-import { EResultParseStatus, type ISiteUserConfig, type IUserInfo, type TSiteID } from "@ptd/site";
+import { EResultParseStatus, type TSiteID } from "@ptd/site";
 
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -41,8 +41,8 @@ import {
 import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import ResultParseStatus from "@/options/components/ResultParseStatus.vue";
-import NavButton from "@/options/components/NavButton.vue";
 import NoDataPlaceholder from "@/options/components/NoDataPlaceholder.vue";
+import ToolbarActions, { type ToolbarAction } from "@/options/components/ToolbarActions.vue";
 import UserLevelRequirementsTd from "./UserLevelRequirementsTd.vue";
 import HistoryDataViewDialog from "./HistoryDataViewDialog.vue";
 import BonusFormatSpan from "./BonusFormatSpan.vue";
@@ -59,10 +59,14 @@ import {
   useMainTableSticky,
 } from "../utils/antdTable.ts";
 import {
+  type IUserInfoItem,
   tableData,
   initTableData,
   cancelFlushSiteLastUserInfo,
+  flushProgress,
   flushSiteLastUserInfo,
+  formatFlushStatusMsg,
+  isFlushFailed,
   isTableDataLoading,
   reconcileFlushPlan,
 } from "./utils/lastUserData.ts";
@@ -140,19 +144,7 @@ const filteredTableBooleanControlKeys = computed(() => {
   ) as (keyof typeof configStore.myDataTableControl)[];
 });
 
-interface IUserInfoItem extends IUserInfo {
-  siteUserConfig: ISiteUserConfig;
-  siteName: string;
-}
-
-const {
-  tableWaitFilterRef,
-  tableFilterRef,
-  tableFilterFn,
-  advanceFilterDictRef,
-  updateTableFilterValueFn,
-  buildFilterDictFn,
-} = useTableCustomFilter<IUserInfoItem>({
+const { tableWaitFilterRef, tableFilterRef, tableFilterFn, buildFilterDictFn } = useTableCustomFilter<IUserInfoItem>({
   parseOptions: {
     keywords: ["site", "status", "siteUserConfig.groups"],
     ranges: ["updateAt", "messageCount"],
@@ -165,18 +157,69 @@ const {
 });
 
 /**
- * 快捷筛选「最后更新状态异常」对应的状态值（字符串形式，供高级筛选匹配使用）。
+ * 快捷筛选（今日未更新 / 刷新异常 / 未读消息）。
  *
- * 放在 script 里而不是模板内联：模板里直接写 `EResultParseStatus.xxx` 会触发
- * vue-tsc 的误报（Property 'value' does not exist on type 'typeof EResultParseStatus'），
- * 且这类枚举拼接逻辑本来就该待在脚本层。
+ * 这些快捷筛选不再把原始查询串塞进搜索框：
+ * - 搜索框只承载用户主动输入的关键词与高级语法，快捷条件在表头以 chip 呈现，状态一眼可见；
+ * - 点 chip 只切换本地条件，不会清掉用户已经输入的文字。
  */
-const lastUpdateErrorStatusValues = [
-  EResultParseStatus.parseError,
-  EResultParseStatus.unknownError,
-  EResultParseStatus.needLogin,
-  EResultParseStatus.noUserInput,
-].map((item) => String(item));
+type TQuickFilter = "failed" | "stale" | "unread";
+const quickFilter = ref<TQuickFilter | null>(null);
+
+function toggleQuickFilter(filter: TQuickFilter) {
+  quickFilter.value = quickFilter.value === filter ? null : filter;
+}
+
+// 每分钟刷新一次「今天」的起点，跨天后「今日未更新」的统计会自动跟上
+const now = ref(Date.now());
+useIntervalFn(() => {
+  now.value = Date.now();
+}, 60_000);
+const todayStart = computed(() => {
+  const today = new Date(now.value);
+  today.setHours(0, 0, 0, 0);
+  return today.getTime();
+});
+
+function isUpdatedToday(record: IUserInfoItem): boolean {
+  return typeof record.updateAt === "number" && record.updateAt >= todayStart.value;
+}
+
+/** 站点分组筛选：required = 只保留（勾选），excluded = 排除（半选），未勾选 = 不参与筛选 */
+const groupRequired = ref<string[]>([]);
+const groupExcluded = ref<string[]>([]);
+
+/** 三态循环：未勾选 → 只保留 → 排除 → 未勾选（旧实现点击三次只能来回两态） */
+function cycleSiteGroupFilter(group: string) {
+  if (groupRequired.value.includes(group)) {
+    groupRequired.value = groupRequired.value.filter((value) => value !== group);
+    groupExcluded.value = [...groupExcluded.value, group];
+  } else if (groupExcluded.value.includes(group)) {
+    groupExcluded.value = groupExcluded.value.filter((value) => value !== group);
+  } else {
+    groupRequired.value = [...groupRequired.value, group];
+  }
+}
+
+const groupOptions = computed(() => metadataStore.getSitesGroupData);
+
+const groupFilterActive = computed(() => groupRequired.value.length + groupExcluded.value.length > 0);
+
+function clearFilters() {
+  quickFilter.value = null;
+  groupRequired.value = [];
+  groupExcluded.value = [];
+  tableWaitFilterRef.value = "";
+  buildFilterDictFn("");
+}
+
+const activeFilterCount = computed(
+  () =>
+    (quickFilter.value ? 1 : 0) +
+    (tableWaitFilterRef.value.trim() ? 1 : 0) +
+    groupRequired.value.length +
+    groupExcluded.value.length,
+);
 
 const myDataSummary = computed(() => {
   let uploaded = 0;
@@ -185,48 +228,20 @@ const myDataSummary = computed(() => {
   let errorSites = 0;
 
   for (const record of tableData.value) {
+    // 刷新失败时行内保留的是上一次成功的数据，汇总仍应按这份数据累计，避免某个站点失败后总量突然变小
     if (record.status === EResultParseStatus.success) {
       if (Number.isFinite(record.uploaded)) uploaded += Number(record.uploaded);
       if (Number.isFinite(record.downloaded)) downloaded += Number(record.downloaded);
       if (Number.isFinite(record.seedingSize)) seedingSize += Number(record.seedingSize);
     }
-    if (lastUpdateErrorStatusValues.includes(String(record.status))) errorSites++;
+    if (isFlushFailed(record)) errorSites++;
   }
 
   return { uploaded, downloaded, seedingSize, errorSites };
 });
 
-function filterErrorSites() {
-  if (myDataSummary.value.errorSites === 0) return;
-  advanceFilterDictRef.value.status.required = [...lastUpdateErrorStatusValues];
-  updateTableFilterValueFn();
-}
-
-/**
- * 站点分组三态筛选：未勾选 → 只保留（required）→ 排除（exclude）→ 未勾选。
- *
- * 旧实现同时挂 `@click`（改 exclude）与 `@update:checked`（改 required），点击三次只会在
- * required ↔ exclude 之间循环，永远无法回到「不参与筛选」。这里由一个入口完整切换三态。
- */
-function cycleSiteGroupFilter(group: string) {
-  const filter = advanceFilterDictRef.value["siteUserConfig.groups"] as {
-    required?: string[];
-    exclude?: string[];
-  };
-  const required = filter.required ?? [];
-  const exclude = filter.exclude ?? [];
-
-  if (required.includes(group)) {
-    filter.required = required.filter((value) => value !== group);
-    filter.exclude = [...exclude, group];
-  } else if (exclude.includes(group)) {
-    filter.exclude = exclude.filter((value) => value !== group);
-  } else {
-    filter.required = [...required, group];
-  }
-
-  updateTableFilterValueFn();
-}
+const staleCount = computed(() => tableData.value.filter((record) => !isUpdatedToday(record)).length);
+const unreadCount = computed(() => tableData.value.filter((record) => (record.messageCount ?? 0) > 0).length);
 
 const tableColumns = computed(() =>
   // 操作列位置 / 固定（#1598）：先按可见列过滤（props.disabled 的列常显）→ toAntdColumns，
@@ -242,7 +257,24 @@ const tableColumns = computed(() =>
 // 操作列固定在行首时，行首的选择列要一起固定
 const { rowSelectionFixed } = useTableActionColumnLayout();
 const filteredTableData = computed(() =>
-  tableData.value.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
+  tableData.value.filter((item) => {
+    // 1) 搜索框（关键词 / 高级筛选语法）
+    if (!tableFilterFn(undefined, tableFilterRef.value, { raw: item })) return false;
+
+    // 2) 快捷筛选 chip
+    if (quickFilter.value === "failed" && !isFlushFailed(item)) return false;
+    if (quickFilter.value === "stale" && isUpdatedToday(item)) return false;
+    if (quickFilter.value === "unread" && (item.messageCount ?? 0) <= 0) return false;
+
+    // 3) 站点分组（多选为「任一命中」，排除优先）
+    const groups = item.siteUserConfig?.groups ?? [];
+    if (groupRequired.value.length > 0 && !groupRequired.value.some((group) => groups.includes(group))) {
+      return false;
+    }
+    if (groupExcluded.value.some((group) => groups.includes(group))) return false;
+
+    return true;
+  }),
 );
 const tablePagination = computed(() =>
   // F16：历史配置里的 itemsPerPage = -1 会让表格完全不渲染分页器（连「每页条数」都改不回来），
@@ -321,17 +353,86 @@ async function multiOpen() {
   }
 }
 
+const showExportDialog = ref(false);
+
+/**
+ * 刷新的作用域：优先「已勾选的站点」；否则跟随当前筛选结果；没有筛选时就是全部。
+ * 用户在「异常站点」筛选下点刷新，期望的是刷新眼前这些站点，而不是全量。
+ */
+const refreshTargets = computed<TSiteID[]>(() => {
+  if (tableSelected.value.length > 0) return tableSelected.value;
+  const scope = activeFilterCount.value > 0 ? filteredTableData.value : tableData.value;
+  return scope.filter((record) => record.selectable !== false).map((record) => record.site);
+});
+
+const refreshLabel = computed(() => {
+  if (runtimeStore.isUserInfoFlush) {
+    const progress = flushProgress.total > 0 ? ` ${flushProgress.done}/${flushProgress.total}` : "";
+    return `${t("MyData.index.flushCancel")}${progress}`;
+  }
+  if (tableSelected.value.length > 0) {
+    return t("MyData.index.flushSelected", [String(tableSelected.value.length)]);
+  }
+  if (activeFilterCount.value > 0) {
+    return t("MyData.index.flushFiltered", [String(refreshTargets.value.length)]);
+  }
+  return t("MyData.index.flushAll");
+});
+
+function clearSelection() {
+  tableSelected.value = [];
+}
+
 async function multiFlush() {
-  let flushSiteIds: TSiteID[] = tableSelected.value;
+  const flushSiteIds = refreshTargets.value;
   if (flushSiteIds.length === 0) {
-    flushSiteIds = tableData.value.map((item) => item.site);
-    runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedRefreshAll"), { color: "info" });
+    runtimeStore.showSnackbar(t("MyData.index.noRefreshTarget"), { color: "warning" });
+    return;
   }
 
-  if (flushSiteIds.length > 0) {
-    flushSiteLastUserInfo(flushSiteIds);
-  } else {
-    runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedCancelRefresh"), { color: "warning" });
+  flushSiteLastUserInfo(flushSiteIds);
+}
+
+/** 刷新失败时优先展示失败原因，退回状态名（成功数据仍保留在行内） */
+function flushFailureLabel(record: IUserInfoItem): string {
+  const status = record.lastFlushFailure?.status ?? record.status;
+  return t(`resultParseStatus.${EResultParseStatus[status]}`);
+}
+
+function flushFailureTitle(record: IUserInfoItem): string {
+  const reason = formatFlushStatusMsg(record.lastFlushFailure?.statusMsg) ?? flushFailureLabel(record);
+  return t("MyData.table.flushFailedTip", {
+    reason,
+    time: record.updateAt ? formatDateTimeForTable(record.updateAt) : "-",
+  });
+}
+
+const toolbarActions = computed<ToolbarAction[]>(() => [
+  {
+    key: "open",
+    label: t("MyData.index.multiOpen"),
+    icon: GlobalOutlined,
+    disabled: tableSelected.value.length === 0,
+  },
+  { key: "timeline", label: t("MyData.index.viewTimeline"), icon: FundOutlined },
+  { key: "statistic", label: t("MyData.index.viewStatistic"), icon: BarChartOutlined },
+  { key: "export", label: t("MyData.index.exportData"), icon: ExportOutlined },
+]);
+
+function onToolbarAction(key: string) {
+  switch (key) {
+    case "open":
+      void multiOpen();
+      break;
+    case "timeline":
+      viewTimeline();
+      break;
+    case "statistic":
+      viewStatistic();
+      break;
+    case "export":
+      showExportDialog.value = true;
+      break;
   }
 }
 
@@ -352,8 +453,6 @@ function viewStatistic() {
     },
   });
 }
-
-const showExportDialog = ref(false);
 
 /** 空态引导：表格里一个站点都没有时，直接跳到站点设置页添加 */
 function goToSiteSettings() {
@@ -394,7 +493,8 @@ function goToSiteSettings() {
         class="my-data-summary__item my-data-summary__item--action"
         :class="{ 'my-data-summary__item--warning': myDataSummary.errorSites > 0 }"
         :disabled="myDataSummary.errorSites === 0"
-        @click="filterErrorSites"
+        :title="t('MyData.index.filter.failed')"
+        @click="toggleQuickFilter('failed')"
       >
         <span class="my-data-summary__label">
           <WarningOutlined />
@@ -405,60 +505,35 @@ function goToSiteSettings() {
     </section>
 
     <a-flex class="page-toolbar" align="center" :gap="8">
-      <!-- 刷新，取消刷新 -->
-      <NavButton
-        v-if="runtimeStore.isUserInfoFlush"
-        :text="t('MyData.index.flushCancel')"
-        color="red"
-        :icon="StopOutlined"
-        @click="cancelFlushSiteLastUserInfo"
-      />
+      <ToolbarActions :items="toolbarActions" @select="onToolbarAction">
+        <template #primary>
+          <a-button
+            :danger="runtimeStore.isUserInfoFlush"
+            :type="runtimeStore.isUserInfoFlush ? 'default' : 'primary'"
+            :title="refreshLabel"
+            @click="runtimeStore.isUserInfoFlush ? cancelFlushSiteLastUserInfo() : multiFlush()"
+          >
+            <template #icon>
+              <StopOutlined v-if="runtimeStore.isUserInfoFlush" />
+              <SyncOutlined v-else />
+            </template>
+            {{ refreshLabel }}
+          </a-button>
+        </template>
+      </ToolbarActions>
 
-      <NavButton
-        v-else
-        :text="t('MyData.index.flushSelectSite')"
-        color="green"
-        :icon="SyncOutlined"
-        @click="multiFlush"
-      />
-
-      <NavButton
-        :disabled="tableSelected.length === 0"
-        color="indigo"
-        :icon="ExportOutlined"
-        :text="t('MyData.index.multiOpen')"
-        @click="multiOpen"
-      />
-
-      <a-divider type="vertical" class="my-data-toolbar-divider"></a-divider>
-
-      <NavButton color="green" :icon="FundOutlined" :text="t('MyData.index.viewTimeline')" @click="viewTimeline" />
-      <NavButton
-        color="green"
-        :icon="BarChartOutlined"
-        :text="t('MyData.index.viewStatistic')"
-        @click="viewStatistic"
-      />
-
-      <a-divider type="vertical" class="my-data-toolbar-divider"></a-divider>
-
-      <!-- 导出按钮 -->
-      <NavButton
-        color="orange-darken-3"
-        :icon="ExportOutlined"
-        :text="t('MyData.index.exportData')"
-        @click="showExportDialog = true"
-      />
-
-      <a-divider type="vertical" class="my-data-toolbar-divider"></a-divider>
+      <span v-if="tableSelected.length > 0" class="my-data-selection">
+        <span class="ptd-meta-text">{{ t("MyData.index.selectedCount", [String(tableSelected.length)]) }}</span>
+        <a-button type="link" size="small" @click="clearSelection">
+          {{ t("MyData.index.clearSelection") }}
+        </a-button>
+      </span>
 
       <a-popover placement="bottom" trigger="click">
-        <NavButton
-          color="blue"
-          :icon="SettingOutlined"
-          :text="t('MyData.index.setting')"
-          class="my-data-settings-button"
-        />
+        <a-button class="my-data-settings-button" :title="t('MyData.index.setting')">
+          <template #icon><SettingOutlined /></template>
+          {{ t("MyData.index.setting") }}
+        </a-button>
         <template #content>
           <a-list size="small">
             <!-- 入站时间显示 -->
@@ -507,84 +582,9 @@ function goToSiteSettings() {
       <a-input
         :value="tableWaitFilterRef"
         allow-clear
-        :placeholder="t('common.search')"
+        :placeholder="t('MyData.index.searchPlaceholder')"
         @update:value="onTableFilterInput"
-      >
-        <template #prefix>
-          <a-popover placement="bottom" trigger="click">
-            <FilterOutlined />
-            <template #content>
-              <a-list size="small" class="my-data-filter-list">
-                <a-list-item>
-                  <a-typography-text strong class="my-data-filter-heading">{{
-                    t("MyData.index.siteStatus")
-                  }}</a-typography-text>
-                </a-list-item>
-
-                <a-list-item
-                  class="my-data-filter-option"
-                  @click.stop="
-                    () => {
-                      advanceFilterDictRef.updateAt = [0, new Date().setHours(0, 0, 0, 0) - 1];
-                      updateTableFilterValueFn();
-                    }
-                  "
-                >
-                  {{ t("MyData.index.filter.todayNotUpdated") }}
-                </a-list-item>
-
-                <a-list-item
-                  class="my-data-filter-option"
-                  @click.stop="
-                    () => {
-                      advanceFilterDictRef.status.required = lastUpdateErrorStatusValues;
-                      updateTableFilterValueFn();
-                    }
-                  "
-                >
-                  {{ t("MyData.index.filter.lastUpdateError") }}
-                </a-list-item>
-
-                <a-list-item
-                  class="my-data-filter-option"
-                  @click.stop="
-                    () => {
-                      advanceFilterDictRef.messageCount = [1, ' '];
-                      updateTableFilterValueFn();
-                    }
-                  "
-                >
-                  {{ t("MyData.index.filter.unreadMessage") }}
-                </a-list-item>
-
-                <a-list-item>
-                  <a-typography-text strong class="my-data-filter-heading">{{
-                    t("MyData.index.siteCategory")
-                  }}</a-typography-text>
-                </a-list-item>
-
-                <a-list-item
-                  v-for="(item, index) in metadataStore.getSitesGroupData"
-                  :key="index"
-                  class="my-data-filter-group"
-                >
-                  <!-- V-21：原为 `:indeterminate="true"`（硬编码）→ antd 只要该属性为真就画半选横杠，
-                         用户无法判断哪些分组筛选已生效。真实三态是：
-                         checked = 在 required（只保留该分组）；indeterminate = 在 exclude（排除该分组）；
-                         未勾选 = 该分组不参与筛选。 -->
-                  <a-checkbox
-                    :checked="advanceFilterDictRef[`siteUserConfig.groups`].required.includes(index)"
-                    :indeterminate="advanceFilterDictRef[`siteUserConfig.groups`].exclude.includes(index)"
-                    @click.stop.prevent="cycleSiteGroupFilter(index)"
-                  >
-                    {{ `${index} (${item.length})` }}
-                  </a-checkbox>
-                </a-list-item>
-              </a-list>
-            </template>
-          </a-popover>
-        </template>
-      </a-input>
+      />
     </a-flex>
     <a-table
       :sticky="mainTableSticky"
@@ -608,6 +608,88 @@ function goToSiteSettings() {
     >
       <template #title>
         <div class="my-data-table-toolbar">
+          <div class="search-filter-chips">
+            <button
+              type="button"
+              class="search-filter-chip"
+              :class="{ 'search-filter-chip--active': quickFilter === 'failed' }"
+              :disabled="myDataSummary.errorSites === 0 && quickFilter !== 'failed'"
+              @click="toggleQuickFilter('failed')"
+            >
+              <span class="search-filter-chip__label">{{ t("MyData.index.filter.failed") }}</span>
+              <span v-if="myDataSummary.errorSites > 0" class="search-filter-count">{{
+                myDataSummary.errorSites
+              }}</span>
+            </button>
+
+            <button
+              type="button"
+              class="search-filter-chip"
+              :class="{ 'search-filter-chip--active': quickFilter === 'stale' }"
+              :disabled="staleCount === 0 && quickFilter !== 'stale'"
+              @click="toggleQuickFilter('stale')"
+            >
+              <span class="search-filter-chip__label">{{ t("MyData.index.filter.stale") }}</span>
+              <span v-if="staleCount > 0" class="search-filter-count">{{ staleCount }}</span>
+            </button>
+
+            <button
+              type="button"
+              class="search-filter-chip"
+              :class="{ 'search-filter-chip--active': quickFilter === 'unread' }"
+              :disabled="
+                (unreadCount === 0 || !configStore.myDataTableControl.showUnreadMessage) && quickFilter !== 'unread'
+              "
+              @click="toggleQuickFilter('unread')"
+            >
+              <span class="search-filter-chip__label">{{ t("MyData.index.filter.unread") }}</span>
+              <span v-if="unreadCount > 0" class="search-filter-count">{{ unreadCount }}</span>
+            </button>
+
+            <a-popover v-if="Object.keys(groupOptions).length > 0" placement="bottomLeft" trigger="click">
+              <button
+                type="button"
+                class="search-filter-chip"
+                :class="{ 'search-filter-chip--active': groupFilterActive }"
+              >
+                <span class="search-filter-chip__label">
+                  {{ t("MyData.index.siteCategory") }}
+                </span>
+                <span v-if="groupFilterActive" class="search-filter-count">{{
+                  groupRequired.length + groupExcluded.length
+                }}</span>
+                <DownOutlined class="search-filter-chip__arrow" />
+              </button>
+              <template #content>
+                <a-list size="small" class="my-data-filter-list">
+                  <a-list-item v-for="(sites, group) in groupOptions" :key="group">
+                    <!-- 三态：checked = 只保留该分组；indeterminate = 排除该分组；未勾选 = 不参与筛选 -->
+                    <a-checkbox
+                      :checked="groupRequired.includes(group)"
+                      :indeterminate="groupExcluded.includes(group)"
+                      @click.stop.prevent="cycleSiteGroupFilter(group)"
+                    >
+                      {{ `${group} (${sites.length})` }}
+                    </a-checkbox>
+                  </a-list-item>
+                </a-list>
+              </template>
+            </a-popover>
+
+            <button v-if="activeFilterCount > 0" type="button" class="my-data-filter-clear" @click="clearFilters">
+              {{ t("MyData.index.filter.clear") }}
+            </button>
+          </div>
+
+          <span class="ptd-meta-text my-data-table-count">
+            {{
+              t("MyData.table.countLabel", {
+                shown: filteredTableData.length,
+                total: tableData.length,
+              })
+            }}
+          </span>
+
           <ColumnSelector
             :headers="fullTableHeader"
             :visible-keys="configStore.tableBehavior.MyData.columns"
@@ -633,6 +715,7 @@ function goToSiteSettings() {
                 <SiteFavicon
                   :site-id="record.site"
                   :size="configStore.myDataTableControl.showSiteName ? 18 : 24"
+                  :title="t('MyData.table.action.flushData')"
                   @click="() => flushSiteLastUserInfo([record.site])"
                 />
               </div>
@@ -819,7 +902,20 @@ function goToSiteSettings() {
 
         <!-- 更新时间 -->
         <template v-else-if="column.key === 'updateAt'">
-          <template v-if="record.status === EResultParseStatus.success">
+          <!-- 刷新失败但保留了上次成功的数据：失败原因进 tooltip，同时显示这份数据的最后成功时间 -->
+          <div v-if="record.lastFlushFailure" class="my-data-update-failed">
+            <a-tooltip :title="flushFailureTitle(record)">
+              <a-tag color="error" class="my-data-update-failed__tag">{{ flushFailureLabel(record) }}</a-tag>
+            </a-tooltip>
+            <span
+              v-if="record.updateAt"
+              class="ptd-date-time my-data-update-failed__time"
+              :title="formatDate(record.updateAt) as string"
+            >
+              {{ formatDateTimeForTable(record.updateAt) }}
+            </span>
+          </div>
+          <template v-else-if="record.status === EResultParseStatus.success">
             <span class="ptd-date-time" :title="record.updateAt ? (formatDate(record.updateAt) as string) : '-'">
               {{
                 record.updateAt
@@ -830,6 +926,9 @@ function goToSiteSettings() {
               }}
             </span>
           </template>
+          <span v-else-if="typeof record.status === 'undefined'" class="ptd-meta-text">
+            {{ t("MyData.table.notFetched") }}
+          </span>
           <template v-else>
             <ResultParseStatus :status="record.status" />
           </template>
@@ -858,11 +957,15 @@ function goToSiteSettings() {
       </template>
 
       <template #emptyText>
-        <!-- 只有「真的没有站点」才引导去设置；筛选无匹配时 tableData 非空，不应把用户送走 -->
-        <NoDataPlaceholder compact :description="t('MyData.table.noData')">
+        <!-- 只有「真的没有站点」才引导去设置；筛选无匹配时给出清除筛选的出口 -->
+        <NoDataPlaceholder
+          compact
+          :description="tableData.length === 0 ? t('MyData.table.noData') : t('MyData.table.noFilteredData')"
+        >
           <a-button v-if="tableData.length === 0" type="primary" @click="goToSiteSettings">
             {{ t("common.goToSiteSettings") }}
           </a-button>
+          <a-button v-else @click="clearFilters">{{ t("MyData.index.filter.clear") }}</a-button>
         </NoDataPlaceholder>
       </template>
     </a-table>
@@ -875,9 +978,17 @@ function goToSiteSettings() {
 <style scoped>
 /* 以下类由模板里原本重复的静态行内样式抽出；值与原来的内联样式一一对应，
    动态绑定（列宽、海报尺寸等）仍留在模板的 :style 上。 */
-.my-data-toolbar-divider {
-  margin-right: 8px;
-  margin-left: 8px;
+.my-data-selection {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .my-data-selection {
+    width: 100%;
+  }
 }
 
 .my-data-summary {
@@ -928,6 +1039,10 @@ function goToSiteSettings() {
   cursor: default;
 }
 
+.my-data-summary__item--action:not(:disabled):hover {
+  border-color: var(--ptd-warning, #faad14);
+}
+
 .my-data-summary__item--warning .my-data-summary__label,
 .my-data-summary__item--warning strong {
   color: var(--ptd-warning, #faad14);
@@ -969,21 +1084,53 @@ function goToSiteSettings() {
   padding: 0;
 }
 
-.my-data-filter-heading {
-  margin: 8px;
-}
-
-.my-data-filter-option {
-  cursor: pointer;
-}
-
-.my-data-filter-group {
-  padding-right: 24px;
-}
-
 .my-data-table-toolbar {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.my-data-table-count {
+  flex: none;
+  white-space: nowrap;
+}
+
+.my-data-filter-clear {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--ptd-primary, #1677ff);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ptd-font-size-sm, 12px);
+}
+
+.my-data-filter-clear:hover {
+  text-decoration: underline;
+}
+
+.my-data-table-toolbar .search-filter-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 刷新失败但保留了上次成功数据：状态标签 + 最后成功时间上下排列 */
+.my-data-update-failed {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.my-data-update-failed__tag {
+  margin-inline-end: 0;
+}
+
+.my-data-update-failed__time {
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+  font-size: var(--ptd-font-size-sm, 12px);
 }
 
 .my-data-site-cell {

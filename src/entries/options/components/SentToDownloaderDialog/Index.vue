@@ -352,7 +352,6 @@ watch(
 
         <a-row :gutter="16">
           <a-col :span="12">
-            <!-- FIXME 添加设置项，默认 disabled -->
             <a-flex align="center" :gap="8">
               <a-switch
                 v-model:checked="addTorrentOptions.localDownload"

@@ -3,14 +3,7 @@
  */
 import type { IMediaServerId, IMediaServerItem, IMediaServerOverview } from "./types.ts";
 
-export function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read media poster"));
-    reader.readAsDataURL(blob);
-  });
-}
+export { blobToDataUrl } from "~/helper.ts";
 
 /** 分辨率宽高 → 规范化标签（480p / 720p / 1080p / 1440p / 4K / 8K） */
 export function getResolutionLabel(width?: number, height?: number): string | undefined {

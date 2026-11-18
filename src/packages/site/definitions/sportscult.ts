@@ -263,7 +263,7 @@ export const siteMetadata: ISiteMetadata = {
             selector: "td.header:contains('Last access') + td",
             filters: [{ name: "parseTime", args: ["dd/MM/yyyy HH:mm:ss"] }],
           },
-          // FIXME 暂未实现 uploads
+          // TODO uploads：需发布列表/总数样本，现有做种表不能作为发布数。
         },
       },
       {

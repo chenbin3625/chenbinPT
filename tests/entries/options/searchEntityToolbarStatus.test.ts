@@ -10,6 +10,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EResultParseStatus } from "@ptd/site";
+
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn().mockResolvedValue(undefined), onMessage: vi.fn() }));
@@ -28,12 +30,21 @@ afterEach(() => {
   window.innerWidth = DESKTOP_WIDTH;
 });
 
-async function mountSearchEntity(viewportWidth: number, search: Record<string, unknown> = {}) {
+async function mountSearchEntity(
+  viewportWidth: number,
+  search: Record<string, unknown> = {},
+  options: { sites?: Record<string, unknown>; siteNameMap?: Record<string, string> } = {},
+) {
   window.innerWidth = viewportWidth;
   window.dispatchEvent(new Event("resize"));
 
   const pinia = prepareOptionsPinia();
   const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+  const { useMetadataStore } = await import("@/options/stores/metadata.ts");
+  // 空状态需要区分「已添加站点」与「还没有站点」，默认给一个站点（无结果行，不会触发站点组件请求）
+  const metadataStore = useMetadataStore(pinia);
+  metadataStore.sites = (options.sites ?? { mteam: { id: "mteam", url: "https://example.com/" } }) as any;
+  metadataStore.siteNameMap = (options.siteNameMap ?? {}) as any;
   const runtimeStore = useRuntimeStore(pinia);
   runtimeStore.search = { ...runtimeStore.search, ...search } as any;
 
@@ -78,9 +89,9 @@ describe("搜索结果页工具条", () => {
     const toolbar = view.$<HTMLElement>(".page-toolbar")!;
     expect(toolbar.textContent).toContain("更多");
     expect(toolbar.textContent, "窄屏的次操作收进「更多」，不再平铺").not.toContain("搜索快照");
-    // 主操作（暂停/重试）仍常显
-    expect(toolbar.textContent).toContain("暂停");
-    expect(toolbar.textContent).toContain("重试");
+    // 已结束的搜索：主操作是「重新搜索」，不再出现只对进行中搜索有意义的「暂停」
+    expect(toolbar.textContent).toContain("重新搜索");
+    expect(toolbar.textContent, "未在搜索时不应显示暂停按钮").not.toContain("暂停");
 
     view.unmount();
   });
@@ -183,13 +194,115 @@ describe("搜索结果页空状态引导", () => {
     view.unmount();
   });
 
-  it("已经搜索过但没有结果时只保留原描述，不给误导性的开始入口", async () => {
+  it("还没有添加站点时引导去站点设置，而不是给一个点了会失败的搜索入口", async () => {
+    const view = await mountSearchEntity(
+      DESKTOP_WIDTH,
+      { startAt: 0, endAt: 0, isSearching: false, searchKey: "", searchResult: [] },
+      { sites: {} },
+    );
+
+    const empty = view.$<HTMLElement>(".ant-table-placeholder .ant-empty")!;
+    const buttons = Array.from(empty.querySelectorAll("button")).map((button) => button.textContent?.trim() ?? "");
+    expect(buttons).toContain("去添加站点");
+    expect(buttons, "没有站点时不应再给搜索按钮").not.toContain("搜索");
+    expect(empty.textContent).toContain("还没有添加可搜索的站点");
+
+    view.unmount();
+  });
+
+  it("搜索进行中且还没有结果时提示正在搜索，不再让用户去开始搜索", async () => {
+    const view = await mountSearchEntity(DESKTOP_WIDTH, completedSearch);
+
+    // 挂载时 reconcileRestoredSearchState 会收敛没有队列任务的在途状态，因此在挂载后再切到搜索中
+    const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+    const runtimeStore = useRuntimeStore();
+    runtimeStore.search.isSearching = true;
+    runtimeStore.search.endAt = 0;
+    await view.settle();
+
+    const empty = view.$<HTMLElement>(".ant-table-placeholder .ant-empty")!;
+    expect(empty.textContent).toContain("正在搜索各站点");
+    expect(empty.textContent, "搜索中不应提示「开始搜索」").not.toContain("请输入关键词");
+    expect(empty.querySelectorAll("button")).toHaveLength(0);
+
+    view.unmount();
+  });
+
+  it("已经搜索过但没有结果时说明「没找到」，不给误导性的开始入口", async () => {
     const view = await mountSearchEntity(DESKTOP_WIDTH, completedSearch);
 
     const empty = view.$<HTMLElement>(".ant-table-placeholder .ant-empty");
     expect(empty).not.toBeNull();
     expect(empty!.querySelectorAll("button")).toHaveLength(0);
-    expect(empty!.textContent).toContain("暂无搜索结果");
+    expect(empty!.textContent).toContain("没有找到与「matrix」相关的结果");
+
+    view.unmount();
+  });
+});
+
+describe("搜索结果页的失败可见性", () => {
+  const row = {
+    site: "mteam",
+    id: "1",
+    uniqueId: "mteam-1",
+    title: "The.Matrix.1999.2160p.BluRay.REMUX",
+    size: 1024 * 1024 * 1024,
+    seeders: 3,
+    leechers: 1,
+    completed: 100,
+    comments: 2,
+    time: Date.now(),
+    url: "https://example.com/torrent/1",
+  };
+  const failedPlan = {
+    siteId: "pthome",
+    searchEntryName: "default",
+    searchEntry: {},
+    status: EResultParseStatus.needLogin,
+    count: 0,
+  };
+  const failedSearch = {
+    startAt: Date.now(),
+    endAt: Date.now(),
+    isSearching: false,
+    searchKey: "matrix",
+    searchPlanKey: "all",
+    searchResult: [row],
+    searchPlan: { "pthome|$|default": failedPlan },
+  };
+
+  it("有结果但部分站点失败时，提示条列出失败站点与原因，并提供重试入口", async () => {
+    const view = await mountSearchEntity(DESKTOP_WIDTH, failedSearch, {
+      siteNameMap: { mteam: "馒头", pthome: "PTHome" },
+    });
+
+    const alert = view.$<HTMLElement>(".search-failure-alert")!;
+    expect(alert, "失败站点不能被藏进「搜索情况」弹窗").not.toBeNull();
+    expect(alert.textContent).toContain("1 个站点搜索失败");
+    expect(alert.textContent).toContain("PTHome");
+    expect(alert.textContent).toContain("需要登录");
+
+    const buttons = Array.from(alert.querySelectorAll("button")).map((button) => button.textContent?.trim() ?? "");
+    expect(buttons).toContain("重试失败");
+    expect(buttons).toContain("查看搜索情况");
+
+    view.unmount();
+  });
+
+  it("0 条结果且有站点失败时，空状态直接给出重试入口", async () => {
+    const view = await mountSearchEntity(
+      DESKTOP_WIDTH,
+      { ...failedSearch, searchResult: [] },
+      { siteNameMap: { pthome: "PTHome" } },
+    );
+
+    const empty = view.$<HTMLElement>(".ant-table-placeholder .ant-empty")!;
+    expect(empty.textContent).toContain("没有找到结果，且 1 个站点搜索失败");
+    const buttons = Array.from(empty.querySelectorAll("button")).map((button) => button.textContent?.trim() ?? "");
+    expect(buttons).toContain("重试失败");
+    expect(buttons).toContain("查看搜索情况");
+    // 失败提示条只负责「有结果可看」的场景，避免与空状态重复
+    expect(view.$(".search-failure-alert")).toBeNull();
 
     view.unmount();
   });

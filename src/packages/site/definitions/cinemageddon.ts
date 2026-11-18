@@ -38,7 +38,7 @@ export const siteMetadata: ISiteMetadata = {
   name: "Cinemageddon",
   description: "Cinemageddon is a Private Torrent Tracker for B-movies",
   tags: ["影视"],
-  timezoneOffset: "-0700", // FIXME 按照 Jackett 的情况修正
+  timezoneOffset: "-0700", // 与 Jackett 的固定 -07:00 解析约定一致。
   collaborator: ["DXV5"],
 
   type: "private",
@@ -144,7 +144,7 @@ export const siteMetadata: ISiteMetadata = {
             selector: "td.clx > .frames td.rowhead:contains('Join') + td:first",
             filters: [{ name: "split", args: [" (", 0] }, { name: "parseTime" }],
           },
-          // FIXME 我对这两块情况暂时存疑，不过先抄过来吧
+          // 读取做种表的数据行；忽略表头和无有效体积的行。
           seeding: {
             selector: ["div#ka2 table:first"],
             elementProcess: (table: HTMLTableElement) => {

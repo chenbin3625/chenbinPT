@@ -201,7 +201,10 @@ describe("L3/L4：milkie 用户等级与 responseType", () => {
 describe("L4：mteam request() 的 method/responseType 默认值", () => {
   it("显式声明 GET + document 时保持原样", async () => {
     const { siteMetadata, default: MTeam } = await import("@ptd/site/definitions/mteam.ts");
-    const site = new MTeam(siteMetadata, { url: "https://kp.m-team.cc/" } as any);
+    const site = new MTeam(siteMetadata, {
+      url: "https://kp.m-team.cc/",
+      inputSetting: { token: "test-token" },
+    } as any);
     adapterMock.requests.length = 0;
     await site.request({ url: "/api/member/profile", method: "GET", responseType: "document" }, false);
     const sent = adapterMock.requests.at(-1)!;
@@ -211,7 +214,10 @@ describe("L4：mteam request() 的 method/responseType 默认值", () => {
 
   it("未声明时仍回落 POST + json", async () => {
     const { siteMetadata, default: MTeam } = await import("@ptd/site/definitions/mteam.ts");
-    const site = new MTeam(siteMetadata, { url: "https://kp.m-team.cc/" } as any);
+    const site = new MTeam(siteMetadata, {
+      url: "https://kp.m-team.cc/",
+      inputSetting: { token: "test-token" },
+    } as any);
     adapterMock.requests.length = 0;
     await site.request({ url: "/api/member/profile" }, false);
     const sent = adapterMock.requests.at(-1)!;

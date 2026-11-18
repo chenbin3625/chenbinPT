@@ -180,6 +180,16 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     pickLast: ["id", "name", "joinTime"],
     selectors: {
+      messageCount: {
+        selector: "a[href*='/forum/private.php']",
+        filters: [
+          (text: string) => {
+            const match = text.match(/(?:^|[^\d.,+-])(\d{1,3}(?:,\d{3})+|\d+)(?=$|[^\d.,])/);
+            const count = match ? Number(match[1].replace(/,/g, "")) : NaN;
+            return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+          },
+        ],
+      },
       // "/forum/usercp.php"
       id: {
         selector: ["a[href*='member.php?action=profile']"],
@@ -246,8 +256,6 @@ export const siteMetadata: ISiteMetadata = {
       },
     },
   },
-
-  // TODO userInfo 中的messageCount 等其他字段
 
   list: [
     {
@@ -392,7 +400,7 @@ export default class AidoruOnline extends PrivateSite {
     }
 
     const selectors = this.metadata.userInfo?.selectors!;
-    const selectorFields = Object.keys(omit(selectors, ["id", "seedingSize"]));
+    const selectorFields = Object.keys(omit(selectors, ["id", "seedingSize", "messageCount"]));
     // E1-C4 / H-6：基类 getUserInfoResult 会用 checkUserInfoSelectorMatches 做「零命中」与关键字段守卫；
     // 本定义整体重写了 getUserInfoResult，必须在这里复刻，否则改版/软错误页会被静默标成 success 并写入空值。
     // 该检查在关键字段（uploaded/downloaded）未命中时会直接抛错，其余字段由下面的 declared/matched 兜底。
@@ -403,7 +411,12 @@ export default class AidoruOnline extends PrivateSite {
       );
     }
 
-    return this.getFieldsData(userDetailDocument, selectors, selectorFields) as Partial<IUserInfo>;
+    const userInfo = this.getFieldsData(userDetailDocument, selectors, selectorFields) as Partial<IUserInfo>;
+    const messageCount = this.getFieldData(userDetailDocument, selectors.messageCount!);
+    if (typeof messageCount === "number" && Number.isFinite(messageCount) && messageCount >= 0) {
+      userInfo.messageCount = messageCount;
+    }
+    return userInfo;
   }
 
   protected async getUserSeedingFields(flushUserInfo: IUserInfo): Promise<IUserInfo> {

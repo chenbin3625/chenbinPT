@@ -1,5 +1,5 @@
 /**
- * FIXME 由 resource/sites/sewerpt.com/config.json 自动转换而来
+ * 来源：由 resource/sites/sewerpt.com/config.json 自动转换而来
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/sewerpt.yml
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/sewerpt.json
  */
@@ -159,7 +159,7 @@ export const siteMetadata: ISiteMetadata = {
   levelRequirements: [
     {
       id: 0,
-      name: "User", // FIXME
+      name: "User", // 保留旧配置的默认等级名，避免未经证实的改名破坏等级匹配。
       privilege: "新用户的默认级别。只能在每周六中午12点至每周日晚上11点59分发布种子。 ",
     },
     {

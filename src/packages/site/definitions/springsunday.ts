@@ -290,7 +290,6 @@ export const siteMetadata: ISiteMetadata = {
         { name: "50%", selector: "span.torrent-pro-icon.torrent-pro-halfdown", color: "red" },
         { name: "30%", selector: "span.torrent-pro-icon.torrent-pro-thirtypercent", color: "purple" },
 
-        // FIXME 特有标签颜色
         { selector: "span.torrent-internal", name: "官方", color: "teal" },
         { selector: "span.torrent-selfrelease", name: "驻站", color: "green" },
         { selector: "span.torrent-animation", name: "动画", color: "blue" },

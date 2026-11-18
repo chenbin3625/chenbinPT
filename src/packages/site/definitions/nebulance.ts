@@ -237,7 +237,7 @@ export const siteMetadata: ISiteMetadata = {
           "seedingSize",
         ],
       },
-      // TODO hnrPreWarning
+      // TODO hnrPreWarning：需站点独立预警字段的样本，不能将现有 HnRs 违规数重复映射。
     ],
     selectors: {
       ...SchemaMetadata.userInfo.selectors!,

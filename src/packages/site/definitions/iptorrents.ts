@@ -290,7 +290,22 @@ export const siteMetadata: ISiteMetadata = {
         leechers: { selector: "> td:nth-child(6)" },
         completed: { selector: "> td:nth-child(7)" },
         comments: { selector: "> td:nth-child(8)" },
-        // TODO category 需要映射类型编号
+        category: {
+          selector: "td:first-child",
+          elementProcess: (element: Element) => {
+            const imageName = element.querySelector("img")?.getAttribute("alt")?.trim();
+            const categoryLink = element.querySelector<HTMLAnchorElement>("a[href^='?']");
+            const query = categoryLink
+              ? new URL(categoryLink.getAttribute("href")!, "https://iptorrents.com/").searchParams
+              : undefined;
+            const category = imageName || (query ? [...query.keys()].find((key) => /^\d+$/.test(key)) : "") || "";
+            return (
+              siteMetadata.category
+                ?.flatMap((group) => group.options)
+                .find((option) => String(option.value) === category)?.name ?? category
+            );
+          },
+        },
       },
     },
   ],

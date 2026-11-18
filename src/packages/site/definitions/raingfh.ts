@@ -1,5 +1,5 @@
 /**
- * FIXME 由 resource/sites/raingfh.top/config.json 自动转换而来
+ * 来源：由 resource/sites/raingfh.top/config.json 自动转换而来
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/raingfh.json
  */
 import { type ISiteMetadata } from "../types";

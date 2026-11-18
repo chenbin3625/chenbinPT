@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { addDays, startOfDay } from "date-fns";
 
 import { formatDate } from "@/options/utils.ts";
-import { tableCustomFilter } from "@/options/views/Overview/DownloadHistory/utils.ts";
+import { downloadStatusMap, tableCustomFilter } from "@/options/views/Overview/DownloadHistory/utils.ts";
 
 import SiteName from "@/options/components/SiteName.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
@@ -40,11 +40,11 @@ const {
  * 某个筛选项（只能整体重置）。这里用单一 handler 实现 required → exclude → none 循环，
  * 不再依赖 checkbox 自身的 checked 变更，因此也不需要 `@update:checked`。
  */
-function cycleKeywordState(field: "siteId" | "downloaderId", value: string) {
+function cycleKeywordState(field: "siteId" | "downloaderId" | "downloadStatus", value: string) {
   cycleKeywordFilterState(advanceFilterDictRef.value[field] as any, value);
 }
 
-function keywordStateOf(field: "siteId" | "downloaderId", value: string) {
+function keywordStateOf(field: "siteId" | "downloaderId" | "downloadStatus", value: string) {
   return keywordFilterStateOf(advanceFilterDictRef.value[field] as any, value);
 }
 
@@ -150,7 +150,21 @@ watch(showDialog, (open) => {
           </a-checkbox>
         </a-col>
       </a-row>
-      <!-- TODO 下载状态 -->
+      <a-row :gutter="0">
+        <a-typography-text>{{ t("DownloadHistory.table.status") }}</a-typography-text>
+      </a-row>
+      <a-row :gutter="8">
+        <a-col v-for="(status, key) in downloadStatusMap" :key="key" :span="12" :sm="6">
+          <a-checkbox
+            :checked="keywordStateOf('downloadStatus', key) === 'required'"
+            :indeterminate="keywordStateOf('downloadStatus', key) === 'exclude'"
+            @click.prevent.stop="() => cycleKeywordState('downloadStatus', key)"
+          >
+            <component :is="status.icon" />
+            {{ status.title }}
+          </a-checkbox>
+        </a-col>
+      </a-row>
       <a-row :gutter="0">
         <a-col :span="24">
           <a-row :gutter="0" class="advance-filter__date-row">

@@ -43,6 +43,25 @@ const statusOptions = [
 ];
 const tags = computed(() => sortTorrentTags(advanceItemPropsRef.value.tags ?? []));
 
+/**
+ * 是否存在生效中的筛选。
+ *
+ * 旧实现只能在每个筛选项的弹层里逐个「清除」，筛选条本身没有全局复位入口：用户从标签快捷筛选
+ * 或「记忆的上次筛选」进入结果页时，很难意识到当前列表已经被过滤过。这里直接读筛选字典
+ * （而不是反过来解析查询串），与各 chip 的高亮判定同源。
+ */
+const hasActiveFilters = computed(() => {
+  for (const field of ["site", "tags", "status", "text"] as const) {
+    const value = advanceFilterDictRef.value[field];
+    if ((value?.required?.length ?? 0) > 0 || (value?.exclude?.length ?? 0) > 0) return true;
+  }
+  for (const field of rangeFields) {
+    const value = advanceFilterDictRef.value[field];
+    if (Array.isArray(value) && (value[0] !== -Infinity || value[1] !== Infinity)) return true;
+  }
+  return false;
+});
+
 function keywordValues(field: KeywordField, kind: "required" | "exclude" = "required"): string[] {
   return advanceFilterDictRef.value[field]?.[kind] ?? [];
 }
@@ -338,6 +357,16 @@ defineExpose({ clearAllFilters });
           </div>
         </template>
       </a-popover>
+      <!-- 筛选生效时的全局复位入口：不用逐个打开弹层「清除」 -->
+      <a-button
+        v-if="hasActiveFilters"
+        class="search-filter-clear-all"
+        type="link"
+        size="small"
+        @click="clearAllFilters"
+      >
+        {{ t("SearchEntity.index.clearFilters") }}
+      </a-button>
     </div>
     <a-input
       :value="tableWaitFilterRef"

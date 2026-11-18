@@ -1,5 +1,5 @@
 /**
- * FIXME 由 resource/sites/pt.itzmx.com/config.json 自动转换而来
+ * 来源：由 resource/sites/pt.itzmx.com/config.json 自动转换而来
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/ptitzmx.yml
  */
 import { type ISiteMetadata } from "../types";

@@ -112,6 +112,63 @@ beforeEach(() => {
 });
 
 describe("S-2 · 拖拽载荷（页面可在 dragstart 里伪造 text/json+ptd）", () => {
+  it("选区丢失父元素时仍能使用原页面站点选择器，可信主机校验保持生效", async () => {
+    const { siteMetadata } = await import("@ptd/site/definitions/rutracker.ts");
+    siteInstance.value = { metadata: siteMetadata } as any;
+    const page = document.createElement("table");
+    const good = "https://rutracker.org/forum/dl.php?t=42";
+    const bad = "https://evil.tld/forum/dl.php?t=43";
+    page.innerHTML = `<tbody><tr><td class="tor-size"><a class="tr-dl" href="${good}">good</a><a class="tr-dl" href="${bad}">bad</a></td></tr></tbody>`;
+    document.body.append(page);
+    try {
+      const result = resolveDroppedTorrents(
+        makeDataTransfer("text/html", `<a class="tr-dl" href="${good}">good</a><a class="tr-dl" href="${bad}">bad</a>`),
+        "rutracker",
+        ["rutracker.org"],
+      );
+      expect(result.torrents.map((torrent: ITorrent) => torrent.link)).toEqual([good]);
+      expect(result.rejectedCount).toBe(1);
+    } finally {
+      page.remove();
+    }
+  });
+
+  it("只包含普通页面链接的 HTML 给出不支持下载的提示", () => {
+    const result = resolveDroppedTorrents(
+      makeDataTransfer("text/html", '<a href="https://pt.example.com/logout.php">logout</a>'),
+      SITE_ID,
+    );
+    expect(result.torrents).toEqual([]);
+    expect(showSnackbar).toHaveBeenCalledOnce();
+  });
+
+  it("混合 HTML 只保留下载链接，支持相对地址和站点专用选择器", () => {
+    (siteInstance.value!.metadata as any).search = {
+      selectors: { link: { selector: "a.site-download", attr: "href" } },
+    };
+    const result = resolveDroppedTorrents(
+      makeDataTransfer(
+        "text/html",
+        [
+          '<a href="https://pt.example.com/userdetails.php?id=7">profile</a>',
+          '<a href="https://pt.example.com/details.php?id=7">details</a>',
+          '<a href="https://pt.example.com/logout.php">logout</a>',
+          '<a href="https://pt.example.com/download.php?id=7">torrent</a>',
+          '<a href="https://pt.example.com/torrents.php?action=download&id=8">torrent</a>',
+          '<a class="site-download" href="https://pt.example.com/fetch/9">custom</a>',
+          '<a href="/file.torrent">relative</a>',
+        ].join(""),
+      ),
+      SITE_ID,
+    );
+    expect(result.torrents.map((torrent: ITorrent) => torrent.link)).toEqual([
+      "https://pt.example.com/download.php?id=7",
+      "https://pt.example.com/torrents.php?action=download&id=8",
+      "https://pt.example.com/fetch/9",
+      new URL("/file.torrent", location.href).href,
+    ]);
+  });
+
   it("伪造载荷里的危险协议（javascript:/data:/file:）被拒绝，且给出提示", () => {
     for (const link of [
       "javascript:alert(document.cookie)",

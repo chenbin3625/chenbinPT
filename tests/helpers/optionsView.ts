@@ -89,7 +89,10 @@ export function prepareOptionsPinia(): Pinia {
   createApp({ render: () => null }).use(pinia);
 
   pinia.use(({ store }) => {
-    (store as any).$onReady = async () => {};
+    // 与真实插件同签名：允许 `$onReady(callback)` 形式（搜索页 / 筛选恢复都依赖它）
+    (store as any).$onReady = async (callback?: () => void) => {
+      callback?.();
+    };
   });
   setActivePinia(pinia);
   return pinia;

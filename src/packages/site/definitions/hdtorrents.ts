@@ -237,7 +237,7 @@ export const siteMetadata: ISiteMetadata = {
             selector: "td.header:contains('Total Size of torrents') + td",
             filters: [{ name: "replace", args: [/,/g, ""] }, removeInvalidDataUnit, { name: "parseSize" }],
           },
-          // FIXME 暂未实现 uploads
+          // TODO uploads：需发布数摘要或完整分页样本；uploaded 是流量，不是发布数。
         },
       },
       {

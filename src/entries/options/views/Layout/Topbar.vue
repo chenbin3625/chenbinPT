@@ -6,7 +6,6 @@ import { DownOutlined, SearchOutlined } from "@ant-design/icons-vue";
 
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
-import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
 import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 
@@ -22,12 +21,17 @@ const { t } = useI18n();
 
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
-const runtimeStore = useRuntimeStore();
 
 const searchKey = ref<string>("");
 const searchPlanKey = ref<string>("default");
+/**
+ * 防重复提交只覆盖「导航尚未完成」这一小段时间。
+ *
+ * 旧实现把「搜索正在进行」也算进禁用态：用户想换个关键词重搜时必须先回搜索页点「取消」，
+ * 否则回车、搜索按钮、热门推荐全部无效。而新一轮 flush 搜索本身已经会作废旧轮次与旧队列
+ * （见 SearchEntity/utils/search.ts 的 epoch 机制），搜索中再搜是安全且有价值的操作。
+ */
 const isSubmittingSearch = ref(false);
-const searchBusy = computed(() => runtimeStore.search.isSearching || isSubmittingSearch.value);
 
 const searchPlans = computed(() =>
   metadataStore.getSearchSolutions
@@ -62,7 +66,7 @@ function refreshSingleSearchSiteIds() {
 watch(() => metadataStore.getAddedSites, refreshSingleSearchSiteIds, { immediate: true, deep: true });
 
 async function startSearchEntity() {
-  if (searchBusy.value) return;
+  if (isSubmittingSearch.value) return;
   isSubmittingSearch.value = true;
   try {
     await router.push({
@@ -197,7 +201,7 @@ function selectSearchPlan({ key }: { key: string | number }) {
         <template #suffix>
           <RecommendationMenu
             v-if="configStore.searchEntity.showHotRecommendations"
-            :disabled="searchBusy"
+            :disabled="isSubmittingSearch"
             @search="searchRecommendation"
           />
         </template>
@@ -205,8 +209,8 @@ function selectSearchPlan({ key }: { key: string | number }) {
 
       <!-- 搜索按键 -->
       <a-button
-        :disabled="searchBusy"
-        :loading="searchBusy"
+        :disabled="isSubmittingSearch"
+        :loading="isSubmittingSearch"
         :aria-label="t('common.search')"
         :title="t('common.search')"
         type="primary"

@@ -263,7 +263,7 @@ export const siteMetadata: ISiteMetadata = {
               "td.header:contains('Last access') + td:not(:contains('day'))": [timeFilterWithoutDay],
             },
           },
-          // FIXME 暂未实现 uploads, seedingSize
+          // TODO uploads / seedingSize：需本站总数及体积样本；上游 -1 哨兵不是真实统计。
         },
       },
       {

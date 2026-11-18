@@ -17,6 +17,7 @@
 import { logMessage } from "./adapter";
 import { isHostTrusted } from "./trustedHost";
 import type { ISiteMetadata } from "../types";
+import { blobToDataUrl } from "~/helper.ts";
 
 // from: https://stackoverflow.com/a/9967193/8824471
 // from: http://proger.i-forge.net/%D0%9A%D0%BE%D0%BC%D0%BF%D1%8C%D1%8E%D1%82%D0%B5%D1%80/[20121112]%20The%20smallest%20transparent%20pixel.html
@@ -111,22 +112,6 @@ function isUsableIconBlob(blob: Blob, href: string): boolean {
     return false;
   }
   return /\.(ico|png|jpe?g|gif|svg|webp)(\?|#|$)/i.test(href);
-}
-
-// FIXME 转成公共函数 BlobToBase64
-function transformBlob(blob: Blob): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("loadend", () => {
-      if (reader.result) {
-        resolve(reader.result);
-      } else {
-        reject(new Error("Error when parse favicon Blob"));
-      }
-    });
-
-    reader.readAsDataURL(blob);
-  });
 }
 
 function trustedIconUrl(href: string, base: string, trustedHosts: readonly string[]): string | undefined {
@@ -410,7 +395,7 @@ export async function getFavicon(site: getFaviconMetadata): Promise<string> {
   // 将请求结果转为 base64
   let faviconBase64;
   if (typeof faviconMeta !== "undefined") {
-    faviconBase64 = await transformBlob(faviconMeta); // 将 faviconMeta 转成 base64，并缓存
+    faviconBase64 = await blobToDataUrl(faviconMeta); // 将 faviconMeta 转成 base64，并缓存
   }
 
   // 3. fallback 使用 NO_IMAGE 替代

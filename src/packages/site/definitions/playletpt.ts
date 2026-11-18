@@ -1,5 +1,5 @@
 /**
- * FIXME 由 resource/sites/playletpt.xyz/config.json 自动转换而来
+ * 来源：由 resource/sites/playletpt.xyz/config.json 自动转换而来
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/playletpt.yml
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/playletpt.json
  */

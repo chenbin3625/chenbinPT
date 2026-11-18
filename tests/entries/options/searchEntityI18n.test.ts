@@ -69,3 +69,33 @@ describe("F12：跨站搜索的方案名不再硬编码中文", () => {
     expect(getSearchSolutionDisplayName("my-plan", () => "我的方案")).toBe("我的方案");
   });
 });
+
+describe("单站搜索方案的展示名", () => {
+  const siteNames: Record<string, string> = { mteam: "馒头", hdsky: "天空" };
+
+  it("site:<id> 用站点名展示，未知站点退回 id，不再暴露原始 key", () => {
+    expect(
+      getSearchSolutionDisplayName(
+        "site:mteam",
+        () => "raw",
+        (id) => siteNames[id],
+      ),
+    ).toBe("馒头");
+    expect(
+      getSearchSolutionDisplayName(
+        "site:mteam,hdsky",
+        () => "raw",
+        (id) => siteNames[id],
+      ),
+    ).toBe("馒头, 天空");
+    expect(
+      getSearchSolutionDisplayName(
+        "site:unknown",
+        () => "raw",
+        (id) => siteNames[id],
+      ),
+    ).toBe("unknown");
+    // 站点名尚未水合（siteNameMap 为空）时也不应显示 `site:` 前缀
+    expect(getSearchSolutionDisplayName("site:unknown", () => "raw")).toBe("unknown");
+  });
+});

@@ -1,5 +1,5 @@
 /**
- * FIXME 由 resource/sites/kufei.org/config.json 自动转换而来
+ * 来源：由 resource/sites/kufei.org/config.json 自动转换而来
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/kufei.yml
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/kufei.json
  */

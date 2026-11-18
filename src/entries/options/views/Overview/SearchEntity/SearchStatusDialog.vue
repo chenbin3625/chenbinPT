@@ -28,7 +28,11 @@ const metadataStore = useMetadataStore();
 const inSnapshotView = computed(() => Boolean(runtimeStore.search.snapshot));
 
 function searchSolutionName(planKey: string) {
-  return getSearchSolutionDisplayName(planKey, (key) => metadataStore.getSearchSolutionName(key));
+  return getSearchSolutionDisplayName(
+    planKey,
+    (key) => metadataStore.getSearchSolutionName(key),
+    (siteId) => metadataStore.siteNameMap?.[siteId],
+  );
 }
 
 function getSearchSolution(planKey: string, entryName: string) {
@@ -81,8 +85,6 @@ const filteredSearchPlan = computed(() => {
   <a-modal v-model:open="showDialog" :footer="null" :width="800">
     <template #title>
       {{ t("SearchEntity.SearchStatusDialog.title", [searchSolutionName(runtimeStore.search.searchPlanKey)]) }}
-      <br />
-      <p style="font-size: 12px"><{{ runtimeStore.search.searchPlanKey }}></p>
     </template>
     <a-space wrap>
       <a-tag
@@ -111,25 +113,31 @@ const filteredSearchPlan = computed(() => {
           <template #title>
             <a-flex :gap="4">
               <SiteName :site-id="searchPlan.siteId" strong style="text-decoration: none" />
-              ->
-              <span v-if="searchPlan.searchEntry.name">
-                {{ searchPlan.searchEntry.name }}
-              </span>
-              <span
+              <!-- 站点默认入口（id 为 default）不带语义，省略「-> default」；多入口方案才展示入口名 -->
+              <template v-if="searchPlan.searchEntry.name">
+                ->
+                <span>{{ searchPlan.searchEntry.name }}</span>
+              </template>
+              <template
                 v-else-if="
                   runtimeStore.search.searchPlanKey === 'all' || runtimeStore.search.searchPlanKey.startsWith('site:')
                 "
               >
-                {{ searchPlan.searchEntry.name ?? searchPlan.searchEntryName }}
-              </span>
+                <template v-if="searchPlan.searchEntryName !== 'default'">
+                  ->
+                  <span>{{ searchPlan.searchEntryName }}</span>
+                </template>
+              </template>
               <span v-else>
                 <SolutionDetail
                   :solution="getSearchSolution(runtimeStore.search.searchPlanKey, searchPlan.searchEntryName)"
                 />
               </span>
             </a-flex>
-            <br />
-            <span style="color: var(--ptd-text-tertiary); font-size: 14px"> <{{ searchPlan.searchEntryName }}> </span>
+            <template v-if="searchPlan.searchEntryName !== 'default'">
+              <br />
+              <span style="color: var(--ptd-text-tertiary); font-size: 14px"> <{{ searchPlan.searchEntryName }}> </span>
+            </template>
           </template>
         </a-list-item-meta>
 

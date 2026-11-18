@@ -182,6 +182,7 @@ vi.mock("@/options/views/Overview/DownloadHistory/utils.ts", async () => {
     text: { required: [], exclude: [] },
     siteId: { required: [], exclude: [] },
     downloaderId: { required: [], exclude: [] },
+    downloadStatus: { required: [], exclude: [] },
     downloadAt: [0, MAX],
   });
 
@@ -189,6 +190,14 @@ vi.mock("@/options/views/Overview/DownloadHistory/utils.ts", async () => {
   filterState.advanceFilterDictRef = advanceFilterDictRef;
 
   return {
+    downloadStatusMap: vueRef(
+      Object.fromEntries(
+        ["pending", "downloading", "completed", "failed"].map((key) => [
+          key,
+          { title: key, icon: "span", color: "grey" },
+        ]),
+      ),
+    ),
     tableCustomFilter: {
       advanceItemPropsRef,
       advanceFilterDictRef,
@@ -279,6 +288,54 @@ beforeEach(() => {
   loadSiteHistoryDataMock.mockResolvedValue([]);
   filterState.updateTableFilterValueFn.mockReset();
   filterState.reBuildAdvanceFilter.mockReset();
+  if (filterState.advanceFilterDictRef) {
+    filterState.advanceFilterDictRef.value.downloadStatus = { required: [], exclude: [] };
+  }
+});
+
+describe("下载历史状态筛选", () => {
+  it("未知任务状态显示问号而非做种箭头", async () => {
+    const { ETorrentStatus } = await import("@ptd/site");
+    const { default: TorrentProcess } = await import("@/options/views/Overview/SearchEntity/TorrentProcessTd.vue");
+    const view = mountOptionsView(TorrentProcess, {
+      props: { torrent: { status: ETorrentStatus.unknown, progress: 50 } },
+    });
+    try {
+      await view.settle();
+      expect(view.$(".anticon-question-circle")).not.toBeNull();
+      expect(view.$(".anticon-arrow-up")).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("状态复选框可依次选择、排除、取消，并可提交筛选", async () => {
+    const { default: Dialog } =
+      await import("@/options/views/Overview/DownloadHistory/AdvanceFilterGenerateDialog.vue");
+    const view = mountOptionsView(Dialog, { props: { modelValue: true } });
+    try {
+      await view.settle();
+      const label = Array.from(document.querySelectorAll<HTMLElement>(".ant-modal .ant-checkbox-wrapper")).find(
+        (element) => element.textContent?.includes("failed"),
+      );
+      expect(label).toBeDefined();
+      const checkbox = label!.querySelector<HTMLElement>(".ant-checkbox")!;
+      checkbox.click();
+      await view.settle();
+      expect(filterState.advanceFilterDictRef.value.downloadStatus).toEqual({ required: ["failed"], exclude: [] });
+      checkbox.click();
+      await view.settle();
+      expect(filterState.advanceFilterDictRef.value.downloadStatus).toEqual({ required: [], exclude: ["failed"] });
+      checkbox.click();
+      await view.settle();
+      expect(filterState.advanceFilterDictRef.value.downloadStatus).toEqual({ required: [], exclude: [] });
+      document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!.click();
+      await view.settle();
+      expect(filterState.updateTableFilterValueFn).toHaveBeenCalledOnce();
+    } finally {
+      view.unmount();
+    }
+  });
 });
 
 describe("OPTIONSOVERVIEW-1：高级筛选日期滑块必须是双滑块（range）", () => {

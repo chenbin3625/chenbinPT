@@ -6,6 +6,7 @@ import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import {
   EResultParseStatus,
+  NeedLoginError,
   type ISearchInput,
   type ISiteMetadata,
   type ITorrent,
@@ -255,16 +256,30 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class Zhuque extends PrivateSite {
-  public override async request<T>(
-    axiosConfig: AxiosRequestConfig,
-    checkLogin: boolean = true,
-  ): Promise<AxiosResponse<T>> {
-    // 在请求的 headers 中添加 csrfToken
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      "x-csrf-token": (await this.getCsrfToken()) ?? "",
-    };
-    return super.request<T>(axiosConfig, checkLogin);
+  private csrfTokenRequest?: Promise<string>;
+
+  protected override async performRequestWithRetry<T>(axiosConfig: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    // The user-info endpoint bootstraps CSRF and must not call token acquisition again.
+    if (new URL(axiosConfig.url ?? "", axiosConfig.baseURL ?? this.url).pathname === "/api/plugins/ptppUserInfo") {
+      return super.performRequestWithRetry<T>(axiosConfig);
+    }
+
+    const token = await this.getCsrfToken();
+    const config = { ...axiosConfig, headers: { ...axiosConfig.headers, "x-csrf-token": token } };
+    const response = await super.performRequestWithRetry<T>(config);
+    if (response.status === 403 || response.status === 419) {
+      const errorText = typeof response.data === "string" ? response.data : (JSON.stringify(response.data) ?? "");
+      if (/csrf|cross.site.request.forgery/i.test(errorText)) {
+        // A concurrent request may already have replaced this request's stale token.
+        const current = await this.retrieveRuntimeSettings<unknown>("csrfToken");
+        config.headers["x-csrf-token"] =
+          typeof current === "string" && current.trim() && current.trim() !== token
+            ? current.trim()
+            : await this.getCsrfToken(true);
+        return super.performRequestWithRetry<T>(config);
+      }
+    }
+    return response;
   }
 
   protected override parseTorrentRowForTags(
@@ -305,7 +320,6 @@ export default class Zhuque extends PrivateSite {
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
     const userInfo = await super.getUserInfoResult(lastUserInfo);
 
-    // FIXME 将 csrfToken 存储到 runtimeSettings 中 （是否可以用一种别的方式来获取？）
     if (userInfo.status === EResultParseStatus.success && typeof userInfo.csrfToken !== "undefined") {
       await this.storeRuntimeSettings("csrfToken", userInfo.csrfToken);
       delete userInfo.csrfToken;
@@ -313,19 +327,32 @@ export default class Zhuque extends PrivateSite {
     return userInfo;
   }
 
-  private async getCsrfToken() {
-    let csrfToken = await this.retrieveRuntimeSettings("csrfToken");
-    if (csrfToken) {
-      return csrfToken;
-    } else {
-      // 如果没有设置 csrfToken，则从扩展存储中获取（兼容之前写法）
-      const csrfToken = await retrieveStore("metadata", `lastUserInfo.${this.metadata.id}.csrfToken`);
-      if (csrfToken) {
-        await this.storeRuntimeSettings("csrfToken", csrfToken);
-        return csrfToken;
+  private async getCsrfToken(refresh = false): Promise<string> {
+    if (!refresh) {
+      const cached = await this.retrieveRuntimeSettings<unknown>("csrfToken");
+      if (typeof cached === "string" && cached.trim()) return cached.trim();
+      const legacy = await retrieveStore("metadata", `lastUserInfo.${this.metadata.id}.csrfToken`);
+      if (typeof legacy === "string" && legacy.trim()) {
+        return this.storeRuntimeSettings("csrfToken", legacy.trim());
       }
     }
 
-    return ""; // 如果没有找到 csrfToken，则返回空字符串
+    this.csrfTokenRequest ??= (async () => {
+      const response = await super.request<{ data?: { csrfToken?: unknown } }>({
+        url: "/api/plugins/ptppUserInfo",
+        method: "GET",
+        responseType: "json",
+      });
+      const token = response.data?.data?.csrfToken;
+      if (typeof token !== "string" || !token.trim()) {
+        throw new NeedLoginError("Zhuque did not return a CSRF token; sign in again");
+      }
+      return this.storeRuntimeSettings("csrfToken", token.trim());
+    })();
+    try {
+      return await this.csrfTokenRequest;
+    } finally {
+      this.csrfTokenRequest = undefined;
+    }
   }
 }

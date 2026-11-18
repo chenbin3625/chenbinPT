@@ -2,13 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { mountOptionsView, loadScopedStyles } from "../../helpers/optionsView.ts";
 
-const stores = vi.hoisted(() => ({ runtime: undefined as any }));
-
-vi.mock("@/options/stores/runtime.ts", async () => {
-  const { reactive } = await import("vue");
-  stores.runtime = reactive({ search: { isSearching: false } });
-  return { useRuntimeStore: () => stores.runtime };
-});
 vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => ({ searchEntity: { allowSingleSiteSearch: false, showHotRecommendations: false } }),
 }));
@@ -48,9 +41,6 @@ function pressEnter(input: HTMLInputElement, isComposing = false) {
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, isComposing, bubbles: true }));
 }
 
-beforeEach(() => {
-  stores.runtime.search.isSearching = false;
-});
 afterEach(() => view?.unmount());
 
 describe("顶栏搜索交互", () => {
@@ -70,14 +60,13 @@ describe("顶栏搜索交互", () => {
     expect(input.value).toBe("");
   });
 
-  it("搜索期间回车与禁用的搜索按钮保持一致", async () => {
+  it("搜索进行中仍可再次搜索：用新关键词替换当前搜索", async () => {
     const { router, input } = await mountTopbar();
-    stores.runtime.search.isSearching = true;
-    await view.settle();
+    // 旧实现会禁用输入框回车 / 搜索按钮 / 热门推荐，用户必须先取消正在进行的搜索
     pressEnter(input);
     await view.settle();
-    expect(router.currentRoute.value.name).toBe("Home");
-    expect(view.$<HTMLButtonElement>('button[title="搜索"]')?.disabled).toBe(true);
+    expect(router.currentRoute.value.name).toBe("SearchEntity");
+    expect(view.$<HTMLButtonElement>('button[title="搜索"]')?.disabled).toBe(false);
   });
 
   it("中文输入法确认候选词的回车不触发搜索", async () => {

@@ -257,7 +257,7 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
-  // TODO userInfo 中的 averageSeedingTime, hnrUnsatisfied 等其他字段
+  // TODO hnrUnsatisfied：需本站当前未满足 H&R 样本；平均做种时间已继承，累计/人工警告不能替代此字段。
 
   levelRequirements: [
     {

@@ -185,6 +185,23 @@ describe("搜索结果下拉筛选", () => {
     view.unmount();
   });
 
+  it("有筛选生效时提供全局「清除筛选」入口，且不混入筛选项计数", async () => {
+    filterMock.state.advanceFilterDictRef.value.site.required = ["a"];
+    const view = mountOptionsView(Bar, { pinia: prepareOptionsPinia() });
+    await view.settle();
+
+    const clearAll = view.$<HTMLButtonElement>(".search-filter-clear-all");
+    expect(clearAll, "筛选生效时应出现全局清除入口").not.toBeNull();
+    expect(clearAll!.textContent).toContain("清除筛选");
+    expect(view.$$(".search-filter-chip"), "全局按钮不能被算作筛选项").toHaveLength(10);
+
+    clearAll!.click();
+    await view.settle();
+    expect(filterMock.state.advanceFilterDictRef.value.site.required).toEqual([]);
+    expect(view.$(".search-filter-clear-all"), "筛选清空后入口应消失").toBeNull();
+    view.unmount();
+  });
+
   it("清除关键词不会删除独立的排除词", async () => {
     filterMock.state.advanceFilterDictRef.value.text = { required: ["movie"], exclude: ["cam"] };
     const view = mountOptionsView(Bar, { pinia: prepareOptionsPinia() });

@@ -61,9 +61,8 @@ export const siteMetadata: ISiteMetadata = {
       // "Download .torrent" -> https://skidrowrepack.com/index.php?do=download&id=25（服务端下发 .torrent）
       link: { selector: "a.dwn-load", attr: "href" },
       // <time datetime="2020-07-27T17:31:25" itemprop="datePublished">：ISO 串**不带偏移**，
-      // 站点也没声明 timezoneOffset，所以按仓库既有惯例交给 parseTime（原样走 Date 构造，
-      // 即按**运行主机**本地时区解释）。这与 clearjav / rousipro 等既有定义的写法一致，
-      // 但严格说结果会随用户时区平移 —— 属于平台级口径问题，此处不单独 hack。
+      // 未声明站点偏移时，由装配层补默认 UTC，再由公共 parseTime 按该偏移解析，
+      // 不依赖运行主机时区；默认 UTC 不代表已确认站点真实时区。
       time: { selector: "time[datetime]", attr: "datetime", filters: [{ name: "parseTime" }] },
       // size / seeders / leechers / category：详情页没有，留空
     },

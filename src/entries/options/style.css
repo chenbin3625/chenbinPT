@@ -930,10 +930,12 @@ body {
 
 /* 搜索结果页的下拉筛选条：普通行内布局，不再用 alert 承载。
  *
- * 外层**刻意不换行**（默认 nowrap）：换行只发生在 .search-filter-chips 内部。
- * 这样在窗口偏窄时被挤到第二行的是筛选项，而不是搜索框 —— 搜索框始终跟在
- * 最后一个可见筛选项后面，不会独占一行。若外层也允许 wrap，flex 换行判定看的
- * 是各子项的 flex-basis，搜索框会在筛选项还能收缩时先被换到下一行（旧行为）。 */
+ * 宽屏下外层**刻意不换行**（默认 nowrap）：换行只发生在 .search-filter-chips 内部，
+ * 搜索框始终跟在最后一个可见筛选项后面，不会独占一行。若宽屏也允许 wrap，flex 换行判定看的
+ * 是各子项的 flex-basis，搜索框会在筛选项还能收缩时先被换到下一行（旧行为）。
+ *
+ * 中窄屏（≤840，含侧栏展开后内容区更窄的情况）改为整行堆叠：搜索框最小 200px 会把 10 个
+ * 筛选项挤成每行只剩一两个的窄列 —— 600px 视口实测筛选条高 298px，搜索结果被推到首屏之外。 */
 .search-filter-bar {
   display: flex;
   align-items: flex-start;
@@ -969,6 +971,12 @@ body {
 .search-filter-clear {
   align-self: flex-end;
   padding-inline: 0;
+}
+
+/* 全局「清除筛选」是文字动作而非筛选项：高度与 chip 对齐，也不参与 chip 数量统计 */
+.search-filter-clear-all {
+  height: 32px;
+  padding-inline: 4px;
 }
 
 .search-filter-chip {
@@ -1199,13 +1207,8 @@ body {
     flex: 1 1 100%;
     min-width: 100%;
   }
-}
 
-@media (max-width: 599px) {
-  .ptd-topbar-title {
-    margin-left: 40px;
-  }
-
+  /* 中窄屏：搜索框换到筛选项下方并吃满宽度，筛选项整行可用（见 .search-filter-bar 的说明） */
   .search-filter-bar {
     flex-wrap: wrap;
   }
@@ -1216,5 +1219,11 @@ body {
 
   .search-filter-search {
     max-width: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .ptd-topbar-title {
+    margin-left: 40px;
   }
 }

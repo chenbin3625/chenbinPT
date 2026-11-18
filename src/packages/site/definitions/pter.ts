@@ -183,9 +183,10 @@ export const siteMetadata: ISiteMetadata = {
             return 100;
           } else if (element.classList.contains("progbarred") || element.classList.contains("progbarrest")) {
             const elementStyle = element.getAttribute("style") || "";
-            const widthMatch = elementStyle.match(/width:([ \d.]+)%/);
-            const progress =
-              widthMatch && widthMatch.length >= 2 ? (parseFloat(widthMatch[1]) / 98) * 100 /* 修正下载进度 */ : 0;
+            const widthMatch = elementStyle.match(/width:\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))%/i);
+            const width = widthMatch ? Number(widthMatch[1]) : NaN;
+            if (!Number.isFinite(width) || width < 0 || width > 100) return 0;
+            const progress = Math.min(100, (width / 98) * 100);
             return element.classList.contains("progbarred") ? progress : 100 - progress; // 如果是 .progbarred 则代表已完成进度，而 .progbarrest 则为未完成进度，取反
           } else {
             return 0;
@@ -198,11 +199,13 @@ export const siteMetadata: ISiteMetadata = {
           if (element.classList.contains("progbargreen")) {
             return ETorrentStatus.seeding;
           } else if (element.classList.contains("progbarred") || element.classList.contains("progbarrest")) {
-            const widthMatch = (element.getAttribute("style") || "").match(/width:([ \d.]+)%/);
-            const progress = widthMatch && widthMatch.length >= 2 ? (parseFloat(widthMatch[1]) / 98) * 100 : 0;
+            const widthMatch = (element.getAttribute("style") || "").match(/width:\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))%/i);
+            const width = widthMatch ? Number(widthMatch[1]) : NaN;
+            if (!Number.isFinite(width) || width < 0 || width > 100) return ETorrentStatus.unknown;
+            const progress = Math.min(100, (width / 98) * 100);
             const realProgress = element.classList.contains("progbarred") ? progress : 100 - progress;
-            // FIXME 不能判断是否在下载状态，所以直接设成 inactive
-            return realProgress >= 100 ? ETorrentStatus.completed : ETorrentStatus.inactive;
+            // A partial bar cannot distinguish active downloading from a paused task.
+            return realProgress >= 100 ? ETorrentStatus.completed : ETorrentStatus.unknown;
           } else {
             return ETorrentStatus.unknown;
           }
@@ -234,7 +237,6 @@ export const siteMetadata: ISiteMetadata = {
       urlPattern: ["/detailsgame.php"],
       mergeSearchSelectors: false,
       selectors: {
-        // TODO,
         rows: {
           selector: ".rowfollow",
           filter: (rows: HTMLElement[] | null): HTMLElement[] | null => {

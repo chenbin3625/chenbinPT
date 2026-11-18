@@ -43,6 +43,39 @@ beforeEach(() => {
   requestMock.mockReset();
 });
 
+describe("Flood version discovery", () => {
+  it("reads and caches the package version from OpenAPI", async () => {
+    requestMock.mockResolvedValue({ data: { info: { version: " 4.16.4 " } } });
+    const client = makeClient();
+    await expect(client.getClientVersion()).resolves.toBe("4.16.4");
+    await expect(client.getClientVersion()).resolves.toBe("4.16.4");
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(requestMock.mock.calls[0]![0].url).toBe("/api/openapi.json");
+  });
+
+  it.each([{}, { info: {} }, { info: { version: null } }, { info: { version: 4 } }, { info: { version: " " } }])(
+    "does not fabricate a version from %j",
+    async (data) => {
+      requestMock.mockResolvedValue({ data });
+      await expect(makeClient().getClientVersion()).resolves.toBe("");
+    },
+  );
+
+  it("supports old releases without OpenAPI", async () => {
+    requestMock.mockRejectedValue(Object.assign(new Error("Not found"), { response: { status: 404 } }));
+    await expect(makeClient().getClientVersion()).resolves.toBe("");
+  });
+
+  it("retains the existing bounded login retry", async () => {
+    requestMock
+      .mockRejectedValueOnce(Object.assign(new Error("unauthorized"), { response: { status: 401 } }))
+      .mockResolvedValueOnce({ data: { success: true } })
+      .mockResolvedValueOnce({ data: { info: { version: "4.16.4" } } });
+    await expect(makeClient().getClientVersion()).resolves.toBe("4.16.4");
+    expect(requestMock).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("Flood FL-1：添加时显式下发 start", () => {
   it("addAtPaused=false → start: true；addAtPaused=true → start: false", async () => {
     requestMock.mockResolvedValue({ data: {} });

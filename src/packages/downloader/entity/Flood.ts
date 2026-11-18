@@ -225,7 +225,15 @@ export default class Flood extends AbstractBittorrentClient {
   }
 
   protected async getClientVersionFromRemote(): Promise<string> {
-    return ""; // TODO
+    try {
+      // jesec/flood exposes its package version in the OpenAPI document.
+      const response = await this.request<{ info?: { version?: unknown } }>("/api/openapi.json");
+      const version = response.data?.info?.version;
+      return typeof version === "string" ? version.trim() : "";
+    } catch {
+      // Older Flood releases do not expose this endpoint.
+      return "";
+    }
   }
 
   async addTorrent(url: string, options: Partial<CAddTorrentOptions> = {}): Promise<CAddTorrentResult> {

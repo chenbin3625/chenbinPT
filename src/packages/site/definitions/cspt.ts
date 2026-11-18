@@ -214,26 +214,37 @@ export const siteMetadata: ISiteMetadata = {
       leechers: { selector: ".torrent-info-text-leechers" },
       completed: { selector: ".torrent-info-text-finished" },
       comments: { selector: ".torrent-info-text-comments" },
-      // FIXME progress 和 status 未作验证
-
       status: {
-        selector: ["div[title*='leeching']", "div[title*='seeding']", "div[title*='inactivity']"],
+        selector: ["div[title*='leeching' i]", "div[title*='seeding' i]", "div[title*='inactivity' i]"],
         attr: "title",
         filters: [
           (title: string) => {
-            if (title.includes("leeching")) return ETorrentStatus.downloading;
-            if (title.includes("seeding")) return ETorrentStatus.seeding;
-            if (title.includes("inactivity")) {
-              return title.includes("100%") ? ETorrentStatus.completed : ETorrentStatus.inactive;
+            const state = title
+              .trim()
+              .match(/^(leeching|seeding|inactivity)\b/i)?.[1]
+              .toLowerCase();
+            if (state === "leeching") return ETorrentStatus.downloading;
+            if (state === "seeding") return ETorrentStatus.seeding;
+            if (state === "inactivity") {
+              const percent = title.match(/([+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*%/);
+              return percent && Number(percent[1].replace(",", ".")) === 100
+                ? ETorrentStatus.completed
+                : ETorrentStatus.inactive;
             }
             return ETorrentStatus.unknown;
           },
         ],
       },
       progress: {
-        selector: ["div[title*='leeching']", "div[title*='seeding']", "div[title*='inactivity']"],
+        selector: ["div[title*='leeching' i]", "div[title*='seeding' i]", "div[title*='inactivity' i]"],
         attr: "title",
-        filters: [{ name: "parseNumber" }],
+        filters: [
+          (title: string) => {
+            const percent = title.match(/([+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*%/);
+            const progress = percent ? Number(percent[1].replace(",", ".")) : NaN;
+            return Number.isFinite(progress) && progress >= 0 && progress <= 100 ? progress : 0;
+          },
+        ],
       },
 
       // Douban 和 imdb 虽然站点有展示评分，但无法获取到对应的id

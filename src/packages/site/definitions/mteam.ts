@@ -16,6 +16,7 @@ import {
   ITorrentTag,
   TSchemaMetadataListSelectors,
   ETorrentStatus,
+  NoUserInputError,
 } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 
@@ -675,6 +676,10 @@ export default class MTeam extends PrivateSite {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
+    const rawToken = this.userConfig.inputSetting?.token;
+    const token = typeof rawToken === "string" ? rawToken.trim() : "";
+    if (!token) throw new NoUserInputError("M-Team API token is required");
+
     // 将请求的 baseUrl 设置为 api. 域名
     axiosConfig.baseURL = this.apiBaseUrl;
 
@@ -686,7 +691,7 @@ export default class MTeam extends PrivateSite {
     // 在请求的 headers 中添加 存取令牌
     axiosConfig.headers = {
       ...(axiosConfig.headers ?? {}),
-      "x-api-key": this.userConfig.inputSetting?.token ?? "", // FIXME 是否允许我们设置一个空字符？
+      "x-api-key": token,
       origin: this.normalizedSiteUrl, // MTeam site requires Origin header for CORS validation (added 2025-10-28)
     };
 

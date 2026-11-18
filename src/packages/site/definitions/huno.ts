@@ -248,19 +248,7 @@ export const siteMetadata: ISiteMetadata = {
         text: 0,
       },
 
-      // DEFS2-2 收尾：这块 DOM selector 对本站 JSON 行（responseType: json）本就不生效，故整体保持注释（DEFS2-4）。
-      // 原数组里的 { name: "H&R", selector: "*", color: "red" } 是上游 fb79a2a7「add default H&R tags with
-      // red color for global sites」(PR #336) 给全站 H&R 站点加的默认标签，整块注释后 H&R 实际丢失；且 JSON 行
-      // 无法被 selector "*" 命中（AbstractBittorrentSite 对对象行走 get(row, "*")，恒为 undefined），
-      // 因此 H&R 已改到本类 parseTorrentRowForTags 末尾无条件补上（见该方法内 H&R 注释）。
-      // tags: [ // todo
-      //   { name: "Free", selector: "i.far.fa-gift", color: "#c149ab" },
-      //   { name: "Pack", selector: "i.far.fa-folder-heart", color: "#e3747a" },
-      //   { name: "Plex", selector: "i.far.fa-play", color: "#f39c12" },
-      //   { name: "Internal", selector: "i.far.fa-bolt", color: "#b793f0" },
-      //   { name: "Worthy", selector: "i.far.fa-medal", color: "#00c07f" },
-      //   { name: "Sticky", selector: "i.far.fa-thumbtack", color: "#d32f2f" },
-      // ],
+      // JSON 标签（包括全站 H&R）由 parseTorrentRowForTags 处理。
     },
   },
 
@@ -286,14 +274,7 @@ export const siteMetadata: ISiteMetadata = {
       seeding: { selector: "data.active_seeds" },
       leeching: { selector: "data.active_leeches" },
       hnrUnsatisfied: { selector: "data.hit_and_runs" },
-      // hnrPreWarning: { // todo, not provided by site?
-      //   // 考核中的 HR
-      //   selector: ["div[view='unsatisfieds'] tbody"],
-      //   elementProcess: (element: Element) => {
-      //     const length = element.querySelectorAll("tr.userFiltered[hr='0'][immune='0']").length;
-      //     return length > 0 ? length : 0;
-      //   },
-      // },
+      // TODO hnrPreWarning：需要当前 /api/profile 的独立预警字段样本，不能复用违规数。
 
       // page '/'
       id: {

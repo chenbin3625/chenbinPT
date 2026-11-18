@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { ArrowDownOutlined, ArrowUpOutlined, CheckOutlined, DisconnectOutlined } from "@ant-design/icons-vue";
+import {
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  CheckOutlined,
+  DisconnectOutlined,
+  QuestionCircleOutlined,
+} from "@ant-design/icons-vue";
 import { computed, type Component } from "vue";
 import { ETorrentStatus } from "@ptd/site";
 
@@ -22,8 +28,10 @@ const icon = computed<Component>(() => {
       return DisconnectOutlined;
 
     case ETorrentStatus.seeding:
-    default:
       return ArrowUpOutlined;
+
+    default:
+      return QuestionCircleOutlined;
   }
 });
 
@@ -37,8 +45,10 @@ const color = computed(() => {
       return "grey";
 
     case ETorrentStatus.seeding:
-    default:
       return "success";
+
+    default:
+      return "grey";
   }
 });
 </script>

@@ -2,6 +2,7 @@ import axios from "axios";
 import PQueue from "p-queue";
 import { getSocialRecommendations } from "@ptd/social";
 import type { ISocialRecommendationItem } from "@ptd/social";
+import { blobToDataUrl } from "~/helper.ts";
 
 import { onMessage } from "@/messages.ts";
 import { setupReplaceUnsafeHeader } from "~/extends/axios/replaceUnsafeHeader.ts";
@@ -181,21 +182,6 @@ async function getSocialInformationSafely(item: ISocialRecommendationItem) {
   }
 }
 
-function transformBlob(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("loadend", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-      } else {
-        reject(new Error("Error when parse recommendation poster Blob"));
-      }
-    });
-
-    reader.readAsDataURL(blob);
-  });
-}
-
 async function fetchPosterDataUrl(
   enrichment: TRecommendationEnrichmentMode,
   ...posters: Array<string | undefined>
@@ -258,7 +244,7 @@ async function fetchPosterDataUrl(
       }
 
       if (normalizedContentType?.startsWith("image/") && contentSize > 1024) {
-        const poster = await transformBlob(response.data);
+        const poster = await blobToDataUrl(response.data);
         setPosterDataUrlCache(cacheKey, poster);
         return poster;
       }

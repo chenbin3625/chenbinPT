@@ -2,6 +2,7 @@ import { computed, shallowRef, ref, toValue } from "vue";
 import type { TSupportSocialSite } from "@ptd/social";
 import { getSite as createSiteInstance, type ISiteMetadata, type ITorrent } from "@ptd/site";
 import { getHostFromUrl, restoreSecureLink } from "@ptd/site/utils/html.ts";
+import { selectElements } from "@ptd/site/utils/selector.ts";
 import type BittorrentSite from "@ptd/site/schemas/AbstractBittorrentSite.ts";
 
 import { sendMessage } from "@/messages.ts";
@@ -703,7 +704,7 @@ export function snapshotDataTransfer(dataTransfer: DataTransfer): IDataTransferS
 }
 
 /**
- * 从非自定义 MIME 的拖拽内容里尽力提取链接（原 App.vue 内的实现，逻辑未变）。
+ * 从非自定义 MIME 的拖拽内容里提取链接。
  * 这里已经做过一次协议过滤，`resolveDroppedTorrents` 会再统一校验一次。
  */
 function extractLinksManually(dataTransfer: IDataTransferSnapshot): string[] {
@@ -718,18 +719,51 @@ function extractLinksManually(dataTransfer: IDataTransferSnapshot): string[] {
         .filter((uri) => !uri.startsWith("#") && uri.startsWith("http"));
     }
   }
-  /**
-   * 可以很好的适配<p><a href="...">...</a></p>这种情况
-   * TODO: 但是面对选了一大片html的时候，可能会解析出来很多不是下载的链接，是否需要给每个站点/框架定义下载链接的正则表达式？
-   * 比如简单的过滤 nexusphp => /passkey=[a-zA-Z0-9-]+/
-   */
   if (dataTransfer.types.includes("text/html")) {
     const textData = dataTransfer.getData("text/html");
     if (textData) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(textData, "text/html");
-      const links = Array.from(doc.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href);
-      return links.filter((link) => link.startsWith("http") || link.startsWith("magnet:"));
+      const metadata = siteInstance.value?.metadata;
+      const linkQueries = [
+        metadata?.search?.selectors?.link,
+        metadata?.detail?.selectors?.link,
+        ...Object.values(metadata?.searchEntry ?? {}).map((entry) => entry.selectors?.link),
+        ...(metadata?.list ?? []).map((entry) => entry.selectors?.link),
+      ];
+      const configuredLinks = new Set<string>();
+      for (const query of linkQueries) {
+        for (const selector of [query?.selector ?? []].flat()) {
+          if (selector === ":self" || selector === "*") continue;
+          try {
+            for (const context of [doc, document]) {
+              for (const element of selectElements(selector, context)) {
+                const href = element.getAttribute("href");
+                const url = href ? URL.parse(href, location.href) : null;
+                if (url) configuredLinks.add(url.href);
+              }
+            }
+          } catch {
+            // A partial HTML selection may lack the configured row context.
+          }
+        }
+      }
+
+      // Selected HTML often contains navigation/profile links alongside torrents.
+      return Array.from(doc.querySelectorAll<HTMLAnchorElement>("a[href]"))
+        .filter((anchor) => {
+          const url = URL.parse(anchor.getAttribute("href") ?? "", location.href);
+          if (!url) return false;
+          if (url.protocol === "magnet:") return true;
+          if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+          return (
+            configuredLinks.has(url.href) ||
+            anchor.hasAttribute("download") ||
+            /(?:\.torrent(?:\/|$)|(?:^|\/)download(?:\.(?:php|aspx))?(?:\/|$))/i.test(url.pathname) ||
+            /^(?:download|downloadtorrent)$/i.test(url.searchParams.get("action") ?? "")
+          );
+        })
+        .map((anchor) => new URL(anchor.getAttribute("href")!, location.href).href);
     }
   }
   // fallback to plain text extraction
@@ -862,7 +896,10 @@ export function resolveDroppedTorrents(
     const runtimeStore = useRuntimeStore();
     if (result.payloadInvalid) {
       runtimeStore.showSnackbar(i18n.t("contentScript.invalidDropData"), { color: "error" });
-    } else if (result.rejectedCount > 0) {
+    } else if (
+      result.rejectedCount > 0 ||
+      (!dataTransfer.types.includes(CUSTOM_DRAG_MIME) && dataTransfer.getData("text/html").trim())
+    ) {
       runtimeStore.showSnackbar(i18n.t("contentScript.unsupportedDropLinks"), { color: "error" });
     }
   }

@@ -253,9 +253,6 @@ export interface IConfigPiniaStorageSchema {
   backup: {
     // 用于备份文件加密、解密的密钥
     encryptionKey: string;
-
-    // TODO 是否开启自动备份
-    enabledAutoBackup: boolean;
   };
 
   socialSiteInformation: IFetchSocialSiteInformationConfig;

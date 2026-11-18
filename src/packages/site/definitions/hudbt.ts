@@ -24,9 +24,37 @@ export const siteMetadata: ISiteMetadata = {
 
   category: [
     {
+      name: "大类",
+      key: "catGroup",
+      options: [
+        { name: "电影", value: "401,413,414,415,430,433" },
+        { name: "剧集", value: "402,417,416,418" },
+        { name: "纪录片", value: "404" },
+        { name: "体育", value: "407" },
+        { name: "综艺", value: "403,419,420,421" },
+        { name: "音乐", value: "408,422,423,424,425" },
+        { name: "音乐MV", value: "406" },
+        { name: "资料", value: "409,412" },
+        { name: "电子书", value: "432" },
+        { name: "动漫", value: "405,427,428,429" },
+        { name: "游戏", value: "410,431" },
+        { name: "软件", value: "411,426" },
+        { name: "华中科技大学", value: "1037" },
+      ],
+      cross: { mode: "custom" },
+      generateRequestConfig: (selected) => ({
+        requestConfig: {
+          params: Object.fromEntries(
+            [...new Set([selected].flat().flatMap((value) => String(value).split(",")))]
+              .filter((id) => /^\d+$/.test(id))
+              .map((id) => [`cat${id}`, 1]),
+          ),
+        },
+      }),
+    },
+    {
       name: "类别",
       key: "cat",
-      // FIXME 由于目前配置问题，不能在配置文件中做到大分类，可能需要用户自定义
       options: [
         // 电影 cat1=1&cat401=1&cat413=1&cat414=1&cat415=1&cat430=1
         { value: 401, name: "大陆电影" },

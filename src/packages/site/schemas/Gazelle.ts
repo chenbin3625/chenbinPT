@@ -260,7 +260,26 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
         attr: "href",
       },
       link: { selector: "a[href*='torrents.php?action=download']:first", attr: "href" },
-      // TODO category: {}
+      category: {
+        selector: "td.cats_col > div[class*='cats_']",
+        attr: "class",
+        filters: [
+          (classes: string) => {
+            const category = classes.match(/(?:^|\s)cats_([\w-]+)(?:\s|$)/)?.[1];
+            if (!category) return "";
+            const categories: Record<string, string> = {
+              music: "Music",
+              applications: "Applications",
+              ebooks: "E-Books",
+              audiobooks: "Audiobooks",
+              elearningvideos: "E-Learning Videos",
+              comedy: "Comedy",
+              comics: "Comics",
+            };
+            return Object.hasOwn(categories, category) ? categories[category] : category;
+          },
+        ],
+      },
       time: baseTimeSelector,
       progress: { text: 0 },
       status: { text: ETorrentStatus.unknown },

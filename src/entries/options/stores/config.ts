@@ -377,7 +377,6 @@ export const useConfigStore = defineStore("config", {
 
     backup: {
       encryptionKey: "",
-      enabledAutoBackup: false,
     },
 
     socialSiteInformation: {

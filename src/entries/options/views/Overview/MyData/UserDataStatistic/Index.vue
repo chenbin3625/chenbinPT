@@ -580,6 +580,7 @@ function goToSiteSettings() {
               <a-button
                 v-for="day in [7, 30, 60, 90, 180]"
                 :key="day"
+                :type="configStore.userStatisticControl.dateRange === day ? 'primary' : 'default'"
                 @click="
                   () => {
                     selectedDateRanges = setSubDate(day);
@@ -589,33 +590,35 @@ function goToSiteSettings() {
               >
                 {{ t("UserDataStatistic.dateRange.day", [day]) }}
               </a-button>
-              <a-button>
-                {{ t("UserDataStatistic.dateRange.custom") }}
-                <a-popover placement="bottom" trigger="click">
-                  <template #content>
-                    <a-range-picker
-                      :value="[dayjs(selectedDateRanges[0]), dayjs(selectedDateRanges.at(-1))]"
-                      :disabled-date="
-                        (date: any) =>
-                          date.isBefore(dayjs(allDateRanges.at(0)), 'day') ||
-                          date.isAfter(dayjs(allDateRanges.at(-1)), 'day')
-                      "
-                      @change="
-                        (values: any) => {
-                          // 清空日期时 antd 会传 null，不判空会抛 TypeError
-                          if (!values) return;
-                          const [start, end] = values.map((v: any) => v.toDate());
-                          selectedDateRanges = eachDayOfInterval({ start, end }).map((x) =>
-                            formatDate(x, 'yyyy-MM-dd'),
-                          ) as string[];
-                          configStore.userStatisticControl.dateRange = 'custom';
-                        }
-                      "
-                    />
-                  </template>
-                </a-popover>
-              </a-button>
+              <!-- 触发器必须是 popover 的默认插槽子节点；原先 a-popover 写在按钮内部，没有可点击的触发器 -->
+              <a-popover placement="bottom" trigger="click">
+                <template #content>
+                  <a-range-picker
+                    :value="[dayjs(selectedDateRanges[0]), dayjs(selectedDateRanges.at(-1))]"
+                    :disabled-date="
+                      (date: any) =>
+                        date.isBefore(dayjs(allDateRanges.at(0)), 'day') ||
+                        date.isAfter(dayjs(allDateRanges.at(-1)), 'day')
+                    "
+                    @change="
+                      (values: any) => {
+                        // 清空日期时 antd 会传 null，不判空会抛 TypeError
+                        if (!values) return;
+                        const [start, end] = values.map((v: any) => v.toDate());
+                        selectedDateRanges = eachDayOfInterval({ start, end }).map((x) =>
+                          formatDate(x, 'yyyy-MM-dd'),
+                        ) as string[];
+                        configStore.userStatisticControl.dateRange = 'custom';
+                      }
+                    "
+                  />
+                </template>
+                <a-button :type="configStore.userStatisticControl.dateRange === 'custom' ? 'primary' : 'default'">
+                  {{ t("UserDataStatistic.dateRange.custom") }}
+                </a-button>
+              </a-popover>
               <a-button
+                :type="configStore.userStatisticControl.dateRange === 'all' ? 'primary' : 'default'"
                 @click="
                   () => {
                     selectedDateRanges = allDateRanges;
