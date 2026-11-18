@@ -52,12 +52,15 @@
     "test:browser": "node tests/entries/content-script/advanceListDialog.browser.mjs",
     "verify": "npm run check && npm run check:node && npm run lint && npm run check:antd && npm test && npm run test:legacy",
     "build:dist": "wxt build",
+    "prebuild:dist": "node scripts/check-picomatch.cjs",
+    "prebuild:dist-firefox": "node scripts/check-picomatch.cjs",
+    "test:security": "node scripts/check-picomatch.cjs",
     "build:dist-firefox": "wxt build -b firefox",
     "pack:crx": "node scripts/pack-crx.mjs",
     "pack:crx:build": "npm run verify && node scripts/pack-crx.mjs --build && npm run test:e2e && npm run check:bundle",
     "action:upload_telegram": "tsx vite/sendToTgChannel.ts",
     "prepare": "husky",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package --error-on-fail"
   },
   "engines": {
     "node": ">=24",
@@ -107,7 +110,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-vue": "^10.11.1",
     "globals": "^17.13.0",
-    "happy-dom": "^20.14.5",
+    "happy-dom": "^21.0.4",
     "husky": "^9.1.7",
     "jszip": "^3.10.2",
     "lint-staged": "^17.6.0",
@@ -118,9 +121,9 @@
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.0",
-    "vite": "^8.3.2",
+    "vite": "^8.3.8",
     "vitest": "^5.0.3",
-    "vue-tsc": "^3.3.11",
+    "vue-tsc": "3.3.12",
     "wxt": "^0.21.4"
   },
   "allowScripts": {
