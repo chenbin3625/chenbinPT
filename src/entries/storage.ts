@@ -82,7 +82,7 @@ export function restrictStorageLocalAccessToTrustedContexts(): void {
       warnedAboutMissingSetAccessLevel = true;
       // eslint-disable-next-line no-console
       console.warn(
-        "[PTD] chrome.storage.local.setAccessLevel is unavailable in this browser: content scripts can read extension local storage (credential protection degraded). See README.md#安全说明.",
+        "[PTD] chrome.storage.local.setAccessLevel is unavailable in this browser: content scripts can read extension local storage (credential protection degraded). See SECURITY.md#存储访问级别.",
       );
     }
   } catch (e) {
