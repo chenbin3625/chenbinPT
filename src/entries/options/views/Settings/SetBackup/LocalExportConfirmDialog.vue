@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, watch, computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { CheckOutlined, ClearOutlined } from "@ant-design/icons-vue";
 
 import { BackupFields, TBackupFields } from "@/shared/types.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -16,6 +17,30 @@ const configStore = useConfigStore();
 
 const backupFields = ref<TBackupFields[]>([]);
 const isExporting = ref(false);
+const LOCAL_EXPORT_FIELDS_KEY = "ptd.backup.localExportFields";
+
+function getInitialBackupFields(): TBackupFields[] {
+  try {
+    const stored = globalThis.localStorage?.getItem(LOCAL_EXPORT_FIELDS_KEY);
+    if (stored !== null) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((field): field is TBackupFields => BackupFields.includes(field));
+      }
+    }
+  } catch {
+    // 存储不可用或内容损坏时回到全量导出，不影响正常导出流程。
+  }
+  return [...BackupFields];
+}
+
+function persistBackupFields(fields: TBackupFields[]) {
+  try {
+    globalThis.localStorage?.setItem(LOCAL_EXPORT_FIELDS_KEY, JSON.stringify(fields));
+  } catch {
+    // 仅保存界面偏好失败时不应阻断备份。
+  }
+}
 
 /**
  * H-2：本地导出在库侧是允许明文的（fail-closed 只针对远端存储），因此这里**不**拦截导出；
@@ -58,8 +83,18 @@ async function doLocalExport() {
 }
 
 function dialogEnter() {
+  backupFields.value = getInitialBackupFields();
+}
+
+function selectAllBackupFields() {
   backupFields.value = [...BackupFields];
 }
+
+function clearBackupFields() {
+  backupFields.value = [];
+}
+
+watch(backupFields, (fields) => persistBackupFields(fields), { deep: true });
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
 // immediate：OPTIONSSETTINGS-3 给确定按钮加了「一项都不勾选就禁用」的守卫，若挂载时弹窗已经是打开状态
@@ -105,6 +140,21 @@ watch(
       type="warning"
       :message="t('SetBackup.LocalExportConfirmDialog.plaintextWarning')"
     />
+    <a-flex align="center" justify="space-between" style="margin-bottom: 8px" wrap>
+      <a-typography-text type="secondary">{{
+        t("SetBackup.LocalExportConfirmDialog.selectionHint")
+      }}</a-typography-text>
+      <a-space :size="4">
+        <a-button size="small" type="link" @click="selectAllBackupFields">
+          <template #icon><CheckOutlined /></template>
+          {{ t("common.checkbox.all") }}
+        </a-button>
+        <a-button size="small" type="link" @click="clearBackupFields">
+          <template #icon><ClearOutlined /></template>
+          {{ t("common.checkbox.none") }}
+        </a-button>
+      </a-space>
+    </a-flex>
     <a-checkbox-group v-model:value="backupFields" style="width: 100%">
       <a-row :gutter="[0, 8]">
         <a-col v-for="backupField in BackupFields" :key="backupField" :md="12" :xs="24">

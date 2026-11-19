@@ -109,6 +109,8 @@ describe("RestoreDialog 异步解析身份", () => {
       await nextTick();
       await view.settle();
       const input = document.body.querySelector<HTMLInputElement>('input[type="file"]')!;
+      expect(document.querySelector(".ptd-restore-upload")).not.toBeNull();
+      expect(input.accept).toContain(".zip");
       for (const name of ["first.zip", "second.zip"]) {
         Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], name)] });
         input.dispatchEvent(new Event("change", { bubbles: true }));

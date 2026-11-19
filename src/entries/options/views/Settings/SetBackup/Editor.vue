@@ -86,6 +86,7 @@ function createDefaultRetention(): IBackupRetention {
 }
 
 const retentionDraft = ref<IBackupRetention>(createDefaultRetention());
+const advancedBackupConfigOpen = ref<string[]>([]);
 
 /** 判断一份保留策略中是否真的有已启用的规则，没有则需要将其置空以保持一致 */
 function hasEnabledRetentionRule(value: IBackupRetention): boolean {
@@ -145,6 +146,15 @@ watch(
     }
   },
   { immediate: true },
+);
+
+watch(
+  clientConfig,
+  (config) => {
+    advancedBackupConfigOpen.value =
+      config && ((config.backupInterval ?? 0) > 0 || hasBackupRetentionToApply(config.retention)) ? ["advanced"] : [];
+  },
+  { immediate: true, deep: false },
 );
 
 watch(
@@ -435,127 +445,129 @@ async function checkConnect() {
           />
         </div>
 
-        <a-divider class="ptd-editor-divider--section" />
-
-        <!-- 自动备份间隔 -->
-        <div>
-          <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.backupInterval") }}</a-typography-text>
-          <!-- 子标题已说明用途，此处标签仅表示单位，避免与子标题重复 -->
-          <a-form-item
-            :extra="t('SetBackup.Editor.backupIntervalHint')"
-            :label="t('SetBackup.Editor.backupIntervalField')"
-          >
-            <a-input-number
-              v-model:value="clientConfig.backupInterval"
-              addon-after="h"
-              :min="0"
-              class="ptd-editor-full-width"
-            />
-          </a-form-item>
-        </div>
-
-        <a-divider class="ptd-editor-divider--section" />
-
-        <!-- 备份保留策略：设置项直接内联展示，不再单独弹出对话框 -->
-        <div>
-          <a-flex align="center" :gap="8" wrap>
-            <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.retention") }}</a-typography-text>
-            <!-- 仅在启用了保留策略时展示摘要，避免未启用时出现无意义的提示文字 -->
-            <a-typography-text v-if="hasRetention" type="secondary">{{ retentionSummary }}</a-typography-text>
-            <a-button
-              v-if="hasRetention"
-              danger
-              :title="t('SetBackup.Editor.clearRetention')"
-              type="text"
-              @click="clearRetention"
-            >
-              <template #icon><FilterOutlined /></template>
-            </a-button>
-          </a-flex>
-
-          <a-typography-text class="ptd-editor-note" type="secondary">
-            {{ t("SetBackup.RetentionDialog.tip") }}
-          </a-typography-text>
-
-          <div class="retention-group ptd-editor-padded">
-            <!-- 按时间期限保留 -->
-            <div class="retention-row">
-              <a-switch v-model:checked="retentionDraft.time!.enabled" />
-              <a-typography-text>{{ t("SetBackup.RetentionDialog.time.title") }}</a-typography-text>
-              <div class="retention-field">
-                <a-input-number
-                  v-model:value="retentionDraft.time!.maxAge"
-                  :addon-after="t('SetBackup.RetentionDialog.daySuffix')"
-                  :disabled="!retentionDraft.time!.enabled"
-                  :min="1"
-                  class="ptd-editor-full-width"
-                />
-              </div>
-            </div>
-
-            <a-divider class="ptd-editor-divider--tight" />
-
-            <!-- 按数量保留 -->
-            <div class="retention-row">
-              <a-switch v-model:checked="retentionDraft.count!.enabled" />
-              <a-typography-text>{{ t("SetBackup.RetentionDialog.count.title") }}</a-typography-text>
-              <div class="retention-field">
-                <a-input-number
-                  v-model:value="retentionDraft.count!.maxCount"
-                  :addon-after="t('SetBackup.RetentionDialog.countSuffix')"
-                  :disabled="!retentionDraft.count!.enabled"
-                  :min="1"
-                  class="ptd-editor-full-width"
-                />
-              </div>
-            </div>
-
-            <a-divider class="ptd-editor-divider--tight" />
-
-            <!-- 按时间窗口采样保留 -->
+        <a-collapse v-model:active-key="advancedBackupConfigOpen" class="ptd-editor-advanced">
+          <a-collapse-panel key="advanced" :header="t('common.advancedSettings')">
+            <!-- 自动备份间隔 -->
             <div>
-              <div class="retention-row">
-                <a-switch v-model:checked="retentionDraft.sample!.enabled" />
-                <a-typography-text>{{ t("SetBackup.RetentionDialog.sample.title") }}</a-typography-text>
-              </div>
+              <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.backupInterval") }}</a-typography-text>
+              <!-- 子标题已说明用途，此处标签仅表示单位，避免与子标题重复 -->
+              <a-form-item
+                :extra="t('SetBackup.Editor.backupIntervalHint')"
+                :label="t('SetBackup.Editor.backupIntervalField')"
+              >
+                <a-input-number
+                  v-model:value="clientConfig.backupInterval"
+                  addon-after="h"
+                  :min="0"
+                  class="ptd-editor-full-width"
+                />
+              </a-form-item>
+            </div>
+
+            <a-divider class="ptd-editor-divider--section" />
+
+            <!-- 备份保留策略：设置项直接内联展示，不再单独弹出对话框 -->
+            <div>
+              <a-flex align="center" :gap="8" wrap>
+                <a-typography-text strong type="secondary">{{ t("SetBackup.Editor.retention") }}</a-typography-text>
+                <!-- 仅在启用了保留策略时展示摘要，避免未启用时出现无意义的提示文字 -->
+                <a-typography-text v-if="hasRetention" type="secondary">{{ retentionSummary }}</a-typography-text>
+                <a-button
+                  v-if="hasRetention"
+                  danger
+                  :title="t('SetBackup.Editor.clearRetention')"
+                  type="text"
+                  @click="clearRetention"
+                >
+                  <template #icon><FilterOutlined /></template>
+                </a-button>
+              </a-flex>
+
               <a-typography-text class="ptd-editor-note" type="secondary">
-                {{ t("SetBackup.RetentionDialog.sample.hint") }}
+                {{ t("SetBackup.RetentionDialog.tip") }}
               </a-typography-text>
 
-              <!-- 采样规则：窗口名称 / 保留窗口数 / 窗口宽度（天） -->
-              <a-table
-                :columns="retentionSampleColumns"
-                :data-source="retentionSampleRows"
-                :pagination="false"
-                size="small"
-                :style="{ opacity: retentionDraft.sample!.enabled ? 1 : 0.5 }"
-              >
-                <template #bodyCell="{ column, record }">
-                  <template v-if="column.key === 'type'">
-                    <span class="ptd-editor-nowrap">
-                      {{ t(`SetBackup.RetentionDialog.sample.type.${record.type}`) }}
-                    </span>
-                  </template>
-                  <template v-else-if="column.key === 'horizon'">
+              <div class="retention-group ptd-editor-padded">
+                <!-- 按时间期限保留 -->
+                <div class="retention-row">
+                  <a-switch v-model:checked="retentionDraft.time!.enabled" />
+                  <a-typography-text>{{ t("SetBackup.RetentionDialog.time.title") }}</a-typography-text>
+                  <div class="retention-field">
                     <a-input-number
-                      v-model:value="record.rule.horizon"
-                      :disabled="!retentionDraft.sample!.enabled"
-                      :min="0"
-                    />
-                  </template>
-                  <template v-else-if="column.key === 'interval'">
-                    <a-input-number
-                      v-model:value="record.rule.interval"
+                      v-model:value="retentionDraft.time!.maxAge"
                       :addon-after="t('SetBackup.RetentionDialog.daySuffix')"
-                      :disabled="!retentionDraft.sample!.enabled"
-                      :min="0"
+                      :disabled="!retentionDraft.time!.enabled"
+                      :min="1"
+                      class="ptd-editor-full-width"
                     />
-                  </template>
-                </template>
-              </a-table>
+                  </div>
+                </div>
+
+                <a-divider class="ptd-editor-divider--tight" />
+
+                <!-- 按数量保留 -->
+                <div class="retention-row">
+                  <a-switch v-model:checked="retentionDraft.count!.enabled" />
+                  <a-typography-text>{{ t("SetBackup.RetentionDialog.count.title") }}</a-typography-text>
+                  <div class="retention-field">
+                    <a-input-number
+                      v-model:value="retentionDraft.count!.maxCount"
+                      :addon-after="t('SetBackup.RetentionDialog.countSuffix')"
+                      :disabled="!retentionDraft.count!.enabled"
+                      :min="1"
+                      class="ptd-editor-full-width"
+                    />
+                  </div>
+                </div>
+
+                <a-divider class="ptd-editor-divider--tight" />
+
+                <!-- 按时间窗口采样保留 -->
+                <div>
+                  <div class="retention-row">
+                    <a-switch v-model:checked="retentionDraft.sample!.enabled" />
+                    <a-typography-text>{{ t("SetBackup.RetentionDialog.sample.title") }}</a-typography-text>
+                  </div>
+                  <a-typography-text class="ptd-editor-note" type="secondary">
+                    {{ t("SetBackup.RetentionDialog.sample.hint") }}
+                  </a-typography-text>
+
+                  <!-- 采样规则：窗口名称 / 保留窗口数 / 窗口宽度（天） -->
+                  <a-table
+                    :columns="retentionSampleColumns"
+                    :data-source="retentionSampleRows"
+                    :pagination="false"
+                    size="small"
+                    :style="{ opacity: retentionDraft.sample!.enabled ? 1 : 0.5 }"
+                  >
+                    <template #bodyCell="{ column, record }">
+                      <template v-if="column.key === 'type'">
+                        <span class="ptd-editor-nowrap">
+                          {{ t(`SetBackup.RetentionDialog.sample.type.${record.type}`) }}
+                        </span>
+                      </template>
+                      <template v-else-if="column.key === 'horizon'">
+                        <a-input-number
+                          v-model:value="record.rule.horizon"
+                          :disabled="!retentionDraft.sample!.enabled"
+                          :min="0"
+                        />
+                      </template>
+                      <template v-else-if="column.key === 'interval'">
+                        <a-input-number
+                          v-model:value="record.rule.interval"
+                          :addon-after="t('SetBackup.RetentionDialog.daySuffix')"
+                          :disabled="!retentionDraft.sample!.enabled"
+                          :min="0"
+                        />
+                      </template>
+                    </template>
+                  </a-table>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </a-collapse-panel>
+        </a-collapse>
 
         <!-- 「测试连接」只负责连通性提示；保存门禁由上面的 formValid 持续驱动 -->
         <ConnectCheckButton :check-fn="checkConnect" :reset-timeout="3e3" />
@@ -605,6 +617,10 @@ async function checkConnect() {
 
 .ptd-editor-note {
   display: block;
+}
+
+.ptd-editor-advanced {
+  margin-top: 12px;
 }
 
 .ptd-editor-padded {

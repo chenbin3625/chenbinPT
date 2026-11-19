@@ -16,6 +16,7 @@ const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 
 afterEach(() => {
   sendMessageMock.mockReset();
+  localStorage.removeItem("ptd.backup.localExportFields");
   document.body.innerHTML = "";
 });
 
@@ -100,5 +101,38 @@ describe("SetBackup 本地导出确认弹窗（L-11）", () => {
     } finally {
       view.unmount();
     }
+  });
+
+  it("记住上次选择，并提供全选/全不选快捷操作", async () => {
+    const first = mountDialog(prepareOptionsPinia());
+    await first.view.settle();
+
+    const buttons = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>(".ant-modal-body button.ant-btn-link"));
+    const noneButton = buttons().find((button) =>
+      button.textContent?.includes(i18nInstance.global.t("common.checkbox.none")),
+    );
+    const allButton = buttons().find((button) =>
+      button.textContent?.includes(i18nInstance.global.t("common.checkbox.all")),
+    );
+    expect(noneButton).toBeDefined();
+    expect(allButton).toBeDefined();
+
+    noneButton!.click();
+    await first.view.settle();
+    expect(document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!.disabled).toBe(true);
+    first.view.unmount();
+
+    const second = mountDialog(prepareOptionsPinia());
+    await second.view.settle();
+    expect(document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!.disabled).toBe(true);
+
+    const secondAllButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".ant-modal-body button.ant-btn-link"),
+    ).find((button) => button.textContent?.includes(i18nInstance.global.t("common.checkbox.all")));
+    secondAllButton!.click();
+    await second.view.settle();
+    expect(document.querySelector<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary")!.disabled).toBe(false);
+    second.view.unmount();
   });
 });

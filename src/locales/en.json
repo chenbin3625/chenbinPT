@@ -754,6 +754,7 @@
       "title": "Backup History for {name}"
     },
     "LocalExportConfirmDialog": {
+      "selectionHint": "Your selection will be reused next time",
       "title": "Select content to export locally",
       "plaintextWarning": "No encryption key set: this export is plaintext (including the selected sensitive fields). Keep the file safe."
     },
@@ -764,6 +765,8 @@
       "keepExistUserInfo": "Keep locally fetched user information",
       "loadFailure": "Load failed: {error}",
       "missingVersion": "Backup data is missing version info, cannot restore",
+      "availableFields": "{count} restorable item(s) in this backup",
+      "dropHint": "ZIP files are supported; you can also drop one here",
       "partialFailure": "Restore finished with errors: some content was not restored, please check the backup data",
       "ptppImport": "PT-Plugin-Plus Backup Import",
       "ptppPrompt": "Need to import PT-Plugin-Plus backup?",

@@ -754,6 +754,7 @@
       "title": "{name} 的历史备份"
     },
     "LocalExportConfirmDialog": {
+      "selectionHint": "下次打开时沿用本次选择",
       "title": "请选择本地需要导出的内容",
       "plaintextWarning": "未设置加密密钥：本次导出的文件为明文（含所选敏感字段），请妥善保管。"
     },
@@ -764,6 +765,8 @@
       "keepExistUserInfo": "保留本地已获取过的用户信息",
       "loadFailure": "加载失败: {error}",
       "missingVersion": "备份数据缺少版本信息，无法恢复",
+      "availableFields": "备份中可恢复 {count} 项",
+      "dropHint": "支持 ZIP 文件，也可以直接拖入此处",
       "partialFailure": "恢复过程中出现错误：部分内容未能恢复，请检查备份数据",
       "ptppImport": "PT-Plugin-Plus 备份导入",
       "ptppPrompt": "需要导入 PT-Plugin-Plus 备份？",

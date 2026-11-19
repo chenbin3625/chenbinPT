@@ -2,7 +2,15 @@
 import { useI18n } from "vue-i18n";
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { Modal } from "ant-design-vue";
-import { EyeInvisibleOutlined, EyeOutlined, SyncOutlined, UploadOutlined } from "@ant-design/icons-vue";
+import {
+  CheckOutlined,
+  ClearOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
+  InboxOutlined,
+  SyncOutlined,
+  UploadOutlined,
+} from "@ant-design/icons-vue";
 import { isEmpty } from "es-toolkit/compat";
 import { zipBlobToBackupData, getBackupWarnings } from "@ptd/backupServer/utils.ts";
 import type { IBackupData } from "@ptd/backupServer";
@@ -58,6 +66,9 @@ const restoreSecurity = computed(() => analyzeRestoreSecurity(restoreData.value,
  * 这里用同一条件禁用确定按钮，从源头掐掉这条静默成功路径（offscreen 侧的返回值问题见 notes）。
  */
 const canRestore = computed(() => (restoreOptions.value.fields?.length ?? 0) > 0);
+const availableRestoreFields = computed(() =>
+  BackupFields.filter((field) => Boolean(restoreData.value?.manifest?.files?.[field])),
+);
 
 /** 解析备份文件时被丢弃的条目（形状不符等），由 packages/backupServer/utils.ts 在解析阶段记录 */
 const backupParseWarnings = computed(() => getBackupWarnings(restoreData.value ?? {}));
@@ -74,6 +85,14 @@ function buildBackupOptions() {
     restoreBackupServers: false,
   };
   currentStep.value = "restore";
+}
+
+function selectAllRestoreFields() {
+  restoreOptions.value.fields = [...availableRestoreFields.value];
+}
+
+function clearRestoreFields() {
+  restoreOptions.value.fields = [];
 }
 
 /**
@@ -300,19 +319,18 @@ watch(restoreMetadataKey, () => {
 
     <a-form layout="vertical">
       <div v-show="currentStep === 'file'">
-        <a-upload
-          accept="application/zip"
-          class="ptd-restore-upload"
+        <a-upload-dragger
+          accept=".zip,application/zip,application/x-zip-compressed"
           :before-upload="beforeLoadLocalBackupFile"
           :file-list="[]"
           :max-count="1"
-          :show-upload-list="true"
+          :show-upload-list="false"
+          class="ptd-restore-upload"
         >
-          <a-button>
-            <template #icon><UploadOutlined /></template>
-            {{ t("SetBackup.RestoreDialog.selectFile") }}
-          </a-button>
-        </a-upload>
+          <p class="ant-upload-drag-icon"><InboxOutlined /></p>
+          <p class="ant-upload-text">{{ t("SetBackup.RestoreDialog.selectFile") }}</p>
+          <p class="ant-upload-hint">{{ t("SetBackup.RestoreDialog.dropHint") }}</p>
+        </a-upload-dragger>
         <a-form-item :label="t('SetBackup.RestoreDialog.decryptKey')" style="margin-top: 8px">
           <a-input
             v-model:value="decryptKey"
@@ -395,6 +413,21 @@ watch(restoreMetadataKey, () => {
         </a-alert>
 
         <a-typography-text strong>{{ t("SetBackup.RestoreDialog.restoreOptions") }}</a-typography-text>
+        <a-flex align="center" justify="space-between" style="margin-top: 8px" wrap>
+          <a-typography-text type="secondary">
+            {{ t("SetBackup.RestoreDialog.availableFields", { count: availableRestoreFields.length }) }}
+          </a-typography-text>
+          <a-space :size="4">
+            <a-button size="small" type="link" @click="selectAllRestoreFields">
+              <template #icon><CheckOutlined /></template>
+              {{ t("common.checkbox.all") }}
+            </a-button>
+            <a-button size="small" type="link" @click="clearRestoreFields">
+              <template #icon><ClearOutlined /></template>
+              {{ t("common.checkbox.none") }}
+            </a-button>
+          </a-space>
+        </a-flex>
         <a-checkbox-group v-model:value="restoreOptions.fields" style="width: 100%">
           <a-row :gutter="[0, 8]">
             <a-col v-for="backupField in BackupFields" :key="backupField" :md="8" :xs="24">
@@ -404,7 +437,6 @@ watch(restoreMetadataKey, () => {
             </a-col>
           </a-row>
         </a-checkbox-group>
-
         <a-form-item :label="t('SetBackup.RestoreDialog.expandCookieMinutes')" style="margin-top: 12px">
           <a-input-number
             v-model:value="restoreOptions.expandCookieMinutes"
@@ -490,14 +522,8 @@ watch(restoreMetadataKey, () => {
 </template>
 
 <style lang="scss" scoped>
-/*
- * 与搜索方案页同一个根因：antd 4 的 .ant-upload-wrapper 是行内 span，包住 28px 的
- * .ant-upload-select 按钮后自身只有字体行高（实测约 15px）。恢复对话框里的上传入口
- * 处于普通块级流（不在 flex 工具条内），不会像 flex item 那样被 blockify，
- * 因此必须显式改成 inline-flex 才能与按钮同高。antd 没有对应 prop。
- */
+/* 拖拽上传区域处于普通块级流中，显式撑满可点击宽度。antd 没有对应 prop。 */
 .ptd-restore-upload {
-  display: inline-flex;
-  align-items: center;
+  display: block;
 }
 </style>
