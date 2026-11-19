@@ -51,6 +51,8 @@ describe("表格超长字段悬停提示", () => {
     const source = readFileSync(resolve(process.cwd(), "src/entries/options/components/TorrentTitleTd.vue"), "utf8");
 
     expect(source).toContain("<a-tooltip");
-    expect(source).toContain(':title="item.title');
+    // 标题展示方式改造后，提示内容由 titleText 计算属性提供（依次回退 title / url / link）
+    expect(source).toContain(':title="titleText"');
+    expect(source).toMatch(/const titleText = computed\(\(\) => item\.title \?\? item\.url \?\? item\.link/);
   });
 });

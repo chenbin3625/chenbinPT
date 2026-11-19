@@ -413,7 +413,10 @@
       "limitLevelNameTdWidth": "限制等级栏宽度",
       "multiOpen": "批量打开",
       "noRefreshTarget": "当前没有可刷新的站点",
+      "noSiteSelectedCancelOpen": "当前没有可打开的站点",
       "noSiteSelectedCancelRefresh": "未选择任何站点，取消刷新",
+      "noSiteSelectedOpenAll": "未选择任何站点，默认打开全部站点",
+      "noSiteSelectedOpenFiltered": "未选择任何站点，默认打开当前筛选结果中的 {0} 个站点",
       "noSiteSelectedRefreshAll": "未选择任何站点，默认刷新全部站点",
       "normalizeLevelName": "使用站点定义的等级名称",
       "onlyShowUserLevelRequirement": "只显示等级要求中的升级队列",
@@ -613,6 +616,7 @@
       "selectedTorrents": "已选择 {0} 个种子",
       "showSiteName": "显示站点名称",
       "showSocialInformation": "显示媒体评价信息",
+      "showTorrentCover": "显示种子封面",
       "showTorrentSubtitle": "显示种子副标题",
       "showTorrentTag": "显示种子标签",
       "socialInformationSearchOnNewTab": "媒体评价信息搜索在新标签页中打开",
@@ -639,6 +643,12 @@
         "uploadTimes": "上传量 ×{0}"
       },
       "totalSize": "总大小 {0}",
+      "titleDisplayMode": "种子标题显示方式",
+      "titleDisplayModeOptions": {
+        "end": "末端省略",
+        "middle": "中间省略",
+        "scroll": "滚动"
+      },
       "uploadAtFormatAsAlive": "上传时间显示为相对时间"
     },
     "siteFilter": {
@@ -880,6 +890,7 @@
       "autoDetectOfficialGroupFromTitle": "自动识别种子标题中的官方组信息，并形成标签",
       "autoLoadInitialMediaWall": "自动加载首屏媒体墙",
       "autoLoadMoreMediaOnScroll": "当滚动到页面底部时，自动加载新的媒体墙",
+      "displayLabel": "标题显示",
       "filterLabel": "结果筛选",
       "forceImdbIdMatchFilter": "使用 IMDb 搜索时，在搜索结果中滤去站点返回的IMDb号不匹配的结果",
       "hiddenTagNames": "隐藏标签（每行一个）",
@@ -905,6 +916,13 @@
       "siteSearchConfig": "站点搜索配置",
       "tagClickToFilter": "点击种子标签快速筛选搜索结果",
       "tagLabel": "标签筛选",
+      "titleDisplayMode": "种子标题显示方式",
+      "titleDisplayModeMessage": "「末端省略」保持单行，超出部分在末尾以 … 收尾；「中间省略」保留标题开头与结尾（可直接看到小组等后缀），中间以 … 省略；「滚动」在标题放不下时默认隐藏超出部分，鼠标悬停时按标题长度往返滚动（2–5 秒完成一次）。",
+      "titleDisplayModeOptions": {
+        "end": "末端省略",
+        "middle": "中间省略",
+        "scroll": "滚动"
+      },
       "treatTTQueryAsImdbSearch": "是否将 tt\\d\\{7,8\\} 的搜索词直接视为 IMDb 搜索"
     },
     "tab": {
@@ -1175,6 +1193,9 @@
       "addCount": "已添加 @:SetSearchSolution.solution {0} 个",
       "cantAddByDuplicateNote": "已存在相同的 @:SetSearchSolution.solution ，无法重复添加。",
       "filterPlaceholder": "通过站点名称或 url 进行搜索",
+      "noMatchInFilteredSolutions": "当前筛选条件下没有匹配的已添加方案",
+      "siteAddedCount": "当前方案中该站点已添加 {0} 个搜索方案",
+      "sortByAddedCount": "按已添加次数排序（点击循环：升序 → 降序 → 默认）",
       "title": "自定义 @:SetSearchSolution.solution"
     },
     "newSolutionNamePrompt": "请输入新搜索方案名称",

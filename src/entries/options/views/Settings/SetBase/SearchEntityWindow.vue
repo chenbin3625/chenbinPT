@@ -42,6 +42,12 @@ const promotionDisplayOptions = computed(() => [
   { label: t("SetBase.searchEntity.promotionDisplayOptions.none"), value: "none" },
 ]);
 
+const titleDisplayModeOptions = computed(() => [
+  { label: t("SetBase.searchEntity.titleDisplayModeOptions.end"), value: "end" },
+  { label: t("SetBase.searchEntity.titleDisplayModeOptions.middle"), value: "middle" },
+  { label: t("SetBase.searchEntity.titleDisplayModeOptions.scroll"), value: "scroll" },
+]);
+
 const hiddenTagNamesText = computed({
   get: () => config.value.searchEntifyControl.hiddenTagNames.join("\n"),
   // 不在每次输入时 trim/过滤空行：那样用户一按回车，新行就被吞掉，无法录入第二条标签。
@@ -107,6 +113,24 @@ const hiddenTagNamesText = computed({
         <div class="ptd-settings-row">
           <a-typography-text>{{ t("SetBase.searchEntity.forceImdbIdMatchFilter") }}</a-typography-text>
           <a-switch v-model:checked="config.searchEntity.forceImdbIdMatchFilter" />
+        </div>
+      </div>
+
+      <div class="ptd-setting-group">
+        <div class="ptd-setting-group__title">{{ t("SetBase.searchEntity.displayLabel") }}</div>
+
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.searchEntity.titleDisplayMode") }}</a-typography-text>
+          <a-select
+            v-model:value="config.searchEntifyControl.titleDisplayMode"
+            :options="titleDisplayModeOptions"
+            style="width: min(100%, 420px)"
+          />
+        </div>
+        <div style="text-align: end">
+          <a-typography-text type="secondary">{{
+            t("SetBase.searchEntity.titleDisplayModeMessage")
+          }}</a-typography-text>
         </div>
       </div>
 

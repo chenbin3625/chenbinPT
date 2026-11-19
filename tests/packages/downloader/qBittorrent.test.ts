@@ -541,3 +541,44 @@ describe("qBittorrent：C1 修复轮", () => {
     ).resolves.toMatchObject({ success: false, message: expect.stringContaining("409") });
   });
 });
+
+/**
+ * qBittorrent 5.3.0（WebAPI 2.16.0）把 torrents/add 的 skip_checking 改名为 seedMode，旧名不再被接受。
+ * 只发旧名时，5.3+ 会静默忽略「跳过哈希校验」，辅种/批量添加都会对已在盘上的数据全量重新校验。
+ */
+describe("qBittorrent ≥5.3：跳过哈希校验同时下发 skip_checking 与 seedMode", () => {
+  beforeEach(() => {
+    axiosMock.request.mockReset();
+    axiosMock.post.mockReset();
+  });
+
+  async function addTorrentAndCaptureForm(advanceAddTorrentOptions: Record<string, any>) {
+    const client = createClient({ username: "", password: "qbt_api_key" });
+    let captured: any;
+    axiosMock.request.mockImplementation(async (config: any) => {
+      captured = config;
+      return { data: "Ok." };
+    });
+
+    await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      addAtPaused: false,
+      advanceAddTorrentOptions,
+    });
+    return captured.data as FormData;
+  }
+
+  it("勾选跳过哈希校验时两个参数都为 true，新旧版本客户端各认自己的那个", async () => {
+    const form = await addTorrentAndCaptureForm({ skip_checking: true });
+
+    expect(form.get("skip_checking")).toBe("true");
+    expect(form.get("seedMode")).toBe("true");
+  });
+
+  it("未勾选跳过哈希校验时不发送 seedMode（其它布尔选项不会带出它）", async () => {
+    const form = await addTorrentAndCaptureForm({ skip_checking: false, sequentialDownload: true });
+
+    expect(form.get("sequentialDownload")).toBe("true");
+    expect(form.has("skip_checking")).toBe(false);
+    expect(form.has("seedMode")).toBe(false);
+  });
+});

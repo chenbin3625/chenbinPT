@@ -23,6 +23,8 @@ import { useRouter } from "vue-router";
 import { isUndefined } from "es-toolkit/compat";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 import { EResultParseStatus, type TSiteID } from "@ptd/site";
+// 轻量索引单独 import：批量打开时同步取站点 URL，避免逐个 await 丢失用户手势
+import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -344,9 +346,30 @@ function viewHistoryData(siteId: TSiteID) {
   historyDataViewDialogSiteId.value = siteId;
 }
 
-async function multiOpen() {
-  for (const siteId of tableSelected.value) {
-    const siteUrl = await metadataStore.getSiteUrl(siteId);
+function multiOpen() {
+  let openSiteIds: TSiteID[] = tableSelected.value;
+
+  // #1663：未勾选站点时，按「是否处于筛选状态」决定打开范围，避免筛选后仍然打开全部站点
+  if (openSiteIds.length === 0) {
+    if (tableFilterRef.value.trim().length > 0) {
+      openSiteIds = filteredTableData.value.map((item) => item.site);
+      if (openSiteIds.length === 0) {
+        runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedCancelOpen"), { color: "warning" });
+        return;
+      }
+      runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedOpenFiltered", [openSiteIds.length]), {
+        color: "info",
+      });
+    } else {
+      openSiteIds = tableData.value.map((item) => item.site);
+      runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedOpenAll"), { color: "info" });
+    }
+  }
+
+  // NOTE: 这里必须同步取 URL，若在循环内 `await`，则第一个 `window.open` 之后用户手势即失效，
+  //       后续标签页会被浏览器拦截（表格数据均已挂载 `siteUserConfig`，无需再走异步查询）
+  for (const siteId of openSiteIds) {
+    const siteUrl = metadataStore.sites[siteId]?.url || siteMetadataIndex[siteId]?.urls?.[0];
     if (siteUrl) {
       window.open(siteUrl, "_blank", "noopener noreferrer");
     }
@@ -412,7 +435,8 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
     key: "open",
     label: t("MyData.index.multiOpen"),
     icon: GlobalOutlined,
-    disabled: tableSelected.value.length === 0,
+    // 未勾选时按筛选结果/全部站点打开（#1663），只要表格有数据就允许点击
+    disabled: tableData.value.length === 0,
   },
   { key: "timeline", label: t("MyData.index.viewTimeline"), icon: FundOutlined },
   { key: "statistic", label: t("MyData.index.viewStatistic"), icon: BarChartOutlined },

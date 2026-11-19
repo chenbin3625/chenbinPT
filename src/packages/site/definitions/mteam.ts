@@ -4,12 +4,13 @@
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/mteam.json
  */
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
-import { set } from "es-toolkit/compat";
+import { get, set } from "es-toolkit/compat";
 import { build as buildDouban } from "@ptd/social/entity/douban.ts";
 import { build as buildImdb } from "@ptd/social/entity/imdb.ts";
 
 import {
   type ILevelRequirement,
+  type IUserInfo,
   ISearchInput,
   ISiteMetadata,
   ITorrent,
@@ -18,6 +19,8 @@ import {
   ETorrentStatus,
   NoUserInputError,
 } from "../types";
+import { definedFilters } from "../utils/filter.ts";
+import { logMessage, siteErrorLogData } from "../utils";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 
 const siteCategory: { value: string; name: string; type: "normal" | "adult" }[] = [
@@ -336,6 +339,7 @@ export const siteMetadata: ISiteMetadata = {
       id: { selector: "id" },
       title: { selector: "name" },
       subTitle: { selector: "smallDescr" },
+      cover: { selector: "imageList.0" },
       url: { selector: "id", filters: [{ name: "prepend", args: ["/detail/"] }] },
       // link: 不返回，在 class 中单独构造
       time: { selector: "createdDate", filters: [{ name: "parseTime" }] },
@@ -392,10 +396,19 @@ export const siteMetadata: ISiteMetadata = {
       },
       {
         requestConfig: { url: "/api/tracker/myPeerStatistics", method: "POST", responseType: "json" },
+        // 接口文档声明 uid 必填（不传时服务端虽会回落到当前 Key 对应用户，但显式传入更稳妥）
+        assertion: { id: "params.uid" },
         selectors: {
           seeding: { selector: "data.seederCount", filters: [{ name: "parseNumber" }] },
-          seedingSize: { selector: "data.seederSize", filters: [{ name: "parseNumber" }] },
           uploads: { selector: "data.uploadCount", filters: [{ name: "parseNumber" }] },
+        },
+      },
+      {
+        // 做种体积：站点网页「保種總體積」使用的就是该接口的 seedingSizeOver72h
+        requestConfig: { url: "/api/member/seedingStats", method: "POST", responseType: "json" },
+        assertion: { id: "params.userid" },
+        selectors: {
+          seedingSize: { selector: "data.seedingSizeOver72h", filters: [{ name: "parseNumber" }] },
         },
       },
       {
@@ -762,6 +775,37 @@ export default class MTeam extends PrivateSite {
 
     torrent.tags = tags;
     return torrent;
+  }
+
+  /**
+   * 做种数。
+   *
+   * `/api/tracker/myPeerStatistics` 的 `seederCount` 对部分账号恒为 0（refs: #1702），
+   * 而站点前端取做种数用的是 `/api/tracker/myPeerStatus` 的 `data.seeder`，
+   * 因此在 tracker statistics 返回 0 时回落到后者。
+   */
+  protected async parseUserInfoForSeeding(userInfo: IUserInfo, dataDocument: any): Promise<IUserInfo> {
+    let seeding = definedFilters.parseNumber(get(dataDocument, "data.seederCount"));
+    if (!seeding) {
+      try {
+        const { data } = await this.request<IMTeamRawResp<{ seeder?: string | number }>>({
+          url: "/api/tracker/myPeerStatus",
+        });
+        if (data?.code === "0" && typeof data.data?.seeder !== "undefined") {
+          seeding = definedFilters.parseNumber(data.data.seeder);
+        }
+      } catch (error) {
+        // fork 的 eslint 禁止直接 console（no-console），走 logMessage 进日志页
+        logMessage(
+          `[Site] ${this.name} failed to fetch myPeerStatus`,
+          { site: this.metadata.id, error: siteErrorLogData(error) },
+          "warn",
+        );
+      }
+    }
+
+    userInfo.seeding = seeding;
+    return userInfo;
   }
 
   /**

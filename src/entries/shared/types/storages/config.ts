@@ -158,6 +158,10 @@ export interface IConfigPiniaStorageSchema {
     promotionDisplay: "tags" | "factor" | "both" | "none";
     // 是否展示种子的副标题信息
     showTorrentSubtitle: boolean;
+    // 是否展示种子自带的封面图片（需要该种子提供 cover 信息）
+    showTorrentCover: boolean;
+    // 种子标题超长时的显示方式：end 末端省略（默认）、middle 中间省略、scroll 滚动
+    titleDisplayMode: "end" | "middle" | "scroll";
     // 是否展示种子额外的媒体评分信息（需要该种子提供 ext_{imdb, douban} 信息）
     showSocialInformation: boolean;
     // 对种子额外的媒体评分信息中 “搜索” 是另开窗口还是当前窗口 （需要 showSocialInformation 为 true 才有实际效果）

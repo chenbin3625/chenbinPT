@@ -84,8 +84,9 @@ describe("DEFS3-5 收尾：tjupt 展开 NexusPHP 共享 tags 再追加本站标�
     const { siteMetadata } = await import("@ptd/site/definitions/tjupt.ts");
     const tags = siteMetadata.search!.selectors!.tags as TTagConfig[];
 
-    expect(tags.some((tag) => tag.name === "Free" && tag.selector === "img.pro_free")).toBe(true);
-    expect(tags.some((tag) => tag.name === "2xFree" && tag.selector === "img.pro_free2up")).toBe(true);
+    // 上游 5cca1fb：共享优惠标签同时认 icon 模式（img.pro_*）与 word 模式（font.*）
+    expect(tags.some((tag) => tag.name === "Free" && tag.selector === "img.pro_free, font.free")).toBe(true);
+    expect(tags.some((tag) => tag.name === "2xFree" && tag.selector === "img.pro_free2up, font.twoupfree")).toBe(true);
     expect(tags.some((tag) => tag.name === "禁转" && tag.selector === ".tag.tag-exclusive")).toBe(true);
     // 共享 tags 里已有 img.hitandrun → H&R，本站不再重复声明（重复会让同一徽标被计入两次）
     expect(tags.filter((tag) => tag.name === "H&R")).toHaveLength(1);
@@ -117,6 +118,8 @@ describe("DEFS3-5 收尾：tjupt 展开 NexusPHP 共享 tags 再追加本站标�
     };
 
     expect(tagNamesFor('<td><img class="pro_free" src="pic/trans.gif"></td>')).toEqual(["Free"]);
+    // word 模式（用户偏好 appendpromotion=word / 详情页）渲染的是 <font class='free'>
+    expect(tagNamesFor("<td><font class='free'>免费</font></td>")).toEqual(["Free"]);
     expect(tagNamesFor('<td><img class="hitandrun" src="pic/trans.gif"></td>')).toEqual(["H&R"]);
     expect(tagNamesFor('<td><span class="tag tag-exclusive">禁转</span></td>')).toEqual(["禁转"]);
   });

@@ -77,10 +77,14 @@ export function buildUserManifest({ target, version, versionName }: IManifestBui
             },
           },
           content_security_policy: {
-            // 显式放行 img-src，否则 Firefox 下站点图标（http 资源）会被 CSP 拦掉（上游 #1657）。
-            // data: 也必须放行：getFavicon 会把图标转成 data URL（失败时回落 NO_IMAGE，同样是 data:image/gif），
-            // 媒体海报（socialRecommendations）也以 data URL 返回；只写 'self' 会让这些图片全部被 CSP 拦截。
-            extension_pages: "script-src 'self'; img-src 'self' data:",
+            // 覆盖默认 CSP 只为去掉 Firefox MV3 自带的 `upgrade-insecure-requests`：它会把扩展页面发出的
+            // http 请求（下载器、媒体服务器）强行升级为 https（上游 #27）。
+            //
+            // 不要在这里声明 `img-src`：扩展页面仍有直接引用远端地址的图片（社交信息卡片的海报、热门推荐里
+            // 非白名单图床透传的 https 海报），写成 `img-src 'self' data:` 会把它们全部拦掉（上游 #1668）。
+            // 不声明 img-src（也没有 default-src）时图片来源不受 CSP 限制，站点图标、媒体服务器海报等 data URL
+            // 照常显示；http 图片能否显示取决于 Firefox 的混合内容升级规则（上游 #1657），CSP 这一层管不了。
+            extension_pages: "script-src 'self';",
           },
         }
       : {}),
