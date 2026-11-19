@@ -138,6 +138,7 @@ const antdGlobalComponents: Record<string, any> = {
   ATypographyText: Typography.Text,
   ATypographyTitle: Typography.Title,
   AUpload: Upload,
+  AUploadDragger: Upload.Dragger,
 };
 
 /**
