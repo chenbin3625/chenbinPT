@@ -2,7 +2,7 @@
  * defs-e3 修复回归（E3 / E3b 站点定义第 3 批）。
  *
  * 断言对象是**真实站点定义 + 真实引擎实现**（不是「源码里存在某字符串」），不发网络请求：
- * - E3-2  hdarea：做种数 / 发布数解析失败时不再写成 0；
+ * - E3-2  hdarea：做种数 / 做种体积 / 发布数解析不到时不再写成 0（14cd599 起取自 REST API v1）；
  * - E3-3  hdroute：行解析失败抛错（而不是返回空对象伪装成功）；
  * - E3-4  hhanclub：seedingBonusPerHour 不再落成 NaN / 字符串；
  * - E3-5  happyfappy：补齐 Scat(14) / AI(15) 分类，删除死配置 advanceKeywordParams.terms；
@@ -95,24 +95,61 @@ describe("E3-11 haidan：找不到 .group_content 祖先时标题为空而不是
 });
 
 describe("E3-2 hdarea：做种/发布数解析不到时不写成 0", () => {
-  it("页面拿不到 data-count 时保留 undefined，拿到时正常解析", async () => {
+  // 上游 14cd599 起用户信息改走 REST API v1（/api/v1/user/profile），不再回落 getusertorrentlistajax.php；
+  // E3-2 的语义随之落在 API 字段上：null / 缺失保持 undefined，真实的 0 照常写入。
+  const profile = (extra: Record<string, unknown>) => ({
+    success: true,
+    data: {
+      id: 42,
+      username: "probe",
+      uploaded: 2 * GiB,
+      downloaded: GiB,
+      share_ratio: 2,
+      seeding_count: 17,
+      seeding_size: 4 * GiB,
+      uploaded_torrents_count: 3,
+      class_name: "User",
+      ...extra,
+    },
+  });
+
+  const fetchUserInfo = async (body: unknown) => {
     const { default: HDArea, siteMetadata } = await import("@ptd/site/definitions/hdarea.ts");
-    const site: any = new HDArea(siteMetadata as any);
+    const site: any = new HDArea(siteMetadata as any, { inputSetting: { apikey: "probe-key" } } as any);
+    site.request = vi.fn(async (config: any) => ({ data: body, config }));
+    site.requestUserSeedingPage = vi.fn(async () => `<div data-count="99"></div>`);
+    const info = await site.getUserInfoResult();
+    return { site, info };
+  };
 
-    site.requestUserSeedingPage = vi.fn().mockResolvedValue(null);
-    const missingSeed = await site.parseUserInfoForSeedingStatus(makeUserInfo({ id: 42 }));
-    expect(missingSeed.seeding).toBeUndefined();
+  it("接口给出做种数 / 做种体积 / 发种数时正常写入，且不再请求网页做种页", async () => {
+    const { site, info } = await fetchUserInfo(profile({}));
+    expect(info.seeding).toBe(17);
+    expect(info.seedingSize).toBe(4 * GiB);
+    expect(info.uploads).toBe(3);
+    expect(site.requestUserSeedingPage).not.toHaveBeenCalled();
+    expect(site.request.mock.calls.map((call: any[]) => call[0].url)).toEqual(["/api/v1/user/profile"]);
+  });
 
-    const missingUploads = await site.parseUserInfoForUploads(makeUserInfo({ id: 42 }));
-    expect(missingUploads.uploads).toBeUndefined();
+  it("字段为 null 或缺失时保留 undefined，而不是写成 0", async () => {
+    for (const extra of [
+      { seeding_count: null, seeding_size: null, uploaded_torrents_count: null },
+      { seeding_count: undefined, seeding_size: undefined, uploaded_torrents_count: undefined },
+    ]) {
+      const { site, info } = await fetchUserInfo(profile(extra));
+      expect(info.seeding).toBeUndefined();
+      expect(info.seedingSize).toBeUndefined();
+      expect(info.uploads).toBeUndefined();
+      expect(info.uploaded).toBe(2 * GiB);
+      expect(site.requestUserSeedingPage).not.toHaveBeenCalled();
+    }
+  });
 
-    site.requestUserSeedingPage = vi.fn().mockResolvedValue(`<div data-count="17"></div>`);
-    const parsed = await site.parseUserInfoForSeedingStatus(makeUserInfo({ id: 42 }));
-    expect(parsed.seeding).toBe(17);
-
-    site.requestUserSeedingPage = vi.fn().mockResolvedValue(`<div data-count='3'></div>`);
-    const parsedUploads = await site.parseUserInfoForUploads(makeUserInfo({ id: 42 }));
-    expect(parsedUploads.uploads).toBe(3);
+  it("接口明确给出 0 时照常写入 0", async () => {
+    const { info } = await fetchUserInfo(profile({ seeding_count: 0, seeding_size: 0, uploaded_torrents_count: 0 }));
+    expect(info.seeding).toBe(0);
+    expect(info.seedingSize).toBe(0);
+    expect(info.uploads).toBe(0);
   });
 });
 

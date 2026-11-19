@@ -510,6 +510,7 @@ export default class GazelleJSONAPI extends GazelleBase {
       completed: torrent.snatches,
       category: group.releaseType || "",
       tags,
+      cover: group.cover || undefined,
     } as ITorrent;
   }
 
