@@ -40,6 +40,8 @@ const emptyDict = () => ({
   seeders: [-Infinity, Infinity],
   leechers: [-Infinity, Infinity],
   completed: [-Infinity, Infinity],
+  downloadVolumeFactor: [-Infinity, Infinity],
+  uploadVolumeFactor: [-Infinity, Infinity],
 });
 
 let Bar: any;
@@ -57,6 +59,9 @@ beforeEach(() => {
   };
   filterMock.state.tableWaitFilterRef.value = "";
   filterMock.state.updateTableFilterValueFn.mockClear();
+  filterMock.state.buildFilterDictFn.mockReset().mockImplementation((value: string) => {
+    if (!value) filterMock.state.advanceFilterDictRef.value = emptyDict();
+  });
 });
 
 describe("搜索结果下拉筛选", () => {
@@ -216,4 +221,28 @@ describe("搜索结果下拉筛选", () => {
     expect(view.$('[data-filter="exclude"]')?.textContent).toContain("cam");
     view.unmount();
   });
+
+  it.each(["time", "downloadVolumeFactor", "uploadVolumeFactor"])(
+    "只有 %s 筛选时也能一键清除，且焦点回到筛选输入框",
+    async (field) => {
+      filterMock.state.advanceFilterDictRef.value[field] = [1, 2];
+      const view = mountOptionsView(Bar, { pinia: prepareOptionsPinia() });
+      try {
+        await view.settle();
+        const clearAll = view.$<HTMLButtonElement>(".search-filter-clear-all");
+        expect(clearAll).not.toBeNull();
+
+        clearAll!.focus();
+        clearAll!.click();
+        await view.settle();
+
+        expect(filterMock.state.advanceFilterDictRef.value[field]).toEqual([-Infinity, Infinity]);
+        expect(filterMock.state.updateTableFilterValueFn).toHaveBeenCalledOnce();
+        expect(view.$(".search-filter-clear-all")).toBeNull();
+        expect(document.activeElement).toBe(view.$('.search-filter-search input[aria-label="过滤搜索结果"]'));
+      } finally {
+        view.unmount();
+      }
+    },
+  );
 });

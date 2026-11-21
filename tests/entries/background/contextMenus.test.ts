@@ -2,7 +2,7 @@
  * 右键菜单「上下文摘要 + 合并式防抖」测试（见 docs/performance-audit.md P1-7）。
  *
  * 本轮重构为了让切标签页不再全量重建菜单，引入了两个回归：
- * - contextKey 只有 `tabHost|siteId|siteName`：只改 `config.contextMenus.*`、下载器、
+ * - contextKey 只有 `siteId|siteName`：只改 `config.contextMenus.*`、下载器、
  *   搜索方案、站点列表时菜单永远不重建；
  * - `chrome.storage.onChanged` 在已有定时器时直接 return：1s 窗口内的后续变更被永久丢弃
  *   （而 lastBuiltContextKey 已被置 null），最后一次变更可能永远不生效。
@@ -75,7 +75,6 @@ const baseConfig = {
 
 function makeInput(overrides: Record<string, unknown> = {}): any {
   return {
-    tabHost: "mteam.example",
     thisTabSiteId: "mteam",
     thisTabSiteName: "M-Team",
     config: baseConfig,
@@ -88,6 +87,12 @@ function makeInput(overrides: Record<string, unknown> = {}): any {
 describe("buildContextMenusContextKey", () => {
   it("相同输入得到相同 key（保证仍能跳过无意义重建）", () => {
     expect(buildContextMenusContextKey(makeInput())).toBe(buildContextMenusContextKey(makeInput()));
+  });
+
+  it("非 PT 站点之间切换（thisTabSiteId 不变）不应改变 key", () => {
+    // P1：tabHost 已移出摘要；任意两个非 PT 站点之间切换不应触发全量重建
+    const base = buildContextMenusContextKey(makeInput());
+    expect(buildContextMenusContextKey(makeInput({ tabHost: "another.example" }))).toBe(base);
   });
 
   it("config.contextMenus.* 变化必须让 key 变化（旧实现只比较站点，改配置不会重建）", () => {

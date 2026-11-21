@@ -1003,6 +1003,11 @@ body {
   background: var(--ptd-hover, rgba(0, 0, 0, 0.04));
 }
 
+.search-filter-chip:focus-visible {
+  outline: 2px solid var(--ptd-primary, #1677ff);
+  outline-offset: 2px;
+}
+
 .search-filter-chip--active {
   border-color: var(--ptd-primary, #1677ff);
   background: var(--ptd-primary-soft, rgba(22, 119, 255, 0.1));

@@ -1,5 +1,6 @@
 import axios from "axios";
 import { logMessage } from "@ptd/site/utils/adapter.ts";
+import { isSocialPageHost } from "./hosts.ts";
 import {
   IFetchSocialSiteInformationConfig,
   ISocialInformation,
@@ -58,27 +59,8 @@ export const socialBuildUrlMap = {} as Record<TSupportSocialSite$1, socialEntity
 export const socialParseUrlMap = {} as Record<TSupportSocialSite$1, socialEntity["parse"]>;
 export const socialPageParserMatchesMap = {} as Record<TSupportSocialSite$1, TSupportSocialSitePageParserMatches>;
 
-/**
- * 各社交站点的「可信主机」后缀白名单（C2-S-1）。
- *
- * 旧实现是精确 hostname 集合，`m.douban.com` / `m.imdb.com` / `m.themoviedb.org` 这类常见移动页
- * 会被判为非社交页（快捷搜索入口消失），与各实体正则本身允许的 `m.*` / `mobile.*` 子域不一致。
- * 后缀匹配同时保留了反例（如 `douban.com.evil.example` 不匹配）。
- */
-const socialPageHosts: Record<TSupportSocialSite$1, readonly string[]> = {
-  anidb: ["anidb.net"],
-  bangumi: ["bgm.tv", "bangumi.tv", "chii.in"],
-  douban: ["douban.com"],
-  imdb: ["imdb.com"],
-  tmdb: ["themoviedb.org"],
-  tvmaze: ["tvmaze.com"],
-};
-
-/** host 是否等于白名单域名本身或为其子域 */
-export function isSocialPageHost(hostname: string, site: TSupportSocialSite$1): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, "");
-  return (socialPageHosts[site] ?? []).some((domain) => host === domain || host.endsWith(`.${domain}`));
-}
+// host 白名单与预筛函数在 ./hosts.ts：引导脚本需要在不引入 axios/实体模块的前提下复用它
+export { isSocialPageHost } from "./hosts.ts";
 
 export function matchSocialPageUrl(url: string): TSupportSocialSite$1 | null {
   let parsed: URL;

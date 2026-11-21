@@ -425,6 +425,40 @@ export async function patchExtStoragePathLocal(
   });
 }
 
+/**
+ * service worker 内部使用：对同一个 key 批量做局部更新，只读一次、只写一次。
+ * 与 `patchExtStoragePathLocal` 一样刻意绕过读缓存（理由见上）。
+ */
+export async function patchExtStoragePathsLocal(
+  key: TExtensionStorageKey,
+  operations: Array<{ path: TStoragePath; value?: unknown; remove?: boolean }>,
+): Promise<void> {
+  if (operations.length === 0) return;
+
+  await enqueueWrite(async () => {
+    const current = (await extStorage.getItem(key)) ?? {};
+    let next: any = current;
+
+    // 每个操作先沿自己的路径做一次浅拷贝再改值，保证不会就地修改 `current` 里的对象
+    for (const operation of operations) {
+      next = cloneAlongPath(next, parsePath(operation.path));
+      if (operation.remove) {
+        removeValueByPath(next, operation.path);
+      } else {
+        setValueByPath(next, operation.path, operation.value);
+      }
+    }
+
+    try {
+      await extStorage.setItem(key, next);
+      commitStorageReadCache(key, next);
+    } catch (e) {
+      invalidateStorageReadCache(key);
+      throw e;
+    }
+  });
+}
+
 // 注：此处原有一个 @ts-ignore，实测当前类型已完全对齐（vue-tsc 报 Unused '@ts-expect-error'），
 // 因此直接删除该指令而不是改成 @ts-expect-error —— 保留一个永远不生效的忽略指令只会掩盖未来的真实错误。
 onMessage("getExtStorage", async ({ data: key }) => {
@@ -499,4 +533,8 @@ onMessage("setExtStorage", async ({ data: { key, value } }) => {
  */
 onMessage("patchExtStoragePath", async ({ data: { key, path, value, remove = false } }) => {
   await patchExtStoragePathLocal(key, path, value, { remove });
+});
+
+onMessage("patchExtStoragePaths", async ({ data: { key, operations } }) => {
+  await patchExtStoragePathsLocal(key, operations);
 });

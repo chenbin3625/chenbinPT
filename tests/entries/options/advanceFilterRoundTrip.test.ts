@@ -33,7 +33,7 @@ function createSiteFilter() {
   });
 }
 
-type TFilter = ReturnType<typeof createSiteFilter>;
+type TFilter = Pick<ReturnType<typeof createSiteFilter>, "tableWaitFilterRef" | "tableFilterRef" | "tableFilterFn">;
 
 /** 与表格实际使用一致：把查询串写进 v-model，并等 refDebounced 的窗口过去 */
 async function applyFilterText(filter: TFilter, text: string) {
@@ -59,6 +59,40 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("批量筛选结果", () => {
+  it("无有效条件时复用原始列表，字段筛选不读取标题", async () => {
+    const filter = createSiteFilter();
+    const readName = vi.fn(() => "Demo Site");
+    const first = {
+      id: "demo",
+      userConfig: {
+        merge: {
+          get name() {
+            return readName();
+          },
+        },
+      },
+    };
+    const rows = [first, { id: "other" }];
+
+    await applyFilterText(filter, "  ");
+    expect(filter.filterTableItems(rows)).toBe(rows);
+
+    await applyFilterText(filter, "id:demo");
+    const selected = filter.filterTableItems(rows);
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toBe(first);
+    expect(readName).not.toHaveBeenCalled();
+
+    await applyFilterText(filter, "demo -private id:demo");
+    expect(filter.filterTableItems(rows)).toEqual([first]);
+    expect(readName).toHaveBeenCalledOnce();
+
+    await applyFilterText(filter, "");
+    expect(filter.filterTableItems(rows)).toBe(rows);
+  });
 });
 
 describe("B-14 转义往返：值不会被 search-query-parser 改写", () => {

@@ -16,6 +16,7 @@ type DatePreset = "today" | "week" | "month" | "year" | "last7";
 
 const { t } = useI18n();
 const { advanceFilterDictRef, advanceItemPropsRef, tableWaitFilterRef, buildFilterDictFn } = tableCustomFilter;
+const filterInput = ref<{ focus: () => void } | null>(null);
 
 const fields: FilterField[] = [
   "site",
@@ -50,17 +51,13 @@ const tags = computed(() => sortTorrentTags(advanceItemPropsRef.value.tags ?? []
  * 或「记忆的上次筛选」进入结果页时，很难意识到当前列表已经被过滤过。这里直接读筛选字典
  * （而不是反过来解析查询串），与各 chip 的高亮判定同源。
  */
-const hasActiveFilters = computed(() => {
-  for (const field of ["site", "tags", "status", "text"] as const) {
-    const value = advanceFilterDictRef.value[field];
-    if ((value?.required?.length ?? 0) > 0 || (value?.exclude?.length ?? 0) > 0) return true;
-  }
-  for (const field of rangeFields) {
-    const value = advanceFilterDictRef.value[field];
-    if (Array.isArray(value) && (value[0] !== -Infinity || value[1] !== Infinity)) return true;
-  }
-  return false;
-});
+const hasActiveFilters = computed(
+  () =>
+    !!tableWaitFilterRef.value.trim() ||
+    Object.values(advanceFilterDictRef.value).some((value) =>
+      Array.isArray(value) ? value.some(Number.isFinite) : value?.required?.length || value?.exclude?.length,
+    ),
+);
 
 function keywordValues(field: KeywordField, kind: "required" | "exclude" = "required"): string[] {
   return advanceFilterDictRef.value[field]?.[kind] ?? [];
@@ -116,9 +113,11 @@ function clearField(field: FilterField) {
 }
 
 function clearAllFilters() {
-  fields.forEach((field) => clearField(field));
+  chosenDatePreset.value = null;
+  buildFilterDictFn("");
   tableWaitFilterRef.value = "";
   updateTableFilterValueFn();
+  filterInput.value?.focus();
 }
 
 function dateStart(preset: DatePreset): number {
@@ -369,7 +368,9 @@ defineExpose({ clearAllFilters });
       </a-button>
     </div>
     <a-input
+      ref="filterInput"
       :value="tableWaitFilterRef"
+      :aria-label="t('SearchEntity.index.filterLabel')"
       class="search-filter-search"
       allow-clear
       :placeholder="t('SearchEntity.index.filterLabel')"

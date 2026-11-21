@@ -131,6 +131,19 @@ interface ProtocolMap {
     value?: any;
     remove?: boolean;
   }): void;
+  /**
+   * 批量局部更新同一个 key：一次读 → 依次改多个路径 → 一次写回。
+   * 用于「按天删除 userInfo 历史」这类需要连续操作同一个大 key 的场景，
+   * 避免 N 次整键读改写（6.89 MB 的 userInfo 每次约 1s，删 30 天要 30 秒）。
+   */
+  patchExtStoragePaths<T extends TExtensionStorageKey>(data: {
+    key: T;
+    operations: Array<{
+      path: string | Array<string | number>;
+      value?: any;
+      remove?: boolean;
+    }>;
+  }): void;
 
   // 1.3 chrome.declarativeNetRequest
   updateDNRSessionRules(data: { rule: chrome.declarativeNetRequest.Rule; extOnly?: boolean }): void;
@@ -390,6 +403,7 @@ export const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "getExtStorage",
   "setExtStorage",
   "patchExtStoragePath",
+  "patchExtStoragePaths",
   "getDownloaderConfig",
   "downloadFile",
   "registerDownloadTracking",

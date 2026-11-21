@@ -207,8 +207,11 @@ export async function doSearch(option: { searchKey?: string; loadMore?: boolean;
       // 已存在的条目（同一 url）用新数据原位替换，保证收藏、观看状态等能随再次搜索刷新，
       // 而不是被当作重复丢弃（上游 #1662）。
       const newItems: IMediaServerItem[] = [];
+      // 先建立 url → 下标索引，避免每条新结果都对已有结果做一次线性扫描（整体 O(n²)）
+      const indexByUrl = new Map<string, number>();
+      runtimeStore.mediaServerSearch.searchResult.forEach((r, index) => indexByUrl.set(r.url, index));
       for (const item of searchResult.items) {
-        const existingIndex = runtimeStore.mediaServerSearch.searchResult.findIndex((r) => r.url === item.url);
+        const existingIndex = indexByUrl.get(item.url) ?? -1;
         if (existingIndex !== -1) {
           runtimeStore.mediaServerSearch.searchResult[existingIndex] = markRaw(item);
         } else {

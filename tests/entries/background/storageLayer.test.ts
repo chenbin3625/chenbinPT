@@ -17,6 +17,7 @@ const changeListeners: Array<(changes: StorageChange, areaName: string) => void>
 /** N1：chrome.runtime.onStartup 监听器（storage.ts 顶层注册，浏览器启动时补一次 storage 访问级别收紧） */
 const startupListeners: Array<() => void> = [];
 let getCallCount = 0;
+let setCallCount = 0;
 
 function emitChanges(changes: StorageChange) {
   for (const listener of changeListeners) {
@@ -31,6 +32,7 @@ const storageLocal = {
     return Promise.resolve(backing.has(key) ? { [key]: backing.get(key) } : {});
   },
   set: (items: Record<string, unknown>) => {
+    setCallCount++;
     const changes: StorageChange = {};
     for (const [key, value] of Object.entries(items)) {
       changes[key] = { oldValue: backing.get(key), newValue: value };
@@ -78,7 +80,7 @@ vi.stubGlobal("chrome", chromeMock);
 vi.stubGlobal("__BROWSER__", "chrome");
 
 vi.resetModules();
-const { getExtStorageCached, getExtStoragePathCached, patchExtStoragePathLocal } =
+const { getExtStorageCached, getExtStoragePathCached, patchExtStoragePathLocal, patchExtStoragePathsLocal } =
   await import("@/background/utils/base.ts");
 
 describe("service worker 存储层（读缓存 + 路径读写）", () => {
@@ -90,6 +92,7 @@ describe("service worker 存储层（读缓存 + 路径读写）", () => {
   beforeEach(async () => {
     backing.clear();
     getCallCount = 0;
+    setCallCount = 0;
     // 注意：不能清空 changeListeners —— base.ts 的缓存失效监听器是模块加载时注册一次的
     // （清掉它会让缓存永远不失效，测试就会读到上一个用例的脏数据）。
     // 这里改为主动触发一次"存储被清空"的变更通知，让被测模块的缓存失效。
@@ -188,6 +191,58 @@ describe("service worker 存储层（读缓存 + 路径读写）", () => {
     const stored = backing.get("userInfo") as any;
     expect(stored.mteam["2026-10-01"]).toBeUndefined();
     expect(stored.mteam["2026-10-02"]).toEqual({ ratio: 2 });
+  });
+
+  it("批量局部写入：删除多天历史只读一次、写一次（removeSiteUserInfo 的 O(1) 读改写）", async () => {
+    await seed("userInfo", {
+      mteam: { "2026-10-01": { ratio: 1 }, "2026-10-02": { ratio: 2 }, "2026-10-03": { ratio: 3 } },
+      ptt: { "2026-10-01": { ratio: 9 } },
+    });
+    getCallCount = 0;
+    setCallCount = 0;
+
+    await patchExtStoragePathsLocal("userInfo", [
+      { path: ["mteam", "2026-10-01"], remove: true },
+      { path: ["mteam", "2026-10-02"], remove: true },
+      { path: ["mteam", "2026-10-03"], remove: true },
+    ]);
+
+    // 若退化为逐条 patch，这里会是 3 次读 + 3 次写；大 key 下每天都要整份序列化
+    expect(getCallCount).toBe(1);
+    expect(setCallCount).toBe(1);
+
+    const stored = backing.get("userInfo") as any;
+    expect(stored.mteam).toEqual({});
+    expect(stored.ptt["2026-10-01"]).toEqual({ ratio: 9 }); // 其它站点不受影响
+  });
+
+  it("批量局部写入：同批次内混合赋值与删除，且不就地修改读到的对象", async () => {
+    const original = { mteam: { "2026-10-01": { ratio: 1 } }, lastUserInfo: { siteA: { ratio: 1 } } };
+    await seed("userInfo", original);
+    const snapshotBefore = await getExtStorageCached("userInfo");
+
+    await patchExtStoragePathsLocal("userInfo", [
+      { path: ["mteam", "2026-10-02"], value: { ratio: 2 } },
+      { path: ["mteam", "2026-10-01"], remove: true },
+    ]);
+
+    const stored = backing.get("userInfo") as any;
+    expect(stored.mteam["2026-10-01"]).toBeUndefined();
+    expect(stored.mteam["2026-10-02"]).toEqual({ ratio: 2 });
+    expect(stored.lastUserInfo).toEqual({ siteA: { ratio: 1 } });
+    // 读缓存里的旧对象（可能仍被其它代码持有）必须保持原样
+    expect(Object.keys((snapshotBefore as any).mteam)).toEqual(["2026-10-01"]);
+  });
+
+  it("批量局部写入：空操作列表直接返回，不触发任何读写", async () => {
+    await seed("userInfo", { mteam: { "2026-10-01": { ratio: 1 } } });
+    getCallCount = 0;
+    setCallCount = 0;
+
+    await patchExtStoragePathsLocal("userInfo", []);
+
+    expect(getCallCount).toBe(0);
+    expect(setCallCount).toBe(0);
   });
 
   it("并发局部写入被串行化：不会互相覆盖（修复前的丢失更新）", async () => {

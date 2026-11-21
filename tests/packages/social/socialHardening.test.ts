@@ -27,7 +27,8 @@ vi.stubGlobal("chrome", {
   declarativeNetRequest: { updateSessionRules: () => Promise.resolve() },
 });
 
-const { matchSocialPageUrl, getSocialSiteInformation, buildInPtGenApi } = await import("@ptd/social");
+const { matchSocialPageUrl, getSocialSiteInformation, buildInPtGenApi, isSocialPageHost } = await import("@ptd/social");
+const { matchSocialPageHost } = await import("@ptd/social/hosts.ts");
 const { normalizeSocialPosterUrl } = await import("@ptd/social/utils.ts");
 const { transformPtGen: doubanTransformPtGen } = await import("@ptd/social/entity/douban.ts");
 const { transformPtGen: imdbTransformPtGen } = await import("@ptd/social/entity/imdb.ts");
@@ -76,6 +77,43 @@ describe("C2-S-1：社交页面识别", () => {
     "javascript:alert(1)",
   ])("%s 不被识别为社交页", (url) => {
     expect(matchSocialPageUrl(url)).toBeNull();
+  });
+});
+
+describe("P1：引导脚本的 host 预筛（matchSocialPageHost）", () => {
+  it.each([
+    ["m.douban.com", "douban"],
+    ["DOUBAN.COM", "douban"],
+    ["douban.com.", "douban"], // 末尾点：FQDN 写法
+    ["bgm.tv", "bangumi"],
+    ["www.tvmaze.com", "tvmaze"],
+  ])("%s → %s", (hostname, expected) => {
+    expect(matchSocialPageHost(hostname)).toBe(expected);
+    expect(isSocialPageHost(hostname, expected as any)).toBe(true);
+  });
+
+  it.each(["douban.com.evil.example", "example.com", "notdouban.com", ""])("%s 不命中", (hostname) => {
+    expect(matchSocialPageHost(hostname)).toBeNull();
+  });
+
+  it("预筛必须是 matchSocialPageUrl 的超集：后者能识别的 URL，其 hostname 不能被预筛漏掉", () => {
+    const urls = [
+      "https://movie.douban.com/subject/1234/",
+      "https://m.douban.com/subject/1234/",
+      "https://www.imdb.com/title/tt0111161/",
+      "https://m.imdb.com/title/tt0111161/",
+      "https://bgm.tv/subject/123",
+      "https://bangumi.tv/subject/123",
+      "https://chii.in/subject/123",
+      "https://www.tvmaze.com/shows/1234/example-show",
+      "https://www.themoviedb.org/movie/550-fight-club",
+      "https://anidb.net/anime/123",
+    ];
+    for (const url of urls) {
+      const site = matchSocialPageUrl(url);
+      expect(site, url).not.toBeNull();
+      expect(matchSocialPageHost(new URL(url).hostname), url).toBe(site);
+    }
   });
 });
 

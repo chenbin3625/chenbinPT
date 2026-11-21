@@ -112,6 +112,40 @@ const invariants: Invariant[] = [
     mustNotMatch: /sendMessage\("getExtStorage",\s*"metadata"\)/,
   },
   {
+    id: "audit-5",
+    description: "社交站点 host 预筛不引入 @ptd/social 根入口（避免 axios/实体模块进入引导包）",
+    file: "src/entries/content-script/index.ts",
+    mustMatch: /from\s*["']@ptd\/social\/hosts\.ts["']/,
+    mustNotMatch: /from\s*["']@ptd\/social["']/,
+  },
+  {
+    id: "audit-4",
+    description: "排序复用模块级 Intl.Collator，而不是每次比较都传 options 调 localeCompare",
+    file: "src/entries/options/views/Overview/utils/antdTable.ts",
+    mustMatch: /new Intl\.Collator\(undefined, \{ numeric: true, sensitivity: "base" \}\)/,
+    mustNotMatch: /\.localeCompare\([^)]*,\s*undefined,\s*\{/,
+  },
+  {
+    id: "audit-3",
+    description: "搜索进行中只落小状态，不序列化仍在增长的结果集",
+    file: "src/entries/options/stores/runtime.ts",
+    mustMatch:
+      /state\.search\.isSearching \|\| state\.mediaServerSearch\.isSearching[\s\S]{0,120}writeState\(state, false\)/,
+  },
+  {
+    id: "audit-8",
+    description: "下载历史轮询合并为单定时器 + 批量查询（不再每条记录各一条链）",
+    file: "src/entries/options/views/Overview/DownloadHistory/utils.ts",
+    mustMatch: /watchingIds/,
+    mustNotMatch: /watchingMap\s*=\s*reactive/,
+  },
+  {
+    id: "audit-13",
+    description: "搜索队列的结果索引每轮只重建一次（active 是逐任务事件）",
+    file: "src/entries/options/views/Overview/SearchEntity/utils/search.ts",
+    mustMatch: /searchIndexBuiltEpoch/,
+  },
+  {
     id: "P2-17",
     description: "content script 优先读 siteIndex 小 key",
     file: "src/entries/content-script/index.ts",

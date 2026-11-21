@@ -177,14 +177,15 @@ describe("站点登录检查和 Cloudflare 邮箱解码", () => {
     expect(site.check({ status: 200, request, headers: {}, data: "ok" })).toBe(false);
   });
 
-  it("没有 Cloudflare 邮箱标记的文档不做 DOM 邮箱查询", async () => {
+  it("没有 Cloudflare 邮箱标记的文档直接返回原文（按选择器判断，不再序列化整份文档）", async () => {
     const doc = document.implementation.createHTMLDocument("normal");
     const query = vi.spyOn(doc, "querySelectorAll");
     mocks.request.mockResolvedValue({ status: 200, headers: {}, data: doc, request: {} });
 
     await newSite().request({ url: "/", responseType: "document" }, false);
 
-    expect(query).not.toHaveBeenCalled();
+    // 现在只做一次选择器查询（比 outerHTML.includes 的整文档序列化便宜得多），不再有「先查字符串再查 DOM」两步
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it("缺少 data-cfemail 的邮箱 span 不会把成功取回的文档判成网络错误（上游 4b1b8c53）", async () => {

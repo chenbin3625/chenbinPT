@@ -109,6 +109,22 @@ describe("搜索结果页页码", () => {
     view.unmount();
   });
 
+  it("未启用筛选时，在第 2 页能看到追加到原数组的结果", async () => {
+    const { view, runtimeStore } = await mountPage();
+    try {
+      await goToPage2(view);
+      const extra = { ...runtimeStore.search.searchResult[0], uniqueId: "mteam-extra", title: "New result" };
+      runtimeStore.search.searchResult.push(extra);
+      await view.settle();
+
+      expect(activePage(view)).toBe("2");
+      expect(view.$$(".ant-table-tbody tr.ant-table-row")).toHaveLength(ROW_COUNT - PAGE_SIZE + 1);
+      expect(view.text()).toContain("New result");
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("筛选条件变化后回到第 1 页", async () => {
     const { view } = await mountPage();
     await goToPage2(view);

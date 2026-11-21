@@ -296,6 +296,10 @@ export function useClientRefresh() {
   function scheduleDownloaderRefresh(id: string) {
     if (!autoRefreshRunning.value) return;
     if (!pageRefreshActive) return; // 页面已卸载：在途请求不得重新挂上定时器
+    // 页面隐藏期间不排定时器。只在 visibilitychange 里清理是不够的：隐藏恰好发生在一次
+    // await 期间时，回包后的续订会在这里重新挂上，之后就一直「隐藏也在轮询」。
+    // 恢复可见时由 visibilitychange 处理器统一续订。
+    if (typeof document !== "undefined" && document.hidden) return;
     if (suspendedDownloaders.value.has(id)) return;
     if (!isRefreshableDownloader(id)) return; // 下载器已删除/停用
     if (globalRefreshInterval.value <= 0) return;

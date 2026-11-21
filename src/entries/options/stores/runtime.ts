@@ -312,7 +312,7 @@ function writeState(state: IRuntimePiniaStorageSchema, withResults: boolean): bo
   }
 }
 
-function flushPersist() {
+function flushPersist(options: { forceResults?: boolean } = {}) {
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -330,6 +330,16 @@ function flushPersist() {
   }
 
   const state = getState();
+  // 搜索进行中只落搜索方案/进度等小数据，不序列化仍在增长的结果集：
+  // 每次 flush 都会同步 JSON.stringify 整个 state 并写 sessionStorage，1 万条结果约 30 ms + 10 ms，
+  // 而且超过 sessionStorage 配额时首个写入必然失败并再序列化一次，结果本身也落不了盘。
+  // 搜索结束时 isSearching 的 watch 会再触发一次 flush，届时写入带结果的完整状态。
+  // 例外：pagehide / 页面隐藏 / persistNow 时只写这一次，必须把结果带上，否则关页面会丢掉结果。
+  const stillSearching = state.search.isSearching || state.mediaServerSearch.isSearching;
+  if (stillSearching && !options.forceResults) {
+    writeState(state, false);
+    return;
+  }
   // 配额不足时降级：保留搜索方案/进度等小数据，丢弃两部分搜索结果（早期实现会整份静默丢失）
   if (!writeState(state, true) && !writeState(state, false)) {
     console.warn("[PTD] runtime store persist failed (sessionStorage quota?)");
@@ -353,10 +363,10 @@ function schedulePersist(getState: () => IRuntimePiniaStorageSchema) {
 // 页面被关闭/切到后台时立即落盘，避免丢失最近的改动
 try {
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-    window.addEventListener("pagehide", flushPersist);
+    window.addEventListener("pagehide", () => flushPersist({ forceResults: true }));
     document?.addEventListener?.("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
-        flushPersist();
+        flushPersist({ forceResults: true });
       }
     });
   }
@@ -415,7 +425,7 @@ export const useRuntimeStore = defineStore("runtime", {
     /** 立即把当前状态写入 sessionStorage（默认由节流器在 500ms 后自动触发） */
     persistNow() {
       schedulePersist(() => this.$state as IRuntimePiniaStorageSchema);
-      flushPersist();
+      flushPersist({ forceResults: true });
     },
   },
 });

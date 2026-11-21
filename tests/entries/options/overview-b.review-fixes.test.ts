@@ -61,7 +61,7 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
   const updateTableFilterValueFn = vitest.fn();
   const buildFilterDictFn = vitest.fn();
   const buildAdvanceItemPropsFn = vitest.fn();
-  const tableFilterFn = vitest.fn(() => true);
+  const filterTableItems = vitest.fn((items) => items);
   // SearchEntity/Index.vue 现在还会在渲染期调用「标签一键筛选」的两个导出；
   // 整模块 mock 必须把它们一起返回，否则挂载搜索结果页时会报 No export defined。
   const getActiveTagFilterNames = vitest.fn(() => [] as string[]);
@@ -75,7 +75,7 @@ vi.mock("@/options/views/Overview/SearchEntity/utils/filter.ts", async () => {
     updateTableFilterValueFn,
     buildFilterDictFn,
     buildAdvanceItemPropsFn,
-    tableFilterFn,
+    filterTableItems,
   };
 
   return {

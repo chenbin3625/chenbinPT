@@ -44,7 +44,9 @@ async function getSiteNameMap(): Promise<Record<string, string>> {
 }
 
 export interface IContextMenusKeyInput {
-  tabHost: string;
+  // P1：不再包含 tabHost。菜单内容只取决于 thisTabSiteId/thisTabSiteName（由 tabHost 推出）
+  // 与配置/元数据；点击回调里的 tab 是事件参数。把 host 纳入摘要会让「任意两个非 PT 站点之间
+  // 切换标签页/导航」都触发一次全量重建（50 站时约 200 次 contextMenus.create）。
   thisTabSiteId?: string | null;
   thisTabSiteName?: string | null;
   config?: IConfigPiniaStorageSchema;
@@ -61,7 +63,7 @@ export interface IContextMenusKeyInput {
  * 摘要顺序与构建菜单时的排序一致，保证相同输入得到相同 key。
  */
 export function buildContextMenusContextKey(input: IContextMenusKeyInput): string {
-  const { tabHost, thisTabSiteId, thisTabSiteName, config, metadata, siteNameMap = {} } = input;
+  const { thisTabSiteId, thisTabSiteName, config, metadata, siteNameMap = {} } = input;
   const contextMenus = config?.contextMenus;
   const solutionsMeta = metadata?.solutions ?? ({} as IMetadataPiniaStorageSchema["solutions"]);
   const sitesMeta = metadata?.sites ?? ({} as IMetadataPiniaStorageSchema["sites"]);
@@ -94,7 +96,6 @@ export function buildContextMenusContextKey(input: IContextMenusKeyInput): strin
     ]);
 
   return JSON.stringify({
-    tabHost,
     thisTabSiteId: thisTabSiteId ?? "",
     thisTabSiteName: thisTabSiteName ?? "",
     contextMenus: {
@@ -573,7 +574,6 @@ async function initContextMenus(tab: chrome.tabs.Tab) {
   // 菜单内容还取决于配置/下载器/搜索方案/站点列表，摘要必须包含它们（P1-7）：
   // 只比较「当前站点」会让只改配置的变更永远不重建菜单。
   const contextKey = buildContextMenusContextKey({
-    tabHost,
     thisTabSiteId,
     thisTabSiteName,
     config: configStore,

@@ -1,5 +1,5 @@
 import { throttle } from "es-toolkit";
-import { computed, reactive, ref, shallowRef, type Component } from "vue";
+import { computed, ref, shallowRef, type Component } from "vue";
 import { CheckOutlined, ClockCircleOutlined, DownloadOutlined, WarningOutlined } from "@ant-design/icons-vue";
 import { sendMessage } from "@/messages.ts";
 import { i18n } from "@/options/plugins/i18n.ts";
@@ -28,88 +28,120 @@ export const tableCustomFilter = useTableCustomFilter({
   },
 });
 
-// 使用 setTimeout 监听下载状态变化
-const watchingMap = reactive<Record<TTorrentDownloadKey, number>>({});
+// 轮询：所有「下载中/等待中」记录共用**一个**定时器，每轮并发查询后只整体替换一次 map。
+// 旧实现为每条记录各排一条 1s setTimeout，且每条回包都复制并替换整个 map：
+// K 条记录 = 每秒 K 条消息 + K 次全表重算/重渲染。集中后同一轮只触发一次列表失效。
+const watchingIds = new Set<TTorrentDownloadKey>();
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 // 轮询失败（例如 offscreen 被回收）只提示一次：否则每个卡住的任务都会弹一条，提示本身反而成为噪音
 let hasWarnedPollFailure = false;
 
 /**
- * 轮询链的轮次号（N2）。
+ * 轮询轮次号（N2）。
  *
- * 每个 id 的轮询链都带一个创建时的 `epoch`。`clearWatchingMap()` / 任意一次重新加载都会把
- * `pollEpoch` +1，于是：
- * - 旧链在下一次 `setTimeout` 回调里发现 epoch 不匹配，直接退出（不会在 clear 之后「复活」）；
- * - 已经在 `await sendMessage` 中的旧回调返回后同样会因 epoch 不匹配而丢弃结果、不再递归排链；
- * - `loadDownloadHistory` 捕获开始时的 epoch，若中途发生重载/卸载，也不会用旧数据覆盖新数据或重排链。
+ * `clearWatchingMap()` / 任意一次重新加载都会把 `pollEpoch` +1，于是：
+ * - 旧轮次排下的定时器触发时发现 epoch 不匹配，直接退出（不会在 clear 之后「复活」）；
+ * - 已经在 `await` 中的旧回调返回后同样会因 epoch 不匹配而丢弃结果、不再排下一轮；
+ * - `loadDownloadHistory` 捕获开始时的 epoch，若中途发生重载/卸载，也不会用旧数据覆盖新数据或重排轮询。
  */
 let pollEpoch = 0;
 
-function clearPollTimer(downloadHistoryId: TTorrentDownloadKey) {
-  const handle = watchingMap[downloadHistoryId];
-  if (handle !== undefined) {
-    clearTimeout(handle);
-    delete watchingMap[downloadHistoryId];
+function stopPollTimer() {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
   }
 }
 
-function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey, epoch: number = pollEpoch, delay: number = 1e3) {
-  // 过期轮次：不再排新链（调用方可能是已被取代的旧加载）
-  if (epoch !== pollEpoch) return;
-  // 同一记录只允许一条链：先清掉可能存在的旧 handle，避免两个加载各排一条
-  clearPollTimer(downloadHistoryId);
-
-  watchingMap[downloadHistoryId] = setTimeout(async () => {
-    if (epoch !== pollEpoch) return;
-    let history: ITorrentDownloadMetadata | undefined;
-    try {
-      history = await sendMessage("getDownloadHistoryById", downloadHistoryId);
-    } catch {
-      // 轮询期间的 rejection 不能逃逸（否则既是 unhandled rejection，又让这条轮询链静默死掉）。
-      // 这里不删掉表格里的行——下载可能仍在进行，只是这一轮状态读不到；但要提示用户一次，
-      // 否则这些行会永久停在「下载中」而用户毫不知情（options 侧没有可用的日志查看器，见审查报告 L-7）。
-      if (epoch !== pollEpoch) return;
-      if (!hasWarnedPollFailure) {
-        hasWarnedPollFailure = true;
-        useRuntimeStore().showSnackbar(i18n.t("DownloadHistory.pollingError"), { color: "error" });
-      }
-      // 一次失败（例如 offscreen 瞬时不可用）不代表任务结束：以更长的间隔继续重试，
-      // 否则该行会永久停在「下载中」，只能手动刷新。
-      watchDownloadHistory(downloadHistoryId, epoch, 5e3);
-      return;
-    }
-
-    // 等待期间被 clearWatchingMap / 新一轮加载取代：丢弃这次响应，且绝不再排链
-    if (epoch !== pollEpoch) return;
-
-    // A-21：记录可能在等待期间被删除（该 handler 返回 IndexedDB 的原始 get，键不存在时是 undefined）。
-    // 直接读 `history.downloadStatus` 会在定时器内抛 TypeError、让轮询链静默死掉，
-    // 并且 undefined 会残留在 map 里破坏列表行。
-    if (!history) {
-      clearPollTimer(downloadHistoryId);
-      const nextDownloadHistory = { ...downloadHistory.value };
-      delete nextDownloadHistory[downloadHistoryId];
-      downloadHistory.value = nextDownloadHistory;
-      return;
-    }
-
-    // V-14：shallowRef 只在 `.value` 被重新赋值时触发；就地写内层对象既不动 ref、也不会让
-    // `downloadHistoryList` 失效，表格会一直持有旧记录 ——「下载中/等待中」永远不会翻成「已完成/错误」。
-    downloadHistory.value = { ...downloadHistory.value, [downloadHistoryId]: history };
-
-    if (history.downloadStatus == "downloading" || history.downloadStatus == "pending") {
-      watchDownloadHistory(downloadHistoryId, epoch);
-    } else {
-      clearPollTimer(downloadHistoryId);
-    }
-  }, 1e3) as unknown as number;
+function scheduleNextPoll(delay: number, epoch: number) {
+  if (epoch !== pollEpoch || watchingIds.size === 0) return;
+  if (pollTimer !== null) return; // 已有下一轮，等它跑完再排
+  // 页面隐藏期间不排下一轮。只在 visibilitychange 里 stop 是不够的：隐藏恰好发生在
+  // 一次 await 期间时，回包后的这里会重新排上定时器，之后就一直「隐藏也在轮询」。
+  if (typeof document !== "undefined" && document.hidden) return;
+  pollTimer = setTimeout(() => void pollWatching(epoch), delay);
 }
 
-/** 取消全部轮询链（卸载页面、重新加载列表前调用）。在途回调会因 epoch 失效而丢弃。 */
+async function pollWatching(epoch: number) {
+  pollTimer = null;
+  if (epoch !== pollEpoch || watchingIds.size === 0) return;
+
+  const ids = [...watchingIds];
+  const results = await Promise.allSettled(ids.map((id) => sendMessage("getDownloadHistoryById", id)));
+
+  // 等待期间被 clearWatchingMap / 新一轮加载取代：丢弃这次响应，且不再排下一轮
+  if (epoch !== pollEpoch) return;
+
+  let nextHistory = downloadHistory.value;
+  let changed = false;
+  let failed = false;
+
+  ids.forEach((id, index) => {
+    const result = results[index]!;
+    if (result.status === "rejected") {
+      // 一轮里只要有一条失败就提示一次（hasWarnedPollFailure 保证每次加载最多一条），
+      // 并让整轮退避到 5s；下载可能仍在进行，不删表格行。
+      failed = true;
+      return;
+    }
+
+    // A-21：记录可能在等待期间被删除（handler 返回 IndexedDB 的原始 get，键不存在时是 undefined）。
+    // 直接读 `history.downloadStatus` 会抛 TypeError、让轮询静默死掉，undefined 还会残留在 map 里破坏列表行。
+    const history = result.value as ITorrentDownloadMetadata | undefined;
+    if (!history) {
+      if (nextHistory === downloadHistory.value) nextHistory = { ...downloadHistory.value };
+      delete nextHistory[id];
+      watchingIds.delete(id);
+      changed = true;
+      return;
+    }
+
+    // V-14：shallowRef 只在 `.value` 被重新赋值时触发；就地写内层对象不会让 `downloadHistoryList` 失效。
+    // 同一轮先累积到同一个副本里，循环结束后只赋值一次。
+    if (nextHistory === downloadHistory.value) nextHistory = { ...downloadHistory.value };
+    nextHistory[id] = history;
+    changed = true;
+    if (history.downloadStatus !== "downloading" && history.downloadStatus !== "pending") {
+      watchingIds.delete(id);
+    }
+  });
+
+  if (changed) {
+    downloadHistory.value = nextHistory;
+  }
+
+  if (failed && !hasWarnedPollFailure) {
+    hasWarnedPollFailure = true;
+    useRuntimeStore().showSnackbar(i18n.t("DownloadHistory.pollingError"), { color: "error" });
+  }
+
+  // 失败时退避到 5s，避免 offscreen 不可用时每秒重试一次
+  scheduleNextPoll(failed ? 5e3 : 1e3, epoch);
+}
+
+function watchDownloadHistory(downloadHistoryId: TTorrentDownloadKey, epoch: number = pollEpoch) {
+  // 过期轮次：不再加入（调用方可能是已被取代的旧加载）
+  if (epoch !== pollEpoch) return;
+  watchingIds.add(downloadHistoryId);
+  scheduleNextPoll(1e3, epoch);
+}
+
+/** 取消全部轮询（卸载页面、重新加载列表前调用）。在途回调会因 epoch 失效而丢弃。 */
 export function clearWatchingMap() {
   pollEpoch++;
-  for (const key of Object.keys(watchingMap)) {
-    clearPollTimer(key as unknown as TTorrentDownloadKey);
-  }
+  watchingIds.clear();
+  stopPollTimer();
+}
+
+// 页面隐藏时不再轮询（表格没人看），恢复可见后继续。定时器只在本模块被加载的管理页里存在。
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopPollTimer();
+    } else {
+      scheduleNextPoll(1e3, pollEpoch);
+    }
+  });
 }
 
 /**

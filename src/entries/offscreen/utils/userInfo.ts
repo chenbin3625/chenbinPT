@@ -308,11 +308,10 @@ onMessage("getSiteUserInfo", async ({ data: siteId }) => {
 });
 
 onMessage("removeSiteUserInfo", async ({ data: { siteId, date } }) => {
-  for (const day of date) {
-    await sendMessage("patchExtStoragePath", {
-      key: "userInfo",
-      path: [siteId, day],
-      remove: true,
-    });
-  }
+  if (date.length === 0) return;
+  // 一次读改写删完所有日期：逐天 patch 会重写整份 userInfo（6.89 MB 时每天约 1s，删一年要几分钟）
+  await sendMessage("patchExtStoragePaths", {
+    key: "userInfo",
+    operations: date.map((day) => ({ path: [siteId, day], remove: true })),
+  });
 });

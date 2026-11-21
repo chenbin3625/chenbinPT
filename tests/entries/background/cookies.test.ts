@@ -19,14 +19,15 @@ const mocks = vi.hoisted(() => ({
   cookiesGetAll: vi.fn(),
   cookiesSet: vi.fn(),
   cookiesRemove: vi.fn(),
-  storageGetItem: vi.fn(),
+  getExtStoragePathCached: vi.fn(),
 }));
 
 vi.mock("@/messages.ts", () => ({ onMessage: mocks.onMessage, sendMessage: mocks.sendMessage }));
 
-vi.mock("@/background/utils/base.ts", () => ({ logBackgroundError: mocks.logBackgroundError }));
-
-vi.mock("@/storage.ts", () => ({ extStorage: { getItem: mocks.storageGetItem, setItem: vi.fn() } }));
+vi.mock("@/background/utils/base.ts", () => ({
+  logBackgroundError: mocks.logBackgroundError,
+  getExtStoragePathCached: mocks.getExtStoragePathCached,
+}));
 
 vi.stubGlobal("chrome", {
   cookies: {
@@ -69,6 +70,7 @@ describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
     mocks.cookiesSet.mockReset();
     mocks.cookiesRemove.mockReset();
     mocks.logBackgroundError.mockReset();
+    mocks.getExtStoragePathCached.mockReset();
     mocks.cookiesSet.mockResolvedValue(undefined);
   });
 
@@ -173,9 +175,8 @@ describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
       name: "remember_web_abc",
       value: "value",
     });
-    mocks.storageGetItem.mockResolvedValue({
-      autoExtendCookies: { enabled: true, triggerThreshold: 2, extensionDuration: 3 },
-    });
+    // checkAndExtendCookies 现在走 SW 读缓存的路径读取，返回值就是 autoExtendCookies 配置本身
+    mocks.getExtStoragePathCached.mockResolvedValue({ enabled: true, triggerThreshold: 2, extensionDuration: 3 });
 
     const { checkAndExtendCookies } = await import("@/background/utils/cookies.ts");
     await checkAndExtendCookies("https://site.example/");

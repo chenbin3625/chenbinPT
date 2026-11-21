@@ -1,9 +1,8 @@
 import { add, differenceInDays } from "date-fns";
 
-import { extStorage } from "@/storage.ts";
 import { onMessage } from "@/messages.ts";
 
-import { logBackgroundError } from "./base.ts";
+import { getExtStoragePathCached, logBackgroundError } from "./base.ts";
 
 /**
  * 计算cookie的剩余有效期（以天为单位）
@@ -169,7 +168,10 @@ onMessage("removeCookie", async ({ data }) => {
  */
 export async function checkAndExtendCookies(url: string) {
   try {
-    const config = (await extStorage.getItem("config"))?.autoExtendCookies ?? { enabled: false };
+    // 走 SW 内读缓存：每个站点刷新都会调用一次，整份 config 读盘没有必要
+    const config = (await getExtStoragePathCached("config", "autoExtendCookies", { enabled: false })) ?? {
+      enabled: false,
+    };
 
     if (!config.enabled) {
       return;

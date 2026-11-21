@@ -567,67 +567,67 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
     return cached;
   }
 
-  function tableFilterFn(value: any, query: string, item: any): boolean {
-    const rawItem = item.raw as ItemType;
+  function prepareTextTerms(text: TFilter["text"]): (string | RegExp | undefined)[] {
+    if (!text) return [];
+    return (Array.isArray(text) ? text : [text]).map((term) => {
+      const normalized = normalizeFilterValue(term);
+      return normalized === undefined ? undefined : (toRegexIfValid(normalized) ?? normalized.toLowerCase());
+    });
+  }
 
-    const { text, exclude } = tableParsedFilterRef.value;
-
-    const itemTitle = getItemTitle(rawItem);
-    const itemTitleLowerCase = itemTitle.toLowerCase();
-
-    if (text) {
-      const includeText = Array.isArray(text) ? text : [text];
-      if (
-        !includeText.every((keyword: string) => {
-          const normalizedKeyword = normalizeFilterValue(keyword);
-          if (typeof normalizedKeyword !== "string") return false;
-          const regex = toRegexIfValid(normalizedKeyword);
-          return regex ? regex.test(itemTitle) : itemTitleLowerCase.includes(normalizedKeyword.toLowerCase());
-        })
-      ) {
-        return false;
-      }
+  const activeTableFilter = computed(() => {
+    const filter = tableParsedFilterRef.value;
+    const { exclude = {} } = filter;
+    const requiredText = prepareTextTerms(filter.text);
+    const excludedText = prepareTextTerms(exclude.text);
+    const requiredKeywords = parseOptions.keywords?.filter((key) => filter[key]) ?? [];
+    const excludedKeywords = parseOptions.keywords?.filter((key) => exclude[key]) ?? [];
+    const ranges = parseOptions.ranges?.filter((key) => filter[key]) ?? [];
+    if (
+      !requiredText.length &&
+      !excludedText.length &&
+      !requiredKeywords.length &&
+      !excludedKeywords.length &&
+      !ranges.length
+    ) {
+      return undefined;
     }
 
-    if (parseOptions.keywords) {
-      for (const keyword of parseOptions.keywords) {
-        if (checkKeywordValue(tableParsedFilterRef.value, rawItem, keyword, format) === false) return false;
-      }
-    }
-
-    if (parseOptions.ranges) {
-      for (const keyword of parseOptions.ranges) {
-        if (checkRangeValue(tableParsedFilterRef.value, rawItem, keyword, format) === false) return false;
-      }
-    }
-
-    if (exclude) {
-      const { text: exText } = exclude;
-
-      if (exText) {
-        const excludesText = Array.isArray(exText) ? exText : [exText];
-        if (
-          excludesText.some((keyword: string) => {
-            const normalizedKeyword = normalizeFilterValue(keyword);
-            if (typeof normalizedKeyword !== "string") return false;
-            const regex = toRegexIfValid(normalizedKeyword);
-            return regex ? regex.test(itemTitle) : itemTitleLowerCase.includes(normalizedKeyword.toLowerCase());
-          })
-        ) {
-          return false;
-        }
+    return (rawItem: ItemType): boolean => {
+      let matchesText: ((term: string | RegExp | undefined) => boolean) | undefined;
+      if (requiredText.length || excludedText.length) {
+        let title: string | undefined;
+        let lowerTitle: string | undefined;
+        matchesText = (term) => {
+          if (term === undefined) return false;
+          title ??= getItemTitle(rawItem);
+          if (typeof term === "string") return (lowerTitle ??= title.toLowerCase()).includes(term);
+          return term.test(title);
+        };
+        if (!requiredText.every(matchesText)) return false;
       }
 
-      if (parseOptions.keywords) {
-        for (const keyword of parseOptions.keywords) {
-          if (checkKeywordValue(exclude, rawItem, keyword, format, true) === true) return false;
-        }
+      for (const key of requiredKeywords) {
+        if (checkKeywordValue(filter, rawItem, key, format) === false) return false;
       }
+      for (const key of ranges) {
+        if (checkRangeValue(filter, rawItem, key, format) === false) return false;
+      }
+      if (matchesText && excludedText.some(matchesText)) return false;
+      for (const key of excludedKeywords) {
+        if (checkKeywordValue(exclude, rawItem, key, format, true) === true) return false;
+      }
+      return true;
+    };
+  });
 
-      // NOTE： search-query-parser 不支持 range 的 exclude
-    }
+  function tableFilterFn(_value: any, _query: string, item: any): boolean {
+    return activeTableFilter.value?.(item.raw as ItemType) ?? true;
+  }
 
-    return true;
+  function filterTableItems(items: ItemType[]): ItemType[] {
+    const matches = activeTableFilter.value;
+    return matches ? items.filter(matches) : items;
   }
 
   return {
@@ -640,6 +640,7 @@ export function useTableCustomFilter<ItemType extends Record<string, any>>(
     buildFilterDictFn,
     stringifyFilterDictFn,
     tableFilterFn,
+    filterTableItems,
     reBuildFilterCountRef,
     reBuildAdvanceFilter,
     updateTableFilterValueFn,

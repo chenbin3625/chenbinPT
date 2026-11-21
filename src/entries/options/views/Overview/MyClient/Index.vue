@@ -356,12 +356,23 @@ watch(globalRefreshInterval, (value) => {
   }
 });
 
+// 页面隐藏时暂停自动刷新（表格没人看），恢复可见后按原有节奏续订。
+// 不改变 autoRefreshRunning / autoRefreshUserStopped，用户的启停选择保持不变。
+function onDocumentVisibilityChange() {
+  if (document.hidden) {
+    clearAllTimers();
+  } else if (autoRefreshRunning.value) {
+    for (const id of activeDownloaderIds.value) scheduleDownloaderRefresh(id);
+  }
+}
+
 onMounted(async () => {
   mounted = true;
   await Promise.all([metadataStore.$onReady(), configStore.$onReady()]);
   if (!mounted) return;
   // 激活页面级刷新会话：离开页面后，旧的在途请求回调会因 epoch 不匹配而不再续订定时器
   beginPageRefresh();
+  document.addEventListener("visibilitychange", onDocumentVisibilityChange);
   // 支持从 SetDownloader 等页面通过 ?downloader=<id> 预选单个下载服务器
   const queryDownloaderId = route.query.downloader as string | undefined;
   let hasQueryDownloader = false;
@@ -395,6 +406,7 @@ onMounted(async () => {
 onUnmounted(() => {
   mounted = false;
   initialized = false;
+  document.removeEventListener("visibilitychange", onDocumentVisibilityChange);
   // 先让在途请求回调失效（否则它们会在 await 之后重新挂上定时器），再清定时器；
   // 保留「是否运行 / 用户是否主动停止」的模块级选择，供下次进入页面恢复（D2-06）。
   endPageRefresh();

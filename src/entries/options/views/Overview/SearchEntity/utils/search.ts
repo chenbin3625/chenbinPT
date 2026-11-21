@@ -72,10 +72,18 @@ let searchExpansionToken = 0;
  * 高级筛选词覆盖掉（cancelSearchQueue 已经写过终态）。
  */
 let lastEnqueuedTaskEpoch = searchTaskEpoch;
+/**
+ * 已按哪个轮次重建过结果索引（见 `active` 监听）。
+ * p-queue 的 `active` 对**每个启动的任务**都会触发，而一轮搜索有几十个任务；
+ * 每轮只在第一个任务启动时重建一次，其余任务的去重由任务写回时增量维护。
+ */
+let searchIndexBuiltEpoch: number | null = null;
 
 /** 让当前所有在途/排队的搜索任务失效（调用方通常还会 `searchQueue.clear()` 清掉尚未开始的任务） */
 export function invalidateSearchTasks() {
   searchTaskEpoch++;
+  // 新一轮（或取消）开始：已有结果 ID 索引必须在本轮第一个任务真正启动时重建一次
+  searchIndexBuiltEpoch = null;
 }
 
 export function captureSearchTaskEpoch(): number {
@@ -302,8 +310,13 @@ searchQueue.on("active", () => {
     searchQueue.concurrency = configStore.searchEntity.queueConcurrency;
     console.debug("Search queue concurrency changed to: ", searchQueue.concurrency);
   }
-  // 队列开始活跃时，按当前结果重建索引
-  rebuildExistingSearchIds();
+  // 队列开始活跃时，按当前结果重建索引。
+  // 只在每轮第一个任务启动时重建：`active` 是逐任务事件，若每次都重建，
+  // 一轮 N 个任务、结果数 M 就是 O(N × M) 的重复扫描；任务写回时已增量维护索引。
+  if (searchIndexBuiltEpoch !== searchTaskEpoch) {
+    rebuildExistingSearchIds();
+    searchIndexBuiltEpoch = searchTaskEpoch;
+  }
 });
 
 searchQueue.on("idle", () => {
@@ -319,6 +332,7 @@ searchQueue.on("idle", () => {
   runtimeStore.search.endAt = Date.now();
 
   clearExistingSearchIds(); // 队列空闲时，清空本轮索引
+  searchIndexBuiltEpoch = null;
   buildAdvanceItemPropsFn(); // 队列空闲时，构建高级筛选词
 });
 

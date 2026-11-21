@@ -215,7 +215,7 @@ const fullTableHeader = computed(
     ] as (DataTableHeader & { props?: any })[],
 );
 
-const { tableFilterRef, tableFilterFn, buildAdvanceItemPropsFn } = tableCustomFilter;
+const { filterTableItems, buildAdvanceItemPropsFn } = tableCustomFilter;
 
 // 标题列标签点击筛选后，已激活的标签名（读的是与筛选条共用的 advanceFilterDictRef，故两边同步）
 const activeTagFilterNames = computed(() => getActiveTagFilterNames());
@@ -278,9 +278,7 @@ watch(
 function normalizeSnapshotPromotions(items: ISearchResultTorrent[] = []) {
   items.forEach((item) => normalizeTorrentPromotion(item));
 }
-const filteredTableData = computed(() =>
-  runtimeStore.search.searchResult.filter((item) => tableFilterFn(undefined, tableFilterRef.value, { raw: item })),
-);
+const filteredTableData = computed(() => filterTableItems(runtimeStore.search.searchResult));
 const hasSearchFilteredNoResults = computed(
   () =>
     runtimeStore.search.searchResult.length > 0 &&
@@ -339,9 +337,12 @@ watch(
 );
 
 // 筛选条件变化：结果集换成另一批行，继续停在第 N 页没有意义
-watch(tableFilterRef, () => {
-  tableCurrentPage.value = 1;
-});
+watch(
+  () => tableCustomFilter.tableFilterRef?.value,
+  () => {
+    tableCurrentPage.value = 1;
+  },
+);
 
 // 结果变少 / 每页条数变化时把页码钳制到最后一页，避免停在空白页
 watch(
@@ -927,6 +928,7 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       </div>
       <a-button
         :title="t('SearchEntity.index.alert.searchStatus')"
+        :aria-label="t('SearchEntity.index.alert.searchStatus')"
         class="status-btn search-status__overview"
         @click="showSearchStatusDialog = true"
         size="small"
@@ -1266,11 +1268,9 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 </template>
 
 <style scoped>
-/* 状态行外层沿用 .ptd-inline-toolbar 的两端对齐；窄屏换行时「搜索情况」按钮落到第二行，
-   行距与内部标签组（下方 6px）保持一致，不出现两种行距 */
 .search-status {
   row-gap: 6px;
-  margin: 0 -12px;
+  margin: 0 -12px 8px;
   padding: 0 12px 12px;
   border-bottom: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.08));
 }
@@ -1373,12 +1373,14 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 }
 
 @media (max-width: 599px) {
-  .search-status__main {
-    gap: 6px 8px;
+  .search-status {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
   }
 
-  .search-status__overview {
-    flex: 0 0 auto;
+  .search-status__main {
+    gap: 6px 8px;
   }
 
   .search-status__overview-label {

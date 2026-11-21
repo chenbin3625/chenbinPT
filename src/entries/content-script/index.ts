@@ -10,6 +10,7 @@
 // 现改为 getExtStoragePath 精确取值，跨进程传输量与反序列化开销都降为常数级。
 
 import { getHostFromUrl } from "@ptd/site/utils/html.ts";
+import { matchSocialPageHost } from "@ptd/social/hosts.ts";
 
 import { sendMessage } from "@/messages.ts";
 import { setContentScriptAppProps } from "@/shared/contentScriptApp.ts";
@@ -67,7 +68,13 @@ sendMessage("getExtStoragePath", {
     const contentScript = (contentScriptConfig ?? {}) as IConfigPiniaStorageSchema["contentScript"];
 
     if (contentScript.enabled ?? true) {
-      if (contentScript.enabledAtSocialSite ?? true) {
+      const host = getHostFromUrl(window.location.href); // 获取当前页面的 host
+
+      // P1：先在本地按 host 后缀预筛（只有 6 组域名），命中才去问 offscreen。
+      // 否则每个普通网页都会先发 ensureOffscreenDocument 再发 matchSocialPage，
+      // 为一次必然落空的匹配唤醒 offscreen 文档并多做两次跨进程往返。
+      // 用 hostname（不含端口），与 matchSocialPageUrl 内部的 parsed.hostname 保持一致。
+      if ((contentScript.enabledAtSocialSite ?? true) && matchSocialPageHost(window.location.hostname)) {
         // B2-3：社交站点匹配是可选的旁路（消息会先唤醒/创建 offscreen 文档），它的失败
         // （offscreen 创建失败、被回收、端口断开…）不得阻断后续的 PT 站点识别与挂载。
         // 失败按「不是社交站点」降级；这里刻意不新增 console 调用 —— 引导包是每次页面加载都要执行
@@ -80,7 +87,6 @@ sendMessage("getExtStoragePath", {
         }
       }
 
-      const host = getHostFromUrl(window.location.href); // 获取当前页面的 host
       // 优先读独立的 siteIndex 小 key（见 docs/performance-audit.md P2-17）：
       // metadata 很大且会被高频写入反复失效，这里只需要 host → siteId 映射表。
       // 旧数据（尚未生成 siteIndex）时回落到 metadata。
