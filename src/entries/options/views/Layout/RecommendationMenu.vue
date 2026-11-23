@@ -46,6 +46,8 @@ async function loadRecommendations(flush = false) {
     return;
   }
 
+  stopEnrichmentQueue();
+
   if (!flush && recommendationItems.value.length > 0 && !recommendationError.value) {
     const requestId = ++recommendationRequestId;
     if (hasIncompleteRecommendations()) {
@@ -73,10 +75,12 @@ async function loadRecommendations(flush = false) {
     if (result.hasFailedSources && recommendationItems.value.length === 0) {
       recommendationError.value = t("layout.header.hotRecommendations.loadFailed");
     }
-    void enrichRecommendations(requestId);
+    if (isRecommendationMenuOpen.value) {
+      void enrichRecommendations(requestId);
+    }
   } catch (error) {
     console.error("Failed to load social recommendations", error);
-    if (recommendationItems.value.length === 0) {
+    if (requestId === recommendationRequestId && recommendationItems.value.length === 0) {
       recommendationError.value = t("layout.header.hotRecommendations.loadFailed");
     }
   } finally {
@@ -142,6 +146,8 @@ function updateRecommendationItem(enrichedItem: ISocialRecommendationItem) {
 }
 
 onUnmounted(() => {
+  recommendationRequestId++;
+  isRecommendationMenuOpen.value = false;
   if (flushEnrichedTimer !== undefined) {
     clearTimeout(flushEnrichedTimer);
     flushEnrichedTimer = undefined;
@@ -189,15 +195,19 @@ async function enrichRecommendationItems(
   items: ISocialRecommendationItem[],
   enrichment: "visible" | "all",
 ) {
-  if (!isRecommendationMenuOpen.value) {
+  if (requestId !== recommendationRequestId || !isRecommendationMenuOpen.value) {
     return;
   }
 
+  stopEnrichmentQueue();
   const enrichmentQueue = createRecommendationEnrichmentQueue(recommendationItemEnrichmentConcurrency);
   activeEnrichmentQueue = enrichmentQueue;
   try {
     for (const item of items) {
       void enrichmentQueue.add(async () => {
+        if (requestId !== recommendationRequestId || !isRecommendationMenuOpen.value) {
+          return;
+        }
         try {
           const result = await sendMessage("getSocialRecommendationItem", { item, enrichment });
           if (requestId !== recommendationRequestId || !isRecommendationMenuOpen.value) {

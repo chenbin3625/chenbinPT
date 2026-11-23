@@ -205,15 +205,23 @@ export default class Gtnet extends PrivateSite {
     // E2-21：vBulletin 的 search.php?do=process 无论是否带关键词都会校验 securitytoken，
     // 原实现只在 keywords 为真时注入，空关键词浏览（仅按分类/状态筛选）会带空 token 被站点拒绝。
     const token = await this.getSecurityToken();
-    if (token) {
-      // 将 token 注入到搜索配置中
-      if (!this.metadata.search!.requestConfig!.data) {
-        this.metadata.search!.requestConfig!.data = {};
-      }
-      (this.metadata.search!.requestConfig!.data as Record<string, string>).securitytoken = token;
-    }
 
-    const searchResult = await super.getSearchResult(keywords, searchEntry);
+    // 在局部拷贝的 searchEntry 上传递 securitytoken（含空串），不修改共享的 this.metadata
+    const baseData = (this.metadata.search?.requestConfig?.data as Record<string, any> | undefined) ?? {};
+    const entryData = (searchEntry.requestConfig?.data as Record<string, any> | undefined) ?? {};
+    const clonedSearchEntry: ISearchEntryRequestConfig = {
+      ...searchEntry,
+      requestConfig: {
+        ...(searchEntry.requestConfig ?? {}),
+        data: {
+          ...baseData,
+          ...entryData,
+          securitytoken: token,
+        },
+      },
+    };
+
+    const searchResult = await super.getSearchResult(keywords, clonedSearchEntry);
 
     if (!token) {
       // 取不到 token 时保留空 token 让站点自行判定，但把原因透出到搜索状态里，避免「无结果」误导
@@ -226,7 +234,11 @@ export default class Gtnet extends PrivateSite {
   }
 
   public override async getTorrentDownloadRequestConfig(torrent: ITorrent): Promise<AxiosRequestConfig> {
-    const detailUrl = `/torrentdetails.php?torrentid=${torrent.id}`;
+    const torrentId = String(torrent.id ?? "").trim();
+    if (!torrentId) {
+      throw new Error(`[PTD] site '${this.name}' cannot build download request without torrent.id`);
+    }
+    const detailUrl = `/torrentdetails.php?torrentid=${encodeURIComponent(torrentId)}`;
     const { data: doc } = await this.request<Document>({
       url: detailUrl,
       responseType: "document",
@@ -249,15 +261,23 @@ export default class Gtnet extends PrivateSite {
       }
     }
 
+    const refererUrl = new URL(detailUrl, this.url).href;
+    const formBody = new URLSearchParams({
+      do: "download",
+      securitytoken: token,
+      torrentid: torrentId,
+      download: "as Torrent",
+    });
+
     return {
       baseURL: this.url,
       url: "/torrentdetails.php",
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
-        Referer: `${this.url}torrentdetails.php?torrentid=${torrent.id}`,
+        Referer: refererUrl,
       },
-      data: `do=download&securitytoken=${token}&torrentid=${torrent.id}&download=as+Torrent`,
+      data: formBody.toString(),
       timeout: this.userConfig.timeout ?? 30e3,
     };
   }

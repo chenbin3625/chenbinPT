@@ -1,7 +1,7 @@
 /**
  * 第三轮审查修复的行为回归：
  * - CONTENTSCRIPT-2：从「高级列表」推送下载时要先关掉自身，否则选择下载器弹窗会被盖住；
- * - CONTENTSCRIPT-3：SiteListPage 的三个 parseListPage() 调用失败时都要给出 UI 反馈；
+ * - CONTENTSCRIPT-3：SiteListPage 的 parseListPage() 调用失败时都要给出 UI 反馈；
  * - CONTENTSCRIPT-4：SpeedDialBtn 在 circle 形态下不提供 description 插槽（antd 会告警）。
  */
 import { describe, expect, it, vi } from "vitest";
@@ -129,10 +129,11 @@ describe("CONTENTSCRIPT-2 · 高级列表推送下载", () => {
 });
 
 describe("CONTENTSCRIPT-3 · SiteListPage 解析失败反馈", () => {
-  it("parseListPage 抛错时推送/高级列表/快捷搜索都会提示 operationFailed", async () => {
+  it("parseListPage 抛错时收藏/推送/高级列表/快捷搜索各按钮都会单独提示 operationFailed", async () => {
     const pinia = newPinia();
     const configStore = useConfigStore(pinia);
     configStore.contentScript.doubleConfirmAction = false;
+    configStore.contentScript.stackedButtons = true;
     const metadataStore = useMetadataStore(pinia);
     metadataStore.downloaders = { d1: { id: "d1", name: "d1", enabled: true } } as any;
 
@@ -158,16 +159,27 @@ describe("CONTENTSCRIPT-3 · SiteListPage 解析失败反馈", () => {
       app.mount(host);
       await settle();
 
-      const buttons = Array.from(host.querySelectorAll<HTMLElement>(".ant-float-btn"));
-      expect(buttons.length).toBeGreaterThanOrEqual(3);
-      for (const button of buttons) button.click();
-      await settle();
-
       const operationFailed = i18nInstance.global.t("contentScript.operationFailed");
-      const failedCalls = snackbar.mock.calls.filter(([text]) => text === operationFailed);
-      // 「推送至下载器」「高级列表」「快捷搜索」三条路径都必须有反馈（修复前 0 条，且留下 unhandled rejection）
-      expect(failedCalls.length).toBeGreaterThanOrEqual(3);
-      expect(failedCalls.every(([, options]) => options?.color === "error")).toBe(true);
+      const targetButtons = [
+        i18nInstance.global.t("contentScript.speedDial.favorite"),
+        i18nInstance.global.t("contentScript.speedDial.pushTo"),
+        i18nInstance.global.t("contentScript.speedDial.advanceList"),
+        i18nInstance.global.t("contentScript.speedDial.quickSearch"),
+      ];
+
+      for (const label of targetButtons) {
+        const button = Array.from(host.querySelectorAll<HTMLElement>(".ant-float-btn")).find(
+          (btn) => btn.querySelector(".ant-float-btn-description")?.textContent?.trim() === label,
+        );
+        expect(button, `应渲染按钮「${label}」`).toBeDefined();
+
+        snackbar.mockClear();
+        button!.click();
+        await settle();
+
+        expect(snackbar, `点击「${label}」失败时应提示 operationFailed`).toHaveBeenCalledTimes(1);
+        expect(snackbar).toHaveBeenCalledWith(operationFailed, { color: "error" });
+      }
     } finally {
       app.unmount();
       host.remove();

@@ -117,27 +117,60 @@ export default class FreeJavTorrent extends BittorrentSite {
    *   3. 中转页里的 `a.download-button` 才指向真正的 `.torrent`（在 dl.<域名> 上）
    */
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    if (!torrent.link && torrent.url) {
-      const detailPage = await this.request<Document>({ url: torrent.url, responseType: "document" });
-      const relayUrl = this.getFieldData(detailPage.data, {
-        selector: "a.download-button",
-        attr: "href",
-      }) as string;
+    let resolvedLink = torrent.link ?? "";
 
-      if (relayUrl) {
-        const relayPage = await this.request<Document>({ url: relayUrl, responseType: "document" });
-        torrent.link = this.getFieldData(relayPage.data, {
+    if (!resolvedLink && torrent.url) {
+      if (!this.isTrustedDownloadLink(torrent.url)) {
+        throw new Error(`Rejected detail URL outside site host allowlist for ${this.metadata.id}`);
+      }
+      const detailPage = await this.request<Document>({ url: torrent.url, responseType: "document" });
+      const rawRelayUrl = this.getFieldData(
+        detailPage.data,
+        {
           selector: "a.download-button",
           attr: "href",
-        }) as string;
+        },
+        "link",
+      ) as string;
+      const relayUrl = rawRelayUrl
+        ? this.fixLink(rawRelayUrl, detailPage.config ?? { baseURL: this.url, url: torrent.url })
+        : "";
+
+      if (relayUrl) {
+        if (!this.isTrustedDownloadLink(relayUrl)) {
+          throw new Error(`Rejected relay URL outside site host allowlist for ${this.metadata.id}`);
+        }
+        const relayPage = await this.request<Document>({ url: relayUrl, responseType: "document" });
+        const rawFinalLink = this.getFieldData(
+          relayPage.data,
+          {
+            selector: "a.download-button",
+            attr: "href",
+          },
+          "link",
+        ) as string;
+        resolvedLink = rawFinalLink
+          ? this.fixLink(rawFinalLink, relayPage.config ?? { baseURL: this.url, url: relayUrl })
+          : "";
       }
+    } else if (resolvedLink) {
+      resolvedLink = this.fixLink(resolvedLink, { baseURL: this.url, url: torrent.url });
     }
 
-    // 与基类保持一致（AbstractBittorrentSite.ts:787-790）
-    if (this.userConfig.downloadLinkAppendix) {
-      torrent.link = `${torrent.link ?? ""}${this.userConfig.downloadLinkAppendix}`;
+    if (!resolvedLink) {
+      const safeUrl = torrent.url ? torrent.url.split("?")[0] : "";
+      throw new Error(
+        `[PTD] site '${this.name}' cannot parse torrent download link (torrentId=${torrent.id ?? ""}, url=${safeUrl})`,
+      );
     }
 
-    return torrent.link!;
+    if (!this.isTrustedDownloadLink(resolvedLink)) {
+      throw new Error(`Rejected download URL outside site host allowlist for ${this.metadata.id}`);
+    }
+
+    // 与基类保持一致：追加 downloadLinkAppendix 但不写回 torrent.link，避免同一对象二次调用重复追加
+    return this.userConfig.downloadLinkAppendix
+      ? `${resolvedLink}${this.userConfig.downloadLinkAppendix}`
+      : resolvedLink;
   }
 }

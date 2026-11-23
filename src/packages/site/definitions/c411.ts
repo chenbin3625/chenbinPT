@@ -44,15 +44,13 @@ import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import { torznabCategoryName } from "../schemas/Torznab.ts";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 import {
-  CFBlockedError,
   EResultParseStatus,
-  NeedLoginError,
   type IElementQuery,
   type ISearchCategoryOptions,
   type ISiteMetadata,
   type IUserInfo,
 } from "../types";
-import { logMessage, siteErrorLogData } from "../utils";
+import { classifySiteError, logMessage, ServerError, siteErrorLogData } from "../utils";
 
 /**
  * torznab `cat` 的取值 → 展示名。
@@ -352,24 +350,24 @@ export default class C411 extends PrivateSite {
 
       flushUserInfo.status = EResultParseStatus.success;
     } catch (error) {
+      // AbstractBittorrentSite.request() 在 status >= 400 时抛 ServerError（无 .response），
+      // 需同时检查 ServerError 消息里的 401/403 与 AxiosError.response.status，再交由 classifySiteError 归类。
+      const httpStatus = (error as AxiosError)?.response?.status;
+      const isAuthFailure =
+        httpStatus === 401 ||
+        httpStatus === 403 ||
+        (error instanceof ServerError && /\b(401|403)\b/.test(error.message));
+
+      const { status, statusMsg, retryable } = classifySiteError(error);
+      flushUserInfo.status = isAuthFailure ? EResultParseStatus.noUserInput : status;
+      flushUserInfo.statusMsg = statusMsg;
+
       // fork 的 eslint 禁止直接 console（no-console），与其它定义一样走 logMessage 进日志页
       logMessage(
-        `[Site] ${this.name} getUserInfoResult failed`,
-        { site: this.metadata.id, error: siteErrorLogData(error) },
-        "error",
+        `[Site] ${this.name} getUserInfoResult failed (status=${EResultParseStatus[flushUserInfo.status]}, retryable=${retryable})`,
+        { site: this.metadata.id, status: flushUserInfo.status, retryable, error: siteErrorLogData(error) },
+        retryable && !isAuthFailure ? "warn" : "error",
       );
-
-      flushUserInfo.status = EResultParseStatus.parseError;
-
-      const status = (error as AxiosError)?.response?.status;
-      if (error instanceof CFBlockedError) {
-        flushUserInfo.status = EResultParseStatus.CFBlocked;
-      } else if (error instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      } else if (status === 401 || status === 403) {
-        // Key 没有 Profile (reading) 权限或已失效
-        flushUserInfo.status = EResultParseStatus.noUserInput;
-      }
     }
 
     return flushUserInfo;

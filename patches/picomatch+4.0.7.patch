@@ -2,24 +2,46 @@ diff --git a/node_modules/picomatch/lib/parse.js b/node_modules/picomatch/lib/pa
 index 2920751..931782f 100644
 --- a/node_modules/picomatch/lib/parse.js
 +++ b/node_modules/picomatch/lib/parse.js
-@@ -284,6 +284,24 @@ const repeatedExtglobRecursion = pattern => {
+@@ -284,6 +284,46 @@ const repeatedExtglobRecursion = pattern => {
    return depth;
  };
  
-+const hasUnboundedBranchQuantifier = branch => {
++const hasUnboundedBranchQuantifier = (branch, options = {}) => {
 +  let escaped = false;
-+  let bracket = 0;
++  let inBracket = false;
++  let bracketStart = -1;
 +  let quote = false;
 +  for (let i = 0; i < branch.length; i++) {
 +    const ch = branch[i];
 +    if (escaped) { escaped = false; continue; }
 +    if (ch === '\\') { escaped = true; continue; }
-+    if (ch === '"' && bracket === 0) { quote = !quote; continue; }
++    if (ch === '"' && !inBracket) { quote = !quote; continue; }
 +    if (quote) continue;
-+    if (ch === '[') { bracket++; continue; }
-+    if (ch === ']' && bracket > 0) { bracket--; continue; }
-+    if (bracket > 0) continue;
-+    if (ch === '*' || (ch === '+' && branch[i + 1] === '(')) return true;
++    if (inBracket) {
++      if (options.posix !== false && ch === '[' && branch[i + 1] === ':') {
++        const closeIdx = branch.indexOf(':]', i + 2);
++        if (closeIdx !== -1 && Object.prototype.hasOwnProperty.call(POSIX_REGEX_SOURCE, branch.slice(i + 2, closeIdx))) {
++          i = closeIdx + 1;
++          continue;
++        }
++      }
++      if (ch === ']') {
++        const isLeadingClose =
++          i === bracketStart + 1 ||
++          (i === bracketStart + 2 &&
++            (branch[bracketStart + 1] === '^' || (options.posix === true && branch[bracketStart + 1] === '!')));
++        if (!isLeadingClose) {
++          inBracket = false;
++        }
++      }
++      continue;
++    }
++    if (ch === '[' && options.nobracket !== true && branch.indexOf(']', i + 1) !== -1) {
++      inBracket = true;
++      bracketStart = i;
++      continue;
++    }
++    if (ch === '*' || ((ch === '+' || ch === '!') && branch[i + 1] === '(')) return true;
 +  }
 +  return false;
 +};
@@ -27,12 +49,12 @@ index 2920751..931782f 100644
  const analyzeRepeatedExtglob = (body, options) => {
    if (options.maxExtglobRecursion === false) {
      return { risky: false };
-@@ -332,7 +350,7 @@ const analyzeRepeatedExtglob = (body, options) => {
+@@ -332,7 +372,7 @@ const analyzeRepeatedExtglob = (body, options) => {
  
      combinable = false;
  
 -    if (repeatedExtglobRecursion(branch) > max) {
-+    if (hasUnboundedBranchQuantifier(branch) || repeatedExtglobRecursion(branch) > max) {
++    if (hasUnboundedBranchQuantifier(branch, options) || repeatedExtglobRecursion(branch) > max) {
        return { risky: true };
      }
    }

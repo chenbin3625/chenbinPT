@@ -6,6 +6,7 @@ import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import { get } from "es-toolkit/compat";
 
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import Unit3D, {
   CategoryFree,
   freeleechFactorMap,
@@ -142,6 +143,15 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
+  list: [
+    {
+      ...SchemaMetadata.list![0],
+      mergeSearchSelectors: false,
+      selectors: SchemaMetadata.search.selectors,
+    },
+    ...SchemaMetadata.list!.slice(1),
+  ],
+
   // E13（与 dreadvault / generationfree 一致）：不要用宽匹配 urlPatterns 覆盖引擎默认登录判据，
   // 否则含 login / verify 的搜索词、用户名会被误判为「未登录」。默认判据见 AbstractPrivateSite。
   noLoginAssert: {
@@ -268,6 +278,10 @@ export default class RetroMoviesClub extends Unit3D {
     row: Element | Document | object,
     searchInput: ISearchInput,
   ): Partial<ITorrent> {
+    if (isElementNode(row)) {
+      return super.parseTorrentRowForTags(torrent, row, searchInput);
+    }
+
     const raw = row as IUnit3DRawTorrent;
     const tags: ITorrentTag[] = [];
 

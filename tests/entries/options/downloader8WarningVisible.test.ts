@@ -11,7 +11,7 @@
  * - 重新下载弹窗：结果里只有 warningMessage 时按 warning 汇总并带上告警文案；
  * - 搜索页推送（ActionTd 的本地下载汇总）：只有告警、没有失败时也必须提示。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, ref } from "vue";
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
@@ -146,65 +146,73 @@ beforeEach(() => {
   mocks.showSnackbar.mockReset();
 });
 
+afterEach(() => {
+  document.body.innerHTML = "";
+});
+
 describe("DOWNLOADER-8：下载历史列表 / 详情必须把「成功但降级」渲染成告警而不是失败", () => {
   it("completed + warningMessage：列表渲染 warning 色 tag 与完整 tooltip，且没有 error 红", async () => {
     const view = await mountHistory([makeRecord({ warningMessage: WARNING })]);
+    try {
+      const warningTag = view.$<HTMLElement>(".ptd-download-warning");
+      expect(warningTag, "列表必须给出告警标记，否则用户不知道设置没生效").not.toBeNull();
+      expect(warningTag!.classList.contains("ant-tag-warning"), "告警应是 warning 色而不是 error 红").toBe(true);
+      expect(warningTag!.classList.contains("ant-tag-error")).toBe(false);
+      expect(warningTag!.textContent).toContain("告警");
 
-    const warningTag = view.$<HTMLElement>(".ptd-download-warning");
-    expect(warningTag, "列表必须给出告警标记，否则用户不知道设置没生效").not.toBeNull();
-    expect(warningTag!.classList.contains("ant-tag-warning"), "告警应是 warning 色而不是 error 红").toBe(true);
-    expect(warningTag!.classList.contains("ant-tag-error")).toBe(false);
-    expect(warningTag!.textContent).toContain("告警");
-
-    // tooltip 承载完整文案（列表列放不下长文案）
-    for (const type of ["mouseover", "mouseenter", "mousemove"]) {
-      warningTag!.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+      // tooltip 承载完整文案（列表列放不下长文案）
+      for (const type of ["mouseover", "mouseenter", "mousemove"]) {
+        warningTag!.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+      }
+      await view.settle(300);
+      const tooltip = inDocument(".ant-tooltip-inner").find((element) => element.textContent?.includes("infoHash"));
+      expect(tooltip, "告警 tag 必须能通过 tooltip 展示完整文案").toBeTruthy();
+    } finally {
+      view.unmount();
     }
-    await view.settle(300);
-    const tooltip = inDocument(".ant-tooltip-inner").find((element) => element.textContent?.includes("infoHash"));
-    expect(tooltip, "告警 tag 必须能通过 tooltip 展示完整文案").toBeTruthy();
-
-    view.unmount();
   });
 
   it("列表里打开详情弹窗：告警走 warning alert，失败原因走 error alert（互不串门）", async () => {
     const view = await mountHistory([makeRecord({ warningMessage: WARNING })]);
+    try {
+      view.$<HTMLElement>(".ptd-download-warning")!.click();
+      await view.settle(80);
 
-    view.$<HTMLElement>(".ptd-download-warning")!.click();
-    await view.settle(80);
-
-    // 判别力：若 offscreen 把告警写回 errorMessage（旧行为），这里只会出现 error alert，本断言即红
-    expect(inDocument(".ptd-download-warning-detail").length, "详情弹窗必须渲染告警 alert").toBe(1);
-    expect(inDocument(".ant-alert-warning").length).toBe(1);
-    expect(inDocument(".ant-alert-error").length, "成功但降级的记录不能被标成失败原因").toBe(0);
-    expect(document.body.textContent).toContain("infoHash");
-
-    view.unmount();
+      // 判别力：若 offscreen 把告警写回 errorMessage（旧行为），这里只会出现 error alert，本断言即红
+      expect(inDocument(".ptd-download-warning-detail").length, "详情弹窗必须渲染告警 alert").toBe(1);
+      expect(inDocument(".ant-alert-warning").length).toBe(1);
+      expect(inDocument(".ant-alert-error").length, "成功但降级的记录不能被标成失败原因").toBe(0);
+      expect(document.body.textContent).toContain("infoHash");
+    } finally {
+      view.unmount();
+    }
   });
 
   it("失败的记录仍只渲染红色「失败原因」，不会冒出告警 tag", async () => {
     const view = await mountHistory([makeRecord({ downloadStatus: "failed", errorMessage: "downloader rejected" })]);
+    try {
+      expect(view.$(".ptd-download-warning"), "没有告警字段就不该有告警标记").toBeNull();
 
-    expect(view.$(".ptd-download-warning"), "没有告警字段就不该有告警标记").toBeNull();
+      // 用状态 tag 打开详情
+      view.$<HTMLElement>(".ant-table .ant-tag")!.click();
+      await view.settle(80);
 
-    // 用状态 tag 打开详情
-    view.$<HTMLElement>(".ant-table .ant-tag")!.click();
-    await view.settle(80);
-
-    expect(inDocument(".ant-alert-error").length).toBe(1);
-    expect(inDocument(".ptd-download-warning-detail").length).toBe(0);
-    expect(document.body.textContent).toContain("downloader rejected");
-
-    view.unmount();
+      expect(inDocument(".ant-alert-error").length).toBe(1);
+      expect(inDocument(".ptd-download-warning-detail").length).toBe(0);
+      expect(document.body.textContent).toContain("downloader rejected");
+    } finally {
+      view.unmount();
+    }
   });
 
   it("阴性对照：普通成功记录（无 warningMessage）不渲染任何告警", async () => {
     const view = await mountHistory([makeRecord({})]);
-
-    expect(view.$(".ptd-download-warning")).toBeNull();
-    expect(view.text()).toContain("已完成");
-
-    view.unmount();
+    try {
+      expect(view.$(".ptd-download-warning")).toBeNull();
+      expect(view.text()).toContain("已完成");
+    } finally {
+      view.unmount();
+    }
   });
 });
 
@@ -229,21 +237,23 @@ describe("DOWNLOADER-8：重新下载弹窗的结果汇总必须带上告警", (
         }),
     });
     const view = mountOptionsView(Host, { pinia: prepareOptionsPinia() });
-    open.value = true;
-    await view.settle(80);
+    try {
+      open.value = true;
+      await view.settle(80);
 
-    // 三个按钮：old / local / downloader，点「本地下载」触发 sendMessage
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".ant-modal-body .ant-list-item button"));
-    expect(buttons.length).toBe(3);
-    buttons[1]!.click();
-    await view.settle(80);
+      // 三个按钮：old / local / downloader，点「本地下载」触发 sendMessage
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".ant-modal-body .ant-list-item button"));
+      expect(buttons.length).toBe(3);
+      buttons[1]!.click();
+      await view.settle(80);
 
-    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
-    const [content, options] = mocks.showSnackbar.mock.calls[0] as [string, { color: string }];
-    expect(options.color, "推送成功但有降级时不能用 success 色").toBe("warning");
-    expect(content).toContain(WARNING);
-
-    view.unmount();
+      expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+      const [content, options] = mocks.showSnackbar.mock.calls[0] as [string, { color: string }];
+      expect(options.color, "推送成功但有降级时不能用 success 色").toBe("warning");
+      expect(content).toContain(WARNING);
+    } finally {
+      view.unmount();
+    }
   });
 });
 
@@ -260,20 +270,22 @@ describe("DOWNLOADER-8：搜索页推送汇总不能把「成功但降级」吞�
         showKeepUploadBtn: false,
       },
     });
-    await view.settle();
+    try {
+      await view.settle();
 
-    // 本地下载按钮（默认下载器为空时按钮组顺序为：推送 / 复制链接 / 本地下载 / 收藏）
-    const buttons = view.$$<HTMLButtonElement>(".ptd-action-bar button");
-    expect(buttons.length).toBe(4);
-    expect(buttons[2]!.getAttribute("title")).toBe("下载种子文件到本地");
-    buttons[2]!.click();
-    await view.settle(80);
+      // 本地下载按钮（默认下载器为空时按钮组顺序为：推送 / 复制链接 / 本地下载 / 收藏）
+      const buttons = view.$$<HTMLButtonElement>(".ptd-action-bar button");
+      expect(buttons.length).toBe(4);
+      expect(buttons[2]!.getAttribute("title")).toBe("下载种子文件到本地");
+      buttons[2]!.click();
+      await view.settle(80);
 
-    expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
-    const [content, options] = mocks.showSnackbar.mock.calls[0] as [string, { color: string }];
-    expect(options.color).toBe("warning");
-    expect(content).toContain(WARNING);
-
-    view.unmount();
+      expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
+      const [content, options] = mocks.showSnackbar.mock.calls[0] as [string, { color: string }];
+      expect(options.color).toBe("warning");
+      expect(content).toContain(WARNING);
+    } finally {
+      view.unmount();
+    }
   });
 });

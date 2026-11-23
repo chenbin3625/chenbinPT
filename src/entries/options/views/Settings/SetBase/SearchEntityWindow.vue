@@ -5,25 +5,78 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { resolveColor } from "@/shared/colors.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
 import { useSetBaseConfigDraft } from "./configDraft.ts";
 
 const { t } = useI18n();
 const config = useSetBaseConfigDraft();
+const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 
 const infoIconColor = resolveColor("info");
+
+function normalizeIntInRange(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
 
 /**
  * F2-N1：清空「上一次搜索筛选词」是保存时才生效的副作用（与 SetBase 的显式保存语义一致）。
  */
 async function beforeSave() {
+  // 清空 a-input-number 会产出 null：在落盘前统一规范为合法范围内的整数，避免 p-queue 并发 setter 抛 TypeError。
+  config.value.searchEntity.queueConcurrency = normalizeIntInRange(
+    config.value.searchEntity.queueConcurrency,
+    1,
+    25,
+    8,
+  );
+  config.value.searchEntifyControl.maxTagCountBeforeGroup = normalizeIntInRange(
+    config.value.searchEntifyControl.maxTagCountBeforeGroup,
+    0,
+    50,
+    0,
+  );
+  config.value.mediaServerEntity.queueConcurrency = normalizeIntInRange(
+    config.value.mediaServerEntity.queueConcurrency,
+    1,
+    25,
+    5,
+  );
+  config.value.mediaServerEntity.searchLimit = normalizeIntInRange(
+    config.value.mediaServerEntity.searchLimit,
+    1,
+    500,
+    50,
+  );
+
   // 文本域输入期间只按行拆分、不做 trim/过滤（否则用户按回车新增的空行会被立即吞掉，
   // 无法逐行录入标签）；真正写入配置前再统一规范化。
   config.value.searchEntifyControl.hiddenTagNames = config.value.searchEntifyControl.hiddenTagNames
     .map((s) => s.trim())
     .filter(Boolean);
+
+  // 优惠展示形式在设置页切换时同步「优惠」列显隐（与 SearchEntity/Index.vue 的非 immediate 监听互补）
+  const prevPromoMode = configStore.searchEntifyControl.promotionDisplay;
+  const nextPromoMode = config.value.searchEntifyControl.promotionDisplay;
+  const prevShowPromo = prevPromoMode === "factor" || prevPromoMode === "both";
+  const nextShowPromo = nextPromoMode === "factor" || nextPromoMode === "both";
+  const searchCols = configStore.tableBehavior?.SearchEntity?.columns;
+  if (Array.isArray(searchCols) && searchCols.length > 0 && prevShowPromo !== nextShowPromo) {
+    if (nextShowPromo && !searchCols.includes("downloadVolumeFactor")) {
+      configStore.updateTableBehavior("SearchEntity", "columns", [...searchCols, "downloadVolumeFactor"]);
+    } else if (!nextShowPromo && searchCols.includes("downloadVolumeFactor")) {
+      configStore.updateTableBehavior(
+        "SearchEntity",
+        "columns",
+        searchCols.filter((key) => key !== "downloadVolumeFactor"),
+      );
+    }
+  }
 
   if (!config.value.searchEntity.saveLastFilter) {
     await metadataStore.setLastSearchFilter("");
@@ -205,7 +258,7 @@ const hiddenTagNamesText = computed({
           v-model:value="config.mediaServerEntity.searchLimit"
           :max="500"
           :min="1"
-          :step="config.mediaServerEntity.searchLimit >= 100 ? 10 : 1"
+          :step="(config.mediaServerEntity.searchLimit ?? 0) >= 100 ? 10 : 1"
           style="width: min(100%, 420px)"
         />
       </div>

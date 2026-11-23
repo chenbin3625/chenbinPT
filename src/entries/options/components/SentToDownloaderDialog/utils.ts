@@ -140,17 +140,18 @@ export async function sendTorrentToDownloader(
         allowSiteLessLink: options.allowSiteLessLink === true,
         addTorrentOptions: realAddTorrentOptions as CAddTorrentOptions,
       }).catch((x) => {
+        const errorMessage = String(x);
         runtimeStore.showSnackbar(
           i18n.t("SentToDownloaderDialog.sendFailed", {
             title: torrent.title,
-            error: String(x),
+            error: errorMessage,
           }),
           { color: "error" },
         );
         // V-1：catch 必须返回 failed 标记。此前这里解析为 `undefined`，而下面的 failedCount 是按
         // `downloadStatus === "failed"` 统计的 → 恒为 0，于是全部失败时仍会弹出
         // 「成功发送 N 个任务到下载器」并配绿色 success。
-        return { downloadStatus: "failed" as const };
+        return { downloadStatus: "failed" as const, errorMessage, rejected: true };
       }),
     );
   }
@@ -158,7 +159,13 @@ export async function sendTorrentToDownloader(
   const status = await Promise.all(promises);
   if (status.length > 0) {
     const pendingCount = status.filter((x) => x?.downloadStatus === "pending").length;
-    const failedCount = status.filter((x) => x?.downloadStatus === "failed").length;
+    const failedResults = status
+      .map((x, index) => ({
+        torrent: torrentItems[index],
+        result: x as (IDownloadTorrentResult & { rejected?: boolean }) | undefined,
+      }))
+      .filter(({ result }) => result?.downloadStatus === "failed");
+    const failedCount = failedResults.length;
     // DOWNLOADER-8：`warningMessage` 表示「推送成功但下载器设置未生效」（如 uTorrent 直发 http 链接
     // 拿不到 infoHash，暂停 / 标签 / 上传限速被跳过）。这类结果既不是 failed 也不是 pending，若只按
     // 上面两类统计，搜索页的推送汇总就会把它当普通成功，用户看不到「设置没生效」。
@@ -169,21 +176,44 @@ export async function sendTorrentToDownloader(
       );
     }).length;
     const successCount = status.length - failedCount;
-    const color = failedCount > 0 || warningCount > 0 ? "warning" : "success";
-    const warningSummary =
-      warningCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryWarning", { count: warningCount }) : "";
+    const firstError = failedResults.find(({ result }) => Boolean(result?.errorMessage))?.result?.errorMessage;
+    const firstResolvedError = failedResults.find(({ result }) => !result?.rejected && Boolean(result?.errorMessage))
+      ?.result?.errorMessage;
 
-    runtimeStore.showSnackbar(
-      successCount > 0
-        ? i18n.t("SentToDownloaderDialog.sendSummary", {
-            success: successCount,
-            pending:
-              pendingCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryPending", { count: pendingCount }) : "",
-            failed: failedCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryFailed", { count: failedCount }) : "",
-          }) + warningSummary
-        : i18n.t("SentToDownloaderDialog.noTasks"),
-      { color },
-    );
+    if (successCount > 0) {
+      const color = failedCount > 0 || warningCount > 0 ? "warning" : "success";
+      const warningSummary =
+        warningCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryWarning", { count: warningCount }) : "";
+      const summaryMessage =
+        i18n.t("SentToDownloaderDialog.sendSummary", {
+          success: successCount,
+          pending: pendingCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryPending", { count: pendingCount }) : "",
+          failed: failedCount > 0 ? i18n.t("SentToDownloaderDialog.sendSummaryFailed", { count: failedCount }) : "",
+        }) + warningSummary;
+
+      runtimeStore.showSnackbar(firstResolvedError ? `${summaryMessage}: ${firstResolvedError}` : summaryMessage, {
+        color,
+      });
+    } else if (failedCount > 0) {
+      // 全部失败（包括 downloadTorrent 以 { downloadStatus: "failed", errorMessage } resolve 的常规错误）
+      // 不能再显示 noTasks 警告，而应以 error 展示失败数量与具体错误信息
+      const failedSummaryText = i18n
+        .t("SentToDownloaderDialog.sendSummaryFailed", { count: failedCount })
+        .replace(/^[,，]\s*/, "");
+      const errorMessage =
+        failedCount === 1 && firstError && !failedResults[0]?.result?.rejected
+          ? i18n.t("SentToDownloaderDialog.sendFailed", {
+              title: failedResults[0]?.torrent?.title ?? "",
+              error: firstError,
+            })
+          : firstError
+            ? `${failedSummaryText}: ${firstError}`
+            : failedSummaryText;
+
+      runtimeStore.showSnackbar(errorMessage, { color: "error" });
+    } else {
+      runtimeStore.showSnackbar(i18n.t("SentToDownloaderDialog.noTasks"), { color: "warning" });
+    }
   } else {
     runtimeStore.showSnackbar(i18n.t("SentToDownloaderDialog.noTasks"), { color: "warning" });
   }

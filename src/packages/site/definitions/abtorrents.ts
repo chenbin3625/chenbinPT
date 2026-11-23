@@ -3,9 +3,11 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/abtorrents.yml
  * @Issue https://github.com/chenbin3625/chenbinPT/issues/143
  */
-import type { ISiteMetadata, ITorrent } from "../types";
+import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import { ETorrentStatus } from "../types";
 import { buildCategoryOptionsFromDict, parseSizeString, extractTextExcluding } from "../utils";
+import { matchesSelector } from "../utils/selector";
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import PrivateSite from "../schemas/AbstractPrivateSite";
 
 // U-232 V4.5 分类，取自 Jackett 定义（PTPP 未提供分类表）
@@ -251,12 +253,34 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class ABTorrents extends PrivateSite {
+  protected override parseTorrentRowForTags(
+    torrent: Partial<ITorrent>,
+    row: Element | Document | object,
+    searchConfig: ISearchInput,
+  ): Partial<ITorrent> {
+    const result = super.parseTorrentRowForTags(torrent, row, searchConfig);
+    // 行节点本身是 <tr class="freeleech_color">，基类的 selectElements 只查后代，需额外检查行本身
+    if (isElementNode(row) && matchesSelector(row, "tr.freeleech_color")) {
+      const tags = result.tags ?? [];
+      if (!tags.some((tag) => tag.name === "Free")) {
+        tags.push({ name: "Free", color: "blue" });
+      }
+      result.tags = tags;
+    }
+    return result;
+  }
+
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     if (torrent.link) {
-      return torrent.link;
+      return super.getTorrentDownloadLink(torrent);
     }
 
     const id = torrent.id ?? (torrent.url ?? "").match(/[?&]id=(\d+)/)?.[1];
-    return id ? `${this.url}download.php?torrent=${id}` : super.getTorrentDownloadLink(torrent);
+    if (id) {
+      const link = new URL(`download.php?torrent=${encodeURIComponent(String(id))}`, this.url).toString();
+      return super.getTorrentDownloadLink({ ...torrent, link });
+    }
+
+    return super.getTorrentDownloadLink(torrent);
   }
 }

@@ -214,7 +214,7 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 const imdbRe = /tt\d+/;
-const tvmazeRe = /^(?:tvmaze\.)?(\d+)$/;
+const tvmazeRe = /^tvmaze\.(\d+)$/i;
 
 export default class AlphaRatio extends GazelleJSONAPI {
   protected override async transformUnGroupTorrent(group: torrentBrowseResult): Promise<ITorrent> {
@@ -227,12 +227,12 @@ export default class AlphaRatio extends GazelleJSONAPI {
     // 在拿不到按种子的真实 H&R 判据前按 DEFS2-2 删除，避免给所有结果贴误导性标签；若将来接口提供该字段，
     // 应改为按该字段判定后再补标签。
 
-    const imdbId = group.tags.find((tag) => imdbRe.test(tag))?.match(imdbRe)?.[0];
+    const imdbId = group.tags?.find((tag) => imdbRe.test(tag))?.match(imdbRe)?.[0];
     if (imdbId) {
       torrent.ext_imdb = imdbId;
     }
 
-    const tvmazeId = group.tags.find((tag) => tvmazeRe.test(tag))?.match(tvmazeRe)?.[1];
+    const tvmazeId = group.tags?.find((tag) => tvmazeRe.test(tag))?.match(tvmazeRe)?.[1];
     if (tvmazeId) {
       torrent.ext_tvmaze = tvmazeId;
     }

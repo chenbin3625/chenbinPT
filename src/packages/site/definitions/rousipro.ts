@@ -3,7 +3,7 @@
  * @PTMDefinitions https://github.com/JustLookAtNow/pt_mate/blob/master/assets/sites/rousipro.json
  */
 import { isElementNode } from "../schemas/AbstractBittorrentSite";
-import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag } from "../types";
+import { NoUserInputError, type ISearchInput, type ISiteMetadata, type ITorrent, type ITorrentTag } from "../types";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 
 import { TPreDefinedTorrentTagName } from "../utils/tags";
@@ -184,7 +184,7 @@ export const siteMetadata: ISiteMetadata = {
         elementProcess: (element: Document) => {
           const url = element.URL;
           const match = url.match(torrentIdRegex);
-          return match ? match[1] : url;
+          return match ? match[1] : undefined;
         },
       },
       title: { selector: "h1" },
@@ -254,23 +254,34 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class RousiPro extends PrivateSite {
   get userPasskey(): string {
-    return this.userConfig.inputSetting?.passkey ?? "";
+    return this.userConfig.inputSetting?.passkey?.trim() ?? "";
   }
 
   public override async request<T>(
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
-    // 设置默认的 responseType，这样其他配置不需要显式声明
-    axiosConfig.responseType = "json";
-
-    // 在请求的 headers 中添加 Bearer Token
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      Authorization: `Bearer ${this.userPasskey}`,
+    const config: AxiosRequestConfig = {
+      ...axiosConfig,
+      // 仅在调用方未指定时设置默认 responseType，避免覆盖二进制下载的 blob/arraybuffer
+      responseType: axiosConfig.responseType ?? "json",
     };
 
-    return super.request<T>(axiosConfig, checkLogin);
+    // 仅对可信站点域名附加 Bearer Token，避免向第三方下载 CDN 泄漏密钥
+    const target = this.resolveRequestTarget(config);
+    if (target && this.isTrustedSiteUrl(target)) {
+      const token = this.userPasskey;
+      if (!token) {
+        throw new NoUserInputError("个人 API Key");
+      }
+
+      config.headers = {
+        ...(config.headers ?? {}),
+        Authorization: `Bearer ${token}`,
+      };
+    }
+
+    return super.request<T>(config, checkLogin);
   }
 
   protected override parseTorrentRowForTags(
@@ -308,18 +319,16 @@ export default class RousiPro extends PrivateSite {
   }
 
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    // fix: 如果 torrent 对象没有 id ，则依次尝试从 url, link 中提取
-    if (!torrent.id && (torrent.url || torrent.link)) {
-      let match;
-      if (torrent.url?.includes("/torrents/")) {
-        match = torrent.url.match(torrentIdRegex);
-      } else if (torrent.link?.includes("/torrents/")) {
-        match = torrent.link.match(torrentIdRegex);
-      }
-
-      if (match) {
-        torrent.id = match[1];
-      }
+    // 提取纯数字种子 ID（不原地修改入参 torrent.id），无法解析出数字 ID 时显式失败
+    let torrentId = torrent.id !== undefined && torrent.id !== null ? String(torrent.id).trim() : "";
+    if (!/^\d+$/.test(torrentId)) {
+      const match = torrent.url?.match(torrentIdRegex) ?? torrent.link?.match(torrentIdRegex);
+      torrentId = match?.[1] ?? "";
+    }
+    if (!/^\d+$/.test(torrentId)) {
+      throw new Error(
+        `[PTD] site '${this.metadata.id}' cannot extract numeric torrent id (id=${String(torrent.id ?? "")})`,
+      );
     }
 
     // 下载必须使用详情接口返回的短时签名 URL（约 5 分钟有效），
@@ -327,7 +336,7 @@ export default class RousiPro extends PrivateSite {
     // 付费种子未购买或缺少 torrent:download scope 时 download_url 为空字符串
     const { data: response } = await this.request<IPeerGoResponse<IRousiTorrentDetail>>({
       method: "GET",
-      url: `/api/v1/torrents/${encodeURIComponent(String(torrent.id))}`,
+      url: `/api/v1/torrents/${encodeURIComponent(torrentId)}`,
       responseType: "json",
     });
 
@@ -339,7 +348,7 @@ export default class RousiPro extends PrivateSite {
     if (!downloadUrl) {
       throw new Error(
         `[PTD] site '${this.metadata.id}' download_url unavailable ` +
-          `(torrentId=${torrent.id ?? ""}, purchased=${response.data?.is_purchased ?? false})`,
+          `(torrentId=${torrentId}, purchased=${response.data?.is_purchased ?? false})`,
       );
     }
 

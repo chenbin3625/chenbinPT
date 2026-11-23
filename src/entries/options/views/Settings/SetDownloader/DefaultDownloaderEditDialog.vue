@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { cloneDeep } from "es-toolkit";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
@@ -45,11 +46,15 @@ function updateDefaultDownloaderInput(downloaderId: TDownloaderKey, clean: boole
 }
 
 async function saveDefaultDownloader() {
-  metadataStore.defaultDownloader = defaultDownloaderConfig.value;
+  const previousDefaultDownloader = metadataStore.defaultDownloader
+    ? cloneDeep(metadataStore.defaultDownloader)
+    : metadataStore.defaultDownloader;
+  metadataStore.defaultDownloader = cloneDeep(defaultDownloaderConfig.value);
   try {
     await metadataStore.$save();
     showDialog.value = false;
   } catch {
+    metadataStore.defaultDownloader = previousDefaultDownloader;
     runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
   }
 }

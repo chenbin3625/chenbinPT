@@ -56,7 +56,9 @@ function updateSiteName(siteId: TSiteID) {
 
   // 优先从缓存中读取
   if (metadataStore.siteNameMap?.[siteId]) {
-    siteName.value = metadataStore.siteNameMap[siteId];
+    const cachedName = metadataStore.siteNameMap[siteId];
+    siteName.value = cachedName;
+    if (explicitTitle === undefined) renderProp.title = cachedName;
   } else {
     // 如果缓存中没有/或者没有生成缓存，则按之前的逻辑读取
     metadataStore

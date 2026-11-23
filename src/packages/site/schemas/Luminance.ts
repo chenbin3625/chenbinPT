@@ -145,7 +145,13 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
       },
       bonus: {
         selector: ["div[id='bonusdiv'] > h4", "h4:contains('Credits:')"],
-        filters: [(query: string) => parseFloat(query.split(":")[1].trim().replace(/,/g, "") || "0")],
+        filters: [
+          (query: string) => {
+            const parts = query.split(":");
+            const raw = (parts.length > 1 ? parts[1] : parts[0]).trim();
+            return definedFilters.parseNumber(raw);
+          },
+        ],
       },
       ratio: {
         selector: ["ul.stats > li:contains('Ratio:') > span"],
@@ -201,7 +207,7 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
 
   list: [
     {
-      urlPattern: ["/torrents\\.php(?!\\?id=\\d+$)"],
+      urlPattern: [/\/torrents\.php(?!.*(?:\bid=|torrentid=))/],
     },
   ],
 
@@ -309,11 +315,13 @@ export default class Luminance extends GazelleBase {
     dataDocument: Document,
   ): Promise<Partial<IUserInfo>> {
     // 对有 Seeding Size 行的站点直接解析对应元素
-    let seedingSize =
+    const seedingSize =
       this.metadata.userInfo?.selectors?.seedingSize &&
       this.getFieldData(dataDocument, this.metadata.userInfo.selectors.seedingSize); // 在 elementQuery 内进行大小解析
 
-    flushUserInfo.seedingSize = seedingSize;
+    if (typeof seedingSize === "number" && Number.isFinite(seedingSize)) {
+      flushUserInfo.seedingSize = seedingSize;
+    }
 
     if (!seedingSize) {
       // 否则则尝试解析做种列表计算获取（M-10 / L-4：失败不作废其它字段，见 GazelleBase.mergeSeedingSizeSafely）

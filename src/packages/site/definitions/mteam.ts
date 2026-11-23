@@ -182,6 +182,8 @@ export const siteMetadata: ISiteMetadata = {
     "uggcf://arkg.z-grnz.pp/",
   ],
 
+  trackerUrls: ["uggcf://genpxre.z-grnz.pp/"],
+
   category: [
     {
       name: "分类入口",
@@ -389,7 +391,14 @@ export const siteMetadata: ISiteMetadata = {
                 levelRequirements.find((x) => levelId == (x.levelId ?? String(x.id)))?.name ?? levelId,
             ],
           },
-          levelId: { selector: "data.role", filters: [{ name: "parseNumber" }] },
+          levelId: {
+            selector: "data.role",
+            filters: [
+              (role: string | number) =>
+                levelRequirements.find((x) => String(role) == (x.levelId ?? String(x.id)))?.id ??
+                definedFilters.parseNumber(role),
+            ],
+          },
           bonus: { selector: "data.memberCount.bonus", filters: [{ name: "parseNumber" }] },
           lastAccessAt: { selector: "data.memberStatus.lastBrowse", filters: [{ name: "parseTime" }] },
         },
@@ -449,8 +458,16 @@ export const siteMetadata: ISiteMetadata = {
 
         comments: { selector: "td:nth-last-child(5)" },
         category: { selector: "img[src*='/static/cate'][alt]", attr: "alt" },
-        ext_douban: { selector: "a[href^='https://movie.douban.com/subject/']", filters: [{ name: "extDoubanId" }] },
-        ext_imdb: { selector: "a[href^='https://www.imdb.com/title/']", filters: [{ name: "extImdbId" }] },
+        ext_douban: {
+          selector: "a[href^='https://movie.douban.com/subject/']",
+          attr: "href",
+          filters: [{ name: "extDoubanId" }],
+        },
+        ext_imdb: {
+          selector: "a[href^='https://www.imdb.com/title/']",
+          attr: "href",
+          filters: [{ name: "extImdbId" }],
+        },
       },
     },
 
@@ -480,10 +497,12 @@ export const siteMetadata: ISiteMetadata = {
         category: { selector: "a[href^='/browse?cat='] > span" },
         ext_douban: {
           selector: "a[href^='/mdb/title'][href*='douban=']",
+          attr: "href",
           filters: [{ name: "querystring", args: ["douban"] }, { name: "extDoubanId" }],
         },
         ext_imdb: {
           selector: "a[href^='/mdb/title'][href*='imdb=']",
+          attr: "href",
           filters: [{ name: "querystring", args: ["imdb"] }, { name: "extImdbId" }],
         },
       },

@@ -72,6 +72,26 @@ const downloadAtSliderValue = computed<[number, number]>({
   },
 });
 
+function onDateRangeChange(values: unknown) {
+  // 清空日期时 antd 会传 null，重置回无日期限制区间；半选或无效项则忽略避免抛 TypeError
+  if (!values) {
+    advanceFilterDictRef.value.downloadAt = [-Infinity, Infinity];
+    return;
+  }
+  if (
+    Array.isArray(values) &&
+    values.length === 2 &&
+    values[0] &&
+    values[1] &&
+    typeof (values[0] as { toDate?: unknown }).toDate === "function" &&
+    typeof (values[1] as { toDate?: unknown }).toDate === "function"
+  ) {
+    advanceFilterDictRef.value.downloadAt = setDateRangeByDatePicker(
+      values.map((v: { toDate: () => Date }) => v.toDate()),
+    );
+  }
+}
+
 function updateTableFilter() {
   updateTableFilterValueFn();
   showDialog.value = false;
@@ -181,19 +201,13 @@ watch(showDialog, (open) => {
             <a-popover placement="top" trigger="click">
               <template #content>
                 <a-range-picker
-                  :value="[dayjs(downloadAtRange[0]), dayjs(downloadAtRange[1])]"
+                  :value="[dayjs(downloadAtSliderValue[0]), dayjs(downloadAtSliderValue[1])]"
                   :disabled-date="
                     (date: any) =>
                       date.isBefore(dayjs(startOfDay(new Date(downloadAtRange[0]))), 'day') ||
                       date.isAfter(dayjs(addDays(new Date(downloadAtRange[1]), 1)), 'day')
                   "
-                  @change="
-                    (values: any) => {
-                      // 清空日期时 antd 会传 null，不判空会抛 TypeError
-                      if (!values) return;
-                      advanceFilterDictRef.downloadAt = setDateRangeByDatePicker(values.map((v: any) => v.toDate()));
-                    }
-                  "
+                  @change="onDateRangeChange"
                 />
               </template>
               <a-tag>{{ t("common.AdvanceFilterGenerateDialog.dateUnit.custom") }}</a-tag>

@@ -128,7 +128,7 @@ export const siteMetadata: ISiteMetadata = {
           ratio: {
             selector: "p:contains('共享率')",
             filters: [
-              { name: "replace", args: [/共享率: | (下载-虚拟下载小于20G则共享率为0)/, ""] },
+              { name: "replace", args: [/共享率:\s*|\s*\(下载-虚拟下载小于20G则共享率为0\)/g, ""] },
               { name: "parseNumber" },
             ],
           },

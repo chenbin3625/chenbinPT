@@ -437,7 +437,12 @@ export const siteMetadata: ISiteMetadata = {
             selector: [".text_alt + br + div .text:nth-child(4)"],
             filters: [
               (query: string) => {
-                return parseFloat(query.match(/(魅力值|Karma Points)\s+([\d.]+)/)?.[2]?.trim() ?? "0");
+                const raw =
+                  query
+                    .match(/(魅力值|Karma Points)\s+([\d.,]+)/)?.[2]
+                    ?.replace(/,/g, "")
+                    .trim() ?? "0";
+                return parseFloat(raw) || 0;
               },
             ],
           },

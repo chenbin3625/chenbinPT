@@ -92,20 +92,38 @@ function collectSiteUrlHosts(siteMetadata?: ISiteMetadata | null): TSafeRequestC
   return hosts;
 }
 
+const SOLUTION_URL_SENTINEL_HOST = "__ptd_relative__.invalid";
+const SOLUTION_URL_SENTINEL_ORIGIN = `https://${SOLUTION_URL_SENTINEL_HOST}/`;
+
+function hasControlCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * `requestConfig.url` / `baseURL` 是否安全：
- * - 相对路径（"search/x"、"/search"）会拼到站点 baseURL 上 → 安全；
- * - 协议相对地址（"//host/..."）会跳到外站 → 不安全；
- * - 绝对地址只有 host 属于站点定义声明过的镜像时才安全。
+ * - 拒绝 C0/C1 控制字符与反斜杠/协议相对前缀（防止 WHATWG URL 规范化绕过）；
+ * - 统一用 `new URL(url, sentinelOrigin)` 解析并限制协议仅为 `http:` / `https:`；
+ * - 落在占位域上的相对路径安全，绝对地址只有 host 属于站点定义声明过的镜像时才安全。
  */
 function isSafeSolutionRequestUrl(value: unknown, allowedHosts: TSafeRequestConfigHosts): boolean {
-  if (typeof value !== "string") return false;
+  if (typeof value !== "string" || hasControlCharacter(value)) return false;
   const url = value.trim();
-  if (url === "" || url.startsWith("//")) return false;
-  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) return true; // 相对路径
+  if (url === "" || url.startsWith("//") || url.startsWith("\\") || url.startsWith("/\\")) return false;
   try {
-    const { host } = new URL(url);
-    return host !== "" && allowedHosts.has(host.toLowerCase());
+    const parsed = new URL(url, SOLUTION_URL_SENTINEL_ORIGIN);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    if (parsed.hostname === SOLUTION_URL_SENTINEL_HOST) {
+      return !/^[a-z][a-z0-9+.-]*:/i.test(url);
+    }
+    return parsed.host !== "" && allowedHosts.has(parsed.host.toLowerCase());
   } catch {
     return false;
   }
@@ -530,8 +548,9 @@ export const useMetadataStore = defineStore("metadata", {
         defaultValue?: ISiteMetadata[T],
       ): Promise<ISiteMetadata[T]> => {
         const siteConfig = await this.getSiteUserConfig(siteId);
-        if (siteConfig.merge?.[field]) {
-          return siteConfig.merge[field];
+        const mergedValue = siteConfig.merge?.[field];
+        if (mergedValue !== undefined && mergedValue !== null) {
+          return mergedValue;
         }
 
         // 固定属性（name/urls/isDead/tags…）走构建期轻量索引，不再解析完整站点定义。
@@ -1211,6 +1230,15 @@ export const useMetadataStore = defineStore("metadata", {
 
     async removeDownloader(downloaderId: TDownloaderKey) {
       delete this.downloaders[downloaderId];
+      if (this.lastDownloader?.id === downloaderId) {
+        this.lastDownloader = {};
+      }
+      if (this.lastKeepUpload?.downloaderId === downloaderId) {
+        this.lastKeepUpload = {};
+      }
+      if (this.defaultDownloader?.id === downloaderId) {
+        this.defaultDownloader = {};
+      }
       scheduleMetadataSave(this);
     },
 
@@ -1220,7 +1248,8 @@ export const useMetadataStore = defineStore("metadata", {
     },
 
     async setLastDownloader(downloader: IMetadataPiniaStorageSchema["lastDownloader"]) {
-      this.lastDownloader = downloader;
+      // 防御性深拷贝（先解代理），避免调用方后续修改对象时直接污染 store 中的 lastDownloader
+      this.lastDownloader = cloneDeep(toRaw(downloader));
       scheduleMetadataSave(this);
     },
 

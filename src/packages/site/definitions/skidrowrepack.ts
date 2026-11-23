@@ -19,8 +19,8 @@ export const siteMetadata: ISiteMetadata = {
   search: {
     // 真机验证：GET /index.php?do=search... 会被 Cloudflare 挡成 403（"Just a moment..."），
     // 同样的参数改用 POST（application/x-www-form-urlencoded）即 200 并正确按关键词过滤。
-    // Jackett 的 inputs 原样搬进 body，只把关键词换成 params.story（keywordPath 指向它）。
-    keywordPath: "params.story",
+    // Jackett 的 inputs 原样搬进 body，关键词也必须写入表单体 data.story（而非 query string params.story）。
+    keywordPath: "data.story",
     requestConfig: {
       url: "/index.php",
       method: "POST",

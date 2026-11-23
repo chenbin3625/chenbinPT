@@ -136,6 +136,7 @@ export const siteMetadata: ISiteMetadata = {
         { value: 36, name: "UBWEB" },
         { value: 38, name: "CSPT" },
       ],
+      cross: { mode: "append" },
     },
     CategoryIncldead,
     CategorySpstate,

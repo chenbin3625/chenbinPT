@@ -100,6 +100,7 @@ beforeEach(() => {
   observed.entries = [];
   faviconMounts.siteIds = [];
   feed.sites = [];
+  meta.getAddedSiteIds = [];
 });
 
 afterEach(() => {
@@ -189,12 +190,23 @@ describe("getCanAddedSiteIndexEntries", () => {
         d: { name: "D", type: "private", urls: ["https://d.example/"] },
       },
     }));
-    meta.getAddedSiteIds = ["b"];
 
-    const { getCanAddedSiteIndexEntries } = await import("@/options/views/Settings/SetSite/utils.ts");
-    const entries = getCanAddedSiteIndexEntries();
-    expect(entries.map((entry) => entry.id)).toEqual(["a", "c", "d"]);
-    expect(entries[0]).toEqual({ id: "a", name: "A", type: "public", urls: ["https://a.example/"] });
-    meta.getAddedSiteIds = [];
+    try {
+      meta.getAddedSiteIds = ["b"];
+
+      const { getCanAddedSiteIndexEntries } = await import("@/options/views/Settings/SetSite/utils.ts");
+      const entries = getCanAddedSiteIndexEntries();
+      expect(entries.map((entry) => entry.id)).toEqual(["a", "c", "d"]);
+      expect(entries[0]).toEqual({ id: "a", name: "A", type: "public", urls: ["https://a.example/"] });
+    } finally {
+      meta.getAddedSiteIds = [];
+      // 恢复文件顶层的 SetSite/utils mock 并清理临时 mock，避免乱序执行时污染 dialog 用例
+      vi.doUnmock("@ptd/site");
+      vi.doUnmock("@ptd/site/metadataIndex");
+      vi.doMock("@/options/views/Settings/SetSite/utils.ts", () => ({
+        getCanAddedSiteIndexEntries: () => feed.sites,
+      }));
+      vi.resetModules();
+    }
   });
 });

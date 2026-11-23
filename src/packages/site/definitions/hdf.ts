@@ -1,5 +1,5 @@
 import BittorrentSite, { isElementNode } from "../schemas/AbstractBittorrentSite.ts";
-import Gazelle, { SchemaMetadata } from "../schemas/Gazelle.ts";
+import Gazelle, { commonPagesList, SchemaMetadata } from "../schemas/Gazelle.ts";
 import { type ISearchInput, type ISiteMetadata, type ITorrent } from "../types";
 
 function isHdfTorrentRow(row: HTMLTableRowElement): boolean {
@@ -204,6 +204,56 @@ export const siteMetadata: ISiteMetadata = {
       ],
     },
   },
+
+  list: [
+    commonPagesList,
+    {
+      urlPattern: [/\/torrents\.php\?(?:.*&)?(\bid|torrentid)=\d+/],
+      selectors: {
+        keywords: { selector: ["span[dir='ltr']"] },
+        rows: {
+          selector:
+            "table#torrent_table tr.group_torrent, table.torrent_table tr.group_torrent, table.torrent_table tr.torrent",
+          filter: filterHdfTorrentRows,
+        },
+        title: {
+          selector: ":self",
+          elementProcess: (row: HTMLElement) =>
+            extractHdfTitle(row) || row.ownerDocument?.querySelector("div > h2")?.textContent?.trim() || "",
+        },
+        time: {
+          selector: ["td.nobr span.time[title]", "+tr span.time[title]"],
+          attr: "title",
+          filters: [{ name: "parseTime", args: ["dd-MM-yyyy, HH:mm:ss"] }],
+        },
+      },
+    },
+    {
+      urlPattern: ["/top10\\.php"],
+      excludeUrlPattern: [/\/top10\.php\?type=(?!torrents\b).*/],
+      selectors: {
+        rows: {
+          selector: "table.torrent_table tr:gt(0)",
+          filter: (rows: HTMLTableRowElement[] | null): HTMLTableRowElement[] | null => {
+            if (!rows) return rows;
+            return rows.filter((row) => {
+              if (!row.querySelector("a[href*='torrents.php?action=download']")) return false;
+              if (row.classList.contains("season_header") || row.classList.contains("torrent_filename_row")) {
+                return false;
+              }
+              if (
+                row.classList.contains("edition") &&
+                !Array.from(row.classList).some((c) => c.startsWith("edition_"))
+              ) {
+                return false;
+              }
+              return true;
+            });
+          },
+        },
+      },
+    },
+  ],
 
   userInfo: {
     ...SchemaMetadata.userInfo,

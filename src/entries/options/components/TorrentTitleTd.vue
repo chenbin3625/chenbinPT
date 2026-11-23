@@ -57,6 +57,7 @@ interface ISocialInformationData extends ISocialInformation {
 
 // T-2：此处原有的 @ts-ignore 已不再需要（vue-tsc 报 Unused），按 background/utils/base.ts 的约定删除
 const socialInformation = reactive<Record<TSupportSocialSite | string, ISocialInformationData>>({});
+const socialRequestSeq: Record<string, number> = {};
 
 // P1-17：社交菜单内容按需渲染。
 // 表格每行对每个支持的社交站点都渲染一个社交菜单，若内容（海报卡片 / 骨架屏 / 按钮组）
@@ -69,6 +70,32 @@ function activateSocialMenu(site: TSupportSocialSite | string) {
 }
 
 const tagsExpanded = ref(false);
+
+const socialIdsSignature = computed(() =>
+  Object.keys(socialBuildUrlMap)
+    .map((key) => `${key}:${item[`ext_${key}` as keyof ITorrent] ?? ""}`)
+    .join("|"),
+);
+
+// 表格行复用导致 item 切换时，清理旧种子的社交信息缓存并使在途请求失效
+watch(socialIdsSignature, () => {
+  for (const key of Object.keys(socialInformation)) {
+    delete socialInformation[key];
+  }
+  for (const key of Object.keys(activatedSocialMenus)) {
+    delete activatedSocialMenus[key];
+  }
+  for (const key of Object.keys(socialRequestSeq)) {
+    socialRequestSeq[key] = (socialRequestSeq[key] ?? 0) + 1;
+  }
+});
+
+watch(
+  () => item,
+  () => {
+    tagsExpanded.value = false;
+  },
+);
 
 const visibleTags = computed(() => {
   const tags = item.tags;
@@ -163,17 +190,21 @@ function tagFilterBindings(tagName: string) {
 }
 
 function loadSocialInformation(site: TSupportSocialSite) {
+  const sid = item[`ext_${site}`] as unknown as string | undefined;
   const current = socialInformation[site];
 
   // V-4：重入守卫不能只判断「有没有值」。请求失败时若把 `{loading:true}` 留在原处，
   // popover 会永久停在 Loading....，悬停也无法重试（守卫永远为假）。这里允许错误态重试。
-  if (item[`ext_${site}`] && (!current || current.error)) {
+  if (sid && (!current || current.error)) {
+    const seq = (socialRequestSeq[site] = (socialRequestSeq[site] ?? 0) + 1);
     socialInformation[site] = { loading: true } as ISocialInformationData;
-    sendMessage("getSocialInformation", { site, sid: item[`ext_${site}`] as unknown as string })
+    sendMessage("getSocialInformation", { site, sid })
       .then((info) => {
+        if (socialRequestSeq[site] !== seq || item[`ext_${site}`] !== sid) return;
         socialInformation[site] = info;
       })
       .catch(() => {
+        if (socialRequestSeq[site] !== seq || item[`ext_${site}`] !== sid) return;
         // 置为错误态（保留键，避免悬停时的并发重复请求），再次悬停 / 点击图标会重新发起请求
         socialInformation[site] = { error: true } as ISocialInformationData;
       });

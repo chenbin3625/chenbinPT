@@ -94,6 +94,8 @@ export interface IFluxTorrentUser {
   ratio_display?: string;
   /** 做种体积（字节）；老版本兼容层没有该字段 */
   seeding_size?: number;
+  /** 做种积分（= sum(seeded_seconds)/3600）；老版本兼容层没有该字段 */
+  seedingPoints?: number;
   /** 注册时间（RFC3339）；老版本兼容层没有该字段 */
   join_at?: string;
 }
@@ -151,6 +153,7 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
           "downloaded",
           "ratio",
           "bonus",
+          "seedingBonus",
           "bonusPerHour",
           "uploads",
           "seeding",
@@ -167,6 +170,8 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
       uploaded: { selector: "uploaded" },
       downloaded: { selector: "downloaded" },
       bonus: { selector: "seedbonus" },
+      // 做种积分（保种积分）：站点 user.json 下发的 seedingPoints；兼容旧字段名。
+      seedingBonus: { selector: ["seedingPoints", "seed_points"] },
       // 时魔（每小时魔力）：2026-11-17 服务端在 user.json 补了 bonusPerHour
       // （与「我的魔力」页同一份预估口径）。老站点版本没有该字段，取不到时
       // 留空，不能让整条资料判成解析失败。
@@ -218,12 +223,15 @@ export default class FluxTorrent extends PrivateSite {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
+    // 先经 prepareRequestConfig 完成浅拷贝与同源校验（E12 / E3-1），再在副本上注入 Token，
+    // 既不原地修改调用方传入的 axiosConfig，也避免向外站 URL 注入凭据。
+    const config = this.prepareRequestConfig(axiosConfig);
+    config.headers = {
+      ...(config.headers ?? {}),
       Authorization: `Token ${this.apiToken}`,
     };
 
-    const response = (await super.request<any>(axiosConfig, checkLogin)) as AxiosResponse<T>;
+    const response = (await super.request<any>(config, checkLogin)) as AxiosResponse<T>;
     const body = response.data as IFluxEnvelope<T> | undefined;
 
     if (body && typeof body === "object" && typeof body.code === "number") {
@@ -275,8 +283,8 @@ export default class FluxTorrent extends PrivateSite {
    * 分享率。
    *
    * 站点在「只上传过、从没下载过」时把分享率记成无穷大，接口给的是
-   * `ratio_infinite: true` + `ratio_display: "∞"`；直接取 `ratio` 会得到 0，
-   * 界面上就成了「分享率 0.00」。这里把原始展示值一并带出去。
+   * `ratio_infinite: true` + `ratio_display: "∞"`；直接取 `ratio` 会得到 0。
+   * 使用仓库约定的 `-1` 作为 `∞` 的可序列化哨兵值（见 `fixRatio` 与 `realFormatRatio`）。
    */
   protected async parseUserInfoForRatio(
     flushUserInfo: Partial<IUserInfo>,
@@ -287,9 +295,7 @@ export default class FluxTorrent extends PrivateSite {
 
     return {
       ...flushUserInfo,
-      ratio: infinite ? 0 : Number.isFinite(ratio) ? ratio : 0,
-      ratioInfinite: infinite,
-      ratioDisplay: dataDocument?.ratio_display,
+      ratio: infinite ? -1 : Number.isFinite(ratio) ? ratio : 0,
     };
   }
 

@@ -5,7 +5,7 @@ import { CloudDownloadOutlined, DeleteOutlined } from "@ant-design/icons-vue";
 import type { IBackupFileInfo } from "@ptd/backupServer";
 
 import { sendMessage } from "@/messages.ts";
-import { formatDate, formatDateTimeForTable, formatSize } from "@/options/utils.ts";
+import { formatDateTimeForTable, formatSize } from "@/options/utils.ts";
 import {
   applyTableActionColumn,
   useTableActionColumnLayout,
@@ -93,6 +93,7 @@ async function confirmDeleteBackupHistory(toDeleteId: string) {
   } else {
     runtimeStore.showSnackbar(t("SetBackup.HistoryDialog.deleteSuccess", { name: toDeleteName }), { color: "success" });
     backupHistory.value = backupHistory.value.filter((item) => item.path !== toDeleteId);
+    tableSelected.value = tableSelected.value.filter((path) => path !== toDeleteId);
   }
 }
 
@@ -112,9 +113,12 @@ async function loadBackupHistory() {
     const history = await sendMessage("getBackupHistory", requestedServerId);
     if (requestToken !== historyRequestToken || requestedServerId !== backupServerId || !showDialog.value) return;
     backupHistory.value = history;
+    const availablePaths = new Set(history.map((item) => item.path));
+    tableSelected.value = tableSelected.value.filter((path) => availablePaths.has(path));
   } catch (e) {
     if (requestToken !== historyRequestToken || requestedServerId !== backupServerId || !showDialog.value) return;
     backupHistory.value = [];
+    tableSelected.value = [];
     runtimeStore.showSnackbar(t("SetBackup.HistoryDialog.loadFailure", { error: getBackupHistoryErrorReason(e) }), {
       color: "error",
     });

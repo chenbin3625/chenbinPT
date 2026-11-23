@@ -145,8 +145,17 @@ export const siteMetadata: ISiteMetadata = {
         },
       },
       {
-        requestConfig: { url: "/profils/user/" },
+        requestConfig: { url: "/profils/user/$name$" },
         assertion: { name: "url" },
+        requestConfigTransformer: (requestConfig) => {
+          if (typeof requestConfig.url === "string") {
+            requestConfig.url = requestConfig.url.replace(
+              /^(.*\/profils\/user\/)(.*)$/,
+              (_match: string, prefix: string, userName: string) => `${prefix}${encodeURIComponent(userName)}`,
+            );
+          }
+          return requestConfig;
+        },
         selectors: {
           uploaded: {
             selector: "div.stats a.btn:contains('Upload')",

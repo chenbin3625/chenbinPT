@@ -134,6 +134,7 @@ async function setupStores() {
 
   // 模块级状态在同一文件的用例之间会保留，这里显式复位
   utils.autoRefreshRunning.value = false;
+  utils.autoRefreshUserStopped.value = false;
   utils.torrents.value = {};
   utils.selectedDownloaderIds.value = [];
   utils.globalRefreshInterval.value = utils.DEFAULT_CLIENT_REFRESH_INTERVAL_SECONDS;
@@ -235,32 +236,54 @@ describe("我的下载器页面自动刷新", () => {
 
   it("D2-06：卸载只清定时器，保留用户手动停止自动刷新的选择", async () => {
     const { pinia } = await setupStores();
+    // 缩短轮询周期到 20ms，使「定时轮询真的在跑」与「停止/卸载后不再触发」在等待窗口内可观测
+    utils.globalRefreshInterval.value = 0.02;
+    const countTorrentLoads = () => sendMessageMock.mock.calls.filter(([type]) => type === "getClientTorrents").length;
+
     const view = mountOptionsView(MyClientView, { pinia, router: true });
-    await view.settle(120);
-    expect(utils.autoRefreshRunning.value).toBe(true);
+    let secondView: ReturnType<typeof mountOptionsView> | undefined;
+    try {
+      await vi.waitFor(() => expect(utils.autoRefreshRunning.value).toBe(true));
+      // 阳性基线：自动刷新定时器确实会在 20ms 间隔内再次触发拉取
+      await vi.waitFor(() => expect(countTorrentLoads()).toBeGreaterThanOrEqual(2));
 
-    // 模拟用户点了「停止自动刷新」（真实的 stopAutoRefresh 会同时置 running=false 与 userStopped=true）
-    utils.autoRefreshRunning.value = false;
-    utils.autoRefreshUserStopped.value = true;
+      // 通过真实 UI 点击「自动刷新 → 停止自动刷新」触发 toggleAutoRefresh → stopAutoRefresh
+      const autoRefreshTrigger = view.$<HTMLButtonElement>(".my-client-toolbar__auto-refresh");
+      expect(autoRefreshTrigger, "应渲染自动刷新入口按钮").not.toBeNull();
+      autoRefreshTrigger!.click();
+      await view.settle(80);
 
-    const callsBeforeUnmount = sendMessageMock.mock.calls.length;
-    view.unmount();
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    // 卸载后不再有新请求（定时器确实被清掉了）
-    expect(sendMessageMock.mock.calls.length).toBe(callsBeforeUnmount);
+      const stopBtn = document.querySelector<HTMLButtonElement>(".my-client-auto-refresh__start button");
+      expect(stopBtn, "点击自动刷新入口后应弹出启停按钮").not.toBeNull();
+      stopBtn!.click();
+      await view.settle(20);
 
-    // 重新进入页面：不能把「用户手动停止」的选择复位
-    const secondView = mountOptionsView(MyClientView, { pinia, router: true });
-    await secondView.settle(150);
-    expect(utils.autoRefreshRunning.value, "重进页面不应自动恢复自动刷新").toBe(false);
-    expect(utils.autoRefreshUserStopped.value).toBe(true);
+      expect(utils.autoRefreshRunning.value).toBe(false);
+      expect(utils.autoRefreshUserStopped.value).toBe(true);
 
-    const callsAfterRemount = sendMessageMock.mock.calls.length;
-    await secondView.settle(600);
-    expect(sendMessageMock.mock.calls.length, "用户已停止自动刷新时不应有定时轮询").toBe(callsAfterRemount);
+      const callsBeforeUnmount = countTorrentLoads();
+      view.unmount();
+      // 等待远超 20ms 轮询间隔的时间，确认定时器已被清理
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      expect(countTorrentLoads()).toBe(callsBeforeUnmount);
 
-    secondView.unmount();
-    utils.autoRefreshUserStopped.value = false;
+      // 重新进入页面：不能把「用户手动停止」的选择复位
+      secondView = mountOptionsView(MyClientView, { pinia, router: true });
+      await secondView.settle(60);
+      expect(utils.autoRefreshRunning.value, "重进页面不应自动恢复自动刷新").toBe(false);
+      expect(utils.autoRefreshUserStopped.value).toBe(true);
+
+      const callsAfterRemount = countTorrentLoads();
+      // 再次等待远超 20ms 轮询间隔的时间：若误启定时器必然产生新请求
+      await secondView.settle(90);
+      expect(countTorrentLoads(), "用户已停止自动刷新时不应有定时轮询").toBe(callsAfterRemount);
+    } finally {
+      secondView?.unmount();
+      view.unmount();
+      document.querySelectorAll(".ant-popover").forEach((element) => element.remove());
+      utils.autoRefreshUserStopped.value = false;
+      utils.globalRefreshInterval.value = utils.DEFAULT_CLIENT_REFRESH_INTERVAL_SECONDS;
+    }
   });
 
   it("N5：刷新间隔改为 0 时运行状态与定时器一起停止", async () => {

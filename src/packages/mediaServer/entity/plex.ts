@@ -476,30 +476,31 @@ export default class Plex extends AbstractMediaServer<IPlexConfig> {
           type: stream.streamType === 1 ? "Video" : stream.streamType === 2 ? "Audio" : "Subtitle",
           format: stream.codec ?? "",
         })),
-      // 调研 A2：Plex 的流明细来自 Media[].Part[].Stream[]
+      // 调研 A2：Plex 的流明细来自 Media[].Part[].Stream[]，列表与概览接口无 Stream[] 时回退到 Media[0]
       mediaInfo:
         hasStreams || media
           ? {
-              video: videoStream
-                ? {
-                    width: videoStream.width ?? media?.width,
-                    height: videoStream.height ?? media?.height,
-                    resolution: media?.videoResolution
-                      ? `${media.videoResolution}`.replace(/k$/i, "K").replace(/^(\d+)$/, "$1p")
-                      : getResolutionLabel(videoStream.width ?? media?.width, videoStream.height ?? media?.height),
-                    codec: videoStream.codec ?? media?.videoCodec,
-                    profile: videoStream.profile ?? media?.videoProfile,
-                    videoRange: videoStream.doviPresent
-                      ? "DolbyVision"
-                      : videoStream.colorTrc === "smpte2084"
-                        ? "HDR10"
-                        : videoStream.colorTrc === "arib-std-b67"
-                          ? "HLG"
-                          : undefined,
-                    bitrate: plexBitrate != null ? plexBitrate * 1000 : undefined,
-                    frameRate: videoStream.frameRate ? Number(videoStream.frameRate) : undefined,
-                  }
-                : undefined,
+              video:
+                videoStream || media
+                  ? {
+                      width: videoStream?.width ?? media?.width,
+                      height: videoStream?.height ?? media?.height,
+                      resolution: media?.videoResolution
+                        ? `${media.videoResolution}`.replace(/k$/i, "K").replace(/^(\d+)$/, "$1p")
+                        : getResolutionLabel(videoStream?.width ?? media?.width, videoStream?.height ?? media?.height),
+                      codec: videoStream?.codec ?? media?.videoCodec,
+                      profile: videoStream?.profile ?? media?.videoProfile,
+                      videoRange: videoStream?.doviPresent
+                        ? "DolbyVision"
+                        : videoStream?.colorTrc === "smpte2084"
+                          ? "HDR10"
+                          : videoStream?.colorTrc === "arib-std-b67"
+                            ? "HLG"
+                            : undefined,
+                      bitrate: plexBitrate != null ? plexBitrate * 1000 : undefined,
+                      frameRate: videoStream?.frameRate ? Number(videoStream.frameRate) : undefined,
+                    }
+                  : undefined,
               audio: streams
                 .filter((stream) => stream.streamType === 2)
                 .map((stream) => ({

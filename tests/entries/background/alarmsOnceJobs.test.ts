@@ -567,17 +567,20 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     expect(downloadHistoryStatus()).toEqual([]); // 已完成的记录不得被判 failed
   });
 
-  it("重放：历史 pending/downloading 视为已投递，不重放（也不误判 failed）", async () => {
-    for (const status of ["pending", "downloading"]) {
+  it("重放：历史 downloading 或已持久化请求配置的 pending 视为已投递，不重放（也不误判 failed）", async () => {
+    for (const record of [
+      { id: 42, downloadStatus: "downloading" },
+      { id: 42, downloadStatus: "pending", downloadRequestConfig: { url: "https://example.test/1.torrent" } },
+    ]) {
       backing.clear();
       createdAlarms.clear();
       sentMessages = [];
       seedExpiredRunningJob("reDownloadTorrent-42~replay-status", 42, 1);
-      mockDownloadHistory([{ id: 42, downloadStatus: status }]);
+      mockDownloadHistory([record]);
       await bootServiceWorker();
       await fireAlarm("reDownloadTorrent-42~replay-status");
 
-      expect(messagesOfType("downloadTorrent"), `status=${status} 不得重放`).toHaveLength(0);
+      expect(messagesOfType("downloadTorrent"), `status=${record.downloadStatus} 不得重放`).toHaveLength(0);
       expect((backing.get(PENDING_JOB_KEY) as Record<string, any>)["reDownloadTorrent-42~replay-status"]).toMatchObject(
         { kind: "consumed" },
       );
@@ -598,13 +601,21 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
     );
   });
 
-  it("重放：历史里没有该记录（首次执行未落记录）时才重放", async () => {
-    seedExpiredRunningJob("reDownloadTorrent-42~replay-no-record", 42, 1);
+  it("重放：历史记录处于未派发 pending 时重放，已被用户删除（历史无记录）时跳过不复活", async () => {
+    seedExpiredRunningJob("reDownloadTorrent-42~replay-pending", 42, 1);
+    mockDownloadHistory([{ id: 42, downloadStatus: "pending" }]);
+    await bootServiceWorker();
+    await fireAlarm("reDownloadTorrent-42~replay-pending");
+    expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+
+    backing.clear();
+    createdAlarms.clear();
+    sentMessages = [];
+    seedExpiredRunningJob("reDownloadTorrent-42~replay-deleted", 42, 1);
     mockDownloadHistory([]);
     await bootServiceWorker();
-    await fireAlarm("reDownloadTorrent-42~replay-no-record");
-
-    expect(messagesOfType("downloadTorrent")).toHaveLength(1);
+    await fireAlarm("reDownloadTorrent-42~replay-deleted");
+    expect(messagesOfType("downloadTorrent")).toHaveLength(0);
   });
 
   it("重放：预检读取下载历史失败时继续执行（不把未执行任务判 failed）", async () => {
@@ -620,7 +631,7 @@ describe("alarms：一次性任务参数持久化（SW 回收后不丢）", () =
   it("重放上限 MAX_REPLAY_ATTEMPTS=3：第 3 次重放仍执行，第 4 次判 failed 且不投递", async () => {
     // 已重放 3 次（attempt-1=3）仍允许最后一次重放
     seedExpiredRunningJob("reDownloadTorrent-42~replay-3", 42, 3);
-    mockDownloadHistory([]);
+    mockDownloadHistory([{ id: 42, downloadStatus: "pending" }]);
     await bootServiceWorker();
     await fireAlarm("reDownloadTorrent-42~replay-3");
     expect(messagesOfType("downloadTorrent")).toHaveLength(1);

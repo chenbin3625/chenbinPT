@@ -289,9 +289,20 @@ async function afterEnter() {
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
-watch(showDialog, (open) => {
-  if (open) nextTick(afterEnter);
-});
+// 快速关闭后立即重开（离开动画未结束、afterClose 尚未执行）或在打开期间切换 torrent 时，
+// 同步重置状态再重新加载，避免残留上一颗种子的页签/文件/peers/tracker 导致错目标修改。
+watch(
+  () => [showDialog.value === true, torrent ? `${torrent.clientId}:${torrent.id}` : ""] as const,
+  ([open, key], [prevOpen, prevKey]) => {
+    if (!open) return;
+    if (!prevOpen || key !== prevKey) {
+      resetDialog();
+      if (key) {
+        nextTick(afterEnter);
+      }
+    }
+  },
+);
 
 function onTabChange(value: string | null | undefined) {
   if (value === "files") {
@@ -613,7 +624,12 @@ function formatTimestamp(timestamp: number | undefined): string {
         <!-- Tracker 管理 -->
         <a-tab-pane v-if="featureAllowed('TrackerList')" key="trackers" :tab="t('MyClient.detail.trackers')">
           <div>
-            <a-row align="middle" :gutter="8" class="torrent-detail__tracker-toolbar">
+            <a-row
+              v-if="featureAllowed('TrackerManage')"
+              align="middle"
+              :gutter="8"
+              class="torrent-detail__tracker-toolbar"
+            >
               <a-col flex="1 1 0">
                 <a-form-item :label="t('MyClient.detail.addTrackerTitle')">
                   <a-input v-model:value="trackerInput" :disabled="trackerOpLoading" @keyup.enter="addTracker" />

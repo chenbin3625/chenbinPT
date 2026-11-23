@@ -329,9 +329,9 @@ provide(THEME_KEY, echartsTheme);
 
 onMounted(async () => {
   try {
-    // metadata store 从 chrome.storage 的恢复是异步的，而 loadFullData 会按 getAddedSiteIds 过滤用户信息：
-    // 若在水合完成前就读取，过滤结果为空，页面会错误地显示「无数据」。这里先等水合完成。
-    await metadataStore.$onReady();
+    // metadata / config store 从 chrome.storage 的恢复是异步的：
+    // 若在水合完成前读取 getAddedSiteIds 或 userStatisticControl/userName，会拿到空数据或默认配置。这里先等两者水合完成。
+    await Promise.all([metadataStore.$onReady?.(), configStore.$onReady?.()]);
 
     rawDataRef.value = await loadFullData();
 

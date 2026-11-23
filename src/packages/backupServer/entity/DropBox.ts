@@ -89,6 +89,14 @@ interface DropBoxList {
 export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
   protected version = "1.0.0";
 
+  /** Dropbox HTTP API v2 要求 Dropbox-API-Arg 使用 HTTP 头安全的纯 ASCII JSON（非 ASCII 字符转为 \uXXXX） */
+  private static serializeApiArg(arg: Record<string, unknown>): string {
+    return JSON.stringify(arg).replace(
+      /[\u007f-\uffff]/g,
+      (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    );
+  }
+
   get accessToken(): string {
     return this.userConfig.access_token;
   }
@@ -131,7 +139,8 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
       const { data } = await this.request<{ is_downloadable?: boolean }>({
         url: "https://content.dropboxapi.com/2/files/upload",
         headers: {
-          "Dropbox-API-Arg": JSON.stringify({ path: `/${fileName}`, mode: "overwrite" }),
+          "Content-Type": "application/octet-stream",
+          "Dropbox-API-Arg": DropBox.serializeApiArg({ path: `/${fileName}`, mode: "overwrite" }),
         },
         data: await this.backupDataToZipBlob(file),
       });
@@ -148,7 +157,7 @@ export default class DropBox extends AbstractBackupServer<DropBoxConfig> {
     const { data } = await this.request<Blob>({
       url: "https://content.dropboxapi.com/2/files/download",
       headers: {
-        "Dropbox-API-Arg": JSON.stringify({ path }),
+        "Dropbox-API-Arg": DropBox.serializeApiArg({ path }),
       },
       responseType: "blob",
     });

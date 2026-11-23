@@ -39,7 +39,7 @@ describe("TorrentDetailDialog（挂载）：迟到响应不关闭新种子的 lo
     const messages = await import("@/messages.ts");
 
     const pendingFiles = new Map<string, (files: unknown[]) => void>();
-    vi.spyOn(messages, "sendMessage").mockImplementation((async (type: string, data: any) => {
+    const sendMessageSpy = vi.spyOn(messages, "sendMessage").mockImplementation((async (type: string, data: any) => {
       if (type === "getDownloaderMetaData") return { feature: { FileList: { allowed: true } } };
       if (type === "getClientTorrentTrackersDetail") return [];
       if (type === "getClientTorrentFiles") {
@@ -91,18 +91,28 @@ describe("TorrentDetailDialog（挂载）：迟到响应不关闭新种子的 lo
       await settle();
       expect(pendingFiles.has("A")).toBe(true);
 
-      // 切到种子 B 并加载它的文件
+      // 切到种子 B：弹窗会重置到 info 页签，再点文件页签触发 B 自己的文件列表请求
       state.torrent = makeTorrent("B");
       await settle();
       filesTab()!.querySelector<HTMLElement>(".ant-tabs-tab-btn")!.click();
       await settle();
+      expect(pendingFiles.has("B"), "切换到 B 并打开文件页签后必须真正发起 B 的文件请求").toBe(true);
+      expect(filesSpinner(), "B 的文件请求在途时应显示 loading").not.toBeNull();
 
-      // A 的响应迟到
+      // A 的响应迟到：既不能关闭 B 的 loading，也不能把 A 的文件写进 B 的视图
       pendingFiles.get("A")!([{ path: "a.mkv", size: 1, progress: 100, priority: "normal" }]);
       await settle();
       expect(filesSpinner(), "B 的文件请求仍在途，loading 不应被 A 的迟到响应关闭").not.toBeNull();
+      expect(document.body.textContent).not.toContain("a.mkv");
+
+      // B 自己的响应到达后：关闭 loading 并渲染 B 的文件
+      pendingFiles.get("B")!([{ path: "b.mkv", size: 2, progress: 100, priority: "normal" }]);
+      await settle();
+      expect(filesSpinner(), "B 的文件请求完成后 loading 应关闭").toBeNull();
+      expect(document.body.textContent).toContain("b.mkv");
     } finally {
       view.unmount();
+      sendMessageSpy.mockRestore();
     }
   });
 });

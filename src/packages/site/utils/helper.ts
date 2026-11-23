@@ -147,9 +147,65 @@ export function hasNonLatinCharacters(query: string): boolean {
   }
 }
 
-/** 判定「敏感字段名」的规则：密码、token、cookie、密钥、鉴权、会话等 */
+/** 判定「敏感字段名」的规则：密码、token、cookie、密钥、鉴权、会话、rsskey、下载链接后缀等 */
 const sensitiveFieldNamePattern =
-  /pass(word)?|pwd|token|secret|cookie|credential|api[-_]?key|auth(orization)?|session|csrf|2fa|otp/i;
+  /pass(word)?|pwd|token|secret|cookie|credential|api[-_]?key|rss[-_]?key|download[-_]?link[-_]?appendix|auth(orization)?|session|csrf|2fa|otp/i;
+
+/** URL query / fragment 中需要脱敏的敏感参数名（补充站点常见的 downhash / key） */
+const sensitiveUrlParamPattern =
+  /pass(word)?|pwd|token|secret|cookie|credential|api[-_]?key|rss[-_]?key|auth(orization|key)?|session|csrf|2fa|otp|downhash|(^|[_-])key$/i;
+
+const URL_IN_STRING_PATTERN = /(?:https?:\/\/|\/\/)[^\s"'<>\\]+/gi;
+const RELATIVE_URL_WITH_QUERY_PATTERN = /(^|[^:\w/])((?:\/|[\w.~%-]+\/)*[\w.~%-]+\?[^\s"'<>\\]+)/g;
+const URL_USERINFO_PATTERN = /^((?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)[^/?#\s]+@/;
+const CREDENTIAL_LIKE_PATH_SEGMENT = /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,}$/;
+const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?)\]}'"]+$/;
+
+function redactSensitiveUrlParams(params: string): string {
+  return params
+    .split("&")
+    .map((pair) => {
+      const equalIndex = pair.indexOf("=");
+      if (equalIndex < 0) return pair;
+      const key = pair.slice(0, equalIndex);
+      return sensitiveUrlParamPattern.test(key) ? `${key}=***` : pair;
+    })
+    .join("&");
+}
+
+function redactUrlCredentials(matched: string): string {
+  const trailing = TRAILING_PUNCTUATION_PATTERN.exec(matched)?.[0] ?? "";
+  const url = trailing ? matched.slice(0, -trailing.length) : matched;
+
+  const safeUrl = url.replace(URL_USERINFO_PATTERN, "$1***@");
+  const hashIndex = safeUrl.indexOf("#");
+  const beforeHash = hashIndex >= 0 ? safeUrl.slice(0, hashIndex) : safeUrl;
+  const redactedHash = hashIndex >= 0 ? `#${redactSensitiveUrlParams(safeUrl.slice(hashIndex + 1))}` : "";
+
+  const queryIndex = beforeHash.indexOf("?");
+  const rawPath = queryIndex >= 0 ? beforeHash.slice(0, queryIndex) : beforeHash;
+  const pathStartIndex = rawPath.includes("//") ? 3 : 0;
+  const redactedPath = rawPath
+    .split("/")
+    .map((segment, index) => (index >= pathStartIndex && CREDENTIAL_LIKE_PATH_SEGMENT.test(segment) ? "***" : segment))
+    .join("/");
+
+  const redactedUrl =
+    queryIndex < 0
+      ? `${redactedPath}${redactedHash}`
+      : `${redactedPath}?${redactSensitiveUrlParams(beforeHash.slice(queryIndex + 1))}${redactedHash}`;
+
+  return redactedUrl + trailing;
+}
+
+function redactSensitiveString(text: string): string {
+  if (!text.includes("://") && !text.includes("//") && !text.includes("?")) {
+    return text;
+  }
+  return text
+    .replace(URL_IN_STRING_PATTERN, redactUrlCredentials)
+    .replace(RELATIVE_URL_WITH_QUERY_PATTERN, (_m, prefix: string, url: string) => prefix + redactUrlCredentials(url));
+}
 
 const MAX_REDACT_DEPTH = 6;
 
@@ -167,6 +223,7 @@ const UNSAFE_REDACT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
  * 设计取舍（见 P1-2）：
  * - 仅处理「普通对象 / 数组 / 基础类型 / Date」，其余对象（Document、Element、AxiosResponse、
  *   类实例等）一律降级为 `[ConstructorName]`，避免日志序列化时出现 DOM 结构爆炸或循环引用；
+ * - 字符串值中嵌入的 URL 凭据（userinfo、敏感 query/fragment 参数、路径内 passkey 段）也会脱敏；
  * - 有深度上限，超限降级为 `[MaxDepth]`；
  * - 不回写原对象，返回全新结构，调用方可以安全打印；
  * - `__proto__` / `constructor` / `prototype` 三个键会被跳过，避免原型污染（见 UNSAFE_REDACT_KEYS）。
@@ -175,6 +232,10 @@ const UNSAFE_REDACT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
  * @param depth 内部递归深度（调用方无需传入）
  */
 export function redactSensitive<T>(value: T, depth: number = 0): any {
+  if (typeof value === "string") {
+    return redactSensitiveString(value);
+  }
+
   if (value === null || typeof value !== "object") {
     return value;
   }

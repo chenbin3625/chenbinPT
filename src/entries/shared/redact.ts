@@ -30,6 +30,16 @@ const URL_WITH_QUERY_PATTERN = /(?:https?:\/\/|\/)[^\s"'<>\\]+/g;
  */
 const RELATIVE_URL_WITH_QUERY_PATTERN = /(^|[^:\w/])((?:[\w.~%-]+\/)*[\w.~%-]+\?[^\s"'<>\\]+)/g;
 
+/**
+ * BEP 9 `magnet:?` 链接（含百分号编码的 `tr=` / `ws=` 等 tracker/webseed 参数，可能内嵌 passkey）。
+ * 先于 HTTP/相对路径模式处理，避免仅替换未编码的内部 `https://` 而漏掉百分号编码的 tracker 凭据。
+ */
+const MAGNET_URL_PATTERN = /\bmagnet:\?[^\s"'<>\\]+/gi;
+
+/** magnet 链接中可安全保留的精确主题参数名（`xt` / `xt.1`）及其标准 URN 值形态 */
+const MAGNET_XT_KEY_PATTERN = /^xt(?:\.\d+)?$/i;
+const MAGNET_XT_URN_VALUE_PATTERN = /^urn(?:(?::|%3a)[A-Za-z0-9._-]+)+$/i;
+
 /** 自然语言标点不属于 URL：匹配后把它们留在原位，避免改写日志文本本身 */
 const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?)\]}'"]+$/;
 
@@ -74,31 +84,62 @@ function redactKeyValuePairs(text: string): string {
 }
 
 /**
- * 抹掉 fragment 里 `k=v` 片段的值（如 `#access_token=…`），保留 `#`、键名与其它不含 `=` 的片段。
+ * 抹掉单个 URL 的 userinfo、query/fragment 值与路径中的凭据段，保留 host、path 结构、键名与不含 `=` 的 hash。
  *
- * 部分站点把 token 放在 hash 里（OAuth implicit flow / SPA 路由），只处理 query 会让它原样进日志。
+ * 必须先按第一个 `#` 拆出 fragment，再对 `#` 之前按第一个 `?` 拆出 path 与 query：
+ * 否则无 `?`（或 `#` 在 `?` 之前）的 URL 会把 `#fragment` 粘在最后一段路径后，
+ * 导致路径内嵌 passkey（如 `/download/{id}/{passkey}#section`）绕过 `CREDENTIAL_LIKE_PATH_SEGMENT` 校验。
  */
-function redactUrlHash(url: string): string {
-  const hashIndex = url.indexOf("#");
-  if (hashIndex < 0) return url;
-  return `${url.slice(0, hashIndex)}#${redactKeyValuePairs(url.slice(hashIndex + 1))}`;
-}
-
-/** 抹掉单个 URL 的 userinfo、query/fragment 值与路径中的凭据段，保留 host、path 结构、键名与 hash */
 function redactUrlQuery(url: string): string {
   const safeUrl = redactUrlUserInfo(url);
-  const queryIndex = safeUrl.indexOf("?");
+  const hashIndex = safeUrl.indexOf("#");
+  const beforeHash = hashIndex >= 0 ? safeUrl.slice(0, hashIndex) : safeUrl;
+  const redactedHash = hashIndex >= 0 ? `#${redactKeyValuePairs(safeUrl.slice(hashIndex + 1))}` : "";
+
+  const queryIndex = beforeHash.indexOf("?");
   if (queryIndex < 0) {
-    return redactUrlHash(redactUrlPath(safeUrl));
+    return `${redactUrlPath(beforeHash)}${redactedHash}`;
   }
 
-  const path = redactUrlPath(safeUrl.slice(0, queryIndex));
-  const rawQuery = safeUrl.slice(queryIndex + 1);
-  const hashIndex = rawQuery.indexOf("#");
-  const hash = hashIndex >= 0 ? rawQuery.slice(hashIndex) : "";
-  const query = hashIndex >= 0 ? rawQuery.slice(0, hashIndex) : rawQuery;
+  const path = redactUrlPath(beforeHash.slice(0, queryIndex));
+  const query = beforeHash.slice(queryIndex + 1);
 
-  return redactUrlHash(`${path}?${redactKeyValuePairs(query)}${hash}`);
+  return `${path}?${redactKeyValuePairs(query)}${redactedHash}`;
+}
+
+/**
+ * 脱敏 `magnet:?` URI：保留标准 URN 形式的 `xt`（infoHash，便于排障定位），
+ * 其余参数（`tr` / `ws` / `as` / `xs` / `dn` 等）值统一替换为 `***`，同时脱敏 fragment 中的 `k=v`。
+ */
+function redactMagnetUrl(url: string): string {
+  const hashIndex = url.indexOf("#");
+  const beforeHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const redactedHash = hashIndex >= 0 ? `#${redactKeyValuePairs(url.slice(hashIndex + 1))}` : "";
+
+  const queryIndex = beforeHash.indexOf("?");
+  if (queryIndex < 0) {
+    return `${beforeHash}${redactedHash}`;
+  }
+
+  const prefix = beforeHash.slice(0, queryIndex);
+  const query = beforeHash
+    .slice(queryIndex + 1)
+    .split("&")
+    .map((pair) => {
+      const equalIndex = pair.indexOf("=");
+      if (equalIndex < 0) {
+        return pair;
+      }
+      const key = pair.slice(0, equalIndex);
+      const value = pair.slice(equalIndex + 1);
+      if (MAGNET_XT_KEY_PATTERN.test(key) && MAGNET_XT_URN_VALUE_PATTERN.test(value)) {
+        return pair;
+      }
+      return `${key}=***`;
+    })
+    .join("&");
+
+  return `${prefix}?${query}${redactedHash}`;
 }
 
 function redactMatchedUrl(matched: string): string {
@@ -107,9 +148,16 @@ function redactMatchedUrl(matched: string): string {
   return redactUrlQuery(url) + trailing;
 }
 
-/** 把文本里所有 URL 的 userinfo / query 值 / 路径凭据段替换为 `***` */
+function redactMatchedMagnet(matched: string): string {
+  const trailing = TRAILING_PUNCTUATION_PATTERN.exec(matched)?.[0] ?? "";
+  const url = trailing ? matched.slice(0, -trailing.length) : matched;
+  return redactMagnetUrl(url) + trailing;
+}
+
+/** 把文本里所有 URL（含 magnet:?）的 userinfo / query 值 / 路径凭据段替换为 `***` */
 export function redactSensitiveUrls(text: string): string {
   return text
+    .replace(MAGNET_URL_PATTERN, redactMatchedMagnet)
     .replace(URL_WITH_QUERY_PATTERN, redactMatchedUrl)
     .replace(
       RELATIVE_URL_WITH_QUERY_PATTERN,

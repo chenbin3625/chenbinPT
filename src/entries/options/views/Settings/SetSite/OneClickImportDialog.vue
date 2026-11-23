@@ -122,6 +122,7 @@ const statusIconProp = (site: TSiteID): TStatusIconProp => {
 };
 
 function toggleToWork(siteId: TSiteID, checked: boolean) {
+  if (importStatus.value.isWorking) return;
   const current = importStatus.value.toWork;
   importStatus.value.toWork = checked
     ? Array.from(new Set([...current, siteId]))
@@ -129,11 +130,15 @@ function toggleToWork(siteId: TSiteID, checked: boolean) {
 }
 
 async function doAutoImport() {
+  if (importStatus.value.isWorking) return;
   importStatus.value.isWorking = true;
   importStatus.value.failed = [];
 
+  // 复制待导入队列快照，避免导入过程中状态变更影响当前批次遍历
+  const workList = [...importStatus.value.toWork];
+
   // 遍历所有需要添加的站点，在遍历过程中我们不更新 siteHostMap 和 siteNameMap
-  for (const site of importStatus.value.toWork) {
+  for (const site of workList) {
     if (successSiteIds.value.has(site)) {
       continue; // 如果已经添加成功，则跳过
     }
@@ -251,7 +256,13 @@ watch(showDialog, (open) => {
           </label>
         </a-tooltip>
         <!-- A-27：原 color="blue-lighten-1" / variant="tonal" 都不是 antd 语义，改用低强调的 text 按钮 -->
-        <CheckSwitchButton v-model="importStatus.toWork" :all="selectableSiteIds" :size="undefined" type="text" />
+        <CheckSwitchButton
+          v-model="importStatus.toWork"
+          :all="selectableSiteIds"
+          :disabled="importStatus.isWorking"
+          :size="undefined"
+          type="text"
+        />
       </a-flex>
     </div>
 

@@ -657,8 +657,13 @@ describe("E2-21：gtnet 空关键词搜索也会注入 securitytoken", () => {
     site.request = vi.fn(async () => ({ data: makeDoc("<html><body></body></html>") }));
 
     await site.getSearchResult(undefined, {});
-    expect(site.metadata.search.requestConfig.data.securitytoken).toBe("TOKEN-123");
-    // 只改实例 metadata，不污染模块级定义
+    // 通过单次请求拷贝注入 securitytoken，既不污染实例 metadata 也不污染模块级定义
+    expect(site.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ securitytoken: "TOKEN-123" }),
+      }),
+    );
+    expect(site.metadata.search.requestConfig.data.securitytoken).toBe("");
     expect((siteMetadata.search!.requestConfig!.data as any).securitytoken).toBe("");
   });
 

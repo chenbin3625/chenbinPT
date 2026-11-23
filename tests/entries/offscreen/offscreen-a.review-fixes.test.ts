@@ -295,23 +295,29 @@ describe("offscreen-a 审查修复（OFFSCREEN-1 / 3 / 6 / 7）", () => {
     });
 
     it("库级缓存返回同一个实例时不 dispose（避免关掉正在使用的连接）", async () => {
-      const { mod } = await loadDownloadModule();
-      const shared = { tag: "shared" };
-      mocks.getDownloader.mockResolvedValue(shared);
-      mocks.downloaders.d1 = { id: "d1", type: "Aria2", address: "http://127.0.0.1:6800" };
+      vi.useFakeTimers();
+      try {
+        const { mod } = await loadDownloadModule();
+        const shared = { tag: "shared" };
+        mocks.getDownloader.mockResolvedValue(shared);
+        mocks.downloaders.d1 = { id: "d1", type: "Aria2", address: "http://127.0.0.1:6800" };
 
-      await mod.getDownloaderInstance("d1");
-      // 库级稳定 key 相同 → getDownloader 仍返回同一个实例；只有 offscreen 的 JSON key 变了
-      mocks.downloaders.d1 = {
-        id: "d1",
-        type: "Aria2",
-        address: "http://127.0.0.1:6800",
-        feature: { BypassCSRF: true },
-      };
-      const again = await mod.getDownloaderInstance("d1");
+        await mod.getDownloaderInstance("d1");
+        // 库级稳定 key 相同 → getDownloader 仍返回同一个实例；只有 offscreen 的 JSON key 变了
+        mocks.downloaders.d1 = {
+          id: "d1",
+          type: "Aria2",
+          address: "http://127.0.0.1:6800",
+          feature: { BypassCSRF: true },
+        };
+        const again = await mod.getDownloaderInstance("d1");
 
-      expect(again).toBe(shared);
-      expect(mocks.releaseDownloaderInstance).not.toHaveBeenCalled();
+        expect(again).toBe(shared);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(mocks.releaseDownloaderInstance).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

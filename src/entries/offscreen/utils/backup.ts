@@ -361,30 +361,89 @@ function isRestorableCookies(value: unknown): value is Required<IBackupData>["co
 /** chrome.cookies.SameSiteStatus 的全部合法取值（恢复不可信备份时逐条校验，见 OFFSCREEN-4） */
 const VALID_SAME_SITE_VALUES = new Set(["no_restriction", "lax", "strict", "unspecified"]);
 
-/** 规范化主机名：去前导点、去端口、小写；空值/非法返回 null */
-function normalizeHostname(host: string): string | null {
-  const value = host.trim().toLowerCase().replace(/^\./, "");
-  if (value.length === 0) {
+/** 主机名中不允许出现的 URL 分隔符、空白与控制字符（防止借 domain 注入路径/查询/锚点绕过白名单） */
+const UNSAFE_HOSTNAME_CHARS = /[\s\u0000-\u001f\u007f/\\?#@%]/;
+
+/** 规范化主机名：去单个前导点、按需去端口、经 URL 解析并小写；空值/含非法字符返回 null */
+function normalizeHostname(host: string, options: { allowPort?: boolean } = {}): string | null {
+  const { allowPort = true } = options;
+  const trimmed = host.trim();
+  if (trimmed.length === 0 || UNSAFE_HOSTNAME_CHARS.test(trimmed)) {
     return null;
   }
-  // siteHostMap 的键来自 getHostFromUrl（url.host，可能带端口），而 cookie.domain 不带端口
-  const withoutPort = value.startsWith("[") ? value : value.replace(/:\d+$/, "");
-  return withoutPort.length > 0 ? withoutPort : null;
+
+  const withoutLeadingDot = trimmed.startsWith(".") ? trimmed.slice(1) : trimmed;
+  if (
+    withoutLeadingDot.length === 0 ||
+    withoutLeadingDot.startsWith(".") ||
+    withoutLeadingDot.endsWith(".") ||
+    withoutLeadingDot.includes("..")
+  ) {
+    return null;
+  }
+
+  if (!allowPort && !withoutLeadingDot.startsWith("[") && withoutLeadingDot.includes(":")) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(`http://${withoutLeadingDot}/`);
+  } catch {
+    return null;
+  }
+
+  if (
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    return null;
+  }
+  if (!allowPort && parsed.port !== "") {
+    return null;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname.length === 0 || hostname.startsWith(".") || hostname.endsWith(".") || hostname.includes("..")) {
+    return null;
+  }
+  return hostname;
 }
 
-/** 取 cookie 归属的主机名：优先 domain，其次 url（见 OFFSCREEN-4） */
+/** 取 cookie 归属的主机名：domain 与 url 同时存在时必须解析到同一主机（见 OFFSCREEN-4） */
 function getCookieHostname(cookie: { domain?: unknown; url?: unknown }): string | null {
-  if (typeof cookie.domain === "string" && cookie.domain.length > 0) {
-    return normalizeHostname(cookie.domain);
-  }
+  const domainHost =
+    typeof cookie.domain === "string" && cookie.domain.length > 0 && !UNSAFE_HOSTNAME_CHARS.test(cookie.domain)
+      ? normalizeHostname(cookie.domain, { allowPort: false })
+      : null;
+
+  let urlHost: string | null = null;
   if (typeof cookie.url === "string" && cookie.url.length > 0) {
     try {
-      return normalizeHostname(new URL(cookie.url).hostname);
+      const parsed = new URL(cookie.url);
+      if (
+        (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+        parsed.username === "" &&
+        parsed.password === "" &&
+        parsed.port === ""
+      ) {
+        urlHost = normalizeHostname(parsed.hostname, { allowPort: false });
+      }
     } catch {
       return null;
     }
+    if (!urlHost) {
+      return null;
+    }
   }
-  return null;
+
+  if (domainHost && urlHost) {
+    return domainHost === urlHost ? urlHost : null;
+  }
+  return urlHost ?? domainHost;
 }
 
 /** cookie 主机是否属于本机已配置站点（等于该 host 或为其子域，见 OFFSCREEN-4） */
@@ -414,16 +473,41 @@ function toCookieSetDetails(value: unknown): CookieSetDetails | null {
   if (typeof value.name !== "string" || value.name.length === 0) {
     return null;
   }
-  // background 依据 secure + domain + path 重建 url，domain 必须有值
-  if (typeof value.domain !== "string" || value.domain.length === 0) {
+  // background 依据 secure + domain + path 重建 url，domain 必须是不含 URL 分隔符的合法主机名
+  if (typeof value.domain !== "string" || value.domain.length === 0 || UNSAFE_HOSTNAME_CHARS.test(value.domain)) {
     return null;
   }
+  const normalizedDomain = normalizeHostname(value.domain, { allowPort: false });
+  if (!normalizedDomain) {
+    return null;
+  }
+  const hasLeadingDot = value.domain.startsWith(".");
+  if (hasLeadingDot && normalizedDomain.startsWith("[")) {
+    return null;
+  }
+  const domain = hasLeadingDot ? `.${normalizedDomain}` : normalizedDomain;
 
   const secure = value.secure === true;
   // 只接受以 `/` 开头的 path：background 用 `domain + path` 重建 cookie URL，
   // 相对 path（如 `@evil.example`）会把 URL 的主机改成别的域。
-  const path = typeof value.path === "string" && value.path.startsWith("/") ? value.path : "/";
-  const domain = value.domain;
+  const rawPath = typeof value.path === "string" && value.path.startsWith("/") ? value.path : "/";
+  const path = /[\u0000-\u001f\u007f\\]/.test(rawPath) ? "/" : rawPath;
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(`http${secure ? "s" : ""}://${normalizedDomain}${path}`);
+  } catch {
+    return null;
+  }
+  if (
+    parsedUrl.protocol !== (secure ? "https:" : "http:") ||
+    parsedUrl.hostname.toLowerCase() !== normalizedDomain ||
+    parsedUrl.port !== "" ||
+    parsedUrl.username !== "" ||
+    parsedUrl.password !== ""
+  ) {
+    return null;
+  }
 
   const details: CookieSetDetails = {
     name: value.name,
@@ -432,9 +516,8 @@ function toCookieSetDetails(value: unknown): CookieSetDetails | null {
     path,
     secure,
     httpOnly: value.httpOnly === true,
-    // background 的 setCookie 会依据 secure + domain + path 重建 url（cookies.ts:71），
-    // 这里给一个同构的合法 url 只是为了满足类型（domain 的前导点在 url 里要去掉）
-    url: `http${secure ? "s" : ""}://${domain.replace(/^\./, "")}${path}`,
+    // 经 URL 解析校验后生成规范 url，保证与 domain 指向同一个主机（防止 hostOnly: true 时 URL 主机漂移）
+    url: parsedUrl.href,
   };
   if (typeof value.hostOnly === "boolean") {
     details.hostOnly = value.hostOnly;
@@ -1006,7 +1089,20 @@ export async function restoreBackupData(
             }
 
             const hostname = getCookieHostname(cookie);
-            if (!hostname || !isCookieHostTrusted(hostname, allowedCookieHosts)) {
+            let parsedUrlHostname: string | null = null;
+            if (typeof cookie.url === "string") {
+              try {
+                parsedUrlHostname = normalizeHostname(new URL(cookie.url).hostname, { allowPort: false });
+              } catch {
+                parsedUrlHostname = null;
+              }
+            }
+            if (
+              !hostname ||
+              !parsedUrlHostname ||
+              parsedUrlHostname !== hostname ||
+              !isCookieHostTrusted(parsedUrlHostname, allowedCookieHosts)
+            ) {
               untrustedCount++;
               return;
             }

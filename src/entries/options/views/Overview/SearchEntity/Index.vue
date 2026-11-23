@@ -13,7 +13,7 @@ import {
   SyncOutlined,
   WarningOutlined,
 } from "@ant-design/icons-vue";
-import { computed, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
@@ -28,11 +28,7 @@ import {
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
-import {
-  useRuntimeStore,
-  consumeRuntimeRestoreInterruption,
-  reconcileRuntimeInFlightState,
-} from "@/options/stores/runtime.ts";
+import { useRuntimeStore, consumeRuntimeRestoreInterruption } from "@/options/stores/runtime.ts";
 import {
   formatDate,
   formatDateTimeForTable,
@@ -76,7 +72,6 @@ import {
   invalidateSearchTasks,
   isFlushQuery,
   isSearchExpansionCurrent,
-  isSearchQueueIdle,
   isSearchTaskCurrent,
   normalizeRouteQueryValue,
   pauseSearchQueue as pauseSearchQueueState,
@@ -243,30 +238,45 @@ const { rowSelectionFixed } = useTableActionColumnLayout();
 
 /**
  * 优惠展示形式与列配置同步：切到 factor / both 时自动勾选「优惠」列，切回 tags / none 时取消
- * （顺带清理旧版本残留在列配置里的 key）。只监听模式变化，这样用户在 factor 模式下仍可在列选择器里手动取消该列。
+ * （顺带清理旧版本残留在列配置里的 key）。
+ * 仅在 configStore 水合完成后注册监听，且初始化阶段只清理不允许显示的列、不强行补回用户手动隐藏的列；
+ * 这样用户在 factor / both 模式下于列选择器里取消勾选「优惠」后，重新挂载/刷新不会再被覆盖。
  */
-watch(
-  showPromoColumn,
-  (enabled, oldEnabled) => {
+function syncPromoColumn(enabled: boolean, options: { allowAdd: boolean }) {
+  // 列配置为空 = 「全部可见」，此时无需增删（也不能用只有 promo 一项的数组把其它列全隐藏掉）
+  const columns = configStore.tableBehavior.SearchEntity.columns;
+  if (!Array.isArray(columns) || columns.length === 0) return;
+
+  const hasPromoColumn = columns.includes("downloadVolumeFactor");
+  if (enabled && options.allowAdd && !hasPromoColumn) {
+    configStore.updateTableBehavior("SearchEntity", "columns", [...columns, "downloadVolumeFactor"]);
+  } else if (!enabled && hasPromoColumn) {
+    configStore.updateTableBehavior(
+      "SearchEntity",
+      "columns",
+      columns.filter((key) => key !== "downloadVolumeFactor"),
+    );
+  }
+}
+
+let isUnmounted = false;
+let stopShowPromoColumnWatch: (() => void) | null = null;
+
+onBeforeUnmount(() => {
+  isUnmounted = true;
+  stopShowPromoColumnWatch?.();
+  stopShowPromoColumnWatch = null;
+});
+
+void Promise.resolve(configStore.$onReady?.()).then(() => {
+  if (isUnmounted) return;
+  // 水合完成后仅清理非法残留列，保留用户在 factor/both 模式下手动隐藏该列的偏好
+  syncPromoColumn(showPromoColumn.value, { allowAdd: false });
+  stopShowPromoColumnWatch = watch(showPromoColumn, (enabled, oldEnabled) => {
     if (enabled === oldEnabled) return;
-
-    // 列配置为空 = 「全部可见」，此时无需增删（也不能用只有 promo 一项的数组把其它列全隐藏掉）
-    const columns = configStore.tableBehavior.SearchEntity.columns;
-    if (!Array.isArray(columns) || columns.length === 0) return;
-
-    const hasPromoColumn = columns.includes("downloadVolumeFactor");
-    if (enabled && !hasPromoColumn) {
-      configStore.updateTableBehavior("SearchEntity", "columns", [...columns, "downloadVolumeFactor"]);
-    } else if (!enabled && hasPromoColumn) {
-      configStore.updateTableBehavior(
-        "SearchEntity",
-        "columns",
-        columns.filter((key) => key !== "downloadVolumeFactor"),
-      );
-    }
-  },
-  { immediate: true },
-);
+    syncPromoColumn(enabled, { allowAdd: true });
+  });
+});
 
 /**
  * 只对「搜索快照」在加载时做一次归一（数据是 sendMessage 回来的普通对象，尚未进入 Pinia store）。
@@ -545,28 +555,16 @@ async function runSearch(search: string, plan: string) {
 }
 
 /**
- * D2-01：先对账从 sessionStorage 恢复的「在途」搜索状态。
+ * D2-01 / OUI-2：先对账从 sessionStorage 恢复的「在途」搜索状态，并把「上次搜索被中断」提示给用户。
  *
- * 恢复出来的 `isSearching` / waiting 计划没有对应的队列任务，不收敛的话页面会永远停在
- * 「搜索中…」、顶栏搜索按钮被禁用。详见 `reconcileRestoredSearchState()`。
- */
-reconcileRestoredSearchState();
-
-/**
- * OUI-2：把「上次搜索被中断」的收尾事件提示给用户（此前 `getRuntimeRestoreInterruptions()`
- * 在生产代码里零调用者）。
- *
- * 恢复阶段会把 isSearching 置 false、waiting/working 计划改写为 `passParse + i18n.userCancel`；
- * 不提示的话用户看到的是「部分结果 + 共找到 N 条」，且这些计划不在「重试失败」集合里。
+ * 仅在搜索域内对账（`reconcileRestoredSearchState()`），绝不调用跨页面的 `reconcileRuntimeInFlightState()`，
+ * 避免从媒体库搜索或我的数据切回搜索页时，把其它页面正在运行的任务误判为僵尸状态并清零。
  * 同一会话内只提示一次（consume 之后标记清除），避免每次进出搜索页重复弹窗。
- * `reconcileRuntimeInFlightState` 覆盖恢复阶段之外的同类僵尸状态。
  */
 {
+  const reconciledSearchInterrupted = reconcileRestoredSearchState();
   const restoredInterrupted = consumeRuntimeRestoreInterruption("search");
-  // 队列里仍有真实任务时（从别的页面切回搜索页），这些 waiting/working 计划是在途搜索而非残留，
-  // 不能把 isSearching 置 false、计划改写成 userCancel，否则会把正在运行的搜索标成「已中断」。
-  const reconciledInterrupted = isSearchQueueIdle() ? reconcileRuntimeInFlightState(runtimeStore).search : false;
-  if (restoredInterrupted || reconciledInterrupted) {
+  if (restoredInterrupted || reconciledSearchInterrupted) {
     runtimeStore.showSnackbar(t("SearchEntity.index.alert.searchInterrupted"), { color: "warning" });
   }
 }

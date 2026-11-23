@@ -4,6 +4,7 @@
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import { get } from "es-toolkit/compat";
 
+import { isDocumentNode, isElementNode } from "../schemas/AbstractBittorrentSite.ts";
 import Unit3D, {
   CategoryFree,
   freeleechFactorMap,
@@ -12,7 +13,7 @@ import Unit3D, {
   pickAttr,
   SchemaMetadata,
 } from "../schemas/Unit3D.ts";
-import type { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag } from "../types";
+import { NoUserInputError, type ISearchInput, type ISiteMetadata, type ITorrent, type ITorrentTag } from "../types";
 import { buildCategoryOptionsFromDict } from "../utils.ts";
 
 /**
@@ -153,6 +154,16 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
+  // search.selectors 使用 JSON API 路径；HTML 列表页需使用 Unit3D 默认 DOM 选择器，避免合并 JSON 选择器
+  list: [
+    {
+      ...SchemaMetadata.list[0],
+      mergeSearchSelectors: false,
+      selectors: SchemaMetadata.search.selectors,
+    },
+    ...SchemaMetadata.list.slice(1),
+  ],
+
   // 站点页面的用户信息仍需登录态 HTML；此处仅保证 API 检索可用，userInfo 沿用 Unit3D 默认
   // E13 同型：不要用宽匹配 urlPatterns 覆盖引擎默认登录判据（会把含 login/verify 的搜索词误判为未登录）。
   noLoginAssert: {
@@ -165,13 +176,32 @@ export default class GenerationFree extends Unit3D {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      Authorization: `Bearer ${this.userConfig.inputSetting?.token ?? ""}`,
-      Accept: "application/json",
-    };
+    const targetUrl = this.resolveRequestTarget(axiosConfig);
+    if (!targetUrl || !this.isTrustedSiteUrl(targetUrl)) {
+      throw new Error(`Rejected request URL outside site host allowlist for ${this.metadata.id}`);
+    }
 
-    return super.request<T>(axiosConfig, checkLogin);
+    const config: AxiosRequestConfig = { ...axiosConfig };
+    let isApiRequest = false;
+    try {
+      isApiRequest = new URL(targetUrl).pathname.startsWith("/api/");
+    } catch {
+      isApiRequest = false;
+    }
+
+    if (isApiRequest) {
+      const token = this.userConfig.inputSetting?.token?.trim();
+      if (!token) {
+        throw new NoUserInputError("API Key");
+      }
+      config.headers = {
+        ...(config.headers ?? {}),
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      };
+    }
+
+    return super.request<T>(config, checkLogin);
   }
 
   /** API 的促销信息是结构化字段，单元数据默认的 DOM 选择器在 JSON 下取不到 */
@@ -180,6 +210,10 @@ export default class GenerationFree extends Unit3D {
     row: Element | Document | object,
     searchConfig: ISearchInput,
   ): Partial<ITorrent> {
+    if (isElementNode(row) || isDocumentNode(row)) {
+      return super.parseTorrentRowForTags(torrent, row, searchConfig);
+    }
+
     const raw = row as IUnit3DRawTorrent;
     const tags: ITorrentTag[] = [];
 

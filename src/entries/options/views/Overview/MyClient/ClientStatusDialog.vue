@@ -30,6 +30,7 @@ const { enabledDownloaders, resumeDownloaderRefresh, clearDownloaderTimer } = us
 const clientStatuses = ref<Record<string, TorrentClientStatus>>({});
 const clientVersions = ref<Record<string, string>>({});
 const clientLoading = ref<Record<string, boolean>>({});
+const fetchSeq = new Map<string, number>();
 
 /** Returns true when the downloader's torrents are included in the current filter. */
 function isDownloaderActive(id: string) {
@@ -55,17 +56,25 @@ function formatSizeOrDash(v: number | undefined): string {
 }
 
 async function fetchStatusFor(id: string) {
+  const seq = (fetchSeq.get(id) ?? 0) + 1;
+  fetchSeq.set(id, seq);
   clientLoading.value[id] = true;
   try {
-    // client version 只获取一次即可
-    if (typeof clientVersions.value[id] === "undefined") {
-      clientVersions.value[id] = (await sendMessage("getDownloaderVersion", id)) ?? "—";
-    }
+    // client version 仅在未成功获取过时拉取，并与 status 并行且独立容错：
+    // 避免版本接口失败阻塞状态展示，或把临时失败/空值永久缓存成 "—"
+    const versionPromise = clientVersions.value[id]
+      ? Promise.resolve(undefined)
+      : sendMessage("getDownloaderVersion", id).catch(() => undefined);
+    const statusPromise = sendMessage("getDownloaderStatus", id).catch(() => undefined);
 
-    const status = await sendMessage("getDownloaderStatus", id);
+    const [version, status] = await Promise.all([versionPromise, statusPromise]);
+    if (fetchSeq.get(id) !== seq) return;
+    if (version) clientVersions.value[id] = version;
     if (status) clientStatuses.value[id] = status;
   } finally {
-    clientLoading.value[id] = false;
+    if (fetchSeq.get(id) === seq) {
+      clientLoading.value[id] = false;
+    }
   }
 }
 

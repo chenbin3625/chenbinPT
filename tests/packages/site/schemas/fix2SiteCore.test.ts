@@ -58,8 +58,11 @@ const { EResultParseStatus } = await import("@ptd/site/types.ts");
 
 const SITE_URL = "https://site.example/";
 
-function makeDoc(html: string, url: string = "https://site.example/torrents.php"): Document {
-  const doc = new DOMParser().parseFromString(`<html><head>${html}</head><body>${html}</body></html>`, "text/html");
+function makeDoc(bodyHtml: string, url: string = "https://site.example/torrents.php", headHtml: string = ""): Document {
+  const doc = new DOMParser().parseFromString(
+    `<html><head>${headHtml}</head><body>${bodyHtml}</body></html>`,
+    "text/html",
+  );
   Object.defineProperty(doc, "URL", { value: url, configurable: true });
   return doc;
 }
@@ -136,14 +139,16 @@ describe("L-1：详情页 title 兜底保持字符串", () => {
   } as any);
 
   it("纯数字 <title> 不再被 getFieldData 转成 number", async () => {
-    const doc = makeDoc("<title>1917</title>", "https://site.example/details.php?id=1");
+    const doc = makeDoc("", "https://site.example/details.php?id=1", "<title>1917</title>");
+    expect(doc.querySelector("body > title")).toBeNull();
     const torrent = await site.detail(doc);
     expect(typeof torrent.title).toBe("string");
     expect(torrent.title).toBe("1917");
   });
 
   it("普通标题保持原样；无 title 选择器时仍能兜底", async () => {
-    const doc = makeDoc("<title>Some.Movie.2024</title>", "https://site.example/details.php?id=2");
+    const doc = makeDoc("", "https://site.example/details.php?id=2", "<title>Some.Movie.2024</title>");
+    expect(doc.querySelector("body > title")).toBeNull();
     const torrent = await site.detail(doc);
     expect(torrent.title).toBe("Some.Movie.2024");
   });

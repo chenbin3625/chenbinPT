@@ -158,13 +158,13 @@ interface rawTask {
 
   // If it is a bittorrent
   bittorrent?: {
-    announceList: string[][];
-    comment: string;
-    creationDate: number;
-    info: {
-      name: string;
+    announceList?: string[][];
+    comment?: string;
+    creationDate?: number;
+    info?: {
+      name?: string;
     };
-    mode: "single" | "multi";
+    mode?: "single" | "multi";
   };
   infoHash?: string;
   seeder?: string;
@@ -491,6 +491,28 @@ export default class Aria2 extends AbstractBittorrentClient {
     const msgId = String(this.msgId);
     const timeout = (this.config.timeout ?? 0) > 0 ? this.config.timeout! : DEFAULT_METHOD_TIMEOUT;
 
+    // 建连阶段同样要受 timeout 保护：半开 TCP（VPN 掉线/防火墙丢包）下 WebSocket 握手可能
+    // 长时间既不 open 也不 close/error，只 await _getOpenWsClient() 会让调用方**永久挂起**
+    // （表现为 UI 一直 loading）。
+    let connectTimer: ReturnType<typeof setTimeout> | undefined;
+    const connectPromise = new Promise<never>((_, reject) => {
+      connectTimer = setTimeout(() => reject(new Error(`Aria2 connect timeout: ${methodName}`)), timeout);
+    });
+
+    let ws: WebSocket;
+    try {
+      // 先等连接可用（包括自动重连）再登记 _pendingRequests 并发送：
+      // 否则旧连接在重连前触发 close/error 会提前 reject 并删掉本次 msgId，
+      // 导致重连后新 socket 发出 ws.send() 但客户端直接抛断连错误。
+      ws = await Promise.race([this._getOpenWsClient(), connectPromise]);
+    } finally {
+      clearTimeout(connectTimer);
+    }
+
+    if (this._disposed) {
+      throw new Error("Aria2 client has been disposed");
+    }
+
     const responsePromise = new Promise<jsonRPCResponse<T>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this._pendingRequests.delete(msgId);
@@ -501,25 +523,10 @@ export default class Aria2 extends AbstractBittorrentClient {
       this._pendingRequests.set(msgId, { resolve, reject, timer });
     });
 
-    // 立刻挂一个「已处理」标记：下面的建连等待本身也可能超时（见 connectPromise 的 race），
-    // 那种情况下我们会先抛错返回，而 responsePromise 的定时器随后才 reject —— 此刻没有
-    // 任何 handler 挂在它上面，会产生 unhandled rejection。这里挂一个 no-op 处理函数，
-    // 既不改变 responsePromise 自身的状态（后面 await 仍能拿到 rejection），也消除了该告警。
+    // 防止 ws.send() 同步触发 close/error 后又抛异常导致 responsePromise 出现 unhandled rejection
     responsePromise.catch(() => undefined);
 
-    // 建连阶段同样要受 timeout 保护：半开 TCP（VPN 掉线/防火墙丢包）下 WebSocket 握手可能
-    // 长时间既不 open 也不 close/error，只 await _getOpenWsClient() 会让调用方**永久挂起**
-    // （表现为 UI 一直 loading），而上面那个定时器此时还没被 await 到。
-    let connectTimer: ReturnType<typeof setTimeout> | undefined;
-    const connectPromise = new Promise<never>((_, reject) => {
-      connectTimer = setTimeout(() => reject(new Error(`Aria2 connect timeout: ${methodName}`)), timeout);
-    });
-
     try {
-      // 等连接可用再发送：CONNECTING 时 send() 会抛 InvalidStateError，
-      // CLOSING/CLOSED 时 send() 会被静默丢弃
-      const ws = await Promise.race([this._getOpenWsClient(), connectPromise]);
-      clearTimeout(connectTimer);
       ws.send(
         JSON.stringify({
           method: methodName,
@@ -528,7 +535,6 @@ export default class Aria2 extends AbstractBittorrentClient {
         }),
       );
     } catch (e) {
-      clearTimeout(connectTimer);
       const pending = this._pendingRequests.get(msgId);
       if (pending) {
         clearTimeout(pending.timer);
@@ -828,8 +834,12 @@ export default class Aria2 extends AbstractBittorrentClient {
 
     return {
       id: rawTask.gid,
-      infoHash: rawTask.infoHash!,
-      name: rawTask.bittorrent!.info.name,
+      infoHash: rawTask.infoHash ?? "",
+      name:
+        rawTask.bittorrent?.info?.name ||
+        rawTask.files?.[0]?.path?.split(/[/\\]/).pop() ||
+        rawTask.infoHash ||
+        rawTask.gid,
       progress,
       isCompleted: progress >= 100,
       // 分享率 = 已上传 / 已下载；totalLength 是种子总大小，下载中会低估
@@ -852,23 +862,27 @@ export default class Aria2 extends AbstractBittorrentClient {
     const id = typeof torrent === "string" ? torrent : (torrent.id as string);
     const { result: files } = await this.methodSend<
       Array<{
-        index: number;
+        index: number | string;
         path: string;
-        length: number;
-        completedLength: number;
+        length: number | string;
+        completedLength: number | string;
         selected: string; // "true" | "false"
       }>
     >("aria2.getFiles", [id]);
 
-    return (files ?? []).map((file) => ({
-      index: file.index,
-      name: file.path.split(/[/\\]/).pop() || file.path,
-      path: file.path,
-      size: file.length,
-      progress: file.length > 0 ? (file.completedLength / file.length) * 100 : 0,
-      priority: "normal" as TorrentFilePriority,
-      wanted: String(file.selected) === "true",
-      raw: file,
-    }));
+    return (files ?? []).map((file) => {
+      const size = Number(file.length) || 0;
+      const completed = Number(file.completedLength) || 0;
+      return {
+        index: Number(file.index),
+        name: file.path.split(/[/\\]/).pop() || file.path,
+        path: file.path,
+        size,
+        progress: size > 0 ? (completed / size) * 100 : 0,
+        priority: "normal" as TorrentFilePriority,
+        wanted: String(file.selected) === "true",
+        raw: file,
+      };
+    });
   }
 }

@@ -47,7 +47,7 @@ export const siteMetadata: ISiteMetadata = {
     keywordPath: "params.q",
     selectors: {
       rows: { selector: 'table.data > tbody > tr:has(a[href^="magnet:?xt="])' },
-      category: { selector: "span > strong", filters: [{ name: "replace", args: ["[>| ]+", ""] }] },
+      category: { selector: "span > strong", filters: [{ name: "replace", args: [/[>| ]+/g, ""] }] },
       title: { selector: "a.cellMainLink" },
       url: { selector: "a.cellMainLink", attr: "href" },
       link: { selector: 'a[href^="magnet:?xt="]', attr: "href" },

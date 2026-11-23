@@ -45,13 +45,13 @@ watch(
 
 function doFlush() {
   if (!flushOnClick) return;
-  getSiteFavicon(siteId, true)
+  const targetSiteId = siteId;
+  getSiteFavicon(targetSiteId, true)
     .then((favicon) => {
-      siteFavicon.value = favicon;
+      if (siteId === targetSiteId) siteFavicon.value = favicon;
     })
     .catch(() => {
       // 手动刷新失败保持原图即可（同上：不新增 console）
-      siteFavicon.value = NO_IMAGE;
     });
 }
 

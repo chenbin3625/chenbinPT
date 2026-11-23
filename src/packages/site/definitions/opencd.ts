@@ -400,7 +400,10 @@ export default class OpenCD extends NexusPHP {
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     // 对 OpenCD 站点，种子详情页为 /plugin_details.php?id=123 的形式
     if (torrent.link && torrent.link.includes("/plugin_details.php")) {
-      return torrent.link.replace(/plugin_details\.php\?id=(\d+)/, "download.php?id=$1").replace(/&hit=1/, ""); // hit=1 是为了统计下载次数
+      const rewrittenLink = torrent.link
+        .replace(/plugin_details\.php\?id=(\d+)/, "download.php?id=$1")
+        .replace(/&hit=1/, ""); // hit=1 是为了统计下载次数
+      return super.getTorrentDownloadLink({ ...torrent, link: rewrittenLink });
     }
 
     return super.getTorrentDownloadLink(torrent);

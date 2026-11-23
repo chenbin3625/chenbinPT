@@ -7,7 +7,7 @@ import { useI18n } from "vue-i18n";
 import { type IDownloaderMetadata } from "@/shared/types.ts";
 
 import { getDownloader, getDownloaderMetaData, TorrentClientMetaData } from "@ptd/downloader";
-import { formatDate, formValidateRules, isInsecureAddress } from "@/options/utils.ts";
+import { formValidateRules, isInsecureAddress } from "@/options/utils.ts";
 
 import ConnectCheckButton from "@/options/components/ConnectCheckButton.vue";
 
@@ -25,6 +25,13 @@ const clientMeta = computedAsync<TorrentClientMetaData>(
 );
 
 const showPassword = ref<boolean>(false);
+
+function formatDurationMmSs(durationMs: number | undefined): string {
+  const totalSeconds = Math.max(0, Math.floor((Number.isFinite(durationMs) ? Number(durationMs) : 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
 const nameRules = [formValidateRules.require(t("SetDownloader.editor.nameTip"))];
 const addressRules = [formValidateRules.url(t("SetDownloader.editor.addressTip"))];
@@ -164,7 +171,7 @@ async function checkConnect() {
                   :step="1e3"
                 />
                 <a-button type="text" @click="clientConfig.timeout = 60e3">
-                  {{ formatDate(clientConfig.timeout!, "mm:ss") }}
+                  {{ formatDurationMmSs(clientConfig.timeout) }}
                 </a-button>
               </a-flex>
             </a-form-item>

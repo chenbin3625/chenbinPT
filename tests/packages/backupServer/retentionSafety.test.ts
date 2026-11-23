@@ -28,20 +28,32 @@ describe("pruneBackupFiles：时间不可解析的备份一律保留", () => {
     expect(kept.map((item) => item.filename).sort()).toEqual(["bad.zip", "new.zip"]);
   });
 
-  it("NaN 时间不会被当成过期删除（按数量策略）", () => {
-    const files = [
+  it("NaN 时间不会被当成过期删除，且不占用 maxCount 名额（按数量策略）", () => {
+    const retention: IBackupRetention = { count: { enabled: true, maxCount: 2 } };
+
+    // bad.zip 位于 index >= maxCount：若删掉 !Number.isFinite 守卫，bad.zip 会被误删
+    const tailNaNFiles = [
       file("new.zip", NOW - DAY),
+      file("mid.zip", NOW - 2 * DAY),
+      file("old.zip", NOW - 3 * DAY),
       file("bad.zip", Number.NaN),
+    ];
+    const [tailDeleted, tailKept] = pruneBackupFiles(tailNaNFiles, retention, NOW);
+
+    expect(tailKept.map((item) => item.filename).sort()).toEqual(["bad.zip", "mid.zip", "new.zip"]);
+    expect(tailDeleted.map((item) => item.filename)).toEqual(["old.zip"]);
+
+    // bad.zip 位于列表前部时同样不能占用 maxCount 名额，避免误删合法备份 mid.zip
+    const headNaNFiles = [
+      file("bad.zip", Number.NaN),
+      file("new.zip", NOW - DAY),
       file("mid.zip", NOW - 2 * DAY),
       file("old.zip", NOW - 3 * DAY),
     ];
-    const retention: IBackupRetention = { count: { enabled: true, maxCount: 2 } };
+    const [headDeleted, headKept] = pruneBackupFiles(headNaNFiles, retention, NOW);
 
-    const [deleted, kept] = pruneBackupFiles(files, retention, NOW);
-
-    // 数量策略只应删掉最新的 2 份之外的旧备份；NaN 那份必须被保留
-    expect(kept.map((item) => item.filename)).toContain("bad.zip");
-    expect(deleted.map((item) => item.filename).sort()).toEqual(["mid.zip", "old.zip"]);
+    expect(headKept.map((item) => item.filename).sort()).toEqual(["bad.zip", "mid.zip", "new.zip"]);
+    expect(headDeleted.map((item) => item.filename)).toEqual(["old.zip"]);
   });
 
   it("全部时间合法时行为不变（期限内的保留，过期的删除）", () => {

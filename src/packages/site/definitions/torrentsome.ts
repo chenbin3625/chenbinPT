@@ -41,7 +41,7 @@ export const siteMetadata: ISiteMetadata = {
   tags: ["综合"],
 
   type: "public",
-  urls: ["https://torrentsome272.com/"],
+  urls: ["https://torrentsome273.com/"],
   legacyUrls: [
     "https://torrentsome252.com/",
     "https://torrentsome253.com/",
@@ -64,6 +64,7 @@ export const siteMetadata: ISiteMetadata = {
     "https://torrentsome270.com/",
     // 2026-11-14 按 Jackett dd402db2 域名轮换更新：主域 271 → 272，旧域进 legacyUrls
     "https://torrentsome271.com/",
+    "https://torrentsome272.com/",
   ],
 
   timezoneOffset: "+0900",

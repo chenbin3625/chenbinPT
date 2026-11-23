@@ -678,6 +678,11 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     return /message port closed|receiving end does not exist|could not establish connection/i.test(message);
   }
 
+  /** `@webext-core/messaging` 在对端无响应（例如 offscreen 已关闭、SW listener 返回 false）时合成的精确错误 */
+  function isMissingOffscreenNoResponseError(error: unknown): boolean {
+    return error instanceof Error && error.message === "No response";
+  }
+
   async function ensureOffscreenReady(): Promise<void> {
     if (offscreenReadyPromise) {
       return offscreenReadyPromise;
@@ -685,15 +690,27 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
 
     const localHandler = messageMaps.ensureOffscreenDocument as
       ((message: { data: undefined }) => void | Promise<void>) | undefined;
-    const pending = localHandler
-      ? Promise.resolve(localHandler({ data: undefined }))
-      : (original.sendMessage as any)("ensureOffscreenDocument", undefined);
+    let pending: Promise<void>;
+    try {
+      pending = Promise.resolve(
+        localHandler
+          ? localHandler({ data: undefined })
+          : (original.sendMessage as any)("ensureOffscreenDocument", undefined),
+      );
+    } catch (error) {
+      return Promise.reject(error);
+    }
 
-    offscreenReadyPromise = Promise.resolve(pending).catch((error) => {
-      offscreenReadyPromise = null;
-      throw error;
+    // 仅对并发在途的 offscreen 就绪检查去重，完成后在 finally 中立即清空：
+    // Chrome MV3 会在空闲时回收 offscreen 文档，若无限期缓存已 resolved 的 promise，
+    // 后续写类消息（不在自动重试白名单中）会跳过文档重建并直接失败，且 "No response" 也不应卡死缓存。
+    const tracked = pending.finally(() => {
+      if (offscreenReadyPromise === tracked) {
+        offscreenReadyPromise = null;
+      }
     });
-    return offscreenReadyPromise;
+    offscreenReadyPromise = tracked;
+    return tracked;
   }
 
   // 包装后的 onMessage：将异步处理函数存入 messageMaps
@@ -792,9 +809,8 @@ function createMessageWrapper<PM extends ProtocolMap>(original: {
     try {
       return await original.sendMessage(type, data); // 执行远程异步调用
     } catch (error) {
-      if (needsOffscreen && isOffscreenConnectionError(error)) {
-        // 即使写类消息不能安全重发，也不能继续相信一个已经失效的 offscreen。
-        // 否则后续调用会复用 resolved promise，永远跳过文档重建。
+      if (needsOffscreen && (isOffscreenConnectionError(error) || isMissingOffscreenNoResponseError(error))) {
+        // 即使写类消息不能安全重发，也不能继续相信可能已经失效的在途 offscreen 就绪状态。
         offscreenReadyPromise = null;
       }
       /**

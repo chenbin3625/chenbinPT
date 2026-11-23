@@ -84,30 +84,48 @@ function onSelectionChange(keys: (string | number)[]) {
 }
 
 const tableSelected = ref<string[]>([]);
+let loadRequestToken = 0;
+
+function resetDialogData() {
+  loadRequestToken += 1;
+  siteHistoryData.value = [];
+  tableSelected.value = [];
+  isLoading.value = false;
+}
 
 /** 读取当前站点的历史用户数据；删除记录后也复用同一条路径重新加载 */
 async function loadHistoryData() {
   if (!siteId) return;
 
-  // B-27：弹窗实例是复用的（见 MyData/Index.vue 的 HistoryDataViewDialog），快速切换站点时
-  // A 站的响应可能晚于 B 站的请求落地。这里捕获发起请求时的 siteId，写入前校验：
-  // 否则表格里显示的是 A 站的数据、标题与 siteId 却已是 B，随后的删除会以「B 的 siteId + A 的日期」
-  // 调用 removeSiteUserInfo，销毁 B 站这些日期的记录。
+  // B-27 / F0147：弹窗实例是复用的（见 MyData/Index.vue 的 HistoryDataViewDialog），快速切换站点时
+  // A 站的响应可能晚于 B 站的请求落地，加载失败时也可能残留旧站点的 tableSelected。
+  // 这里同步清空选择集并捕获请求时的 siteId 与令牌，写入/报错前校验，避免跨站点误删。
   const requested = siteId;
+  const requestToken = ++loadRequestToken;
+  tableSelected.value = [];
   isLoading.value = true;
   try {
     const data = await loadSiteHistoryData(requested);
-    if (requested !== siteId) return;
+    if (requestToken !== loadRequestToken || requested !== siteId) return;
 
     siteHistoryData.value = data;
     tableSelected.value = [];
+  } catch {
+    if (requestToken !== loadRequestToken || requested !== siteId) return;
+
+    siteHistoryData.value = [];
+    tableSelected.value = [];
+    runtimeStore.showSnackbar(t("MyClient.detail.operatorFailed"), { color: "error" });
   } finally {
     // 过期响应不能收起新请求的 loading
-    if (requested === siteId) isLoading.value = false;
+    if (requestToken === loadRequestToken) isLoading.value = false;
   }
 }
 
 async function deleteSiteUserInfo(date: string[]) {
+  const targetSiteId = siteId;
+  if (!targetSiteId) return;
+
   // OPTIONSOVERVIEW-4：当天数据不允许删除（与行内删除按钮、复选框的判据一致），
   // 原实现只是静默地把当天日期过滤掉：只勾选当天记录时会以空数组调用后台，
   // 界面既不提示也没有任何变化。这里显式中止并给出可见反馈。
@@ -121,10 +139,12 @@ async function deleteSiteUserInfo(date: string[]) {
   if (!(await confirmModal(t("common.dialog.deleteText", [String(removable.length)])))) return;
 
   try {
-    // OPTIONSOVERVIEW-4：sendMessage 原先没有 catch/反馈，删除失败时列表不刷新、也没有任何提示
-    // （未处理的 rejection 只进控制台，用户无从判断是否删成功）。成功与失败都要提示。
-    await sendMessage("removeSiteUserInfo", { siteId: siteId!, date: removable });
-    await loadHistoryData();
+    // OPTIONSOVERVIEW-4 / F0147：sendMessage 原先没有 catch/反馈，删除失败时列表不刷新、也没有任何提示；
+    // 同时使用确认前捕获的 targetSiteId，避免确认期间站点切换后误删其他站点的数据。
+    await sendMessage("removeSiteUserInfo", { siteId: targetSiteId, date: removable });
+    if (siteId === targetSiteId) {
+      await loadHistoryData();
+    }
     runtimeStore.showSnackbar(t("KeepUploadTask.deleteSuccess"), { color: "success" });
   } catch {
     runtimeStore.showSnackbar(t("KeepUploadTask.deleteError"), { color: "error" });
@@ -149,17 +169,29 @@ function exportSiteHistoryData() {
 }
 
 function afterEnter() {
+  if (!showDialog.value) return;
   void loadHistoryData();
 }
 
-// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
-watch(showDialog, (open) => {
-  if (open) nextTick(afterEnter);
+// 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开或切换站点时同步清空旧数据与选择集，
+// 再在下一帧发起加载，避免在 :after-close 之前重新打开或切换站点时暴露旧站点数据与勾选状态。
+watch([showDialog, () => siteId], ([open, currentSiteId], [wasOpen, prevSiteId]) => {
+  if (open) {
+    if (!wasOpen || currentSiteId !== prevSiteId) {
+      resetDialogData();
+      if (currentSiteId) {
+        isLoading.value = true;
+        nextTick(afterEnter);
+      }
+    }
+  } else if (wasOpen) {
+    tableSelected.value = [];
+  }
 });
 </script>
 
 <template>
-  <a-modal v-model:open="showDialog" :footer="null" :width="1200" :after-close="() => (siteHistoryData = [])">
+  <a-modal v-model:open="showDialog" :footer="null" :width="1200" :after-close="resetDialogData">
     <template #title>
       {{ t("MyData.HistoryDataView.title") }} @ <SiteName :site-id="siteId!" class="" tag="span" />
     </template>
@@ -252,11 +284,17 @@ watch(showDialog, (open) => {
         <template v-else-if="column.key === 'bonus'">
           <div>
             <a-row :gutter="8" style="align-items: center; justify-content: flex-end">
-              <BonusFormatSpan v-if="record.bonus" :num="record.bonus" />
+              <BonusFormatSpan
+                v-if="record.bonus !== undefined && record.bonus !== null && record.bonus !== ''"
+                :num="record.bonus"
+              />
               <span v-else style="white-space: nowrap">-</span>
             </a-row>
             <a-row :gutter="8" style="align-items: center; justify-content: flex-end">
-              <BonusFormatSpan v-if="record.seedingBonus" :num="record.seedingBonus" />
+              <BonusFormatSpan
+                v-if="record.seedingBonus !== undefined && record.seedingBonus !== null && record.seedingBonus !== ''"
+                :num="record.seedingBonus"
+              />
               <span v-else style="white-space: nowrap">-</span>
             </a-row>
           </div>
@@ -275,7 +313,7 @@ watch(showDialog, (open) => {
 
             <!-- 删除 -->
             <a-button
-              :disabled="record.date == currentDate()"
+              :disabled="isLoading || record.date == currentDate()"
               :title="t('common.remove')"
               @click="() => deleteSiteUserInfo([record.date])"
               danger
@@ -294,7 +332,7 @@ watch(showDialog, (open) => {
       <template #footer>
         <a-flex align="center" :gap="8">
           <NavButton
-            :disabled="tableSelected.length <= 0"
+            :disabled="isLoading || tableSelected.length <= 0"
             color="error"
             :icon="DeleteOutlined"
             :text="t('common.remove')"

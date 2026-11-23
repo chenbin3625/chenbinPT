@@ -117,7 +117,10 @@ export const formValidateRules: Record<string, (args?: any) => (v: any) => boole
     return (v: any) => v === 0 || !!v || args;
   },
   url: (args: string = i18n.t("common.form.invalidUrl")) => {
-    return (v: any) => /^(https?):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;[\]]+[-A-Za-z0-9+&@#/%=~_|]$/.test(v) || args;
+    return (v: any) =>
+      (typeof v === "string" &&
+        /^(https?|wss?):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;[\]]+[-A-Za-z0-9+&@#/%=~_|]$/i.test(v)) ||
+      args;
   },
 };
 

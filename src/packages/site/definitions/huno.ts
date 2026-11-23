@@ -394,10 +394,8 @@ const HUNO_FREE_FIELD_PATH_RE = /free|freeleech|discount|promo|promotion/i;
 const HUNO_CHINESE_LANGUAGE_RE = /Chinese|Mandarin|Cantonese|中文|中字|简体|繁体|国语|国配|粤语|粤配/i;
 const HUNO_CHINESE_SUB_TITLE_RE = /中字|中文|简体|繁体|CHS|CHT|CHN|Chinese\s*Sub/i;
 const HUNO_SUBBED_RE = /SUBBED/i;
-const HUNO_SUB_FIELD_RE = /sub(title)?|caption/i;
 const HUNO_MANDARIN_RE = /Mandarin|Chinese|国语|国配|普通话|中配/i;
 const HUNO_CANTONESE_RE = /Cantonese|粤语|粤配/i;
-const HUNO_CHINESE_SHORT_RE = /Chinese|Mandarin|Cantonese|中文|中字|简体|繁体/i;
 const HUNO_DUBBED_RE = /DUBBED/i;
 
 export default class Huno extends Unit3D {
@@ -496,21 +494,11 @@ export default class Huno extends Unit3D {
     }
     const subtitleFieldText = subtitleFieldValues.join(" ");
     const audioFieldText = audioFieldValues.join(" ");
-    const combinedText = [
-      titleText,
-      releaseTagText,
-      mediaLanguageText,
-      audioText,
-      subtitleText,
-      subtitleFieldText,
-      audioFieldText,
-    ].join(" ");
     if (
       HUNO_CHINESE_LANGUAGE_RE.test(subtitleText) ||
       HUNO_CHINESE_LANGUAGE_RE.test(subtitleFieldText) ||
       HUNO_CHINESE_SUB_TITLE_RE.test(titleText) ||
-      (HUNO_SUBBED_RE.test(releaseTagText) && HUNO_CHINESE_LANGUAGE_RE.test(rowText)) ||
-      (HUNO_SUB_FIELD_RE.test(rowText) && HUNO_CHINESE_LANGUAGE_RE.test(rowText))
+      (HUNO_SUBBED_RE.test(releaseTagText) && HUNO_CHINESE_LANGUAGE_RE.test(rowText))
     ) {
       addTag({ name: "中字" });
     }
@@ -521,13 +509,6 @@ export default class Huno extends Unit3D {
 
     if (HUNO_CANTONESE_RE.test([mediaLanguageText, audioText, titleText].join(" "))) {
       addTag({ name: "粤语" });
-    }
-
-    if (
-      HUNO_CHINESE_SHORT_RE.test(subtitleFieldText) ||
-      (HUNO_SUBBED_RE.test(releaseTagText) && HUNO_CHINESE_SHORT_RE.test(rowText))
-    ) {
-      addTag({ name: "中字" });
     }
 
     if (

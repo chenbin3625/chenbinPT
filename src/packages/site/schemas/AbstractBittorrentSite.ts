@@ -150,15 +150,7 @@ const leadingZeroNumberPattern = /^-?0\d/;
  * （见该方法内 `torrentCountFieldKeys` 循环），只影响 `ITorrent`，不影响 `getFieldData` 的返回值。
  * 用户信息字段不在此列——它们走 `getFieldsData({dropEmptyMisses})`，零命中保留 undefined（D1-6）。
  */
-const torrentCountFieldKeys = new Set<string>([
-  "seeders",
-  "leechers",
-  "completed",
-  "comments",
-  "size",
-  "time",
-  "progress",
-]);
+const torrentCountFieldKeys = new Set<string>(["seeders", "leechers", "completed", "comments", "size", "progress"]);
 
 /**
  * 用**惰性文档**解析一段 HTML 片段（E07）。
@@ -844,22 +836,27 @@ export default class BittorrentSite {
       // 传入 key 以启用 getFieldData 的「按字段名推导返回类型」重载（见 P2-4）
       const value = this.getFieldData(element, selector, key as keyof Omit<ITorrent, "site">);
 
-      // D1-6：用户信息路径不允许把「selector 零命中」回落出来的 "" 当成真实值写入
+      // D1-6：用户信息路径不允许把「selector 零命中」或「过滤器解析失败」回落出来的 "" 当成真实值写入
       // （否则页面改版/软错误页会把数字字段覆盖成空串，破坏 IUserInfo 的数字契约）。
       if (options.dropEmptyMisses === true) {
         const rawValue = this.getRawFieldValue(element, selector);
         const matched = rawValue !== "" && rawValue !== null && typeof rawValue !== "undefined";
 
-        if (!matched) {
-          if (value === "") continue;
-        } else if (value === "" || value === 0) {
+        if (value === "") {
+          continue;
+        }
+        if (matched && value === 0) {
           /**
-           * 命中了元素、原始文本也非空，但过滤器把它解析成了空串 / 0（站点改版、单位格式变化、
-           * 软错误页）。这类「解析失败」不能覆盖用户信息里的真实数字：只有原始文本本身就是 0
-           * （如 "0"、"0 B"）时才认为 0 是真实值。
+           * 命中了元素、原始文本也非空，但过滤器把它解析成了 0（站点改版、单位格式变化、
+           * 软错误页）。这类「解析失败」不能覆盖用户信息里的真实数字：只有原始文本本身表示 0
+           * （如 "0"、"0.00"、"0 B"、"Ratio: 0.00"、"0 BP/hr"、"0 points per hour"）时才认为 0 是真实值。
            */
           const rawIsZero =
-            typeof rawValue === "number" ? rawValue === 0 : /^0(?:\.0+)?\s*[a-z]*$/i.test(String(rawValue).trim());
+            typeof rawValue === "number"
+              ? rawValue === 0
+              : /^(?:[^\d]*[^\dA-Za-z])?0+(?:[.,]0+)?(?:\s*[a-z%/\u4e00-\u9fff]+(?:\s+[a-z%/\u4e00-\u9fff]+)*)?$/i.test(
+                  String(rawValue).trim(),
+                );
           if (!rawIsZero) continue;
         }
       }
@@ -1283,7 +1280,8 @@ export default class BittorrentSite {
 
     // 选择器未命中时 time 会回落到空串，而空串并不是合法的墙上时间：把它当作「未知」丢掉，
     // 否则下面的 parseTimeWithZone 会抛 RangeError: Invalid time value（如手机端 HDCity 的 Lo-Fi 列表，见 #1484）
-    if ((torrent.time as unknown as string) === "") {
+    const rawTime: unknown = torrent.time;
+    if (typeof rawTime === "string" && rawTime.trim() === "") {
       delete torrent.time;
     }
 
@@ -1519,11 +1517,14 @@ export default class BittorrentSite {
       if (!torrent.url || !this.isTrustedDownloadLink(torrent.url)) {
         throw new Error(`Rejected detail URL outside site host allowlist for ${this.metadata.id}`);
       }
-      const { data } = await this.request<any>(
-        toMerged({ responseType: "document", url: torrent.url }, this.metadata.detail?.requestConfig ?? {}),
+      const detailRequestConfig = toMerged(
+        { responseType: "document", url: torrent.url },
+        this.metadata.detail?.requestConfig ?? {},
       );
+      const { data, config } = await this.request<any>(detailRequestConfig);
       // 显式传字段名 "link"：link 属于字符串语义字段，避免纯数字形式的链接被 getFieldData 转成 number
       resolvedLink = this.getFieldData(data, this.metadata.detail.selectors.link, "link");
+      resolvedLink = resolvedLink ? this.fixLink(resolvedLink, config ?? detailRequestConfig) : "";
       resolvedFromDetailPage = true;
     }
 

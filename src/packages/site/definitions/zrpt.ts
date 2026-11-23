@@ -2,7 +2,7 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/zrpt.yml
  * @PDSDefinitions https://github.com/mantou568/pre-dessert-sites/blob/main/site_config/sites/zrpt.json
  */
-import type { ISiteMetadata, ITorrentTag } from "../types";
+import type { ISiteMetadata } from "../types";
 import { CategoryInclbookmarked, CategoryIncldead, CategorySpstate, SchemaMetadata } from "../schemas/NexusPHP";
 
 export const siteMetadata: ISiteMetadata = {
@@ -160,8 +160,9 @@ export const siteMetadata: ISiteMetadata = {
     selectors: {
       ...SchemaMetadata.search.selectors!,
 
-      // ZRPT特有的选择器优化
+      // ZRPT特有的选择器优化：保留 NexusPHP 优先读取 title 属性的 elementProcess，避免截断文本
       title: {
+        ...SchemaMetadata.search.selectors!.title!,
         selector: ["a[href*='details.php?id='][title]:first", "a[href*='details.php?id=']:first"],
       },
       subTitle: {

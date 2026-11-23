@@ -16,6 +16,7 @@ import { get } from "es-toolkit/compat";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { NO_IMAGE, type TSiteID } from "@ptd/site";
+import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { sendMessage } from "@/messages.ts";
@@ -23,6 +24,7 @@ import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
+import { cycleKeywordFilterState } from "@/options/views/Overview/DownloadHistory/advanceFilter.ts";
 import { useStoreHydrating } from "@/options/composables/useStoreHydrating.ts";
 import {
   applyTableActionColumn,
@@ -68,7 +70,7 @@ function siteDisplayName(record: ISiteTableItem) {
 }
 
 const tableHeader = computed(() => {
-  const baseHeaders = [
+  const baseHeaders: DataTableHeader[] = [
     // site favicon
     { title: "№", key: "userConfig.sortIndex", align: "center" },
     { title: t("SetSite.common.name"), key: "name", align: "left", sortable: false },
@@ -96,11 +98,7 @@ const tableHeader = computed(() => {
     });
   }
 
-  // 操作列位置 / 固定（#1598）：先拼好基础列再交给 helper 调整操作列位置
-  return applyTableActionColumn([
-    ...baseHeaders,
-    { title: t("common.action"), key: "action", sortable: false },
-  ] as DataTableHeader[]);
+  return [...baseHeaders, { title: t("common.action"), key: "action", sortable: false }] as DataTableHeader[];
 });
 /** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
 const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
@@ -112,7 +110,6 @@ const {
   tableFilterRef,
   tableFilterFn,
   advanceFilterDictRef,
-  toggleKeywordStateFn,
   buildFilterDictFn,
   updateTableFilterValueFn,
 } = useTableCustomFilter<ISiteTableItem>({
@@ -130,7 +127,7 @@ const tableSelected = ref<TSiteID[]>([]);
 const columns = computed(() => {
   const multiSort = configStore.enableTableMultiSort;
   const sortBy = configStore.tableBehavior.SetSite.sortBy ?? [];
-  return tableHeader.value.map((header) => {
+  const mappedColumns = tableHeader.value.map((header) => {
     const key = String(header.key);
     const sortItem = sortBy.find((item) => item.key === key);
     const compare = (a: Record<string, any>, b: Record<string, any>) => {
@@ -149,11 +146,15 @@ const columns = computed(() => {
             : ("center" as const),
       dataIndex: key,
       key,
+      ...(header.minWidth !== undefined ? { minWidth: header.minWidth } : {}),
       sorter: header.sortable === false ? false : multiSort ? { compare, multiple: 1 } : compare,
       sortOrder: sortItem ? (order === "desc" || order === "descend" ? "descend" : "ascend") : undefined,
       title: header.title,
     };
   });
+
+  // 操作列位置 / 固定（#1598）：在最终 antd column 列表上调用，避免 map 丢弃 fixed
+  return applyTableActionColumn(mappedColumns);
 });
 
 const dataSource = computed(() =>
@@ -206,26 +207,21 @@ function closeFilterMenu() {
   filterMenuOpen.value = false;
 }
 
-/** 对齐迁移前 PtdCheckbox（数组模型）的语义：把 value 加入/移出 required 数组 */
-function toggleRequiredValue(filterKey: string, value: unknown) {
+function cycleFilterValue(filterKey: string, value: string) {
   const state = advanceFilterDictRef.value[filterKey];
-  const required: unknown[] = Array.isArray(state?.required) ? state.required : [];
-  state.required = required.includes(value) ? required.filter((item) => item !== value) : [...required, value];
+  if (!state) return;
+  cycleKeywordFilterState(state as { required: string[]; exclude: string[] }, value);
+  updateTableFilterValueFn();
 }
 
 function onBoolFilterCheck(keyword: string) {
-  const filterKey = `userConfig.${keyword}`;
-  toggleKeywordStateFn(filterKey, "1");
   // 必须写入字符串 "1"：format 里的 boolean.build 是 (v) => (v ? "1" : "0")，
   // 写入 undefined 会被格式化成 "0"，查询变成「该字段为 false」，筛选结果与勾选状态相反。
-  toggleRequiredValue(filterKey, "1");
-  updateTableFilterValueFn();
+  cycleFilterValue(`userConfig.${keyword}`, "1");
 }
 
 function onGroupFilterCheck(groupName: string) {
-  toggleKeywordStateFn("userConfig.groups", groupName);
-  toggleRequiredValue("userConfig.groups", groupName);
-  updateTableFilterValueFn();
+  cycleFilterValue("userConfig.groups", groupName);
 }
 
 const toEditId = ref<TSiteID | null>("");
@@ -396,7 +392,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                   <a-checkbox
                     v-for="keyword in booleanUserConfigKeywords"
                     :key="keyword"
-                    :checked="advanceFilterDictRef[`userConfig.${keyword}`]?.required?.includes('1')"
+                    :checked="Boolean(advanceFilterDictRef[`userConfig.${keyword}`]?.required?.includes('1'))"
                     :indeterminate="isKeywordExcluded(`userConfig.${keyword}`, '1')"
                     style="display: block"
                     @change="() => onBoolFilterCheck(keyword)"
@@ -411,8 +407,8 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                   <a-checkbox
                     v-for="(item, index) in metadataStore.getSitesGroupData"
                     :key="index"
-                    :checked="advanceFilterDictRef['userConfig.groups']?.required?.includes(index)"
-                    :indeterminate="isKeywordExcluded('userConfig.groups', index)"
+                    :checked="Boolean(advanceFilterDictRef['userConfig.groups']?.required?.includes(String(index)))"
+                    :indeterminate="isKeywordExcluded('userConfig.groups', String(index))"
                     style="display: block; padding-right: 24px"
                     @change="() => onGroupFilterCheck(String(index))"
                     @click.stop
@@ -534,7 +530,11 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
           <a-space class="table-action">
             <!-- 站点信息编辑 -->
             <a-tooltip :title="t('common.edit')">
-              <a-button :disabled="record.metadata.isDead" size="small" @click="() => editSite(record.id)">
+              <a-button
+                :disabled="record.metadata.isDead || !siteMetadataIndex[record.id]"
+                size="small"
+                @click="() => editSite(record.id)"
+              >
                 <template #icon>
                   <EditOutlined />
                 </template>

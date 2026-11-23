@@ -17,6 +17,7 @@ import {
   TLevelId,
 } from "../types";
 import { guessUserLevelId, store } from "../utils";
+import BittorrentSite from "../schemas/AbstractBittorrentSite.ts";
 import NexusPHP, {
   CategoryInclbookmarked,
   CategoryIncldead,
@@ -304,7 +305,7 @@ export const siteMetadata: ISiteMetadata = {
           const noTagSubTitle = subTitleRemoveExtraElement(["span.optiontag"], true)(element);
 
           // 移除 [优惠剩余时间：17时50分] [ promotion will end in 23 hours 16 mins] [優惠剩餘時間：23時16分] 内容
-          return noTagSubTitle.replace(/\[(优惠剩余时间| ?promotion will end in |優惠剩餘時間).*\]/g, "").trim();
+          return noTagSubTitle.replace(/\[(优惠剩余时间| ?promotion will end in |優惠剩餘時間)[^\]]*\]/g, "").trim();
         },
       },
       link: {
@@ -354,12 +355,17 @@ export default class Hdsky extends NexusPHP {
      *   - /download.php?id=<tid>&passkey=<passkey>&sign=<sign>
      *   - /download.php?id=<tid>&t=<timestamp>&sign=<sign>
      * 其中第一种格式的链接是永久有效的，而第二种格式的链接是有时间限制的，通常有效期为10分钟（具体不明）。
-     * 因此，在获取下载链接时，优先使用第一种格式的链接，如果不存在或过期，则使用第二种格式的链接。
+     * 因此，在获取下载链接时，优先使用第一种格式的链接，如果不存在或过期，则重新请求详情页刷新签名链接。
      */
     if (torrent.link) {
+      if (torrent.link.startsWith("magnet:")) {
+        return BittorrentSite.prototype.getTorrentDownloadLink.call(this, torrent);
+      }
+
       const hasPasskey = /&passkey=/.test(torrent.link);
       if (hasPasskey) {
-        return torrent.link;
+        const normalized = this.fixLink(torrent.link, { baseURL: this.url, url: torrent.url });
+        return BittorrentSite.prototype.getTorrentDownloadLink.call(this, { ...torrent, link: normalized });
       }
 
       const linkCreatedTime = this.runQueryFilters(torrent.link, [{ name: "querystring", args: ["t"] }]) as string;
@@ -368,18 +374,23 @@ export default class Hdsky extends NexusPHP {
       const expiredTimestamp = parseInt(linkCreatedTime || "0", 10) + 10 * 60; // 这里假定下载链接有效期10分钟（具体不明）
 
       if (currentTimestamp < expiredTimestamp) {
-        return torrent.link;
-      } else {
-        delete torrent.link; // 删除过期链接属性，以便重新获取
+        const normalized = this.fixLink(torrent.link, { baseURL: this.url, url: torrent.url });
+        return BittorrentSite.prototype.getTorrentDownloadLink.call(this, { ...torrent, link: normalized });
       }
     }
 
-    // 为 content-script 的 drag 生成 url，以免 super 无法获取到 torrent.url 进而无法生成 link
-    if (torrent.id && !torrent.url) {
-      torrent.url = urlJoin(this.url, `/details.php?id=${torrent.id}`);
-    }
+    // 为 content-script 的 drag 或过期链接生成详情页 url，并直接委托 BittorrentSite 通过 detail.selectors.link 刷新，
+    // 避免走 NexusPHP.getTorrentDownloadLink 合成无签名的 /download.php?id=<id>
+    const detailUrl =
+      torrent.url ||
+      (torrent.link?.includes("details.php") ? this.fixLink(torrent.link, { baseURL: this.url }) : undefined) ||
+      (torrent.id ? urlJoin(this.url, `/details.php?id=${encodeURIComponent(String(torrent.id))}`) : undefined);
 
-    return super.getTorrentDownloadLink(torrent);
+    return BittorrentSite.prototype.getTorrentDownloadLink.call(this, {
+      ...torrent,
+      link: undefined,
+      url: detailUrl,
+    });
   }
 
   protected override parseTorrentRowForTags(

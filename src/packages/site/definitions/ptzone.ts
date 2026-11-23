@@ -118,6 +118,7 @@ export const siteMetadata: ISiteMetadata = {
         { value: 5, name: "Other" },
         { value: 6, name: "PTZWeb" },
       ],
+      cross: { mode: "append" },
     },
   ],
 

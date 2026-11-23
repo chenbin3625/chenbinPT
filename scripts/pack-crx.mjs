@@ -492,6 +492,30 @@ function warnIfStale(dir) {
   return newest > distTime ? new Date(newest).toLocaleString() : null;
 }
 
+function runNpmBuild() {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && /\.[cm]?js$/i.test(npmExecPath) && fs.existsSync(npmExecPath)) {
+    execFileSync(process.execPath, [npmExecPath, "run", "build:dist"], {
+      cwd: ROOT,
+      stdio: "inherit",
+    });
+    return;
+  }
+  if (process.platform === "win32") {
+    // Node >= 20.12.2 (CVE-2024-27980) 禁止无 shell 直接 execFileSync("npm.cmd")，会抛 EINVAL；
+    // 通过 ComSpec (cmd.exe) 执行固定命令，既避免 EINVAL 也避免 Node 24+ `shell: true` + args 的 DEP0190 警告。
+    execFileSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm run build:dist"], {
+      cwd: ROOT,
+      stdio: "inherit",
+    });
+    return;
+  }
+  execFileSync("npm", ["run", "build:dist"], {
+    cwd: ROOT,
+    stdio: "inherit",
+  });
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
@@ -501,10 +525,7 @@ async function main() {
 
   if (opts.build) {
     if (!opts.quiet) console.log("▶ 先构建：npm run build:dist");
-    execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build:dist"], {
-      cwd: ROOT,
-      stdio: "inherit",
-    });
+    runNpmBuild();
   }
 
   // 1) 载荷

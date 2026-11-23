@@ -187,47 +187,55 @@ describe("webExtPersistence：最小字段 patch（P0-3）", () => {
     expect(store.sites.siteA.name).toBe("changed");
   });
 
-  it("回声窗口内：与自身刚写入内容一致的 onChanged 被抑制（对照用例，见下一条 TESTS-6）", async () => {
+  it("回声窗口内：较早自身写入的迟到回声被抑制，不会把本地已保存的新值回退", async () => {
     vi.useFakeTimers();
     try {
       const store = createTestStore();
       await store.$onReady();
+
+      // 连续两次 $save，selfWriteSnapshots 同时保留 self-v1 与 self-v2，基线停在 self-v2
       store.sites.siteA.name = "self-v1";
       await store.$save();
-      // 落盘后本地又改了（未落盘）；此时外部把「旧的自身写入内容」写回 storage
-      const selfWritten = JSON.parse(JSON.stringify(backing.get(STORE_KEY)));
-      store.sites.siteA.name = "local-edit";
+      const selfV1 = JSON.parse(JSON.stringify(backing.get(STORE_KEY)));
 
-      await storageLocal.set({ [STORE_KEY]: selfWritten });
+      store.sites.siteA.name = "self-v2";
+      await store.$save();
 
-      // 仍在 SELF_WRITE_ECHO_WINDOW 内且内容与刚写入的快照逐字节一致 → 判定为自身回声，不下发
-      expect(store.sites.siteA.name).toBe("local-edit");
+      const mutationCount = { count: 0 };
+      store.$subscribe(() => (mutationCount.count += 1), { detached: true });
+
+      // 仍在 SELF_WRITE_ECHO_WINDOW 内重放较早的 self-v1 快照 → 命中历史自身写入回声，被抑制
+      await storageLocal.set({ [STORE_KEY]: selfV1 });
+
+      expect(mutationCount.count).toBe(0);
+      expect(store.sites.siteA.name).toBe("self-v2");
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("回声窗口过期后，等于基线的通知仍不能抹掉未保存编辑", async () => {
-    // TESTS-6：原用例全程没有调用 $save()，selfWriteUntil 恒为 0（窗口从未建立），
-    // 把 SELF_WRITE_ECHO_WINDOW 改成 Infinity 或让 isWithinSelfWriteEchoWindow() 恒为 true
-    // 都照样通过。这里先真正建立窗口，再用受控假时钟越过它。
+  it("回声窗口过期后：重放旧快照不再被当成自身回声，而是按外部变更应用到 store", async () => {
+    // TESTS-6：与上一条形成可观测分歧 —— 窗口内重放 self-v1 被抑制（保持 self-v2），
+    // 越过 500ms 窗口后 selfWriteSnapshots 清空，同一通知会按外部 diff 把 store 更新为 self-v1。
+    // 若窗口逻辑坏掉（始终返回 true 或 false），两条用例必有一条失败。
     vi.useFakeTimers();
     try {
       const store = createTestStore();
       await store.$onReady();
+
       store.sites.siteA.name = "self-v1";
-      await store.$save(); // 登记自身写入快照 + 打开回声窗口
+      await store.$save();
+      const selfV1 = JSON.parse(JSON.stringify(backing.get(STORE_KEY)));
 
-      const selfWritten = JSON.parse(JSON.stringify(backing.get(STORE_KEY)));
-      store.sites.siteA.name = "local-edit";
+      store.sites.siteA.name = "self-v2";
+      await store.$save();
 
-      // 越过 500ms 的自身写入窗口（与上一条只差这一步）
+      // 越过 500ms 的自身写入回声窗口
       vi.advanceTimersByTime(1000);
 
-      await storageLocal.set({ [STORE_KEY]: selfWritten });
+      await storageLocal.set({ [STORE_KEY]: selfV1 });
 
-      // 虽已不在回声窗口内，但通知没有带来相对基线的外部改动。
-      expect(store.sites.siteA.name).toBe("local-edit");
+      expect(store.sites.siteA.name).toBe("self-v1");
       expect((backing.get(STORE_KEY) as any).sites.siteA.name).toBe("self-v1");
     } finally {
       vi.useRealTimers();

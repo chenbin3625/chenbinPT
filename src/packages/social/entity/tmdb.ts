@@ -13,7 +13,9 @@ function isNonEmptyString(value: string | undefined): value is string {
 }
 
 const tmdbUrlPattern =
-  /^(?:https?:\/\/)?(?:[\w-]+\.)?themoviedb\.org\/((?:movie|tv)\/\d+(?:-[^/?#]+)?(?:\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?.*)?$/;
+  /^(?:https?:\/\/)?(?:[\w-]+\.)?themoviedb\.org\/((?:movie|tv)\/\d+(?:-[^/?#]+)?(?:\/seasons|\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?[^#]*)?(?:#.*)?$/;
+
+const DEFAULT_TMDB_REQUEST_TIMEOUT = 10e3;
 
 export function build(id: string): string {
   return `https://www.themoviedb.org/${parse(id)}`;
@@ -26,14 +28,14 @@ export function parse(query: string | number | undefined): string {
 
   const normalizedQuery = String(query).trim();
   const match = normalizedQuery.match(
-    /(?:https?:\/\/)?(?:[\w-]+\.)?themoviedb\.org\/((movie|tv)\/\d+)(?:-[^/?#]+)?((?:\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?.*)?$/,
+    /(?:https?:\/\/)?(?:[\w-]+\.)?themoviedb\.org\/((movie|tv)\/\d+)(?:-[^/?#]+)?((?:\/seasons|\/season\/\d+(?:\/episode\/\d+)?)?)\/?(?:\?[^#]*)?(?:#.*)?$/,
   );
 
   if (match) {
     return `${match[1]}${match[3] ?? ""}`;
   }
 
-  const idMatch = normalizedQuery.match(/^(movie|tv)\/\d+(?:\/season\/\d+(?:\/episode\/\d+)?)?$/);
+  const idMatch = normalizedQuery.match(/^(movie|tv)\/\d+(?:\/seasons|\/season\/\d+(?:\/episode\/\d+)?)?$/);
   if (idMatch) {
     return idMatch[0];
   }
@@ -96,23 +98,29 @@ function isTmdbLoginDocument(doc: Document): boolean {
   return !!doc.querySelector('#auth_login_form, form[action*="/login"], input[type="password"]');
 }
 
-function fetchTmdbDocument(url: string, isValidDocument: TTmdbDocumentValidator): Promise<Document> {
+function fetchTmdbDocument(
+  url: string,
+  isValidDocument: TTmdbDocumentValidator,
+  timeout = DEFAULT_TMDB_REQUEST_TIMEOUT,
+): Promise<Document> {
   const cached = tmdbDocumentCache.get(url);
   if (cached && Date.now() - cached.createAt < TMDB_DOCUMENT_CACHE_TTL) {
     return cached.promise;
   }
 
-  const promise = axios.get<Document>(url, { responseType: "document", withCredentials: true }).then((response) => {
-    const doc = response.data;
+  const promise = axios
+    .get<Document>(url, { responseType: "document", withCredentials: true, timeout })
+    .then((response) => {
+      const doc = response.data;
 
-    // 未登录时 /edit?active_nav_item=external_ids 等页面会以 200 返回登录页（不抛错），
-    // 关键元素不存在时按抓取失败处理：不写入缓存，避免这份"空文档"被 TTL 钉住 10 分钟。
-    if (!isValidDocument(doc) || isTmdbLoginDocument(doc)) {
-      throw new Error(`Unexpected TMDb document for ${url}`);
-    }
+      // 未登录时 /edit?active_nav_item=external_ids 等页面会以 200 返回登录页（不抛错），
+      // 关键元素不存在时按抓取失败处理：不写入缓存，避免这份"空文档"被 TTL 钉住 10 分钟。
+      if (!isValidDocument(doc) || isTmdbLoginDocument(doc)) {
+        throw new Error(`Unexpected TMDb document for ${url}`);
+      }
 
-    return doc;
-  });
+      return doc;
+    });
 
   tmdbDocumentCache.set(url, { createAt: Date.now(), promise });
 
@@ -133,14 +141,17 @@ function fetchTmdbDocument(url: string, isValidDocument: TTmdbDocumentValidator)
   return promise;
 }
 
-async function fetchTmdbExternalIds(docUrl: string): Promise<{ imdb?: string; tvdb?: string }> {
+async function fetchTmdbExternalIds(
+  docUrl: string,
+  timeout = DEFAULT_TMDB_REQUEST_TIMEOUT,
+): Promise<{ imdb?: string; tvdb?: string }> {
   const externalIdsUrl = buildTmdbExternalIdsUrl(docUrl);
   if (!externalIdsUrl) {
     return {};
   }
 
   try {
-    const extDoc = await fetchTmdbDocument(externalIdsUrl, (doc) => !!doc.querySelector("#imdb_id, #tvdb_id"));
+    const extDoc = await fetchTmdbDocument(externalIdsUrl, (doc) => !!doc.querySelector("#imdb_id, #tvdb_id"), timeout);
     const imdb = extDoc.querySelector<HTMLInputElement>("#imdb_id")?.value?.trim() || undefined;
     const tvdb = extDoc.querySelector<HTMLInputElement>("#tvdb_id")?.value?.trim() || undefined;
 
@@ -151,7 +162,10 @@ async function fetchTmdbExternalIds(docUrl: string): Promise<{ imdb?: string; tv
   }
 }
 
-async function fetchTmdbSeriesOgTitleFromSeasons(docUrl: string): Promise<string | undefined> {
+async function fetchTmdbSeriesOgTitleFromSeasons(
+  docUrl: string,
+  timeout = DEFAULT_TMDB_REQUEST_TIMEOUT,
+): Promise<string | undefined> {
   const seasonsUrl = buildTmdbSeasonsUrl(docUrl);
   if (!seasonsUrl) {
     return undefined;
@@ -161,6 +175,7 @@ async function fetchTmdbSeriesOgTitleFromSeasons(docUrl: string): Promise<string
     const seasonsDoc = await fetchTmdbDocument(
       seasonsUrl,
       (doc) => !!doc.querySelector('div.season_wrapper, meta[property="og:title"]'),
+      timeout,
     );
     return seasonsDoc.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || undefined;
   } catch (error) {
@@ -169,14 +184,21 @@ async function fetchTmdbSeriesOgTitleFromSeasons(docUrl: string): Promise<string
   }
 }
 
-async function fetchTmdbBaseTitles(docUrl: string): Promise<{ displayTitle?: string; originalTitle?: string }> {
+async function fetchTmdbBaseTitles(
+  docUrl: string,
+  timeout = DEFAULT_TMDB_REQUEST_TIMEOUT,
+): Promise<{ displayTitle?: string; originalTitle?: string }> {
   const baseUrl = buildTmdbBaseUrl(docUrl);
   if (!baseUrl) {
     return {};
   }
 
   try {
-    const baseDoc = await fetchTmdbDocument(baseUrl, (doc) => !!doc.querySelector('meta[property="og:title"]'));
+    const baseDoc = await fetchTmdbDocument(
+      baseUrl,
+      (doc) => !!doc.querySelector('meta[property="og:title"]'),
+      timeout,
+    );
     const displayTitle =
       baseDoc.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() || undefined;
     const originalTitle = getOriginalTitleText(baseDoc) || undefined;
@@ -206,29 +228,40 @@ function formatSeasonCode(docUrl: string): string {
   return `S${seasonNumber.padStart(2, "0")}`;
 }
 
-async function pageParser(doc: Document): Promise<ISocialSitePageInformation | ISocialSitePageInformation[]> {
+interface IParseTmdbDocumentOptions {
+  includeExternalIds?: boolean;
+  timeout?: number;
+}
+
+async function parseTmdbDocument(
+  doc: Document,
+  options: IParseTmdbDocumentOptions = {},
+): Promise<ISocialSitePageInformation | ISocialSitePageInformation[]> {
+  const { includeExternalIds = true, timeout = DEFAULT_TMDB_REQUEST_TIMEOUT } = options;
   const mediaType = doc.URL.match(/\/((movie|tv))\//)?.[1] as "movie" | "tv" | undefined;
   const parsedId = parse(doc.URL);
   const baseId = getBaseId(doc.URL) || parsedId;
   const ogTitle = doc.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim() ?? "";
   const originalTitleText = getOriginalTitleText(doc);
-  const shouldUseBaseTitles = mediaType === "tv" && /\/(seasons|season\/\d+)(?:\?.*)?$/.test(doc.URL);
-  const shouldUseSeasonsOgTitle = mediaType === "tv" && /\/season\/\d+(?:\?.*)?$/.test(doc.URL);
+  const shouldUseBaseTitles = mediaType === "tv" && /\/(seasons|season\/\d+)\/?(?:\?[^#]*)?(?:#.*)?$/.test(doc.URL);
+  const shouldUseSeasonsOgTitle = mediaType === "tv" && /\/season\/\d+\/?(?:\?[^#]*)?(?:#.*)?$/.test(doc.URL);
 
   // 三张附属页面互不依赖，并行抓取（各自的 Document 也有进程内缓存），避免串行整页下载
   const [{ displayTitle: baseDisplayTitle, originalTitle: baseOriginalTitle }, external_ids, seriesOgTitle] =
     await Promise.all([
       shouldUseBaseTitles
-        ? fetchTmdbBaseTitles(doc.URL)
+        ? fetchTmdbBaseTitles(doc.URL, timeout)
         : Promise.resolve({} as { displayTitle?: string; originalTitle?: string }),
-      fetchTmdbExternalIds(doc.URL),
-      shouldUseSeasonsOgTitle ? fetchTmdbSeriesOgTitleFromSeasons(doc.URL) : Promise.resolve(undefined),
+      includeExternalIds
+        ? fetchTmdbExternalIds(doc.URL, timeout)
+        : Promise.resolve({} as { imdb?: string; tvdb?: string }),
+      shouldUseSeasonsOgTitle ? fetchTmdbSeriesOgTitleFromSeasons(doc.URL, timeout) : Promise.resolve(undefined),
     ]);
 
   const displayTitle = baseDisplayTitle || ogTitle;
   const originalTitle = baseOriginalTitle || originalTitleText;
 
-  if (mediaType === "tv" && /\/seasons(?:\?.*)?$/.test(doc.URL)) {
+  if (mediaType === "tv" && /\/seasons\/?(?:\?[^#]*)?(?:#.*)?$/.test(doc.URL)) {
     const seasonResults: ISocialSitePageInformation[] = Array.from(
       doc.querySelectorAll("div.season_wrapper div.season h2 a[href*='/season/']"),
     ).flatMap((item) => {
@@ -263,7 +296,7 @@ async function pageParser(doc: Document): Promise<ISocialSitePageInformation | I
     }
   }
 
-  if (mediaType === "tv" && /\/season\/\d+(?:\?.*)?$/.test(doc.URL)) {
+  if (mediaType === "tv" && /\/season\/\d+\/?(?:\?[^#]*)?(?:#.*)?$/.test(doc.URL)) {
     const seasonCode = formatSeasonCode(doc.URL);
     const seasonDisplayTitle = seriesOgTitle ?? displayTitle;
     const currentSeasonTitle =
@@ -295,6 +328,10 @@ async function pageParser(doc: Document): Promise<ISocialSitePageInformation | I
     titles: uniq([displayTitle, originalTitle]).filter(isNonEmptyString),
     external_ids,
   };
+}
+
+async function pageParser(doc: Document): Promise<ISocialSitePageInformation | ISocialSitePageInformation[]> {
+  return await parseTmdbDocument(doc);
 }
 
 export const pageParserMatches: TSupportSocialSitePageParserMatches = [[tmdbUrlPattern, pageParser]];
@@ -334,14 +371,16 @@ export async function fetchInformation(
   } as ISocialInformation;
 
   try {
+    const timeout = config.timeout ?? DEFAULT_TMDB_REQUEST_TIMEOUT;
     const { data } = await axios.get<Document>(build(realId), {
       responseType: "document",
-      timeout: config.timeout ?? 10e3,
+      timeout,
     });
     const ldJson = JSON.parse(
       data.querySelector('script[type="application/ld+json"]')?.textContent ?? "{}",
     ) as ITmdbLdJson;
-    const pageInfo = await pageParser(data);
+    // fetchInformation 仅消费标题，不消费 external_ids，跳过需要登录态的 /edit?active_nav_item=external_ids 请求
+    const pageInfo = await parseTmdbDocument(data, { includeExternalIds: false, timeout });
     const firstPageInfo = Array.isArray(pageInfo) ? pageInfo[0] : pageInfo;
 
     resDict.title = firstPageInfo?.titles.join(" / ") || ldJson.name || "";

@@ -74,15 +74,15 @@ function newSite() {
   return new BittorrentSite(metadata, {});
 }
 
-describe("AbstractBittorrentSite.request 重试", () => {
-  beforeEach(() => {
-    mocks.request.mockReset();
-    mocks.sleep.mockReset();
-    mocks.sleep.mockResolvedValue(undefined);
-    mocks.isCloudflareBlocked.mockReset();
-    mocks.isCloudflareBlocked.mockReturnValue(false);
-  });
+beforeEach(() => {
+  mocks.request.mockReset();
+  mocks.sleep.mockReset();
+  mocks.sleep.mockResolvedValue(undefined);
+  mocks.isCloudflareBlocked.mockReset();
+  mocks.isCloudflareBlocked.mockReturnValue(false);
+});
 
+describe("AbstractBittorrentSite.request 重试", () => {
   it("429 后重试成功：把 error.response 当作可重试状态码而不是直接失败", async () => {
     mocks.request
       .mockRejectedValueOnce(axiosRejectedResponse(429, "Too Many Requests"))

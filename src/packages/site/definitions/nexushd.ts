@@ -15,6 +15,7 @@ export const siteMetadata: ISiteMetadata = {
   schema: "NexusPHP",
 
   urls: ["https://v6.nexushd.org/", "https://www.nexushd.org/"],
+  trackerUrls: ["https://v6.tracker.nexushd.org/", "https://tracker.nexushd.org/"],
 
   category: [
     {

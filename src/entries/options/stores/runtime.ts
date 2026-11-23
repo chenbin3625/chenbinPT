@@ -72,8 +72,9 @@ function isHostPageStorage(): boolean {
     }
     return !href.startsWith(extensionUrl);
   } catch {
-    // 宿主用 getter 抛错代替返回值（例如扩展被重载后的「Extension context invalidated」）
-    return false;
+    // 宿主用 getter 抛错代替返回值（例如扩展被重载后的「Extension context invalidated」）：
+    // 无法确认当前属于扩展自身页面时 fail-closed 退化为纯内存，避免误读写宿主页面 sessionStorage。
+    return true;
   }
 }
 
@@ -290,8 +291,15 @@ const restoredState = restoreState();
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingState: (() => IRuntimePiniaStorageSchema) | null = null;
+let latestStateGetter: (() => IRuntimePiniaStorageSchema) | null = null;
+let hasDeferredResults = false;
 
-function writeState(state: IRuntimePiniaStorageSchema, withResults: boolean): boolean {
+interface IWriteStateOptions {
+  searchResults: boolean;
+  mediaServerResults: boolean;
+}
+
+function writeState(state: IRuntimePiniaStorageSchema, options: IWriteStateOptions): boolean {
   const storage = getSessionStorage();
   if (!storage) {
     return false;
@@ -302,8 +310,10 @@ function writeState(state: IRuntimePiniaStorageSchema, withResults: boolean): bo
       RUNTIME_STORE_KEY,
       JSON.stringify({
         ...state,
-        search: withResults ? state.search : { ...state.search, searchResult: [] },
-        mediaServerSearch: withResults ? state.mediaServerSearch : { ...state.mediaServerSearch, searchResult: [] },
+        search: options.searchResults ? state.search : { ...state.search, searchResult: [] },
+        mediaServerSearch: options.mediaServerResults
+          ? state.mediaServerSearch
+          : { ...state.mediaServerSearch, searchResult: [] },
       }),
     );
     return true;
@@ -318,7 +328,7 @@ function flushPersist(options: { forceResults?: boolean } = {}) {
     persistTimer = null;
   }
 
-  const getState = pendingState;
+  const getState = pendingState ?? (options.forceResults && hasDeferredResults ? latestStateGetter : null);
   pendingState = null;
   if (!getState) {
     return;
@@ -335,13 +345,30 @@ function flushPersist(options: { forceResults?: boolean } = {}) {
   // 而且超过 sessionStorage 配额时首个写入必然失败并再序列化一次，结果本身也落不了盘。
   // 搜索结束时 isSearching 的 watch 会再触发一次 flush，届时写入带结果的完整状态。
   // 例外：pagehide / 页面隐藏 / persistNow 时只写这一次，必须把结果带上，否则关页面会丢掉结果。
-  const stillSearching = state.search.isSearching || state.mediaServerSearch.isSearching;
-  if (stillSearching && !options.forceResults) {
-    writeState(state, false);
+  // 两个搜索切片（search 与 mediaServerSearch）按各自 isSearching 独立决定是否省略结果，
+  // 避免开始媒体服务器搜索时顺手把已完成的种子搜索结果清空。
+  const includeSearchResults = Boolean(options.forceResults) || !state.search.isSearching;
+  const includeMediaServerResults = Boolean(options.forceResults) || !state.mediaServerSearch.isSearching;
+  if (!includeSearchResults || !includeMediaServerResults) {
+    hasDeferredResults = true;
+    if (
+      !writeState(state, {
+        searchResults: includeSearchResults,
+        mediaServerResults: includeMediaServerResults,
+      }) &&
+      (includeSearchResults || includeMediaServerResults)
+    ) {
+      writeState(state, { searchResults: false, mediaServerResults: false });
+    }
     return;
   }
+
+  hasDeferredResults = false;
   // 配额不足时降级：保留搜索方案/进度等小数据，丢弃两部分搜索结果（早期实现会整份静默丢失）
-  if (!writeState(state, true) && !writeState(state, false)) {
+  if (
+    !writeState(state, { searchResults: true, mediaServerResults: true }) &&
+    !writeState(state, { searchResults: false, mediaServerResults: false })
+  ) {
     console.warn("[PTD] runtime store persist failed (sessionStorage quota?)");
   }
 }
@@ -351,6 +378,7 @@ function schedulePersist(getState: () => IRuntimePiniaStorageSchema) {
     return;
   }
 
+  latestStateGetter = getState;
   pendingState = getState;
   if (persistTimer === null) {
     persistTimer = setTimeout(() => {
@@ -438,7 +466,11 @@ export const useRuntimeStore = defineStore("runtime", {
  * （options 与 content-script 都存在这个问题）。
  */
 export function setupRuntimeStorePersistence(store: ReturnType<typeof useRuntimeStore>) {
-  const schedule = () => schedulePersist(() => store.$state as IRuntimePiniaStorageSchema);
+  const getState = () => store.$state as IRuntimePiniaStorageSchema;
+  if (!memoryOnly) {
+    latestStateGetter = getState;
+  }
+  const schedule = () => schedulePersist(getState);
 
   // pinia 的 `$subscribe` 默认 deep:true，会对整个 state（含 5 万条 searchResult）做深遍历；
   // 这里改为 shallow（deep:false）：只负责「顶层整体替换」（resetSearchData 等）。

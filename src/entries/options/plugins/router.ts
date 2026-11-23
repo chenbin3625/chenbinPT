@@ -245,14 +245,17 @@ if (typeof window !== "undefined") {
   });
 }
 
+let scrollGeneration = 0;
+
 /**
  * 把主区滚到指定位置；返回 `false` 是告诉 vue-router「已经自己处理了滚动」。
  *
  * 为什么要等帧：scrollBehavior 在导航确认后立刻执行，懒加载的路由 chunk 此时可能还没挂载，
  * 内容高度不足时浏览器会把刚写入的 scrollTop 夹回 0。这里最多重试 10 帧，
- * 等 `scrollHeight` 足够容纳目标位置后再写。
+ * 等 `scrollHeight` 足够容纳目标位置后再写；快速连续导航时通过世代计数器取消旧的滚动任务。
  */
 async function scrollMainTo(top: number): Promise<false> {
+  const generation = ++scrollGeneration;
   const apply = () => {
     const main = document.getElementById("ptd-main");
     if (!main) return false;
@@ -263,6 +266,7 @@ async function scrollMainTo(top: number): Promise<false> {
 
   for (let i = 0; i < 10; i++) {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (generation !== scrollGeneration) break;
     if (apply()) break;
   }
   return false;

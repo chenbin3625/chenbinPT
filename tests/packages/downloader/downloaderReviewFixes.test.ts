@@ -179,8 +179,8 @@ describe("DOWNLOADER-2：各客户端只向 UI 提供真实存在的文件优先
     expect(floodMetaData.feature.FilePriority.unsupportedPriorities).toEqual(["low", "highest"]);
   });
 
-  it("ruTorrent（f.priority 0..3）不提供 highest", () => {
-    expect(ruTorrentMetaData.feature.FilePriority.unsupportedPriorities).toEqual(["highest"]);
+  it("ruTorrent（f.priority 0=skip / 1=normal / 2=high）不提供 low/highest", () => {
+    expect(ruTorrentMetaData.feature.FilePriority.unsupportedPriorities).toEqual(["low", "highest"]);
   });
 
   it("uTorrent（0..3）不提供 highest", () => {
@@ -405,14 +405,27 @@ describe("DOWNLOADER-5：实例缓存淘汰 / 主动释放会 dispose 长连接"
       password: "p",
     }));
 
+    const instances = [];
     for (const config of configs) {
-      await getDownloader(config);
+      instances.push(await getDownloader(config));
     }
 
     expect(FakeWebSocket.instances).toHaveLength(17);
+    const evictedSocket = socketFor(configs[0]!.address);
+    const newestSocket = socketFor(configs[16]!.address);
     // 被淘汰的是最早创建的 dl-0；它与最新的 dl-16 都必须保持「未关闭」
-    expect(socketFor(configs[0]!.address).readyState).not.toBe(3);
-    expect(socketFor(configs[16]!.address).readyState).not.toBe(3);
+    expect(evictedSocket.readyState).not.toBe(3);
+    expect(newestSocket.readyState).not.toBe(3);
+
+    // 验证最新的 dl-16 仍在缓存中（命中缓存、不新建连接）
+    await expect(getDownloader(configs[16]!)).resolves.toBe(instances[16]);
+    expect(FakeWebSocket.instances).toHaveLength(17);
+
+    // 验证 dl-0 确实已被 LRU 从缓存淘汰（再次获取返回新实例并新建连接），且旧实例连接依然未关闭
+    const recreated = await getDownloader(configs[0]!);
+    expect(recreated).not.toBe(instances[0]);
+    expect(FakeWebSocket.instances).toHaveLength(18);
+    expect(evictedSocket.readyState).not.toBe(3);
   });
 
   it("releaseDownloaderInstance 释放连接并从缓存移除，同配置再次获取得到新实例", async () => {

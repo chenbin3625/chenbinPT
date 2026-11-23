@@ -15,8 +15,16 @@
  * API Key 在 My Settings → API Key 页生成（见下方 hint）。
  */
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
-import { NoUserInputError, type ISearchCategoryOptions, type ISiteMetadata } from "../types";
-import Unit3D, { SchemaMetadata } from "../schemas/Unit3D.ts";
+import {
+  NoUserInputError,
+  type ISearchCategoryOptions,
+  type ISearchInput,
+  type ISiteMetadata,
+  type ITorrent,
+  type ITorrentTag,
+} from "../types";
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
+import Unit3D, { freeleechFactorMap, type IUnit3DRawTorrent, pick, SchemaMetadata } from "../schemas/Unit3D.ts";
 
 // 取自 Jackett seedcore-api.yml 的 categorymappings（该表注明来自 torznab caps）
 const categories: ISearchCategoryOptions[] = [
@@ -36,7 +44,7 @@ export const siteMetadata: ISiteMetadata = {
   id: "seedcore",
   name: "SeedCore",
   aka: ["ROT", "Rotorrent"],
-  description: "SeedCore (ROT) is a ROMANIAN Private Torrent Tracker for MOVIES / TV / GENERAL",
+  description: "SeedCore (SC) is a ROMANIAN Private Torrent Tracker for MOVIES / TV / GENERAL",
   tags: ["影视", "综合"],
 
   type: "private",
@@ -72,8 +80,20 @@ export const siteMetadata: ISiteMetadata = {
       responseType: "json",
       params: { perPage: 100 },
     },
+    advanceKeywordParams: {
+      ...SchemaMetadata.search.advanceKeywordParams,
+      imdb: {
+        requestConfigTransformer: ({ requestConfig: config }) => {
+          if (config?.params?.name) {
+            // UNIT3D 的 imdbId 参数使用不带 tt 前缀的数字 ID
+            config.params.imdbId = String(config.params.name).replace(/^tt/i, "");
+            delete config.params.name;
+          }
+          return config!;
+        },
+      },
+    },
     selectors: {
-      ...SchemaMetadata.search.selectors,
       // JSON 响应可能带 data 包装，沿用多候选路径（同 concertos）
       rows: { selector: ["data.data", "data", "torrents.data", "torrents"] },
       id: { selector: ["id", "attributes.id"] },
@@ -97,11 +117,20 @@ export const siteMetadata: ISiteMetadata = {
       seeders: { selector: ["seeders", "attributes.seeders"] },
       leechers: { selector: ["leechers", "attributes.leechers"] },
       completed: { selector: ["times_completed", "attributes.times_completed", "completed", "attributes.completed"] },
-      ext_imdb: { selector: ["imdb_id", "attributes.imdb_id"] },
+      ext_imdb: { selector: ["imdb_id", "attributes.imdb_id"], filters: [{ name: "extImdbId" }] },
       ext_tmdb: { selector: ["tmdb_id", "attributes.tmdb_id"] },
       ext_tvdb: { selector: ["tvdb_id", "attributes.tvdb_id"] },
     },
   },
+
+  list: [
+    {
+      ...SchemaMetadata.list![0],
+      mergeSearchSelectors: false,
+      selectors: SchemaMetadata.search.selectors,
+    },
+    ...SchemaMetadata.list!.slice(1),
+  ],
 };
 
 export default class SeedCore extends Unit3D {
@@ -123,5 +152,43 @@ export default class SeedCore extends Unit3D {
     }
 
     return super.request<T>(axiosConfig, checkLogin);
+  }
+
+  protected override parseTorrentRowForTags(
+    torrent: Partial<ITorrent>,
+    row: Element | Document | object,
+    searchInput: ISearchInput,
+  ): Partial<ITorrent> {
+    // HTML 列表页仍走 Unit3D 默认的 DOM 标签选择器
+    if (isElementNode(row)) {
+      return super.parseTorrentRowForTags(torrent, row, searchInput);
+    }
+
+    const raw = row as IUnit3DRawTorrent;
+    const tags: ITorrentTag[] = [];
+
+    const featured = pick(raw, "featured", false);
+    const freeleech = String(pick(raw, "freeleech", ""));
+    const doubleUpload = pick(raw, "double_upload", false);
+    const internal = pick(raw, "internal", false);
+
+    if (featured) {
+      torrent.downloadVolumeFactor = 0;
+      torrent.uploadVolumeFactor = 2;
+      tags.push({ name: "精选", color: "deep-purple" });
+    } else {
+      const downloadVolumeFactor = freeleechFactorMap[freeleech];
+      if (downloadVolumeFactor !== undefined) {
+        torrent.downloadVolumeFactor = downloadVolumeFactor;
+      }
+      torrent.uploadVolumeFactor = doubleUpload ? 2 : 1;
+    }
+
+    if (internal) {
+      tags.push({ name: "官方", color: "blue-darken-2" });
+    }
+
+    torrent.tags = tags;
+    return torrent;
   }
 }

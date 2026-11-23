@@ -110,6 +110,7 @@ export const siteMetadata: ISiteMetadata = {
         { value: 4, name: "CMCT" },
         { value: 5, name: "Other" },
       ],
+      cross: { mode: "append" },
     },
     {
       name: "语言-阅听",

@@ -365,6 +365,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   private loginCooldownUntil = 0;
   private syncData: rawSyncMaindata = { rid: 0 };
   private lastSyncTimestamp: number = 0;
+  private syncFlight: { full: boolean; promise: Promise<rawSyncMaindata> } | null = null;
   private webApiVersion: string | null = null;
 
   constructor(options: Partial<TorrentClientConfig> = {}) {
@@ -509,7 +510,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       }
     }
 
-    if (config.method?.toLowerCase() === "post") {
+    if (config.method?.toLowerCase() === "post" && !(config.data instanceof FormData)) {
       config.headers = {
         ...(config.headers ?? {}),
         "content-type": "application/x-www-form-urlencoded",
@@ -566,8 +567,20 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     }
   }
 
-  private async getSyncData(fullSync: boolean = false) {
-    if (Date.now() > this.lastSyncTimestamp + 15e3) {
+  private async getSyncData(fullSync: boolean = false): Promise<rawSyncMaindata> {
+    while (this.syncFlight) {
+      if (!fullSync || this.syncFlight.full) {
+        return await this.syncFlight.promise;
+      }
+      // 等待进行中的增量同步结束再发起全量同步，避免旧 delta 晚到覆盖全量快照或回退 rid
+      await this.syncFlight.promise.catch(() => undefined);
+    }
+
+    if (!fullSync && Date.now() <= this.lastSyncTimestamp + 15e3) {
+      return this.syncData;
+    }
+
+    const promise = (async () => {
       const { data } = await this.request<rawSyncMaindata>("/sync/maindata", {
         params: { rid: fullSync ? 0 : this.syncData.rid },
       });
@@ -600,9 +613,19 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
         });
         delete this.syncData.tags_removed;
       }
-    }
 
-    return this.syncData;
+      return this.syncData;
+    })();
+
+    const flight = { full: fullSync, promise };
+    this.syncFlight = flight;
+    try {
+      return await promise;
+    } finally {
+      if (this.syncFlight === flight) {
+        this.syncFlight = null;
+      }
+    }
   }
 
   private invalidateSyncCache() {
@@ -1018,7 +1041,7 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
   override async getTorrentFiles(torrent: string | CTorrent): Promise<CTorrentFile[]> {
     const { data: files } = await this.request<
       Array<{
-        index: number;
+        index?: number;
         name: string;
         size: number;
         progress: number; // 0-1
@@ -1027,10 +1050,10 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
       }>
     >("/torrents/files", { params: { hash: this.getTorrentHash(torrent) } });
 
-    return files.map((file) => {
+    return files.map((file, idx) => {
       const priority = mapQBittorrentFilePriority(file.priority);
       return {
-        index: file.index,
+        index: file.index ?? idx,
         name: file.name,
         path: file.name,
         size: file.size,

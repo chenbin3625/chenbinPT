@@ -62,16 +62,23 @@ export function isHostTrusted(host: string, trustedHosts: Iterable<string>): boo
   return false;
 }
 
-/** 把「URL 或裸 hostname」转成可比较的 hostname */
+/** 把「URL 或裸 hostname（含 host:port、IPv4/IPv6）」转成可比较的 hostname */
 function toTrustedHostname(value?: string | null): string | undefined {
   if (!value) return undefined;
   const trimmed = String(value).trim();
   if (!trimmed) return undefined;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) || trimmed.startsWith("//")) {
-    return parseHostname(trimmed.startsWith("//") ? `https:${trimmed}` : trimmed);
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+    return parseHostname(trimmed);
   }
-  const host = trimmed.split(/[/?#]/)[0];
-  return host ? normalizeSiteHost(host) : undefined;
+  if (trimmed.startsWith("//")) {
+    return parseHostname(`https:${trimmed}`);
+  }
+  // 拒绝 mailto: / javascript: 等不带 `//` 且冒号后不是端口号的 URI scheme
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?:[/?#]|$))/.test(trimmed)) {
+    return undefined;
+  }
+  const hostname = parseHostname(`https://${trimmed}`);
+  return hostname ? normalizeSiteHost(hostname) : undefined;
 }
 
 /**

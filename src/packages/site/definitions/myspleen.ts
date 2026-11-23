@@ -13,8 +13,11 @@
  * userInfo 仅补了三源（cardigann / fourbytes / streamx）一致的 Ratio。detail 与其余用户字段、
  * levelRequirements 依赖登录后页面结构，本次匿名调研无法核实，**不做编造**，待有账号实测后再补。
  */
-import { type ISiteMetadata } from "../types";
+import { type ISearchInput, type ISiteMetadata, type ITorrent } from "../types";
+import { isDocumentNode } from "../schemas/AbstractBittorrentSite.ts";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
+import { selectElements } from "../utils/selector";
+import { normalizeTorrentPromotion } from "../utils/promotion";
 
 // 分类 id → 名称，取自 Jackett categorymappings（站点 browse.php 的 c<id>=1 勾选参数）
 const categoryMap: Record<number, string> = {
@@ -94,14 +97,7 @@ export const siteMetadata: ISiteMetadata = {
       },
       seeders: { selector: "td:nth-child(10)", filters: [{ name: "parseNumber" }] },
       leechers: { selector: "td:nth-child(11)", filters: [{ name: "parseNumber" }] },
-      tags: [
-        { name: "Free", selector: "span.star, span.fltime", color: "blue" },
-        {
-          name: "Free",
-          selector: 'li[id="alert-fl"][class*="alert"]:contains("Freeleech ends in ")',
-          color: "blue",
-        },
-      ],
+      tags: [{ name: "Free", selector: "span.star, span.fltime", color: "blue" }],
     },
   },
 
@@ -126,6 +122,24 @@ export const siteMetadata: ISiteMetadata = {
   },
 };
 
-// 自研引擎无现成 schema 承载；保留空 class 与 schema 名指向 AbstractPrivateSite，
-// 后续若需覆写 getDetail/getTorrentDownloadLink 等再在此扩展（对齐 abtorrents / karagarga 惯例）。
-export default class MySpleen extends PrivateSite {}
+export default class MySpleen extends PrivateSite {
+  public override async transformSearchPage(
+    doc: Document | object | any,
+    searchConfig: ISearchInput,
+  ): Promise<ITorrent[]> {
+    const torrents = await super.transformSearchPage(doc, searchConfig);
+    if (
+      isDocumentNode(doc) &&
+      selectElements('li[id="alert-fl"][class*="alert"]:contains("Freeleech ends in ")', doc).length > 0
+    ) {
+      return torrents.map((torrent) => {
+        const tags = torrent.tags ?? [];
+        if (!tags.some((t) => t.name === "Free")) {
+          torrent.tags = [...tags, { name: "Free", color: "blue" }];
+        }
+        return normalizeTorrentPromotion(torrent);
+      });
+    }
+    return torrents;
+  }
+}

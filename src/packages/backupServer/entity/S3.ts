@@ -54,7 +54,7 @@ export default class S3 extends AbstractBackupServer<S3Config> {
   }
 
   private get keyPrefix(): string {
-    const prefix = this.userConfig.pathPrefix?.trim() ?? "";
+    const prefix = (this.userConfig.pathPrefix?.trim() ?? "").replace(/^\/+/, "");
     return prefix ? (prefix.endsWith("/") ? prefix : `${prefix}/`) : "";
   }
 
@@ -92,7 +92,7 @@ export default class S3 extends AbstractBackupServer<S3Config> {
 
   private objectUrl(path: string): string {
     const bucket = this.userConfig.bucket;
-    const cleanPath = path.replace(/^\//, "");
+    const cleanPath = path.replace(/^\/+/, "");
     // 复检 P2（F）：实际请求 URL 与 canonical URI 使用同一套路径编码，避免 prefix/文件名含
     // `+ ! ' ( ) * % 空格` 时「签名用 A、请求用 B」→ 全 403。
     const encodedPath = cleanPath

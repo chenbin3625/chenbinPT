@@ -95,21 +95,34 @@ export const siteMetadata: ISiteMetadata = {
         selector: ":self",
         elementProcess: (row: HTMLElement) => {
           // 对有 data-timestamp 属性的行直接返回时间戳
-          if (row.dataset.timestamp) return parseInt(row.dataset.timestamp);
+          if (row.dataset.timestamp) {
+            const ts = Number.parseInt(row.dataset.timestamp, 10);
+            if (Number.isFinite(ts)) return ts;
+          }
 
           // 其它版本行自身没有 data-timestamp 属性，需从子元素中获取
-          const timeTd = row.querySelector(".added")! as HTMLElement;
-          const timeSpan = timeTd.querySelector("span.datetime");
-          if (timeSpan) {
-            return parseInt((timeSpan as HTMLElement).dataset.timestamp!);
+          const timeTd = row.querySelector(".added") as HTMLElement | null;
+          if (!timeTd) {
+            return undefined;
+          }
+
+          const timeSpan = timeTd.querySelector("span.datetime") as HTMLElement | null;
+          if (timeSpan?.dataset.timestamp) {
+            const ts = Number.parseInt(timeSpan.dataset.timestamp, 10);
+            if (Number.isFinite(ts)) return ts;
           }
 
           // 其它版本种子上传时间如为 today 或 yesterday，无法获取到时间戳，转为手动解析
-          const currentDate = new Date();
-          if (timeTd.textContent === "yesterday") {
-            currentDate.setDate(currentDate.getDate() - 1);
+          const addedText = (timeTd.textContent ?? "").trim().toLowerCase();
+          if (addedText === "today" || addedText === "yesterday") {
+            const currentDate = new Date();
+            if (addedText === "yesterday") {
+              currentDate.setDate(currentDate.getDate() - 1);
+            }
+            return currentDate.getTime();
           }
-          return currentDate.getTime();
+
+          return undefined;
         },
       },
       size: { selector: ".size", filters: [{ name: "parseSize" }] },

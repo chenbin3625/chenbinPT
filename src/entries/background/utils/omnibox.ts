@@ -88,24 +88,21 @@ export function splitOmniboxInput(text: string): { solutionName?: string; key: s
 
 // 当用户接收关键字建议时触发
 chrome.omnibox?.onInputEntered.addListener(async (text) => {
-  let solutionName = "";
   let solutionId = "default";
-  let key = "";
+  let key = text;
 
   if (text.indexOf(splitString) != -1) {
     const solutions = await getSearchSolution(true);
     const parsed = splitOmniboxInput(text);
-    solutionName = parsed.solutionName ?? "";
-    key = parsed.key;
+    const solutionName = parsed.solutionName ?? "";
 
-    let solution = solutions.find((item: ISearchSolution) => {
+    const solution = solutions.find((item: ISearchSolution) => {
       return item.name == solutionName;
     });
     if (solution) {
       solutionId = solution.value;
+      key = parsed.key;
     }
-  } else {
-    key = text;
   }
 
   // 按关键字进行搜索

@@ -241,7 +241,11 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   private static readonly POSTER_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
   /** C2-M-4：登录单飞——并发 401 时只允许一个 AuthenticateByName 在途，其余请求复用同一个 Promise */
-  private loginInFlight?: Promise<IFnOSSession>;
+  private loginInFlight?: { key: string; promise: Promise<IFnOSSession> };
+
+  /** 记录构造时 config.auth 中预置 apikey/userId 对应的凭据快照；凭据变化或 401 刷新后不再回退 */
+  private initialConfigAuthKey?: string;
+  private configAuthInvalidated = false;
 
   /** /Users/{id}/Views 的结果缓存（按实例，避免每次搜索重复请求） */
   private viewIdsPromise?: Promise<string[]>;
@@ -251,6 +255,7 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
    */
   get baseUrl() {
     let serverAddress = this.config.address.trim();
+    serverAddress = serverAddress.replace(/#.*$/, "");
     serverAddress = serverAddress.replace(/\/+$/, "");
     serverAddress = serverAddress.replace(/\/(?:web|v)(?:\/.*)?$/i, "");
     serverAddress = serverAddress.replace(/\/(?:emby|jellyfin)(?:\/.*)?$/i, "");
@@ -270,6 +275,11 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     return [this.baseUrl, this.config.auth.username].join("|");
   }
 
+  /** 会话缓存键包含密码区分度，避免修改密码后仍命中旧 token（不用于 deviceId，避免密码进入请求头） */
+  private get sessionCacheKey(): string {
+    return JSON.stringify([this.baseUrl, this.config.auth.username ?? "", this.config.auth.password ?? ""]);
+  }
+
   private get deviceId() {
     return `chenbinPT-${this.config.id ?? this.cacheKey}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
   }
@@ -280,30 +290,34 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   }
 
   private get session(): IFnOSSession | undefined {
-    const cachedSession = FnOS.sessionCache.get(this.cacheKey);
+    const sessionKey = this.sessionCacheKey;
+    const cachedSession = FnOS.sessionCache.get(sessionKey);
     if (cachedSession) {
       return cachedSession;
     }
 
-    if (this.config.auth.apikey && this.config.auth.userId) {
-      return {
-        apikey: this.config.auth.apikey,
-        userId: this.config.auth.userId,
-        sessionId: this.config.auth.sessionId,
-      };
+    if (!this.configAuthInvalidated && this.config.auth.apikey && this.config.auth.userId) {
+      this.initialConfigAuthKey ??= sessionKey;
+      if (this.initialConfigAuthKey === sessionKey) {
+        return {
+          apikey: this.config.auth.apikey,
+          userId: this.config.auth.userId,
+          sessionId: this.config.auth.sessionId,
+        };
+      }
     }
 
     return undefined;
   }
 
-  private setSession(session: IFnOSSession) {
-    this.config.auth.apikey = session.apikey;
-    this.config.auth.userId = session.userId;
-    this.config.auth.sessionId = session.sessionId ?? "";
-    FnOS.sessionCache.set(this.cacheKey, session);
+  private setSession(session: IFnOSSession, sessionKey: string = this.sessionCacheKey) {
+    // 不回写 this.config.auth：避免「测试连接」把运行时 token 写进响应式配置并随配置持久化，
+    // 导致后续改账号/地址时回落到旧用户的隐藏 apikey/userId。
+    FnOS.sessionCache.set(sessionKey, session);
   }
 
   private async login(force = false): Promise<IFnOSSession> {
+    const sessionKey = this.sessionCacheKey;
     const existingSession = this.session;
     if (!force && existingSession) {
       return existingSession;
@@ -311,17 +325,15 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
 
     // C2-M-4：合并在途登录。一次搜索里 getViewIds/多条 queryItems/多张海报可能同时 401，
     // 旧实现会让它们各自 AuthenticateByName（登录风暴），并把 N 个 token 依次写回缓存。
+    // 直接复用同凭据的在途登录 Promise：成功时共享新 session，失败时如实向上抛错而非返回过期 token。
     const inFlightLogin = this.loginInFlight;
-    if (inFlightLogin) {
-      if (!force) {
-        return await inFlightLogin;
-      }
-      // force 刷新也先等前一个在途登录结束，避免"以旧顶新"；随后若 session 已被刷新则直接复用
-      await inFlightLogin.catch(() => undefined);
-      const refreshedSession = this.session;
-      if (refreshedSession) {
-        return refreshedSession;
-      }
+    if (inFlightLogin && inFlightLogin.key === sessionKey) {
+      return await inFlightLogin.promise;
+    }
+
+    if (force) {
+      FnOS.sessionCache.delete(sessionKey);
+      this.configAuthInvalidated = true;
     }
 
     const loginPromise = (async () => {
@@ -346,15 +358,15 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
         userId: response.data.User.Id,
         sessionId: response.data.SessionInfo?.Id,
       };
-      this.setSession(session);
+      this.setSession(session, sessionKey);
       return session;
     })();
 
-    this.loginInFlight = loginPromise;
+    this.loginInFlight = { key: sessionKey, promise: loginPromise };
     try {
       return await loginPromise;
     } finally {
-      if (this.loginInFlight === loginPromise) {
+      if (this.loginInFlight?.promise === loginPromise) {
         this.loginInFlight = undefined;
       }
     }
@@ -451,6 +463,7 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       params: {
         ParentId: parentId,
         Recursive: true,
+        IncludeItemTypes: includeItemTypes ?? "Movie,Series",
         StartIndex: options.startIndex,
         Limit: options.limit,
         Fields: FNOS_SEARCH_FIELDS,
@@ -459,10 +472,6 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
 
     if (keywords !== "") {
       requestConfig.params.SearchTerm = keywords;
-      requestConfig.params.IncludeItemTypes = "Movie,Series";
-    }
-    if (includeItemTypes) {
-      requestConfig.params.IncludeItemTypes = includeItemTypes;
     }
 
     const mergedConfig = toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {});

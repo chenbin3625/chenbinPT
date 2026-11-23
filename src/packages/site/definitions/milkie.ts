@@ -42,6 +42,7 @@ export const siteMetadata: ISiteMetadata = {
     keywordPath: "params.query",
     requestConfig: {
       url: "/api/v1/torrents",
+      responseType: "json",
       params: {
         ps: 50,
       },
@@ -106,6 +107,7 @@ export const siteMetadata: ISiteMetadata = {
       {
         requestConfig: {
           url: "/api/v1/auth",
+          responseType: "json",
         },
         selectors: {
           name: { selector: "user.displayName" },

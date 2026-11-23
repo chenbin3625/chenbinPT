@@ -147,7 +147,7 @@ describe("hdcity 时间与等级（DEFS2-5 / DEFS2-9）", () => {
     }
   });
 
-  it("具名 parseTime 按站点 +0800 换算，不随宿主时区漂移（走真实装配路径）", async () => {
+  itAcrossTimezones("具名 parseTime 按站点 +0800 换算，不随宿主时区漂移（走真实装配路径）", async () => {
     const { default: NexusPHP } = await import("@ptd/site/schemas/NexusPHP.ts");
     const { getDefinedSiteMetadata } = await import("@ptd/site/index.ts");
     const { siteMetadata } = await import("@ptd/site/definitions/hdcity.ts");
@@ -165,9 +165,7 @@ describe("hdcity 时间与等级（DEFS2-5 / DEFS2-9）", () => {
     expect(assembled.timezoneOffset).toBe("+0800");
 
     const probe = new Probe(assembled as any);
-    expect(probe.run(listFilters[0]("发布时间 2024-01-02 03:04:05"), listFilters)).toBe(
-      Date.parse("2024-01-02T03:04:05+08:00"),
-    );
+    expect(probe.run("发布时间 2024-01-02 03:04:05", listFilters)).toBe(Date.parse("2024-01-02T03:04:05+08:00"));
   });
 
   it("levelName 过滤器在 src 不匹配 /class/N.gif 时不再抛错", async () => {

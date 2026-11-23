@@ -92,6 +92,25 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
   }
 
   /**
+   * 校验 OWSS 单文件名路径并做 URL 编码：拒绝空串、`.`/`..`、路径分隔符与空字节，
+   * 避免不可信文件名注入路径穿越（`../../...`）或未编码的 `#`/`?` 截断请求路径。
+   */
+  private encodeSafeFilePath(path: string, action: string): string {
+    if (
+      typeof path !== "string" ||
+      path.length === 0 ||
+      path === "." ||
+      path === ".." ||
+      path.includes("/") ||
+      path.includes("\\") ||
+      path.includes("\0")
+    ) {
+      throw new Error(`OWSS ${action} failed: invalid file path`);
+    }
+    return encodeURIComponent(path);
+  }
+
+  /**
    * C2-B-3：OWSS 的错误响应是 HTTP 200 + `{error}` / `{code,msg}`（见 OWSSResponse 注释），
    * axios 不会 reject。旧实现直接 `data.data` 取值 → list 静默返回 []、addFile/deleteFile 静默 false，
    * 用户/自动备份日志完全看不到原因。这里统一校验并抛出可读错误。
@@ -177,9 +196,10 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
 
   public async deleteFile(path: string): Promise<boolean> {
     try {
+      const encodedPath = this.encodeSafeFilePath(path, "deleteFile");
       const { data } = await this.request<OWSSResponse<boolean>>({
         method: "post",
-        url: urlJoin("/delete", path),
+        url: urlJoin("/delete", encodedPath),
       });
       const result = this.expectData(data, "deleteFile");
       if (!result) {
@@ -194,8 +214,9 @@ export default class OWSS extends AbstractBackupServer<OWSSConfig> {
 
   public async getFile(path: string): Promise<IBackupData> {
     try {
+      const encodedPath = this.encodeSafeFilePath(path, "getFile");
       const { data } = await this.request<Blob>({
-        url: urlJoin("/get", path),
+        url: urlJoin("/get", encodedPath),
         responseType: "blob",
       });
       return await this.zipBlobToBackupData(data);

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, shallowRef, watch } from "vue";
+import { ref, computed, nextTick, shallowRef, toRaw, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { AppstoreOutlined, CheckCircleOutlined } from "@ant-design/icons-vue";
-import { toMerged } from "es-toolkit";
+import { cloneDeep, toMerged } from "es-toolkit";
 import { Modal } from "ant-design-vue";
 
 import { type ITorrent } from "@ptd/site";
@@ -15,7 +15,7 @@ import {
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
-import type { IDownloaderMetadata } from "@/shared/types.ts";
+import type { IDownloaderMetadata, TDownloaderKey } from "@/shared/types.ts";
 
 import { createDynamicReplacePrompter, sendTorrentToDownloader } from "./utils.ts";
 
@@ -43,7 +43,12 @@ const promptForDynamicReplace = createDynamicReplacePrompter(modal);
 
 const isSending = ref(false);
 const quickSendToClient = ref<boolean>(false);
-const selectedDownloader = ref<IDownloaderMetadata | null>(null);
+const selectedDownloaderId = ref<TDownloaderKey | undefined>(undefined);
+const selectedDownloader = computed<IDownloaderMetadata | null>(() => {
+  const id = selectedDownloaderId.value;
+  if (!id) return null;
+  return metadataStore.downloaders?.[id] ?? metadataStore.getEnabledDownloaders?.find((item) => item.id === id) ?? null;
+});
 const selectedDownloaderMetadata = shallowRef();
 const addTorrentOptions = ref<Required<Omit<CAddTorrentOptions, "localDownloadOption">>>({
   localDownload: true,
@@ -86,12 +91,17 @@ const quickSendRows = computed(() =>
 const downloaderOptions = computed(() =>
   sortedEnabledDownloadersBySite.value.map((downloader) => ({
     label: downloaderTitle(downloader),
-    value: downloader,
+    value: downloader.id,
+    downloader,
   })),
 );
 
+function optionDownloader(option: any): IDownloaderMetadata | undefined {
+  return option?.downloader ?? option?.data?.downloader;
+}
+
 function filterDownloader(inputValue: string, option: any): boolean {
-  const downloader = option?.value as IDownloaderMetadata | undefined;
+  const downloader = optionDownloader(option);
   if (!downloader) return true;
   const keyword = inputValue.toLowerCase();
   return [downloader.name, downloader.address, downloader.username]
@@ -100,13 +110,22 @@ function filterDownloader(inputValue: string, option: any): boolean {
 }
 
 function restoreAddTorrentOptions(downloader?: IDownloaderMetadata) {
-  addTorrentOptions.value.localDownload = true;
-  addTorrentOptions.value.addAtPaused = !(downloader?.feature?.DefaultAutoStart ?? true);
-  addTorrentOptions.value.savePath = "";
-  addTorrentOptions.value.label = "";
-  // 必须克隆：模板用 v-model:checked 直接写这个对象，直接引用 store 会让「取消」后
-  // 已保存的下载器高级设置也被永久改写。
-  addTorrentOptions.value.advanceAddTorrentOptions = { ...(downloader?.advanceAddTorrentOptions ?? {}) };
+  // 每次赋予新对象而非就地修改，避免与已交给 metadataStore.setLastDownloader 的对象别名冲突
+  addTorrentOptions.value = {
+    localDownload: true,
+    addAtPaused: !(downloader?.feature?.DefaultAutoStart ?? true),
+    savePath: "",
+    label: "",
+    uploadSpeedLimit: 0,
+    // 必须克隆：模板用 v-model:checked 直接写这个对象，直接引用 store 会让「取消」后
+    // 已保存的下载器高级设置也被永久改写。
+    advanceAddTorrentOptions: cloneDeep(toRaw(downloader?.advanceAddTorrentOptions ?? {})),
+  };
+}
+
+function handleDownloaderChange(value: unknown) {
+  const id = typeof value === "string" ? value : undefined;
+  restoreAddTorrentOptions(id ? metadataStore.downloaders[id] : undefined);
 }
 
 watch(selectedDownloader, (value) => {
@@ -136,12 +155,12 @@ async function sendToDownloader() {
     return;
   }
 
-  // 保存此次选择记录（默认推送不保存）
+  // 保存此次选择记录（默认推送不保存）；深拷贝解代理，避免关闭弹窗触发 dialogLeave 时原地清空
   if (!isDefaultSend && configStore.download.saveLastDownloader) {
     // noinspection ES6MissingAwait
     metadataStore.setLastDownloader({
       id: selectedDownloader.value.id,
-      options: addTorrentOptions.value,
+      options: cloneDeep(toRaw(addTorrentOptions.value)),
     });
   }
 
@@ -171,18 +190,20 @@ async function sendToDownloader() {
 
 function quickSendToDownloader(downloader: IDownloaderMetadata, path: string = "", label?: string) {
   if (isSending.value) return;
-  selectedDownloader.value = downloader;
+  selectedDownloaderId.value = downloader.id;
 
   // 设置下载推送选项
-  addTorrentOptions.value.localDownload = true;
-  addTorrentOptions.value.addAtPaused = !(downloader.feature?.DefaultAutoStart ?? true);
-  addTorrentOptions.value.advanceAddTorrentOptions = { ...(downloader.advanceAddTorrentOptions ?? {}) };
-
   // V-2：必须**无条件**赋值。原来的 `if (path) savePath = path` / `if (label) label = label`
   // 让「默认路径」行（path 为空串）沿用上一次的保存路径与标签：
   // 先点 /downloads/movies 再点「默认路径」行，第二个种子仍会被送进那个目录。
-  addTorrentOptions.value.savePath = path;
-  addTorrentOptions.value.label = label ?? "";
+  addTorrentOptions.value = {
+    localDownload: true,
+    addAtPaused: !(downloader.feature?.DefaultAutoStart ?? true),
+    savePath: path,
+    label: label ?? "",
+    uploadSpeedLimit: 0,
+    advanceAddTorrentOptions: cloneDeep(toRaw(downloader.advanceAddTorrentOptions ?? {})),
+  };
 
   return sendToDownloader();
 }
@@ -194,35 +215,44 @@ function dialogEnter() {
     quickSendToClient.value = true;
 
     // 加载默认下载器设置中的 folder, tags 信息
-    selectedDownloader.value = downloader;
+    selectedDownloaderId.value = downloader?.id;
     addTorrentOptions.value.savePath = metadataStore.defaultDownloader.folder ?? "";
     addTorrentOptions.value.label = metadataStore.defaultDownloader.tags ?? "";
 
     // 直接调用发送函数
     sendToDownloader();
   } else {
+    selectedDownloaderId.value = undefined;
     restoreAddTorrentOptions(); // 先重置所有选项，然后如果需要则从uiStore中获取历史情况
     quickSendToClient.value = configStore.download.useQuickSendToClient;
 
     // 如果不是快速发送到客户端模式，则尝试设置默认下载器
     if (!quickSendToClient.value) {
       const lastDownloaderId = metadataStore.lastDownloader?.id;
-      selectedDownloader.value = lastDownloaderId // 如果有上次选择的下载器，则直接使用
-        ? metadataStore.downloaders[lastDownloaderId]
-        : sortedEnabledDownloadersBySite.value.length === 1 // 如果只有一个启用的下载器，则直接使用
-          ? sortedEnabledDownloadersBySite.value[0]
-          : null;
+      const eligibleLastDownloader = lastDownloaderId
+        ? sortedEnabledDownloadersBySite.value.find((d) => d.id === lastDownloaderId)
+        : undefined;
 
-      // 将上一次的下载器选项通过 toMerged 合并到当前选项中，而不是直接覆盖
-      addTorrentOptions.value = toMerged(
-        addTorrentOptions.value,
-        metadataStore.lastDownloader?.options ?? {},
-      ) as Required<Omit<CAddTorrentOptions, "localDownloadOption">>;
+      if (eligibleLastDownloader) {
+        selectedDownloaderId.value = eligibleLastDownloader.id;
+        restoreAddTorrentOptions(eligibleLastDownloader);
+        // 将上一次的下载器选项通过 toMerged 合并到当前选项中，而不是直接覆盖
+        addTorrentOptions.value = toMerged(
+          addTorrentOptions.value,
+          cloneDeep(toRaw(metadataStore.lastDownloader?.options ?? {})),
+        ) as Required<Omit<CAddTorrentOptions, "localDownloadOption">>;
+      } else {
+        const fallbackDownloader =
+          sortedEnabledDownloadersBySite.value.length === 1 ? sortedEnabledDownloadersBySite.value[0] : undefined;
+        selectedDownloaderId.value = fallbackDownloader?.id;
+        restoreAddTorrentOptions(fallbackDownloader);
+      }
     }
   }
 }
 
 function dialogLeave() {
+  selectedDownloaderId.value = undefined;
   restoreAddTorrentOptions(); // 先重置所有选项，然后从uiStore中获取历史情况
   emit("cancel");
 }
@@ -310,18 +340,18 @@ watch(
       <!-- 普通下载选项 -->
       <template v-else>
         <a-select
-          v-model:value="selectedDownloader"
+          v-model:value="selectedDownloaderId"
           allow-clear
           :filter-option="filterDownloader"
           :options="downloaderOptions"
           :placeholder="t('SentToDownloaderDialog.selectDownloader')"
           show-search
-          @change="restoreAddTorrentOptions"
+          @change="handleDownloaderChange"
         >
-          <template #option="{ value }">
-            <a-flex align="center" :gap="8">
-              <a-avatar :size="20" :src="getDownloaderIcon(value.type)" shape="square" />
-              <span>{{ downloaderTitle(value) }}</span>
+          <template #option="option">
+            <a-flex v-if="optionDownloader(option)" align="center" :gap="8">
+              <a-avatar :size="20" :src="getDownloaderIcon(optionDownloader(option)!.type)" shape="square" />
+              <span>{{ downloaderTitle(optionDownloader(option)!) }}</span>
             </a-flex>
           </template>
         </a-select>

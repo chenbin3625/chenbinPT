@@ -14,7 +14,7 @@ import {
   type ISearchCategories,
   type TSchemaMetadata,
 } from "../types";
-import { classifySiteError, logMessage, parseTimeToLiveToDate, siteErrorLogData } from "../utils";
+import { classifySiteError, definedFilters, logMessage, parseTimeToLiveToDate, siteErrorLogData } from "../utils";
 
 type TUserInfoTransKey =
   "id" | "seedingSize" | "joinTime" | "averageSeedingTime" | "invites" | "ratio" | "trueRatio" | "lastAccessAt";
@@ -367,7 +367,7 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
 
   list: [
     {
-      urlPattern: ["/torrents(?:/?$|\\?\[\^/\]*$)"],
+      urlPattern: ["/torrents(?:/?$|\\?[^/]*$)"],
       // `?` 必须转义：未转义时 `s?` 是「可选 s」量词，永远匹配不到真正的查询串
       excludeUrlPattern: ["/torrents\\?view=card", "/torrents\\?view=grouped", "/torrents\\?view=poster"],
     },
@@ -548,14 +548,14 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
       uploads: {
         selector: ["dl.key-value:has(a[href*='/uploads'])", ".badge-user .fa-upload + span"],
         elementProcess: (el: Element) => {
-          if (!el.querySelector("a[href*='/uploads']")) {
-            return undefined;
+          if (el.querySelector("a[href*='/uploads']")) {
+            let count = 0;
+            el.querySelectorAll("dt:has(a[href*='/uploads']) + dd").forEach((e) => {
+              count += definedFilters.parseNumber(e.textContent ?? "");
+            });
+            return count;
           }
-          let count = 0;
-          el.querySelectorAll("dt:has(a[href*='/uploads']) + dd").forEach((e) => {
-            count += Number(e.textContent.trim());
-          });
-          return count;
+          return el.textContent ?? "";
         },
         switchFilters: {
           ".badge-user .fa-upload + span": [{ name: "parseNumber" }],
@@ -686,7 +686,10 @@ export default class Unit3D extends PrivateSite {
       // 此前会跳到外层 catch，把 status 改成失败，而 setSiteLastUserInfo 只在 success 时
       // 写当日历史 → 一个可选页面失败就丢掉整天的记录。这里只丢掉 bonusPerHour 字段。
       try {
-        flushUserInfo.bonusPerHour = await this.getUserBonusPerHour(userName);
+        const bonusPerHour = await this.getUserBonusPerHour(userName);
+        if (typeof bonusPerHour === "number" && Number.isFinite(bonusPerHour)) {
+          flushUserInfo.bonusPerHour = bonusPerHour;
+        }
       } catch (e) {
         logMessage(
           `[Site] ${this.name} getUserBonusPerHour failed`,
@@ -749,7 +752,7 @@ export default class Unit3D extends PrivateSite {
     });
 
     const userInfoSelectors = this.metadata.userInfo?.selectors!;
-    const fields = Object.keys(omit(userInfoSelectors, ["name"]));
+    const fields = Object.keys(omit(userInfoSelectors, ["name", "bonusPerHour"]));
     const declaredSelectors = userInfoSelectors as Record<string, IElementQuery | undefined>;
 
     // SITECORE-2：与 AbstractPrivateSite 的 H-6 判据对齐——统计「声明了 selector 的字段」真正命中多少个。
@@ -776,7 +779,7 @@ export default class Unit3D extends PrivateSite {
     }) as Partial<IUserInfo>;
   }
 
-  protected async getUserBonusPerHour(name: string): Promise<number> {
+  protected async getUserBonusPerHour(name: string): Promise<number | undefined> {
     const { data: document } = await this.request<Document>(
       {
         // E18：用户名作为路径段必须编码（含空格/特殊字符的 Unit3D 用户名）
@@ -785,7 +788,14 @@ export default class Unit3D extends PrivateSite {
       },
       true,
     );
-    return this.getFieldData(document, this.metadata.userInfo?.selectors?.bonusPerHour!);
+    const bonusPerHourSelector = this.metadata.userInfo?.selectors?.bonusPerHour;
+    if (!bonusPerHourSelector) {
+      return undefined;
+    }
+    const { bonusPerHour } = this.getFieldsData(document, { bonusPerHour: bonusPerHourSelector }, ["bonusPerHour"], {
+      dropEmptyMisses: true,
+    });
+    return typeof bonusPerHour === "number" && Number.isFinite(bonusPerHour) ? bonusPerHour : undefined;
   }
 
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {

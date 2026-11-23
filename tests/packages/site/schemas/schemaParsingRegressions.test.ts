@@ -213,6 +213,10 @@ describe("站点时间过滤器", () => {
     parseFuzzyTime(value: string, format: string) {
       return this.runQueryFilters<number>(value, [{ name: "parseFuzzyTime", args: [format] }]);
     }
+
+    runFilter(value: string, filter: any) {
+      return this.runQueryFilters<number>(value, [filter]);
+    }
   }
 
   it("无时区墙上时间按站点偏移解析，而不是按浏览器本地时区", () => {
@@ -231,22 +235,24 @@ describe("站点时间过滤器", () => {
     expect(site.parseTime("2024-03-10 02:30:00")).toBe(Date.parse("2024-03-10T02:30:00-05:00"));
   });
 
-  it("四站格式串分别能解析搜索或用户信息日期", () => {
+  it("四站格式串分别能解析搜索或用户信息日期并产出准确时间戳", () => {
     const cases = [
-      [learnflakes, "01-03-2024 10:00", "search"],
-      [losslessclub, "03/01/24", "search"],
-      [teamhd, "1 March 2024", "userInfo"],
-      [wihd, "01/03/2024", "userInfo"],
+      [learnflakes, "01-03-2024 10:00", "search", "parseFuzzyTime", Date.parse("2024-03-01T10:00:00Z")],
+      [losslessclub, "03/01/24", "search", "parseTime", Date.parse("2024-03-01T00:00:00+03:00")],
+      [teamhd, "1 March 2024", "userInfo", "parseTime", Date.parse("2024-03-01T00:00:00+03:00")],
+      [wihd, "01/03/2024", "userInfo", "parseTime", Date.parse("2024-03-01T00:00:00+02:00")],
     ] as const;
 
-    for (const [metadata, input, section] of cases) {
+    for (const [metadata, input, section, expectedFilterName, expectedTimestamp] of cases) {
       const selector =
         section === "search"
           ? metadata.search!.selectors!.time!
           : metadata.userInfo!.process!.find((process) => process.selectors?.joinTime)!.selectors!.joinTime!;
       const filter = selector.filters!.find((item) => typeof item !== "function" && item.name?.startsWith("parse"))!;
+      expect((filter as { name: string }).name, metadata.id).toBe(expectedFilterName);
+
       const site = new TimeSite(metadata);
-      expect(() => site.parseTime(input, (filter as { args: string[] }).args[0]), metadata.id).not.toThrow();
+      expect(site.runFilter(input, filter), metadata.id).toBe(expectedTimestamp);
     }
   });
 });

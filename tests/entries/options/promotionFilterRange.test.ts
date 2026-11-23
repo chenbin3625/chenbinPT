@@ -42,12 +42,17 @@ describe("checkRangeValue：优惠系数范围筛选", () => {
   });
 
   it("该 range 未参与筛选时返回 undefined（调用方据此跳过），而不是 false", () => {
-    const filter: TFilter = { downloadVolumeFactor: { from: undefined, to: undefined } };
-
-    expect(checkRangeValue(filter, { downloadVolumeFactor: 0.5 }, "downloadVolumeFactor")).toBe(true);
-
     const unused: TFilter = {};
+
     expect(checkRangeValue(unused, { downloadVolumeFactor: 0 }, "downloadVolumeFactor")).toBeUndefined();
+    expect(checkRangeValue(unused, {}, "downloadVolumeFactor")).toBeUndefined();
+  });
+
+  it("空上下界 range（{ from: undefined, to: undefined }）按开区间匹配有效数值，字段缺失仍返回 false", () => {
+    const openRange: TFilter = { downloadVolumeFactor: { from: undefined, to: undefined } };
+
+    expect(checkRangeValue(openRange, { downloadVolumeFactor: 0.5 }, "downloadVolumeFactor")).toBe(true);
+    expect(checkRangeValue(openRange, {}, "downloadVolumeFactor")).toBe(false);
   });
 });
 

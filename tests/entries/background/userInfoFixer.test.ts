@@ -12,6 +12,7 @@ type StorageChange = Record<string, { oldValue?: unknown; newValue?: unknown }>;
 const backing = new Map<string, unknown>();
 const changeListeners: Array<(changes: StorageChange, areaName: string) => void> = [];
 let getCallCount = 0;
+let setCallCount = 0;
 /**
  * 是否广播 onChanged。
  *
@@ -36,6 +37,7 @@ const storageLocal = {
     return Promise.resolve(backing.has(key) ? { [key]: structuredClone(backing.get(key)) } : {});
   },
   set: (items: Record<string, unknown>) => {
+    setCallCount++;
     const changes: StorageChange = {};
     for (const [key, value] of Object.entries(items)) {
       changes[key] = { oldValue: backing.get(key), newValue: value };
@@ -82,6 +84,7 @@ describe("fixAllStoredUserInfo（B-18）", () => {
   beforeEach(async () => {
     backing.clear();
     getCallCount = 0;
+    setCallCount = 0;
     emitOnChange = true;
     emitChanges({ userInfo: { oldValue: undefined, newValue: undefined } });
   });
@@ -118,12 +121,14 @@ describe("fixAllStoredUserInfo（B-18）", () => {
 
   it("没有坏数据时不写存储", async () => {
     await storageLocal.set({ userInfo: { mteam: { "2026-10-01": { ratio: 1.5, seeding: 3 } } } });
-    const writesBefore = getCallCount;
+    const readsBefore = getCallCount;
+    const setsBefore = setCallCount;
 
     await fixAllStoredUserInfo();
 
     expect((backing.get("userInfo") as any).mteam["2026-10-01"]).toEqual({ ratio: 1.5, seeding: 3 });
-    expect(getCallCount).toBe(writesBefore + 1); // 只多了一次链内读取
+    expect(getCallCount).toBe(readsBefore + 1); // 只多了一次链内读取
+    expect(setCallCount).toBe(setsBefore); // 没有触发任何存储写回
   });
 
   it("BACKGROUNDSHARED-6：null / 非对象条目不再击穿整轮修复，且不再静默", async () => {
@@ -155,12 +160,14 @@ describe("fixAllStoredUserInfo（B-18）", () => {
 
   it("BACKGROUNDSHARED-6：只有坏条目、没有任何可修复项时不写存储", async () => {
     await storageLocal.set({ userInfo: { brokenSite: null } });
-    const writesBefore = getCallCount;
+    const readsBefore = getCallCount;
+    const setsBefore = setCallCount;
 
     await fixAllStoredUserInfo();
 
     expect((backing.get("userInfo") as any).brokenSite).toBeNull();
-    expect(getCallCount).toBe(writesBefore + 1); // 只有链内读取，没有多余的整份写回
+    expect(getCallCount).toBe(readsBefore + 1); // 只有链内读取
+    expect(setCallCount).toBe(setsBefore); // 没有多余的整份写回
   });
 });
 

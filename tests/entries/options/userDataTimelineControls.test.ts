@@ -106,20 +106,22 @@ describe("时间轴显示内容控件", () => {
 
   it("时间轴输入控件不产生非法的 onUpdate:value prop 警告", async () => {
     const warnings: unknown[][] = [];
-    const warn = console.warn;
-    console.warn = (...args: unknown[]) => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
       warnings.push(args);
-    };
+    });
 
-    const { view } = await mountTimeline();
+    let view: Awaited<ReturnType<typeof mountTimeline>>["view"] | undefined;
+    try {
+      ({ view } = await mountTimeline());
 
-    console.warn = warn;
-    const invalidUpdateWarnings = warnings.filter((args) =>
-      String(args[0]).includes('Invalid prop: type check failed for prop "onUpdate:value"'),
-    );
-    expect(invalidUpdateWarnings).toEqual([]);
-
-    view.unmount();
+      const invalidUpdateWarnings = warnings.filter((args) =>
+        String(args[0]).includes('Invalid prop: type check failed for prop "onUpdate:value"'),
+      );
+      expect(invalidUpdateWarnings).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+      view?.unmount();
+    }
   });
 
   it("统计字段与每站点字段都用复选框渲染，数量与配置项一一对应", async () => {

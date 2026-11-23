@@ -113,6 +113,7 @@ export const siteMetadata: ISiteMetadata = {
           { name: "replace", args: ["ГБ", "GB"] },
           { name: "replace", args: ["МБ", "MB"] },
           { name: "replace", args: ["КБ", "KB"] },
+          { name: "parseSize" },
         ],
       },
     },

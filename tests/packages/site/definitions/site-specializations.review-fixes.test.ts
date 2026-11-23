@@ -237,10 +237,10 @@ describe("pussytorrents 用户列表初始化", () => {
     expect(result.status).toBe(EResultParseStatus.success);
     expect(result.uploads).toBe(7);
     expect(calls.slice(-4)).toEqual([
-      { method: "GET", url: "/user/account/snatchlist", userID: 123 },
-      { method: "POST", url: "/user/account/snatchlist", userID: 123 },
-      { method: "GET", url: "/user/account/uploadedtorrents", userID: 123 },
-      { method: "POST", url: "/user/account/uploadedtorrents", userID: 123 },
+      { method: "GET", url: "/user/account/snatchlist", userID: "123" },
+      { method: "POST", url: "/user/account/snatchlist", userID: "123" },
+      { method: "GET", url: "/user/account/uploadedtorrents", userID: "123" },
+      { method: "POST", url: "/user/account/uploadedtorrents", userID: "123" },
     ]);
   });
 

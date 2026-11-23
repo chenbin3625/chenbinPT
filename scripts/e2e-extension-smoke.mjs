@@ -143,24 +143,34 @@ async function runSmoke() {
       }),
     );
     const sitePage = await context.newPage();
-    const contentScriptErrors = [];
-    sitePage.on("pageerror", (error) => contentScriptErrors.push(error.message));
+    const mountErrors = [];
+    const probeErrors = [];
+    let activeErrors = mountErrors;
+    sitePage.on("pageerror", (error) => activeErrors.push({ kind: "pageerror", text: error.message }));
     sitePage.on("console", (message) => {
       if (["error", "warning"].includes(message.type())) {
-        contentScriptErrors.push(message.text());
+        activeErrors.push({ kind: "console", text: message.text() });
       }
     });
     await sitePage.goto("https://movie.douban.com/top250", { waitUntil: "domcontentloaded", timeout: timeoutMs });
     try {
       await sitePage.locator(".ptd-content-script-root").waitFor({ state: "attached", timeout: timeoutMs });
     } catch (error) {
-      throw new Error(`Content script did not mount: ${error.message}\n${contentScriptErrors.join("\n")}`);
+      throw new Error(
+        `Content script did not mount: ${error.message}\n${mountErrors.map((e) => e.text).join("\n")}`,
+      );
     }
     // task-12（P2）：挂载点插入后 Vue 应用仍在异步初始化（store 水合、站点识别）。
     // 若立刻断言「零 console error」，会漏掉稍后才出现的挂载失败（漏报），这里给一个 settle 窗口。
     await sitePage.waitForTimeout(1500);
+    // 在发起主动 WAR 探测之前断言挂载期零错误，避免挂载期的资源加载/WAR 报错被探测期的过滤规则掩盖
+    assert(
+      mountErrors.length === 0,
+      `The content script raised ${mountErrors.length} exception(s) during mount:\n${mountErrors.map((e) => e.text).join("\n")}`,
+    );
 
     // WXT 迁移后的指纹面收窄：页面不应能按固定扩展 ID 拉到任何扩展脚本（内容脚本 UI 由后台注入，不需要 WAR）。
+    activeErrors = probeErrors;
     const webAccessibleScripts = await sitePage.evaluate(
       async (urls) => {
         const accessible = [];
@@ -185,13 +195,15 @@ async function runSmoke() {
       `Extension scripts are web-accessible (fingerprinting surface): ${webAccessibleScripts.join(", ")}`,
     );
     // 上面主动探测会让 Chrome 在页面控制台留下「Denying load of chrome-extension://…」/ net::ERR_FAILED，
-    // 这些正是预期的拒绝结果，不计入内容脚本错误
-    const unexpectedContentScriptErrors = contentScriptErrors.filter(
-      (text) => !/Denying load of chrome-extension:\/\/|ERR_FAILED|Failed to load resource/.test(text),
+    // 仅在探测阶段忽略这类控制台网络拒绝日志，不放过 pageerror 或其他异常
+    const unexpectedProbeErrors = probeErrors.filter(
+      (entry) =>
+        entry.kind === "pageerror" ||
+        !/Denying load of chrome-extension:\/\/|ERR_FAILED|Failed to load resource/.test(entry.text),
     );
     assert(
-      unexpectedContentScriptErrors.length === 0,
-      `The content script raised ${unexpectedContentScriptErrors.length} exception(s):\n${unexpectedContentScriptErrors.join("\n")}`,
+      unexpectedProbeErrors.length === 0,
+      `The content script raised ${unexpectedProbeErrors.length} unexpected exception(s) during WAR probe:\n${unexpectedProbeErrors.map((e) => e.text).join("\n")}`,
     );
     console.log(`Extension smoke E2E passed (${extensionId})`);
   } finally {

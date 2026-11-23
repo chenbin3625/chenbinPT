@@ -115,7 +115,7 @@ export const siteMetadata: ISiteMetadata = {
       tags: [
         {
           name: "Free",
-          selector: "span[title*='100%'], span.torrent-badges__item--freeleech span.torrent-badges__item--featured",
+          selector: "span[title*='100%'], span.torrent-badges__item--freeleech, span.torrent-badges__item--featured",
           color: "blue",
         },
         {

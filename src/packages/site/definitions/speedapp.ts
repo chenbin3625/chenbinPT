@@ -597,33 +597,49 @@ export default class SpeedApp extends PrivateSite {
     const params = searchEntry.requestConfig?.params;
 
     if (params) {
-      // 整合自定义 key 的值到同一数组中
-      const merged = Object.entries(params)
-        .filter(([k, v]) => k !== "categories" && Array.isArray(v))
-        .flatMap(([_, v]) => v);
+      const nextParams: Record<string, unknown> = {};
+      const mergedTags: unknown[] = [];
 
-      // 删除自定义 key
-      Object.keys(params).forEach((k) => {
-        if (k !== "categories") {
-          delete params[k];
+      for (const [k, v] of Object.entries(params)) {
+        if (k !== "categories" && Array.isArray(v)) {
+          mergedTags.push(...v);
+        } else {
+          nextParams[k] = v;
         }
-      });
+      }
 
-      // tags 为最终的 params key
-      params.tags = merged;
+      if (mergedTags.length > 0) {
+        nextParams.tags = mergedTags;
+      }
+
+      searchEntry = {
+        ...searchEntry,
+        requestConfig: {
+          ...searchEntry.requestConfig,
+          params: nextParams,
+        },
+      };
     }
 
     return super.getSearchResult(keywords, searchEntry);
   }
 
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    const downloadLink = await super.getTorrentDownloadLink(torrent);
+    const appendix = this.userConfig.downloadLinkAppendix ?? "";
+    let downloadLink = await super.getTorrentDownloadLink(torrent);
+    if (appendix && downloadLink.endsWith(appendix)) {
+      downloadLink = downloadLink.slice(0, -appendix.length);
+    }
+
     if (downloadLink && !downloadLink.includes("/torrents/")) {
-      const { data: detailDocument } = await this.request<Document>({
+      const requestConfig = {
         url: downloadLink,
-        responseType: "document",
-      });
-      const resolvedLink = this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!);
+        responseType: "document" as const,
+      };
+      const { data: detailDocument, config } = await this.request<Document>(requestConfig);
+      const linkSelector = this.metadata.detail?.selectors?.link ?? this.metadata.search?.selectors?.link;
+      const rawLink = linkSelector ? this.getFieldData(detailDocument, linkSelector, "link") : "";
+      const resolvedLink = rawLink ? this.fixLink(rawLink, config ?? requestConfig) : "";
       // E5-12：中间页取不到真正链接时必须显式失败，否则空串会让下游把站点首页当种子请求。
       if (!resolvedLink) {
         throw new Error(
@@ -631,9 +647,9 @@ export default class SpeedApp extends PrivateSite {
             `(torrentId=${torrent.id ?? ""}, middlePage=${downloadLink.split("?")[0]})`,
         );
       }
-      return resolvedLink;
+      return appendix ? `${resolvedLink}${appendix}` : resolvedLink;
     }
 
-    return downloadLink;
+    return appendix ? `${downloadLink}${appendix}` : downloadLink;
   }
 }

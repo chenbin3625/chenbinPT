@@ -5,7 +5,7 @@ import { includes, isEmpty, set } from "es-toolkit/compat";
 import { intervalToDuration } from "date-fns";
 
 import type { IImplicitUserInfo, ILevelRequirement, IUserInfo, TLevelGroupType, TLevelId } from "../types";
-import { parseSizeString } from "./filesize";
+import { parseLocalizedNumber, parseSizeString } from "./filesize";
 // P1-4：拆成「值导入 + 类型导入」两条，类型边不再与运行时边混在一起
 import { convertIsoDurationToDate } from "./datetime";
 import type { isoDuration } from "./datetime";
@@ -22,6 +22,13 @@ const ratioCountMap = {
   trueRatio: ["trueUploaded", "trueDownloaded"],
 } as const;
 
+function computeFallbackRatio(uploaded: number, downloaded: number): number {
+  if (downloaded == 0 && uploaded == 0) {
+    return -Infinity;
+  }
+  return downloaded == 0 ? Infinity : uploaded / downloaded; // 没有下载量时设置分享率为无限
+}
+
 /**
  * 计算分享率。
  *
@@ -32,20 +39,36 @@ const ratioCountMap = {
  * - 显式 `-1`：**无条件**视为 `Infinity`（哨兵约定；前端 `realFormatRatio` 本来也把 -1
  *   显示为 `∞`）。不能依赖 uploaded/downloaded 是否存在——用户画像可能只带 ratio 字段
  *   （站点只采集了 ratio），此时若按「0/0 → -Infinity」处理仍会误判；
- * - 显式 `0` 且下载为 0、上传 > 0：视为 `Infinity`。
+ * - 显式 `0` 且下载为 0、上传 > 0：视为 `Infinity`；
+ * - 字符串形式的分享率（如 `"2.34"` / `"1,5"` / `"∞"` / `""`）安全转换为数字或回落计算，
+ *   确保调用方永远拿到 `number` 而不是字符串。
  */
 export function fixRatio(userInfo: Partial<IUserInfo>, ratioKey: "ratio" | "trueRatio" = "ratio"): number {
   const [uploadedKey, downloadedKey] = ratioCountMap[ratioKey];
   const { [uploadedKey]: uploaded = 0, [downloadedKey]: downloaded = 0 } = userInfo;
 
-  if (typeof userInfo[ratioKey] === "undefined") {
-    if (downloaded == 0 && uploaded == 0) {
-      return -Infinity;
+  const rawRatio: unknown = userInfo[ratioKey];
+  let ratio: number;
+  if (typeof rawRatio === "number") {
+    ratio = rawRatio;
+  } else if (typeof rawRatio === "string") {
+    const trimmed = rawRatio.trim();
+    if (!trimmed) {
+      return computeFallbackRatio(uploaded, downloaded);
     }
-    return downloaded == 0 ? Infinity : uploaded / downloaded; // 没有下载量时设置分享率为无限
+    if (/^(?:∞|inf(?:inity)?\.?)$/i.test(trimmed)) {
+      return Infinity;
+    }
+    ratio = /^[+-]?(?:\d+(?:[.,\s\u00a0\u202f]\d+)*|\.\d+)$/.test(trimmed)
+      ? parseLocalizedNumber(trimmed)
+      : Number(trimmed);
+  } else {
+    return computeFallbackRatio(uploaded, downloaded);
   }
 
-  const ratio = userInfo[ratioKey] as number;
+  if (Number.isNaN(ratio)) {
+    return computeFallbackRatio(uploaded, downloaded);
+  }
   if (ratio === -1) {
     return Infinity; // -1 是「∞」的哨兵值（见上）
   }
@@ -377,8 +400,13 @@ export function getNextLevelUnMet(
 
     // DEFS1-1/DEFS1-6：无门槛的等级没有任何「待满足条件」，与当前等级门槛逐字相同的等级也不是真实目标，
     // 二者都会让「距下一级」面板显示一个空目标（desigaane 的 Torrent Master、dicmusic 的 Elite TM +）——
-    // 这里跳过它们，找不到真实下一级时返回空对象（面板显示「已无可判定目标」而不是「无待满足条件」）
+    // 这里跳过它们，且只选择普通 user 等级（不能跳过无门槛 user 级选到 VIP/manager 等级），
+    // 找不到真实下一级时返回空对象（面板显示「已无可判定目标」而不是「无待满足条件」）
     const nextLevelRequirement = levelRequirements.find((level) => {
+      if ((level.groupType ?? "user") !== "user") {
+        return false;
+      }
+
       if (level.id <= currentLevelId) {
         return false;
       }

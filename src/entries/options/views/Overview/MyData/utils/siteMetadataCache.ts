@@ -68,6 +68,7 @@ const EMPTY_SITE_LEVEL_METADATA: ISiteLevelMetadata = { levelRequirements: [], u
 const siteLevelMetadata = shallowReactive<Record<TSiteID, ISiteLevelMetadata>>({});
 const loadingSiteLevelMetadata = new Set<TSiteID>();
 let invalidationScope: ReturnType<typeof effectScope> | undefined;
+let cacheVersion = 0;
 
 /**
  * 站点用户配置（merge）变化时整体失效，等价于原来 computedAsync 对 `state.sites[siteId]` 的响应性。
@@ -81,6 +82,7 @@ function ensureInvalidationWatch() {
     watch(
       () => metadataStore.sites,
       () => {
+        cacheVersion += 1;
         for (const siteId of Object.keys(siteLevelMetadata)) {
           delete siteLevelMetadata[siteId];
         }
@@ -102,12 +104,14 @@ export function getSiteLevelMetadata(siteId: TSiteID): ISiteLevelMetadata {
   if (cached) return cached;
 
   if (siteId && !loadingSiteLevelMetadata.has(siteId)) {
+    const version = cacheVersion;
     loadingSiteLevelMetadata.add(siteId);
     Promise.all([
       getCachedSiteMergedMetadata(siteId, "levelRequirements", []),
       getCachedSiteMergedMetadata(siteId, "userInfo"),
     ])
       .then(([levelRequirements, userInfo]) => {
+        if (version !== cacheVersion) return;
         siteLevelMetadata[siteId] = {
           levelRequirements: (levelRequirements ?? []) as ISiteLevelMetadata["levelRequirements"],
           userInfo,
@@ -115,11 +119,15 @@ export function getSiteLevelMetadata(siteId: TSiteID): ISiteLevelMetadata {
         };
       })
       .catch(() => {
+        if (version !== cacheVersion) return;
         // 失败时填充空值，避免每行反复重试；站点配置变化时上面的 watcher 会清空缓存后重试。
         // 注意 loaded 仍为 false：失败/未加载不能被当成「该站没有等级要求 / 已满级」。
         siteLevelMetadata[siteId] = EMPTY_SITE_LEVEL_METADATA;
       })
-      .finally(() => loadingSiteLevelMetadata.delete(siteId));
+      .finally(() => {
+        if (version !== cacheVersion) return;
+        loadingSiteLevelMetadata.delete(siteId);
+      });
   }
 
   return EMPTY_SITE_LEVEL_METADATA;

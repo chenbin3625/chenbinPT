@@ -29,6 +29,22 @@ export const siteMetadata: ISiteMetadata = {
 
   urls: ["uggcf://jjj.ukcg.bet/"],
 
+  userInfo: {
+    ...SchemaMetadata.userInfo,
+    process: (SchemaMetadata.userInfo?.process ?? []).map((step, index) =>
+      index === 0 ? { ...step, fields: [...(step.fields ?? []), "seedingTime"] } : step,
+    ),
+    selectors: {
+      ...SchemaMetadata.userInfo.selectors,
+      // FluxTorrent user.json 的 seedingPoints 为累计做种小时数（sum(seeded_seconds)/3600），
+      // 换算为秒级 seedingTime 以支持 levelRequirements.seedingTime 门槛判定。
+      seedingTime: {
+        selector: ["seedingPoints", "seed_points"],
+        filters: [(val: number) => (typeof val === "number" && Number.isFinite(val) ? Math.round(val * 3600) : "")],
+      },
+    },
+  },
+
   category: [
     {
       // 分类 id = 好学线上 `categories` 表的**站内 id**（2026-11-10 从生产库核对）。
@@ -136,8 +152,8 @@ export const siteMetadata: ISiteMetadata = {
    * 名称必须与接口返回的 `class_name`（= user_classes.name）一致，否则用户卡的
    * 「下一等级」算不出来。
    *
-   * `min_download_count` 是**个数**（完成过的下载数），不是体积，所以不放
-   * `downloaded`（那个字段语义是下载量体积），另存 `downloadCount`。
+   * `min_download_count` 是完成过的下载个数（非体积），且当前兼容层 `user.json`
+   * 尚未下发完成数，因此不放入门槛比较键，仅在 `privilege` 文本中注明。
    *
    * ⚠ 门槛可由站长在后台调整；站点另开了 `GET /api/v1/open/me/classes`
    * （开放 API Token 鉴权）动态下发同一份数据。这份静态表用于「未登录时也能看
@@ -150,9 +166,9 @@ export const siteMetadata: ISiteMetadata = {
       id: 2,
       name: "Power User",
       uploaded: "50 GiB",
-      downloadCount: 241,
       seedingTime: 240 * 3600,
       interval: "P28D",
+      privilege: "需完成下载数 ≥ 241（当前兼容接口未返回完成数）",
     },
     {
       id: 3,

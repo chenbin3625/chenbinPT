@@ -206,9 +206,13 @@ export function pruneBackupFiles(
     }
   }
 
-  // 按数量保留：保留最新的 maxCount 份备份
+  // 按数量保留：仅对有限且不晚于 now 的有效时间戳备份计入配额，
+  // 避免前面已被无条件保留的 NaN / 未来时间条目挤占 maxCount 名额而误删近期正常备份。
   if (maxCount > 0) {
-    files.slice(0, maxCount).forEach(keep);
+    files
+      .filter((file) => Number.isFinite(file.time) && file.time <= now)
+      .slice(0, maxCount)
+      .forEach(keep);
   }
 
   const deletedFiles = files.filter((file) => !keptPaths.has(file.path));
@@ -557,7 +561,7 @@ function readZipEntryText(bytes: Uint8Array, name: string): string | undefined {
       return true;
     },
   });
-  const entry = entries[name];
+  const entry = Object.hasOwn(entries, name) ? entries[name] : undefined;
   return entry ? zipEntryDecoder.decode(entry) : undefined;
 }
 
@@ -610,7 +614,7 @@ export async function zipBlobToBackupData(blob: Blob, encryptionKey?: string): P
 
     // 只解出 manifest 中记录的其他文件；多文件的解压/解密/校验改为有界并发
     const manifestFiles = Object.entries(omit(manifest.files ?? {}, ["manifest"]));
-    const decryptedFiles: Record<string, any> = {};
+    const decryptedFiles = Object.create(null) as Record<string, any>;
     const queue = new PQueue({ concurrency: RESTORE_FILE_CONCURRENCY });
     const warnings: string[] = [];
 
@@ -690,7 +694,7 @@ export async function zipBlobToBackupData(blob: Blob, encryptionKey?: string): P
 
     // 按 manifest 的顺序写回，保证恢复结果的 key 顺序与并发前一致
     for (const [fileKey] of manifestFiles) {
-      if (fileKey in decryptedFiles) {
+      if (Object.hasOwn(decryptedFiles, fileKey)) {
         data[fileKey] = decryptedFiles[fileKey];
       }
     }

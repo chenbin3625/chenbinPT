@@ -151,6 +151,14 @@ describe("我的数据等级要求浮层", () => {
 });
 
 describe("F9：没有等级要求 / 元数据未加载完时不得显示「已达下一级」", () => {
+  /** 仅包含用户当前等级（无更高等级要求），使 `getNextLevelUnMet` 返回空对象 */
+  const maxLevelRequirement = {
+    id: 1,
+    name: "User",
+    groupType: "user",
+    privilege: "基础权限",
+  };
+
   async function mountCellWithNextLevelFlag() {
     const pinia = prepareOptionsPinia();
     const { useConfigStore } = await import("@/options/stores/config.ts");
@@ -159,7 +167,9 @@ describe("F9：没有等级要求 / 元数据未加载完时不得显示「已�
 
     const configStore = useConfigStore();
     configStore.myDataTableControl.showNextLevelInTable = true;
-    configStore.myDataTableControl.showLevelRequirement = false;
+    // `<CheckOutlined>` 位于 `<a-popover v-if="showLevelRequirement && userLevelRequirements.length > 0">` 分支内，
+    // 必须开启 showLevelRequirement 才能真正测试该分支上的 levelRequirementsLoaded 守卫
+    configStore.myDataTableControl.showLevelRequirement = true;
 
     const view = mountOptionsView(UserLevelRequirementsTd, { props: { userInfo }, pinia });
     await view.settle();
@@ -171,18 +181,38 @@ describe("F9：没有等级要求 / 元数据未加载完时不得显示「已�
     levelMetadataState.loaded = true;
 
     const view = await mountCellWithNextLevelFlag();
-    // CheckOutlined = .anticon-check；用户等级组图标是 anticon-team / anticon-check-circle，不会命中
-    expect(view.$$(".anticon-check")).toHaveLength(0);
-    view.unmount();
+    try {
+      // CheckOutlined = .anticon-check；用户等级组图标是 anticon-team / anticon-check-circle，不会命中
+      expect(view.$$(".anticon-check")).toHaveLength(0);
+    } finally {
+      view.unmount();
+    }
   });
 
-  it("元数据尚未加载完成（loaded=false）时同样不显示绿色勾", async () => {
-    levelMetadataState.levelRequirements = [];
+  it("元数据尚未加载完成（loaded=false）时即使已有满级要求也不显示绿色勾", async () => {
+    levelMetadataState.levelRequirements = [maxLevelRequirement];
     levelMetadataState.loaded = false;
 
     const view = await mountCellWithNextLevelFlag();
-    expect(view.$$(".anticon-check")).toHaveLength(0);
-    view.unmount();
+    try {
+      // 确认已进入 `<a-popover>` 分支（Popover 触发 span 含 `<br>`，而 v-else 分支没有）
+      expect(view.$("br"), "应已进入包含 CheckOutlined 的 Popover 分支").not.toBeNull();
+      expect(view.$$(".anticon-check")).toHaveLength(0);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("阳性对照：元数据已加载完成（loaded=true）且已满足全部等级要求时显示绿色勾", async () => {
+    levelMetadataState.levelRequirements = [maxLevelRequirement];
+    levelMetadataState.loaded = true;
+
+    const view = await mountCellWithNextLevelFlag();
+    try {
+      expect(view.$$(".anticon-check")).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
   });
 });
 

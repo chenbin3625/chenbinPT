@@ -5,9 +5,9 @@
  * 也会复用旧 Promise，成功结果（含按错误端点拿到的）被钉死。
  *
  * 这里用 imdb（支持 transformPtGen）作为站点，mock 掉 axios：
- * 只有配置里的 ptGenEndpoint 会成功，内置的 ourhelp 端点始终失败，
+ * 只有配置里的 ptGenEndpoint 会成功，内置的 ourhelp / github.io 端点始终失败，
  * 从而让 `Promise.any` 的胜者稳定等于当前配置指定的端点。
- * 注意：每次 PtGen 抓取都会同时请求配置端点与内置 ourhelp 端点，断言时用 ptGenRequests() 过滤。
+ * 注意：每次 PtGen 抓取都会同时请求配置端点与内置端点，断言时用 ptGenRequests() 过滤。
  */
 import axios from "axios";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,8 +63,8 @@ beforeEach(() => {
   vi.spyOn(axios, "get").mockImplementation(((url: string) => {
     requestedUrls.push(url);
 
-    // 内置 ourhelp 端点始终失败，保证 Promise.any 的胜者一定是配置里的 ptGenEndpoint
-    if (url.includes("ourhelp.club")) {
+    // 所有内置端点（OurHelp CDN / OurHelp API / Github Pages）均始终失败，保证 Promise.any 的胜者一定是配置里的 ptGenEndpoint
+    if (url.includes("ourhelp.club") || url.includes("ourbits.github.io")) {
       return Promise.reject(new Error("built-in endpoint disabled in test"));
     }
 

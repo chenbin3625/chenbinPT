@@ -7,13 +7,12 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
 import type { ISearchSolution } from "@/shared/types/storages/metadata.ts";
 import { buildSearchSolutionFromCategories } from "@/options/utils/searchSolutionConfig.ts";
 
-const metadataStore = useMetadataStore();
-
 export const radioDefault = Symbol("default");
 
 export type TSelectCategory = Record<ISearchCategories["key"], TSelectSearchCategoryValue | symbol>;
 
 export async function getSiteMetaCategory(siteId: TSiteID): Promise<ISearchCategories[]> {
+  const metadataStore = useMetadataStore();
   return (await metadataStore.getSiteMergedMetadata(siteId, "category", []))!;
 }
 
@@ -128,14 +127,16 @@ export function isSafeSearchEntryKey(key: string): boolean {
  *
  * 旧判定要求 `selectedCategories` 非空或存在 `name`，而分类全取默认时两者都为空 →
  * 连点两次「添加」会出现两条完全相同的 `{ id: "default", siteId }` 条目。
- * 这里按「有分类比分类、无分类比 name」的规范化规则比较。
+ * 这里按「任一方有分类则对称比较分类、双方都无分类再比 name」的规范化规则比较，
+ * 避免既有条目带分类而新条目是默认方案时被误判为重复。
  */
 export function isDuplicateSearchSolution(existing: ISearchSolution, incoming: ISearchSolution): boolean {
   if (existing.siteId !== incoming.siteId) return false;
 
+  const existingCategories = existing.selectedCategories ?? {};
   const incomingCategories = incoming.selectedCategories ?? {};
-  if (Object.keys(incomingCategories).length > 0) {
-    return isEqual(existing.selectedCategories ?? {}, incomingCategories);
+  if (Object.keys(existingCategories).length > 0 || Object.keys(incomingCategories).length > 0) {
+    return isEqual(existingCategories, incomingCategories);
   }
 
   return (existing.name ?? "") === (incoming.name ?? "");

@@ -17,7 +17,8 @@ const {
 
 const emit = defineEmits(["remove:solution"]);
 
-function removeSolution(solution: ISearchSolution) {
+function removeSolution(solution: ISearchSolution, event?: MouseEvent) {
+  event?.preventDefault?.();
   emit("remove:solution", solution);
 }
 </script>
@@ -27,10 +28,10 @@ function removeSolution(solution: ISearchSolution) {
     <a-space :direction="column ? 'vertical' : 'horizontal'" :size="4" wrap>
       <a-tag
         v-for="solution in solutions"
-        :key="solution.id"
+        :key="`${solution.siteId}:${solution.id}`"
         :closable="closable"
         style="height: auto; padding: 2px 8px"
-        @close="() => removeSolution(solution)"
+        @close="(event: MouseEvent) => removeSolution(solution, event)"
       >
         <SiteName class="" :site-id="solution.siteId" tag="span" />&nbsp;->&nbsp;
         <SolutionDetail :solution="solution" />

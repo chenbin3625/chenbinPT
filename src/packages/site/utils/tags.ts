@@ -48,14 +48,14 @@ export const preDefinedTorrentTagMap: IPreDefinedTorrentTag[] = [
   { name: "4K", color: "teal-darken-3", aka: ["4p", "2160p", /4 ?[Kk]/] },
   { name: "1080p", color: "teal-darken-1", aka: [] },
 
-  { name: "WEB-DL", color: "green-darken-2", aka: ["WEB DL", /WEB\.?DL/] },
-  { name: "Blu-ray", color: "blue-darken-3", aka: ["蓝光", /Blu[-]?ray/] },
+  { name: "WEB-DL", color: "green-darken-2", aka: ["WEB DL", /WEB\.?DL/i] },
+  { name: "Blu-ray", color: "blue-darken-3", aka: ["蓝光", /Blu[-]?ray/i] },
 
-  { name: "H265", color: "indigo", aka: ["HEVC", "x265", /H\.?265/] },
+  { name: "H265", color: "indigo", aka: ["HEVC", "x265", /H\.?265/i] },
 
   { name: "HDR", color: "purple", aka: ["HDR10", "HDR10+"] },
   { name: "HLG", color: "deep-purple", aka: ["Hybrid Log-Gamma", /混合对数伽玛/] },
-  { name: "DoVi", color: "pink", aka: ["Dolby Vision", "DV", /杜比(视界)*/, /DOLBY\s?VISION/] },
+  { name: "DoVi", color: "pink", aka: ["Dolby Vision", "DV", /杜比视界|^杜比$/, /DOLBY\s?VISION/i] },
 ] as const;
 
 export type TPreDefinedTorrentTagName = (typeof preDefinedTorrentTagMap)[number]["name"];
@@ -76,7 +76,7 @@ function escapeRegExp(literal: string): string {
  * 中文别名两侧都不是 `[A-Za-z0-9]`，行为与之前保持一致。
  *
  * 边界只约束「字母数字连续片段」，因此 `2160p`、`WEB-DL`、`50%`、`H&R` 等仍按预期命中；
- * 需要刻意放宽的匹配继续由 aka 中的 RegExp 字面量承担（如 `/H\.?265/`、`/4 ?[Kk]/`）。
+ * 需要刻意放宽的匹配继续由 aka 中的 RegExp 字面量承担（如 `/H\.?265/i`、`/4 ?[Kk]/`）。
  */
 function toBoundedLiteralPattern(literal: string): string {
   const prefix = /^[A-Za-z0-9]/.test(literal) ? "(?<![A-Za-z0-9])" : "";

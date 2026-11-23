@@ -375,7 +375,7 @@ export default class HDBits extends PrivateSite {
     row: IHDBitsRawTorrent,
     searchConfig: ISearchInput,
   ): Partial<ITorrent> {
-    torrent.link = `/download.php/${row.filename}?id=${row.id}&passkey=${this.userConfig.inputSetting?.passkey ?? ""}`;
+    torrent.link = `/download.php/${encodeURIComponent(row.filename ?? "")}?id=${encodeURIComponent(String(row.id))}&passkey=${encodeURIComponent(this.userConfig.inputSetting?.passkey ?? "")}`;
     return torrent;
   }
 

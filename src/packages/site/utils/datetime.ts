@@ -304,23 +304,36 @@ export function parseValidTimeStringInZone(
   formatString: string[],
   offset: timezoneOffset,
 ): number | string {
-  if (/^\d+$/.test(query)) return parseTimeWithZone(query, offset);
-  if (wallTimePattern.test(query)) return parseTimeWithZone(query, offset);
-
   // 站点自定义格式：在 UTC 上下文里解析出墙上时间字段，再按站点时区换算。
   // 不能先让 date-fns 按宿主时区 parse 再 format 回字段 —— 宿主处于夏令时跳变的那一小时
   // （如纽约 2024-03-10 02:30 不存在）时，parse 会把它挪到 03:30，站点时间就差 1 小时。
+  // 优先于 /^\d+$/ 尝试：纯数字自定义格式（如 yyyyMMddHHmmss / ddMMyyyy）不能被时间戳路径短路。
   for (const f of formatString) {
     try {
       // 格式里没有的字段（如年份）取自参考日期，与 date-fns 默认一致取当前时刻
       const wall = parse(query, f, new UTCWallDate(), { in: (value) => new UTCWallDate(value) });
       if (!isValid(wall)) continue;
-      // 格式自带时区（XXX / 'Z' 等）时 date-fns 已换算成绝对时间，直接返回
-      if (/[XxOz]/.test(f.replace(/'[^']*'/g, ""))) return +wall;
+      // 格式自带时区（XXX / 字面量 'Z'/'UTC'/'GMT'）或输入本身带显式时区时已是绝对时间，直接返回
+      if (
+        /[XxOz]/.test(f.replace(/'[^']*'/g, "")) ||
+        /'(?:Z|UTC|GMT)'/i.test(f) ||
+        explicitTimeZonePattern.test(query)
+      ) {
+        return +wall;
+      }
       return parseTimeWithZone(new Date(+wall).toISOString().slice(0, 23), offset);
     } catch {
       // 坏格式不阻止后续格式的尝试
     }
+  }
+
+  if (/^\d+$/.test(query)) {
+    const ts = parseTimeWithZone(query, offset);
+    return ts !== 0 ? ts : query;
+  }
+  if (wallTimePattern.test(query)) {
+    const ts = parseTimeWithZone(query, offset);
+    return ts !== 0 ? ts : query;
   }
 
   const parsed = parseValidTimeString(query, formatString);

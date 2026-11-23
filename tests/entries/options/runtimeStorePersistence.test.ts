@@ -14,7 +14,7 @@
  * - 从 sessionStorage 恢复的逻辑仍然有效；
  * - 配额不足时降级为"不保存搜索结果"而不是整份静默丢失（修复前的行为）。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
 import { nextTick } from "vue";
 
@@ -39,6 +39,11 @@ async function loadRuntimeStore(seed?: unknown) {
 describe("runtime store：节流持久化（P0-1）", () => {
   beforeEach(() => {
     sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("从 sessionStorage 恢复：刷新页面后搜索结果仍在", async () => {
@@ -89,6 +94,7 @@ describe("runtime store：节流持久化（P0-1）", () => {
       expect(Object.keys(saved.search.searchPlan)).toHaveLength(5);
     } finally {
       vi.useRealTimers();
+      vi.restoreAllMocks();
     }
   });
 
@@ -99,8 +105,8 @@ describe("runtime store：节流持久化（P0-1）", () => {
       const originalSetItem = sessionStorage.setItem.bind(sessionStorage);
       const spy = vi.spyOn(sessionStorage, "setItem").mockImplementation((key: string, value: string) => {
         const parsed = JSON.parse(value);
-        // 只在包含搜索结果时抛出配额错误，模拟 sessionStorage 写满
-        if (parsed?.search?.searchResult?.length > 0) {
+        // 只要包含任意一份搜索结果就抛出配额错误，模拟 sessionStorage 写满
+        if (parsed?.search?.searchResult?.length > 0 || parsed?.mediaServerSearch?.searchResult?.length > 0) {
           throw new DOMException("QuotaExceededError", "QuotaExceededError");
         }
         originalSetItem(key, value);
@@ -108,13 +114,17 @@ describe("runtime store：节流持久化（P0-1）", () => {
 
       store.search.searchKey = "keep-me";
       (store.search.searchResult as any[]).push({ id: 1 });
+      store.mediaServerSearch.searchKey = "keep-media";
+      (store.mediaServerSearch.searchResult as any[]).push({ id: "m1" });
       await nextTick();
       vi.advanceTimersByTime(500);
 
-      expect(spy).toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(2);
       const saved = JSON.parse(sessionStorage.getItem(RUNTIME_KEY) as string);
       expect(saved.search.searchKey).toBe("keep-me");
       expect(saved.search.searchResult).toEqual([]);
+      expect(saved.mediaServerSearch.searchKey).toBe("keep-media");
+      expect(saved.mediaServerSearch.searchResult).toEqual([]);
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();

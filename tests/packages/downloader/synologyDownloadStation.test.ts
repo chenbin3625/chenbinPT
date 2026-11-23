@@ -216,7 +216,7 @@ describe("Synology Download Station 删除参数", () => {
     (client as any).requestEntryCGI = request;
 
     await expect(client.removeTorrent("task-1", true)).resolves.toBe(true);
-    expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: "delete", id: "task-1" }));
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: "delete", id: ["task-1"] }));
   });
 });
 

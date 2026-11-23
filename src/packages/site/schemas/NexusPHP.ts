@@ -179,6 +179,15 @@ export const parseSectionedHitAndRunElement = (element: HTMLElement) => {
   return { hnrPreWarning: preWarningCount || 0, hnrUnsatisfied: unsatisfiedCount || 0 };
 };
 
+let inertScratchDocument: Document | undefined;
+const getInertScratchDocument = (ownerDocument?: Document | null): Document => {
+  if (!inertScratchDocument) {
+    const impl = ownerDocument?.implementation ?? document.implementation;
+    inertScratchDocument = impl.createHTMLDocument("");
+  }
+  return inertScratchDocument;
+};
+
 /**
  * 原实现：序列化整行 innerHTML 后按 "<br>" 切分，取最后一段并二次解析。
  * 仅在无法用直接子节点等价切分（存在嵌套 <br>）时作为回落使用。
@@ -267,15 +276,19 @@ export const subTitleRemoveExtraElement =
       return text.trim();
     }
 
-    // 需要剥离元素时，把尾部节点克隆到临时容器内再移除，等价于"解析尾部 HTML 片段 → 删除匹配元素 → 取文本"
-    const div = document.createElement("div");
+    // 需要剥离元素时，在惰性文档内创建临时容器并导入克隆节点（E07），
+    // 避免将不可信 HTML 节点（如 <img>）采纳进活动扩展文档而触发网络请求。
+    const inertDoc = getInertScratchDocument(element.ownerDocument);
+    const div = inertDoc.createElement("div");
     for (let i = lastBrIndex + 1; i < childNodes.length; i++) {
-      div.appendChild(childNodes[i].cloneNode(true));
+      div.appendChild(inertDoc.importNode(childNodes[i], true));
     }
     for (const removeSelectorsKey of removeSelectors) {
-      div.querySelectorAll(removeSelectorsKey).forEach((el) => (self ? el : el.parentElement!).remove());
+      div.querySelectorAll(removeSelectorsKey).forEach((el) => {
+        (self ? el : el.parentElement !== div ? el.parentElement : null)?.remove();
+      });
     }
-    return (div.textContent || div.innerText).trim();
+    return (div.textContent ?? "").trim();
   };
 
 /**
@@ -428,7 +441,7 @@ export const xiaomloveDefaultUserLevelRequirements: ILevelRequirement[] = [
 ];
 
 export const defaultUserLevelRequirements = xiaomloveDefaultUserLevelRequirements.map((level) => {
-  return omit(level, ["bonus"]);
+  return omit(level, ["bonus", "seedingBonus"]);
 }) as ILevelRequirement[];
 
 /**
@@ -1098,7 +1111,8 @@ export default class NexusPHP extends PrivateSite {
           let sizeIndex = 2;
           const tdAnothers = selectElements("> td", trAnothers[0]);
           for (let i = 0; i < tdAnothers.length; i++) {
-            if (sizePattern.test((tdAnothers[i] as HTMLElement).innerText)) {
+            const cellText = ((tdAnothers[i] as HTMLElement).innerText || tdAnothers[i].textContent || "").trim();
+            if (sizePattern.test(cellText)) {
               sizeIndex = i;
               break;
             }
@@ -1111,7 +1125,7 @@ export default class NexusPHP extends PrivateSite {
             const sizeElement = selectElements(`td:eq(${sizeIndex})`, trAnother)[0] as HTMLElement | undefined;
             if (!sizeElement) return;
 
-            seedStatus!.seedingSize += parseSizeString(sizeElement.innerText.trim());
+            seedStatus!.seedingSize += parseSizeString((sizeElement.innerText || sizeElement.textContent || "").trim());
           });
         }
       }
@@ -1142,13 +1156,9 @@ export default class NexusPHP extends PrivateSite {
 
     let uploads: number | undefined;
 
-    if (
-      // 先按关键字匹配（`<b>N</b>条记录` 或明确的「没有记录」）
-      /<b>\d+<\/b>(条记录| records|條記錄)|No record\.?|没有记录|沒有記錄|暂无数据|暫無數據/i.test(
-        userUploadsRequestString,
-      )
-    ) {
-      uploads = Number(userUploadsRequestString.match(/<b>(\d+)<\/b>(条记录| records|條記錄)/)?.[1] ?? 0);
+    const countMatch = userUploadsRequestString.match(/<b>(\d+)<\/b>(条记录| records|條記錄)/i);
+    if (countMatch) {
+      uploads = Number(countMatch[1]);
     } else if (userUploadsRequestString.includes("<table")) {
       // 未匹配到关键字，则从表格中解析
       const userUploadsDocument = createDocument(userUploadsRequestString);
@@ -1159,6 +1169,8 @@ export default class NexusPHP extends PrivateSite {
       } else {
         uploads = selectElements("table:last tr:not(:eq(0))", userUploadsDocument).length;
       }
+    } else if (NexusPHP.noRecordPattern.test(userUploadsRequestString)) {
+      uploads = 0;
     }
 
     if (typeof uploads !== "number" || !Number.isFinite(uploads)) {

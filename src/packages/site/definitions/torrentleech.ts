@@ -135,7 +135,7 @@ export const siteMetadata: ISiteMetadata = {
         delete requestConfig!.params?.keywords; // 移除 AbstractBittorrentSite 自动添加的 keywords 参数
 
         // remove dashes at the beginning of keywords as they exclude search strings (see Jackett/Jackett#3096)
-        keywords = keywords.replace(/(^|\s)-/, "");
+        keywords = keywords.replace(/(^|\s)-+/g, "$1");
         // 关键词作为路径段拼进 URL，必须编码：AC/DC、Spider-Man?、含 #/% 的关键词
         // 否则会改变路径语义（截断、多出路径段、被当成 query/hash）。
         requestConfig!.url = urlJoin(baseUrl, encodeURIComponent(keywords));
@@ -170,7 +170,7 @@ export const siteMetadata: ISiteMetadata = {
           (query: string) => {
             // Example: "e1234567" "s12345"
             // 只保留能直接用于 social 模块的 season id
-            if (query.charAt(0) === "e") return null;
+            if (typeof query !== "string" || !query || query.charAt(0) === "e") return null;
             return query.slice(1);
           },
         ],

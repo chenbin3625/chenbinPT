@@ -713,10 +713,17 @@ function extractLinksManually(dataTransfer: IDataTransferSnapshot): string[] {
   if (Array.from(dataTransfer.types).includes("text/uri-list")) {
     const uriList = dataTransfer.getData("text/uri-list");
     if (uriList) {
-      return uriList
-        .split("\r\n")
+      const links = uriList
+        .split(/\r?\n/)
         .map((line) => line.trim())
-        .filter((uri) => !uri.startsWith("#") && uri.startsWith("http"));
+        .filter((uri) => {
+          if (!uri || uri.startsWith("#")) return false;
+          const url = URL.parse(uri);
+          return !!url && ALLOWED_TORRENT_LINK_PROTOCOLS.has(url.protocol);
+        });
+      if (links.length > 0) {
+        return links;
+      }
     }
   }
   if (dataTransfer.types.includes("text/html")) {

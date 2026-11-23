@@ -9,7 +9,7 @@
  *
  * 这里只测可注入依赖的纯函数：摘要函数与合并式防抖。
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/messages.ts", () => ({
   sendMessage: vi.fn(),
@@ -205,8 +205,15 @@ describe("buildContextMenusContextKey", () => {
 });
 
 describe("createCoalescingDebounce", () => {
-  it("窗口内的多次变更只执行一次", async () => {
+  beforeEach(() => {
     vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("窗口内的多次变更只执行一次", async () => {
     const run = vi.fn();
     const debounce = createCoalescingDebounce(run, 1000);
 
@@ -218,12 +225,9 @@ describe("createCoalescingDebounce", () => {
     expect(run).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(run).toHaveBeenCalledTimes(1);
-
-    vi.useRealTimers();
   });
 
   it("执行期间到达的新变更会在本轮结束后再跑一轮（最后一次变更一定生效）", async () => {
-    vi.useFakeTimers();
     const resolvers: Array<() => void> = [];
     const run = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)));
     const debounce = createCoalescingDebounce(run, 1000);
@@ -246,11 +250,9 @@ describe("createCoalescingDebounce", () => {
 
     resolvers[1]!();
     await vi.advanceTimersByTimeAsync(0);
-    vi.useRealTimers();
   });
 
   it("run 抛错时走 onError，且不丢后续变更", async () => {
-    vi.useFakeTimers();
     const onError = vi.fn();
     const run = vi.fn(() => Promise.reject(new Error("rebuild failed")));
     const debounce = createCoalescingDebounce(run, 1000, onError);
@@ -262,8 +264,6 @@ describe("createCoalescingDebounce", () => {
     debounce.schedule();
     await vi.advanceTimersByTimeAsync(1000);
     expect(run).toHaveBeenCalledTimes(2);
-
-    vi.useRealTimers();
   });
 });
 

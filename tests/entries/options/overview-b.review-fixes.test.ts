@@ -567,7 +567,7 @@ it("批量暂停在请求完成前只提交一次，并显示忙碌状态", asyn
 });
 
 describe("D2-09：批量操作的部分失败计数与原因", () => {
-  it("一个成功一个失败时，提示包含失败数与 warning 色", async () => {
+  it("1 个成功、2 个失败（返回 false）时，精确展示成功数、部分失败提示与 warning 色", async () => {
     const { view, showSnackbar, t, selectAllRows } = await mountMyClientForBatch((data) => data.id === "hash-1");
 
     try {
@@ -579,11 +579,38 @@ describe("D2-09：批量操作的部分失败计数与原因", () => {
       pauseBtn!.click();
       await view.settle(120);
 
-      expect(showSnackbar).toHaveBeenCalled();
+      expect(showSnackbar).toHaveBeenCalledTimes(1);
       const [message, options] = showSnackbar.mock.calls.at(-1)!;
-      expect(message, "应报成功数").toContain("1");
-      expect(message, "应报失败数").toContain("1");
-      expect(message, "部分失败应为 warning 色").toBeTruthy();
+      expect(message).toBe(
+        `${t("MyClient.action.pauseSelectedSuccess", { count: 1 })}，${t("MyClient.batch.partialFailure")}`,
+      );
+      expect(options).toMatchObject({ color: "warning" });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("部分失败且存在异常原因时，附带首个失败原因并用 warning 色提示", async () => {
+    const { view, showSnackbar, t, selectAllRows } = await mountMyClientForBatch((data) => {
+      if (data.id === "hash-1") return true;
+      if (data.id === "hash-2") return false;
+      return Promise.reject(new Error("rpc timeout"));
+    });
+
+    try {
+      await selectAllRows();
+      const pauseBtn = view.$<HTMLButtonElement>(
+        `.my-client-toolbar__actions button[title="${t("MyClient.pauseSelected")}"]`,
+      );
+      expect(pauseBtn).not.toBeNull();
+      pauseBtn!.click();
+      await view.settle(120);
+
+      expect(showSnackbar).toHaveBeenCalledTimes(1);
+      const [message, options] = showSnackbar.mock.calls.at(-1)!;
+      expect(message).toBe(
+        `${t("MyClient.action.pauseSelectedSuccess", { count: 1 })}，${t("MyClient.batch.partialFailure")} (${t("DownloadHistory.detail.errorMessage")}: rpc timeout)`,
+      );
       expect(options).toMatchObject({ color: "warning" });
     } finally {
       view.unmount();

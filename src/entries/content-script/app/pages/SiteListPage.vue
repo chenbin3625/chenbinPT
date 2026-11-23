@@ -77,7 +77,11 @@ async function handleLocalDownloadMulti() {
     const results = await Promise.allSettled(
       torrents.map((torrent) => sendMessage("downloadTorrent", { torrent, downloaderId: "local" })),
     );
-    const failed = results.filter((result) => result.status === "rejected").length;
+    // downloadTorrent 的失败通常以返回值 { downloadStatus: "failed" } 表示，而不是 reject
+    const failed = results.filter(
+      (result) =>
+        result.status === "rejected" || (result.status === "fulfilled" && result.value?.downloadStatus === "failed"),
+    ).length;
     if (failed > 0) {
       const success = results.length - failed;
       runtimeStore.showSnackbar(

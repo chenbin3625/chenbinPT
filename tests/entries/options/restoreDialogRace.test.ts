@@ -92,7 +92,11 @@ describe("RestoreDialog 异步解析身份", () => {
   it("本地文件后选覆盖前选，旧文件的失败不能显示重试状态", async () => {
     document.body.innerHTML = "";
     const pinia = prepareOptionsPinia();
+    const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
     const { default: Dialog } = await import("@/options/views/Settings/SetBackup/RestoreDialog.vue");
+    const runtimeStore = useRuntimeStore(pinia);
+    const showSnackbarSpy = vi.spyOn(runtimeStore, "showSnackbar").mockImplementation(() => {});
     const open = ref(false);
     const first = deferred<any>();
     const second = deferred<any>();
@@ -123,8 +127,17 @@ describe("RestoreDialog 异步解析身份", () => {
       expect(document.body.querySelector<HTMLInputElement>(".ant-checkbox-group input[value='config']")?.disabled).toBe(
         false,
       );
-      expect(document.body.querySelector(".ant-btn")?.textContent).not.toContain("old failure");
+
+      // 校验弹窗内所有按钮均未渲染重试按钮（v-if="!isDecryptKeyValid"），且旧失败未触发错误提示
+      const retryLabel = i18nInstance.global.t("SetBackup.RestoreDialog.retry");
+      const modalButtonTexts = Array.from(document.body.querySelectorAll(".ant-modal .ant-btn")).map(
+        (button) => button.textContent?.trim() ?? "",
+      );
+      expect(modalButtonTexts.length).toBeGreaterThan(0);
+      expect(modalButtonTexts.some((text) => text.includes(retryLabel))).toBe(false);
+      expect(showSnackbarSpy).not.toHaveBeenCalled();
     } finally {
+      showSnackbarSpy.mockRestore();
       view.unmount();
     }
   });

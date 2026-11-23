@@ -107,7 +107,7 @@ const {
 const loading = ref(false);
 const pendingCommand = ref<"pause" | "resume" | "queue" | null>(null);
 
-const tableSelected = ref<CTorrent[]>([]);
+const selectedKeys = ref<string[]>([]);
 const searchText = ref("");
 // P1-20：搜索框输入做防抖，避免每敲一个字符都对数千种子做一次全量过滤
 const searchTextDebounced = refDebounced(searchText, 300);
@@ -172,8 +172,8 @@ const tablePagination = computed(() =>
     { allowUnpaginated: false },
   ),
 );
-function onSelectionChange(_keys: (string | number)[], rows: CTorrent[]) {
-  tableSelected.value = rows;
+function onSelectionChange(keys: (string | number)[]) {
+  selectedKeys.value = keys.map(String);
 }
 function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown) {
   configStore.updateTableBehavior("MyClient", "sortBy", toSortBy(sorter as never));
@@ -194,25 +194,47 @@ const filteredTorrents = computed(() => {
 });
 
 /**
+ * 仅保存选中的 row key，并从实时 `allTorrents` 派生选中对象：
+ * 自动刷新或批量弹窗完成后，`torrents.value` 会替换成最新快照；若直接缓存旧的 `CTorrent` 引用，
+ * 再次打开标签/限速弹窗会读到陈旧的 label/speedLimit，或继续指向已不存在的种子。
+ */
+const tableSelected = computed(() => {
+  const keySet = new Set(selectedKeys.value);
+  return allTorrents.value.filter((t) => keySet.has(torrentKey(t)));
+});
+
+/**
  * 批量操作只作用于「当前可见且仍被勾选」的种子（D2-07）。
  *
  * antd 的 `selectedRowKeys` 不会在数据源被筛选时主动裁剪：用户先全选、再输入搜索词过滤，
- * 隐藏行仍留在选中集合里，此时点删除/限速/标签会作用到看不见的行。这里用当前可见集合求交，
- * 所有批量入口（按钮禁用条件、确认框、批量弹窗）都只使用这个交集。
+ * 隐藏行仍留在选中集合里，此时点删除/限速/标签会作用到看不见的行。这里直接从实时
+ * `filteredTorrents` 按 `selectedKeys` 派生，保证可见交集与最新快照同时成立。
  */
 const selectedTorrents = computed(() => {
-  const visibleKeys = new Set(filteredTorrents.value.map((t) => torrentKey(t)));
-  return tableSelected.value.filter((t) => visibleKeys.has(torrentKey(t)));
+  const keySet = new Set(selectedKeys.value);
+  return filteredTorrents.value.filter((t) => keySet.has(torrentKey(t)));
 });
 
 // 当前选中种子的下载器类型对应的能力元数据（用于显示可用操作）
 const clientMetaMap = ref<Record<string, TorrentClientMetaData>>({});
+const pendingClientMetaMap = new Map<string, Promise<void>>();
 
 async function ensureClientMeta(clientId: string) {
   const type = metadataStore.downloaders[clientId]?.type;
-  if (type && !clientMetaMap.value[type]) {
-    clientMetaMap.value[type] = await getDownloaderMetaData(type);
+  if (!type || clientMetaMap.value[type]) return;
+  let pending = pendingClientMetaMap.get(type);
+  if (!pending) {
+    pending = getDownloaderMetaData(type)
+      .then((meta) => {
+        clientMetaMap.value[type] = meta;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        pendingClientMetaMap.delete(type);
+      });
+    pendingClientMetaMap.set(type, pending);
   }
+  await pending;
 }
 
 /** 判断某个 feature 在该下载器上是否可用 */
@@ -235,9 +257,20 @@ function isFeatureAllowedForAll(list: CTorrent[], feature: keyof TorrentClientMe
 
 // 在表格渲染时按需加载选中/可见种子的客户端能力元数据
 async function loadVisibleClientMeta() {
-  const ids = new Set(allTorrents.value.map((t) => t.clientId));
+  const ids = new Set<string>([...activeDownloaderIds.value, ...allTorrents.value.map((t) => t.clientId)]);
   await Promise.all([...ids].map(ensureClientMeta));
 }
+
+watch(
+  () => {
+    const ids = new Set<string>([...activeDownloaderIds.value, ...allTorrents.value.map((t) => t.clientId)]);
+    return [...ids].map((id) => `${id}:${metadataStore.downloaders[id]?.type ?? ""}`).join(",");
+  },
+  () => {
+    void loadVisibleClientMeta();
+  },
+  { immediate: true },
+);
 
 // ── table headers ─────────────────────────────────────────────────────────
 const fullTableHeader = computed(
@@ -281,7 +314,7 @@ const fullTableHeader = computed(
 /** Manual full refresh: fetch all active downloaders, reset error state. */
 async function loadTorrents() {
   loading.value = true;
-  tableSelected.value = [];
+  selectedKeys.value = [];
   resetRefreshState();
   try {
     await Promise.allSettled(activeDownloaderIds.value.map((id) => loadSingleDownloader(id)));
@@ -582,6 +615,13 @@ function clientName(clientId: string) {
 function clientIcon(clientId: string) {
   const type = metadataStore.downloaders[clientId]?.type;
   return type ? getDownloaderIcon(type) : undefined;
+}
+
+/** Aria2 等不提供添加时间的客户端会返回 0（或缺失）：统一显示 "-"，避免渲染成 1970-01-01 或 NaN */
+function formatDateAdded(timestamp: number | undefined): string {
+  return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
+    ? formatDateTimeForTable(timestamp * 1000)
+    : "-";
 }
 
 /**
@@ -914,7 +954,7 @@ function onToolbarSecondaryAction(key: string) {
 
         <!-- date added -->
         <template v-else-if="column.key === 'dateAdded'">
-          <span class="ptd-date-time my-client-date">{{ formatDateTimeForTable(record.dateAdded * 1000) }}</span>
+          <span class="ptd-date-time my-client-date">{{ formatDateAdded(record.dateAdded) }}</span>
         </template>
 
         <!-- actions -->

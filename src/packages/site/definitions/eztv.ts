@@ -70,7 +70,7 @@ export const siteMetadata: ISiteMetadata = {
         attr: "title",
         filters: [
           (title: string) => title.replace(/\[eztv\]/g, ""),
-          (title: string) => title.replace(/\(.*\)$/, ""),
+          (title: string) => title.replace(/\s*\([\d,]+(?:\.\d+)?\s*[KMGT]?i?B\)\s*$/i, ""),
           { name: "trim" },
         ],
       },

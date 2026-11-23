@@ -74,20 +74,45 @@ describe("fetchTmdbDocument 缓存校验", () => {
     expect(vi.mocked(axios.get).mock.calls.length).toBeGreaterThan(axiosCalls);
   });
 
-  it("重定向到登录页（带登录表单）时同样不写入缓存", async () => {
-    const tmdbMovieId = 680;
+  it("重定向到登录页（带登录表单或 /login URL）时即使含关键元素也不写入缓存", async () => {
+    // 分支 1：URL 不含 /login，页面包含 #imdb_id（满足 isValidDocument），但含 #auth_login_form
+    // 只有 isTmdbLoginDocument 能拦截并阻止写入缓存
+    const tmdbMovieIdByForm = 680;
+    externalIdsDocument = () =>
+      createDocument(
+        `<html><body><form id="auth_login_form" action="/auth" method="post"><input type="password"></form><input id="imdb_id" value="tt0137523"></body></html>`,
+        buildExternalIdsUrl(tmdbMovieIdByForm),
+      );
+    expect(await parseExternalIds(tmdbMovieIdByForm)).toEqual({});
+    const callsAfterForm = vi.mocked(axios.get).mock.calls.length;
+    expect(callsAfterForm).toBe(1);
 
     externalIdsDocument = () =>
       createDocument(
-        `<html><body><form id="auth_login_form" action="/login" method="post"><input type="password"></form></body></html>`,
+        `<html><body><input id="imdb_id" value="tt0137523"></body></html>`,
+        buildExternalIdsUrl(tmdbMovieIdByForm),
+      );
+    expect((await parseExternalIds(tmdbMovieIdByForm)).imdb).toBe("tt0137523");
+    expect(vi.mocked(axios.get).mock.calls.length).toBe(callsAfterForm + 1);
+
+    // 分支 2：页面不含登录表单且包含 #imdb_id（满足 isValidDocument），但最终 URL 落在 /login
+    const tmdbMovieIdByUrl = 681;
+    externalIdsDocument = () =>
+      createDocument(
+        `<html><body><input id="imdb_id" value="tt0137523"></body></html>`,
         "https://www.themoviedb.org/login",
       );
-    expect(await parseExternalIds(tmdbMovieId)).toEqual({});
+    expect(await parseExternalIds(tmdbMovieIdByUrl)).toEqual({});
+    const callsAfterUrl = vi.mocked(axios.get).mock.calls.length;
+    expect(callsAfterUrl).toBe(callsAfterForm + 2);
 
     externalIdsDocument = () =>
-      createDocument(`<html><body><input id="imdb_id" value="tt0137523"></body></html>`, "about:blank");
-
-    expect((await parseExternalIds(tmdbMovieId)).imdb).toBe("tt0137523");
+      createDocument(
+        `<html><body><input id="imdb_id" value="tt0137523"></body></html>`,
+        buildExternalIdsUrl(tmdbMovieIdByUrl),
+      );
+    expect((await parseExternalIds(tmdbMovieIdByUrl)).imdb).toBe("tt0137523");
+    expect(vi.mocked(axios.get).mock.calls.length).toBe(callsAfterUrl + 1);
   });
 
   it("正常目标页面仍按 URL 缓存复用（保留原有缓存收益）", async () => {

@@ -18,14 +18,17 @@ vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(async () => undefined) }));
 
 const EXTENSION_URL = "chrome-extension://test/";
 
-function stubExtensionStorage(configValue: unknown) {
+function stubExtensionStorage(
+  configValue: unknown,
+  options: { getImpl?: (key: string) => Promise<Record<string, unknown>> } = {},
+) {
   (window as any).happyDOM?.setURL(`${EXTENSION_URL}options.html`);
   const setSpy = vi.fn(async () => undefined);
   vi.stubGlobal("chrome", {
     runtime: { id: "test-extension-id", getURL: (path: string) => `${EXTENSION_URL}${path}` },
     storage: {
       local: {
-        get: async (key: string) => ({ [key]: configValue }),
+        get: options.getImpl ?? (async (key: string) => ({ [key]: configValue })),
         set: setSpy,
       },
       session: { get: async () => ({}), set: async () => undefined },
@@ -84,6 +87,35 @@ describe("F1-03：config.afterRestore 不得让 $onReady() reject", () => {
 
     await expect(configStore.$onReady()).resolves.toBeUndefined();
     expect(configStore.tableBehavior.DownloadHistory.sortBy).toEqual([{ key: "downloadAt", order: "desc" }]);
+  });
+
+  it("afterRestore 内部抛错（getter 抛出异常）时不会冒泡到 $onReady()", async () => {
+    let releaseGet!: (value: Record<string, unknown>) => void;
+    const pendingGet = new Promise<Record<string, unknown>>((resolve) => {
+      releaseGet = resolve;
+    });
+    stubExtensionStorage(undefined, { getImpl: () => pendingGet });
+
+    const configStore = await createFreshConfigStore();
+
+    // 在 restore 尚未触发 afterRestore 前，把 $state.tableBehavior 换成抛错 getter；
+    // 远端恢复载荷只含 { lang: "en" }，不会覆盖 tableBehavior，确保异常真正由 afterRestore 触发并被其 try/catch 吞掉
+    let getterCalls = 0;
+    Object.defineProperty(configStore.$state, "tableBehavior", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("boom in afterRestore");
+      },
+    });
+
+    releaseGet({ config: { lang: "en" } });
+
+    await expect(configStore.$onReady()).resolves.toBeUndefined();
+    expect(configStore.$ready).toBe(true);
+    expect(getterCalls).toBeGreaterThanOrEqual(1);
+    expect(configStore.lang).toBe("en");
   });
 
   it("正常数据：仍会过滤掉基于 id 的 DownloadHistory 排序项", async () => {

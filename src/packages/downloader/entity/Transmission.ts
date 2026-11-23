@@ -190,6 +190,30 @@ interface AddTorrentResponse extends Omit<TransmissionBaseResponse, "arguments">
 
 type TransmissionTorrentIds = number | Array<number | string> | "recently-active";
 
+function normalizeSingleTransmissionId(id: number | string): number | string {
+  if (typeof id === "string" && /^\d+$/.test(id)) {
+    const numericId = Number(id);
+    if (Number.isSafeInteger(numericId) && String(numericId) === id) {
+      return numericId;
+    }
+  }
+  return id;
+}
+
+function normalizeTransmissionIds(ids: number | string | Array<number | string>): TransmissionTorrentIds {
+  if (ids === "recently-active") {
+    return ids;
+  }
+  if (Array.isArray(ids)) {
+    return ids.map((item) => normalizeSingleTransmissionId(item));
+  }
+  return [normalizeSingleTransmissionId(ids)];
+}
+
+function normalizeTransmissionLabel(label: string): string {
+  return label.trim().replaceAll(",", "-");
+}
+
 type TransmissionRequestMethod =
   | "session-get"
   | "session-stats"
@@ -215,7 +239,7 @@ interface TransmissionAddTorrentOptions {
 }
 
 interface TransmissionTorrentFilterRules extends CTorrentFilterRules {
-  ids?: TransmissionTorrentIds;
+  ids?: TransmissionTorrentIds | string;
 }
 
 interface TransmissionTorrentArguments {
@@ -493,8 +517,9 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       }
 
       // PKG-4：label 语义统一为「单一标签」——添加时与 setTorrentLabel 一样只写一个 label，
-      // 不再按逗号拆成多个（拆分会让 addTorrent 与 setTorrentLabel 的语义不一致）。
-      const labels: string[] | undefined = options.label?.trim() ? [options.label.trim()] : undefined;
+      // 不再按逗号拆成多个（拆分会让 addTorrent 与 setTorrentLabel 的语义不一致），同时归一化逗号避免 Transmission 拒绝。
+      const normalizedLabel = options.label ? normalizeTransmissionLabel(options.label) : "";
+      const labels: string[] | undefined = normalizedLabel ? [normalizedLabel] : undefined;
 
       if (labels && supportLabelAtAdd) {
         addTorrentOptions.labels = labels;
@@ -525,7 +550,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       if (!isDuplicate && !supportLabelAtAdd && labels && typeof torrentId !== "undefined") {
         try {
           await this.request("torrent-set", {
-            ids: torrentId,
+            ids: normalizeTransmissionIds(torrentId),
             labels: labels,
           });
         } catch (e) {
@@ -548,7 +573,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       ) {
         try {
           await this.request("torrent-set", {
-            ids: torrentId,
+            ids: normalizeTransmissionIds(torrentId),
             uploadLimit: options.uploadSpeedLimit * 1024, // KB/s
             uploadLimited: true,
           });
@@ -596,8 +621,8 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       fields: this.torrentRequestFields,
     };
 
-    if (filter.ids) {
-      args.ids = filter.ids;
+    if (filter.ids !== undefined && filter.ids !== null && filter.ids !== "") {
+      args.ids = normalizeTransmissionIds(filter.ids);
     }
 
     const { data } = await this.request<TransmissionTorrentGetResponse>("torrent-get", args);
@@ -659,7 +684,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   async pauseTorrent(id: any): Promise<boolean> {
     try {
       const args: TransmissionTorrentArguments = {
-        ids: id,
+        ids: normalizeTransmissionIds(id),
       };
       await this.request("torrent-stop", args);
       return true;
@@ -671,7 +696,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   async removeTorrent(id: any, removeData?: boolean): Promise<boolean> {
     try {
       const args: TransmissionTorrentRemoveArguments = {
-        ids: id,
+        ids: normalizeTransmissionIds(id),
         "delete-local-data": removeData,
       };
       await this.request("torrent-remove", args);
@@ -685,7 +710,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   async resumeTorrent(id: any): Promise<boolean> {
     try {
       const args: TransmissionTorrentArguments = {
-        ids: id,
+        ids: normalizeTransmissionIds(id),
       };
       await this.request("torrent-start", args);
       return true;
@@ -702,7 +727,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       const {
         data: { arguments: args },
       } = await this.request<TransmissionTorrentGetResponse>("torrent-get", {
-        ids: [torrent.id],
+        ids: normalizeTransmissionIds(torrent.id),
         fields: ["trackers"],
       });
       trackers = args.torrents[0]?.trackers;
@@ -715,7 +740,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   override async recheckTorrent(id: any): Promise<boolean> {
     try {
       const args: TransmissionTorrentArguments = {
-        ids: id,
+        ids: normalizeTransmissionIds(id),
       };
       await this.request("torrent-verify", args);
       return true;
@@ -734,7 +759,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         bottom: "queue-move-bottom",
       };
       const args: TransmissionTorrentArguments = {
-        ids: id,
+        ids: normalizeTransmissionIds(id),
       };
       await this.request(methodMap[direction], args);
       return true;
@@ -757,7 +782,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
       downloadLimit?: number;
       downloadLimited?: boolean;
     } = {
-      ids: id,
+      ids: normalizeTransmissionIds(id),
     };
 
     if (typeof limits.upload !== "undefined") {
@@ -781,15 +806,16 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   // 设置单个种子的标签
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
     try {
-      // labels 字段从 RPC 17（Transmission 3.00）起才支持；低版本发送会被静默忽略，
+      // labels 字段从 RPC 16（Transmission 3.00）起支持 torrent-set；低版本发送会被静默忽略，
       // 与其它方法保持一致直接返回 false，同时避免一次无意义的 torrent-set 请求。
-      if ((await this.getRpcVersion()) < 17) {
+      if ((await this.getRpcVersion()) < 16) {
         return false;
       }
 
+      const normalizedLabel = normalizeTransmissionLabel(label);
       const args = {
-        ids: id,
-        labels: [label],
+        ids: normalizeTransmissionIds(id),
+        labels: normalizedLabel ? [normalizedLabel] : [],
       };
       await this.request("torrent-set", args);
       this.invalidateSuggestListCache();
@@ -822,7 +848,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         }>;
       }>
     >("torrent-get", {
-      ids: [this.getTorrentId(torrent)],
+      ids: normalizeTransmissionIds(this.getTorrentId(torrent)),
       fields: ["files", "fileStats"],
     });
 
@@ -858,7 +884,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     const wanted = selections.filter((s) => s.priority !== "skip");
     const unwanted = selections.filter((s) => s.priority === "skip");
 
-    const args: Record<string, any> = { ids: this.getTorrentId(torrent) };
+    const args: Record<string, any> = { ids: normalizeTransmissionIds(this.getTorrentId(torrent)) };
     if (unwanted.length) {
       args["files-unwanted"] = unwanted.map((s) => s.index);
     }
@@ -900,7 +926,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         }>;
       }>
     >("torrent-get", {
-      ids: [this.getTorrentId(torrent)],
+      ids: normalizeTransmissionIds(this.getTorrentId(torrent)),
       fields: ["peers"],
     });
 
@@ -949,7 +975,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
         }>;
       }>
     >("torrent-get", {
-      ids: [this.getTorrentId(torrent)],
+      ids: normalizeTransmissionIds(this.getTorrentId(torrent)),
       fields: ["trackerStats"],
     });
 
@@ -973,7 +999,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
   override async addTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
     try {
       await this.request("torrent-set", {
-        ids: this.getTorrentId(torrent),
+        ids: normalizeTransmissionIds(this.getTorrentId(torrent)),
         trackerAdd: [url],
       });
       return true;
@@ -991,7 +1017,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
    */
   override async removeTorrentTracker(torrent: string | CTorrent, url: string): Promise<boolean> {
     try {
-      const ids = this.getTorrentId(torrent);
+      const ids = normalizeTransmissionIds(this.getTorrentId(torrent));
       const {
         data: { arguments: args },
       } = await this.request<
@@ -999,7 +1025,7 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
           torrents: Array<{ trackerStats: Array<{ announce: string; id?: number }> }>;
         }>
       >("torrent-get", {
-        ids: [ids],
+        ids,
         fields: ["trackerStats"],
       });
 

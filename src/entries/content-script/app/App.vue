@@ -96,6 +96,7 @@ window.addEventListener("resize", handleWindowResize);
 
 // 由于App.vue是整个应用的根组件，此时 configStore 等 pinia store 可能还未初始化完成，所以需要监听 $onReady
 let stopUrlWatcher: (() => void) | undefined;
+let unmounted = false;
 
 const dataReady = inject<Promise<void> | undefined>("ptd_data_ready", undefined);
 
@@ -108,13 +109,18 @@ void (async () => {
     await configStore.$onReady();
   }
 
+  // 组件在异步就绪前已被卸载（如宿主移除 contentRoot 触发 unmount），不得再注册全局 URL 监听器
+  if (unmounted) return;
+
   {
     openSpeedDial.value = configStore.contentScript?.defaultOpenSpeedDial ?? false;
 
     if (openSpeedDial.value) {
-      void updatePageType(ptdData).catch(() =>
-        runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }),
-      );
+      void updatePageType(ptdData).catch(() => {
+        if (!unmounted) {
+          runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" });
+        }
+      });
     }
 
     // A-8：SPA 站点（Unit3D/Livewire 等）列表 → 详情是 pushState 导航，内容脚本不会重新执行，
@@ -131,7 +137,11 @@ void (async () => {
     rightX.value = clientWidth - x.value;
     bottomY.value = clientHeight - y.value;
   }
-})().catch(() => runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" }));
+})().catch(() => {
+  if (!unmounted) {
+    runtimeStore.showSnackbar(t("contentScript.operationFailed"), { color: "error" });
+  }
+});
 
 const remoteDownloadDialogData = shallowReactive<IRemoteDownloadDialogData>({
   show: false,
@@ -171,9 +181,11 @@ function handleDocumentDragStart(e: DragEvent) {
 document.addEventListener("dragstart", handleDocumentDragStart);
 
 onUnmounted(() => {
+  unmounted = true;
   window.removeEventListener("resize", handleWindowResize);
   document.removeEventListener("dragstart", handleDocumentDragStart);
   stopUrlWatcher?.(); // A-8：移除 URL 变化订阅（含 history 上的补丁）
+  stopUrlWatcher = undefined;
 });
 
 async function onDrop(event: DragEvent) {

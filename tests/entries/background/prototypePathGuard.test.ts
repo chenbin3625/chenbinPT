@@ -84,7 +84,7 @@ describe("patchExtStoragePathLocal：原型污染防护（C-1）", () => {
 
   it("path = ['a', '__proto__']（危险段在叶子）同样不污染", async () => {
     backing.set("metadata", { a: 1 });
-    await patchExtStoragePathLocal("metadata", ["a", "__proto__"], { polluted2: 1 }).catch(() => undefined);
+    await expect(patchExtStoragePathLocal("metadata", ["a", "__proto__"], { polluted2: 1 })).rejects.toThrow();
 
     expect(hasGlobalPollution("polluted2")).toBe(false);
     expect(({} as any).polluted2).toBeUndefined();
@@ -94,7 +94,7 @@ describe("patchExtStoragePathLocal：原型污染防护（C-1）", () => {
 
   it("constructor / prototype 段被拒绝且不污染", async () => {
     backing.set("metadata", { a: 1 });
-    await patchExtStoragePathLocal("metadata", ["constructor", "prototype", "bad"], 1).catch(() => undefined);
+    await expect(patchExtStoragePathLocal("metadata", ["constructor", "prototype", "bad"], 1)).rejects.toThrow();
 
     expect(hasGlobalPollution("bad")).toBe(false);
     expect((backing.get("metadata") as any).a).toBe(1);

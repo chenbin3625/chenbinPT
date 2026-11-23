@@ -90,10 +90,11 @@ async function onEnter() {
         );
       })
       .join(";");
-
-    // 脱钩 selectedCategories，因为 name 已经包含了这些信息
-    delete searchSolution.value.selectedCategories;
   }
+
+  // 无论是否从默认分类进入，自定义方案都必须脱钩 selectedCategories：
+  // 否则保留的 `{}` 在读取时会被 refreshSavedSearchSolutionItem 当作按分类重建条目，清掉自定义 requestConfig。
+  delete searchSolution.value.selectedCategories;
 
   // 生成 requestConfig 的 JSON 字符串
   searchSolutionEntryRequestConfig.value = JSON.stringify(

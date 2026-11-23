@@ -151,7 +151,7 @@ describe("offscreen 用户信息刷新队列：首批任务立即应用并发配
   it("storage.onChanged 发生 config 变更时清除记忆并发，后续请求重读新配置", async () => {
     let currentConcurrency = 2;
     let storageListener: any;
-    (globalThis as any).chrome = {
+    vi.stubGlobal("chrome", {
       storage: {
         onChanged: {
           addListener: vi.fn((fn: any) => {
@@ -159,37 +159,41 @@ describe("offscreen 用户信息刷新队列：首批任务立即应用并发配
           }),
         },
       },
-    };
-    const handler = await loadUserInfoHandler();
-    mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
-      if (name === "getExtStoragePath" && payload?.path === "userInfo.queueConcurrency") {
-        return currentConcurrency;
-      }
-      return payload?.defaultValue;
     });
-    mocks.getSiteInstance.mockImplementation(async (siteId: string) => ({
-      url: `https://${siteId}.example.test`,
-      allowQueryUserInfo: true,
-      metadata: { type: "private" },
-      isOnline: true,
-      getUserInfoResult: vi.fn(async () => ({ site: siteId, status: 0, updateAt: Date.now() })),
-    }));
+    try {
+      const handler = await loadUserInfoHandler();
+      mocks.sendMessage.mockImplementation(async (name: string, payload: any) => {
+        if (name === "getExtStoragePath" && payload?.path === "userInfo.queueConcurrency") {
+          return currentConcurrency;
+        }
+        return payload?.defaultValue;
+      });
+      mocks.getSiteInstance.mockImplementation(async (siteId: string) => ({
+        url: `https://${siteId}.example.test`,
+        allowQueryUserInfo: true,
+        metadata: { type: "private" },
+        isOnline: true,
+        getUserInfoResult: vi.fn(async () => ({ site: siteId, status: 0, updateAt: Date.now() })),
+      }));
 
-    await handler({ data: "site-1" });
-    expect(
-      mocks.sendMessage.mock.calls.filter(
-        ([name, payload]: any[]) => name === "getExtStoragePath" && payload?.path === "userInfo.queueConcurrency",
-      ),
-    ).toHaveLength(1);
+      await handler({ data: "site-1" });
+      expect(
+        mocks.sendMessage.mock.calls.filter(
+          ([name, payload]: any[]) => name === "getExtStoragePath" && payload?.path === "userInfo.queueConcurrency",
+        ),
+      ).toHaveLength(1);
 
-    currentConcurrency = 4;
-    storageListener?.({ config: { newValue: {} } }, "local");
+      currentConcurrency = 4;
+      storageListener?.({ config: { newValue: {} } }, "local");
 
-    await handler({ data: "site-2" });
-    expect(
-      mocks.sendMessage.mock.calls.filter(
-        ([name, payload]: any[]) => name === "getExtStoragePath" && payload?.path === "userInfo.queueConcurrency",
-      ),
-    ).toHaveLength(2);
+      await handler({ data: "site-2" });
+      expect(
+        mocks.sendMessage.mock.calls.filter(
+          ([name, payload]: any[]) => name === "getExtStoragePath" && payload?.path === "userInfo.queueConcurrency",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

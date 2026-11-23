@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 
@@ -50,6 +50,41 @@ function readSource(relativePath: string): string {
   return readFileSync(resolve(REPO_ROOT, relativePath), "utf8");
 }
 
+function extractFunctionBody(source: string, name: string): string {
+  return new RegExp(`(?:async )?function ${name}\\(\\) \\{([\\s\\S]*?)\\n\\}`).exec(source)?.[1] ?? "";
+}
+
+const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalExecCommandDescriptor = Object.getOwnPropertyDescriptor(document, "execCommand");
+
+const activeStops: Array<() => void> = [];
+const mountedNodes: Element[] = [];
+
+function trackStop(stop: () => void): () => void {
+  let stopped = false;
+  const wrapped = () => {
+    if (stopped) return;
+    stopped = true;
+    stop();
+  };
+  activeStops.push(wrapped);
+  return wrapped;
+}
+
+function mountNode<T extends Element>(node: T): T {
+  document.body.appendChild(node);
+  mountedNodes.push(node);
+  return node;
+}
+
+function restorePropertyDescriptor(target: object, key: PropertyKey, descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(target, key, descriptor);
+  } else {
+    delete (target as Record<PropertyKey, unknown>)[key];
+  }
+}
+
 const FAKE_SITE = {
   metadata: {
     id: SITE_ID,
@@ -75,12 +110,25 @@ beforeEach(() => {
   pageType.value = "unknown";
 });
 
+afterEach(() => {
+  while (activeStops.length > 0) {
+    activeStops.pop()?.();
+  }
+  while (mountedNodes.length > 0) {
+    mountedNodes.pop()?.remove();
+  }
+  setClipboardFallbackContainer(undefined);
+  restorePropertyDescriptor(navigator, "clipboard", originalClipboardDescriptor);
+  restorePropertyDescriptor(document, "execCommand", originalExecCommandDescriptor);
+  vi.restoreAllMocks();
+});
+
 describe("H-3 · 页面 world 的 pushState（隔离世界里补丁不可见）", () => {
   it("绕过补丁直接调用原生 pushState 后，轮询仍能发现 URL 变化并重新求值", async () => {
     vi.useFakeTimers();
     try {
       history.replaceState({}, "", "/torrents");
-      const stop = installPageTypeUrlWatcher({ siteId: SITE_ID });
+      const stop = trackStop(installPageTypeUrlWatcher({ siteId: SITE_ID }));
 
       // 模拟真实浏览器：页面脚本调用的是页面 world 的 History，内容脚本装在自己 world 上的补丁不会经过。
       // 这里用 History.prototype 上的原生实现绕过补丁，补丁（以及旧实现）对此完全无感。
@@ -108,7 +156,7 @@ describe("H-3 · 页面 world 的 pushState（隔离世界里补丁不可见）"
 describe("A-8 · URL 变化订阅", () => {
   it("pushState 导航到详情页后重新求值 pageType（列表 → 详情）", async () => {
     history.replaceState({}, "", "/torrents");
-    const stop = installPageTypeUrlWatcher({ siteId: SITE_ID });
+    const stop = trackStop(installPageTypeUrlWatcher({ siteId: SITE_ID }));
 
     // 订阅本身不触发求值（幂等：只有 URL 真的变化才求值）
     expect(mocks.getSite).toHaveBeenCalledTimes(0);
@@ -130,7 +178,7 @@ describe("A-8 · URL 变化订阅", () => {
 
   it("同一 URL 的重复事件幂等：不重复求值；hashchange/popstate 也能触发", async () => {
     history.replaceState({}, "", "/torrents?page=1");
-    const stop = installPageTypeUrlWatcher({ siteId: SITE_ID });
+    const stop = trackStop(installPageTypeUrlWatcher({ siteId: SITE_ID }));
 
     history.replaceState({}, "", "/torrents?page=1"); // 同址回写
     await flushAsync();
@@ -152,7 +200,7 @@ describe("A-8 · URL 变化订阅", () => {
     const removeSpy = vi.spyOn(window, "removeEventListener");
 
     history.replaceState({}, "", "/torrents");
-    const stop = installPageTypeUrlWatcher({ siteId: SITE_ID });
+    const stop = trackStop(installPageTypeUrlWatcher({ siteId: SITE_ID }));
 
     // 装上补丁与监听器
     expect(history.pushState).not.toBe(originalPushState);
@@ -171,17 +219,14 @@ describe("A-8 · URL 变化订阅", () => {
     await flushAsync();
     expect(mocks.getSite).toHaveBeenCalledTimes(0);
     expect(pageType.value).toBe("unknown");
-
-    addSpy.mockRestore();
-    removeSpy.mockRestore();
   });
 
   it("重复订阅两次再各自取消：共享同一套补丁与监听器，全部取消后完全还原", async () => {
     const originalPushState = history.pushState;
     history.replaceState({}, "", "/torrents");
 
-    const stop1 = installPageTypeUrlWatcher({ siteId: SITE_ID });
-    const stop2 = installPageTypeUrlWatcher({ siteId: SITE_ID });
+    const stop1 = trackStop(installPageTypeUrlWatcher({ siteId: SITE_ID }));
+    const stop2 = trackStop(installPageTypeUrlWatcher({ siteId: SITE_ID }));
     const patched = history.pushState;
 
     history.pushState({}, "", "/torrent/1");
@@ -219,10 +264,9 @@ describe("A-9 · 复制/下载动作", () => {
   });
 
   it("剪贴板回退节点挂在内容脚本容器内，不落到宿主 document.body", async () => {
-    const shadowHost = document.createElement("div");
+    const shadowHost = mountNode(document.createElement("div"));
     const fallbackContainer = document.createElement("div");
     shadowHost.attachShadow({ mode: "closed" }).appendChild(fallbackContainer);
-    document.body.appendChild(shadowHost);
 
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: vi.fn().mockRejectedValue(new Error("clipboard unavailable")) },
@@ -242,16 +286,12 @@ describe("A-9 · 复制/下载动作", () => {
     await expect(copyTextToClipboard("secret-download-link")).resolves.toBe(true);
     expect(seenInFallbackContainer).toBe(true);
     expect(fallbackContainer.querySelector("textarea")).toBeNull();
-
-    setClipboardFallbackContainer(undefined);
-    shadowHost.remove();
   });
 
   it("execCommand 抛错时也清理影子树中的敏感文本", async () => {
-    const shadowHost = document.createElement("div");
+    const shadowHost = mountNode(document.createElement("div"));
     const fallbackContainer = document.createElement("div");
     shadowHost.attachShadow({ mode: "closed" }).appendChild(fallbackContainer);
-    document.body.appendChild(shadowHost);
     setClipboardFallbackContainer(fallbackContainer);
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
     Object.defineProperty(document, "execCommand", {
@@ -263,9 +303,6 @@ describe("A-9 · 复制/下载动作", () => {
 
     await expect(copyTextToClipboard("secret-download-link")).resolves.toBe(false);
     expect(fallbackContainer.querySelector("textarea")).toBeNull();
-
-    setClipboardFallbackContainer(undefined);
-    shadowHost.remove();
   });
 
   it("影子容器不可用时不把下载凭据插入宿主页面", async () => {
@@ -293,7 +330,7 @@ describe("A-9 · 复制/下载动作", () => {
       ["handleLocalDownloadMulti", listPage, "localDownloadMultiStatus"],
       ["handleLinkCopyMulti", listPage, "linkCopyMultiStatus"],
     ] as const) {
-      const body = new RegExp(`(?:async )?function ${name}\\(\\) \\{([\\s\\S]*?)\\n\\}`).exec(source)?.[1] ?? "";
+      const body = extractFunctionBody(source, name);
       expect(body, `${name} 应存在`).not.toBe("");
       expect(body, `${name} 应有 try/finally`).toContain("finally");
       expect(body, `${name} 复位语句应在 finally 之后`).toMatch(/finally \{[\s\S]*?\.value = false/);
@@ -308,18 +345,36 @@ describe("A-9 · 复制/下载动作", () => {
     const dialog = readSource("src/entries/content-script/app/components/AdvanceListModuleDialog.vue");
     const listPage = readSource("src/entries/content-script/app/pages/SiteListPage.vue");
 
-    for (const source of [dialog, listPage]) {
-      expect(source).toMatch(/function mapWithConcurrency/);
+    for (const [fileLabel, source] of [
+      ["AdvanceListModuleDialog.vue", dialog],
+      ["SiteListPage.vue", listPage],
+    ] as const) {
+      expect(source, `${fileLabel} 应定义 mapWithConcurrency`).toMatch(/function mapWithConcurrency/);
+
+      const copyBody = extractFunctionBody(source, "handleLinkCopyMulti");
+      expect(copyBody, `${fileLabel}#handleLinkCopyMulti 应存在`).not.toBe("");
       // 并发上限 3~5，避免一次向 offscreen 投递过多任务
-      expect(source).toMatch(/await mapWithConcurrency\((?:torrents|selectedTorrents\.value), [3-5],/);
+      expect(copyBody, `${fileLabel}#handleLinkCopyMulti 应使用有限并发`).toMatch(
+        /await mapWithConcurrency\((?:torrents|selectedTorrents\.value), [3-5],/,
+      );
       // 部分成功时仍复制已成功的链接，并复用现有提示组合
-      expect(source).toContain("contentScript.copyLinkSuccess");
-      expect(source).toContain("contentScript.copyLinkFailed");
+      expect(copyBody, `${fileLabel}#handleLinkCopyMulti 应包含成功提示`).toContain("contentScript.copyLinkSuccess");
+      expect(copyBody, `${fileLabel}#handleLinkCopyMulti 应包含失败提示`).toContain("contentScript.copyLinkFailed");
+
+      const downloadBody = extractFunctionBody(source, "handleLocalDownloadMulti");
+      expect(downloadBody, `${fileLabel}#handleLocalDownloadMulti 应存在`).not.toBe("");
+      // downloadTorrent 失败通常不 reject，而是返回 { downloadStatus: "failed" }
+      expect(downloadBody, `${fileLabel}#handleLocalDownloadMulti 应识别 downloadStatus=failed`).toContain(
+        'downloadStatus === "failed"',
+      );
+      expect(downloadBody, `${fileLabel}#handleLocalDownloadMulti 应区分部分成功提示`).toContain(
+        "contentScript.localDownloadPartial",
+      );
     }
 
-    // downloadTorrent 失败通常不 reject，而是返回 { downloadStatus: "failed" }
-    expect(dialog).toContain('downloadStatus === "failed"');
-    expect(dialog).toContain("contentScript.localDownloadPartial");
+    // AdvanceListModuleDialog 批量本地下载也显式限制并发上限 3~5
+    const dialogDownloadBody = extractFunctionBody(dialog, "handleLocalDownloadMulti");
+    expect(dialogDownloadBody).toMatch(/await mapWithConcurrency\(selectedTorrents\.value, [3-5],/);
   });
 });
 
@@ -344,7 +399,7 @@ describe("A-10 · 宿主样式规则与主题变量优先级", () => {
   });
 
   it("运行时复现注入结构：宿主不在影子树内 → 影子树内的类名选择器匹配不到它", () => {
-    const host = document.createElement("div");
+    const host = mountNode(document.createElement("div"));
     host.className = "ptd-content-script-root";
 
     const shadowRoot = host.attachShadow({ mode: "closed" });
@@ -352,7 +407,6 @@ describe("A-10 · 宿主样式规则与主题变量优先级", () => {
     // 与 init.ts 完全一致的注入方式（含 :root → :host 替换）
     styleElement.textContent = readSource("src/entries/content-script/app/app.css").replaceAll(":root", ":host");
     shadowRoot.appendChild(styleElement);
-    document.body.appendChild(host);
 
     // 宿主自己匹配类名，但影子树里根本没有这个元素：类名规则永远命中不了宿主
     expect(host.matches(".ptd-content-script-root")).toBe(true);
@@ -360,17 +414,17 @@ describe("A-10 · 宿主样式规则与主题变量优先级", () => {
     expect(shadowRoot.contains(styleElement)).toBe(true);
     // 注入的样式文本里确实只有 :host 一条宿主规则
     expect(styleElement.textContent).toMatch(/:host \{/);
-
-    host.remove();
   });
 
   it("主题 token 以 important 优先级写到宿主上（页面 !important 覆盖不了）", async () => {
     setActivePinia(createPinia());
     const host = document.createElement("div");
-    const stop = syncThemeVarsToHost(
-      host,
-      () => ({ "--ptd-bg": "#123456" }),
-      () => true,
+    const stop = trackStop(
+      syncThemeVarsToHost(
+        host,
+        () => ({ "--ptd-bg": "#123456" }),
+        () => true,
+      ),
     );
     await nextTick();
 

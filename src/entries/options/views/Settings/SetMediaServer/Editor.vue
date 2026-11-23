@@ -6,7 +6,7 @@ import { useI18n } from "vue-i18n";
 import { getMediaServer, getMediaServerMetaData, IMediaServerMetadata } from "@ptd/mediaServer";
 
 import type { IMediaServerMetadata as IMediaServerConfig } from "@/shared/types.ts";
-import { formatDate, formValidateRules, isInsecureAddress } from "@/options/utils.ts";
+import { formValidateRules, isInsecureAddress } from "@/options/utils.ts";
 
 import ConnectCheckButton from "@/options/components/ConnectCheckButton.vue";
 
@@ -23,6 +23,13 @@ const clientMeta = computedAsync<IMediaServerMetadata>(
     clientConfig.value?.type ? await getMediaServerMetaData(clientConfig.value.type) : ({} as IMediaServerMetadata),
   {} as IMediaServerMetadata,
 );
+
+function formatDurationMmSs(durationMs: number | undefined): string {
+  const totalSeconds = Math.max(0, Math.floor((Number.isFinite(durationMs) ? Number(durationMs) : 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
 // V-9：原先复用 `SetDownloader.editor.*` 的文案，于是媒体服务器对话框会显示
 // 「为这个**下载服务器**取个好记的名字」——术语与场景都不对。已补 `SetMediaServer.Editor.*` 专属文案。
@@ -49,11 +56,14 @@ function authFieldName(authField: string | { name: string }) {
 const revealedAuthFields = ref<Set<string>>(new Set());
 
 // 编辑对话框会复用同一个 Editor 实例：切换到另一个服务器时清除上一台的明文显示状态，
-// 避免新服务器的凭据在一打开时就以明文渲染。
+// 避免新服务器的凭据在一打开时就以明文渲染；同时为缺失 auth 的旧配置补齐对象，避免模板绑定抛 TypeError。
 watch(
   clientConfig,
-  () => {
+  (config) => {
     revealedAuthFields.value = new Set();
+    if (config && !config.auth) {
+      config.auth = {};
+    }
   },
   { immediate: true, deep: false },
 );
@@ -155,7 +165,7 @@ async function checkConnect() {
           </a-col>
         </a-row>
 
-        <a-row>
+        <a-row v-if="clientConfig.auth">
           <a-col class="ptd-editor-col-flush" :span="24">
             <a-typography-text strong>{{ t("SetMediaServer.Editor.authInfo") }}</a-typography-text>
           </a-col>
@@ -185,7 +195,12 @@ async function checkConnect() {
                 </template>
               </a-input>
             </a-form-item>
-            <a-form-item v-else :help="authFieldError(authField) ?? authField.message" :label="authField.name" required>
+            <a-form-item
+              v-else
+              :help="authFieldError(authField) ?? authField.message"
+              :label="authField.name"
+              :required="Boolean(authField.required)"
+            >
               <a-input
                 v-model:value="clientConfig.auth[authField.name]"
                 :status="authFieldError(authField) ? 'error' : undefined"
@@ -220,7 +235,7 @@ async function checkConnect() {
                   class="ptd-editor-grow"
                 />
                 <a-button type="text" @click="clientConfig.timeout = 60e3">
-                  {{ formatDate(clientConfig.timeout!, "mm:ss") }}
+                  {{ formatDurationMmSs(clientConfig.timeout) }}
                 </a-button>
               </a-flex>
             </a-form-item>

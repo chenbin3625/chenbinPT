@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const axiosMock = vi.hoisted(() => ({
   request: vi.fn(),
@@ -21,6 +21,18 @@ const EmbyCtor = Emby as unknown as new (config: any) => Emby;
 const JellyfinCtor = Jellyfin as unknown as new (config: any) => Jellyfin;
 
 describe("媒体海报令牌不进入 URL", () => {
+  beforeEach(() => {
+    vi.stubGlobal("__EXT_VERSION__", "1.0.0");
+    axiosMock.request.mockReset();
+    (FnOS as any).sessionCache?.clear();
+    (FnOS as any).posterUrlCache?.clear();
+    (FnOS as any).posterUrlCacheBytes = 0;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("Plex 从认证头拉取海报并返回 Data URL", async () => {
     const client = new PlexCtor({
       id: "plex-1",
@@ -41,7 +53,7 @@ describe("媒体海报令牌不进入 URL", () => {
     expect(request.headers["X-Plex-Token"]).toBe("private-plex-token");
   });
 
-  it("fnOS 海报 URL 不含 AccessToken，使用请求头拉取", async () => {
+  it("fnOS 海报 URL 不含 AccessToken，通过真实 request() 附加认证头拉取", async () => {
     const client = new FnOSCtor({
       id: "fnos-1",
       type: "fnos",
@@ -49,16 +61,35 @@ describe("媒体海报令牌不进入 URL", () => {
       address: "https://fnos.example",
       auth: { username: "user", password: "password" },
     });
-    (client as any).login = vi.fn().mockResolvedValue({ apikey: "private-fnos-token", userId: "user-1" });
-    (client as any).request = vi.fn().mockResolvedValue({ data: poster });
+    axiosMock.request.mockImplementation(async (config: any) => {
+      if (config.url === "/Users/AuthenticateByName") {
+        return {
+          status: 200,
+          data: {
+            AccessToken: "private-fnos-token",
+            User: { Id: "user-1" },
+            SessionInfo: { Id: "session-1" },
+          },
+        };
+      }
+      if (config.url === "/Items/movie-1/Images/Primary") {
+        return { status: 200, data: poster };
+      }
+      throw new Error(`unexpected request: ${config.url}`);
+    });
 
     const url = await (client as any).getPoster({ Id: "movie-1", ImageTags: { Primary: "tag-1" } });
 
     expect(url).toMatch(/^data:image\/png;base64,/);
-    const [path, config] = (client as any).request.mock.calls[0];
-    expect(path).toBe("/Items/movie-1/Images/Primary");
-    expect(config.params).toEqual({ tag: "tag-1", maxHeight: 400 });
-    expect(`${path}${JSON.stringify(config)}`).not.toContain("private-fnos-token");
+    expect(axiosMock.request).toHaveBeenCalledTimes(2);
+    const posterRequest = axiosMock.request.mock.calls[1]![0];
+    expect(posterRequest.url).toBe("/Items/movie-1/Images/Primary");
+    expect(posterRequest.params).toEqual({ tag: "tag-1", maxHeight: 400 });
+    expect(posterRequest.headers["X-Emby-Token"]).toBe("private-fnos-token");
+    expect(posterRequest.headers["X-Emby-Authorization"]).toContain('UserId="user-1"');
+    expect(`${posterRequest.baseURL}${posterRequest.url}${JSON.stringify(posterRequest.params)}`).not.toContain(
+      "private-fnos-token",
+    );
   });
 
   it("Plex 搜索海报以有界并发抓取，而不是逐张串行等待", async () => {

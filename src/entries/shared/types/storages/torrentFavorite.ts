@@ -19,8 +19,8 @@ export type TTorrentFavoriteStorageSchema = Record<TTorrentFavoriteKey, ITorrent
 /**
  * 判断一个值是否具备收藏项的最小形状。
  *
- * 备份恢复是不可信输入：`torrentFavorite: { k: null }` 这类脏数据一旦落库，
- * `getTorrentFavorites` 的 `b.createdAt - a.createdAt` 会抛 TypeError，收藏页持续加载失败。
+ * 备份恢复是不可信输入：`torrentFavorite: { k: null }` 或畸形的 `favCategories` / `comment`
+ * 一旦落库，读取排序与收藏页遍历会抛 TypeError，导致页面持续加载失败。
  * 这里与恢复侧共用同一份判据。
  */
 export function isTorrentFavoriteItem(value: unknown): value is ITorrentFavoriteItem {
@@ -30,7 +30,10 @@ export function isTorrentFavoriteItem(value: unknown): value is ITorrentFavorite
     typeof item.key === "string" &&
     typeof item.createdAt === "number" &&
     Number.isFinite(item.createdAt) &&
-    typeof item.site === "string"
+    typeof item.site === "string" &&
+    (item.favCategories === undefined ||
+      (Array.isArray(item.favCategories) && item.favCategories.every((category) => typeof category === "string"))) &&
+    (item.comment === undefined || typeof item.comment === "string")
   );
 }
 

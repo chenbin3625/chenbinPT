@@ -2,7 +2,7 @@
  * this plugin is edit from ohmree/pinia-plugin-webext-storage
  */
 import type { Ref } from "vue";
-import { getCurrentScope, onScopeDispose, ref, unref } from "vue";
+import { getCurrentScope, onScopeDispose, ref, toRaw, unref } from "vue";
 import { MutationType, PiniaPluginContext } from "pinia";
 import { cloneDeep } from "es-toolkit";
 import { message } from "ant-design-vue";
@@ -110,21 +110,85 @@ function isPlain(value: any): value is Record<string, any> {
 }
 
 /**
- * 复制一段「要写入 store」的值，使其与基线（syncedSnapshot）/ 合并结果（toWrite）不共享可变子树。
- *
- * 为什么必须复制（持久化回灌别名）：
- * - `onChanged` 收到的 `newValue` 会原样成为新的基线；
- * - `mergeBeforeWrite` 的 `merged` 会作为本次落盘内容（`toWrite`）成为基线；
- * - 若把其中的子树直接塞进 store，用户随后对 store 的**就地修改**会同时改掉基线。
- *   下一次 `$save()` 计算「基线 → 本地」差异时看到两边相同，改动被当成「没有变化」而不落盘，
- *   表现为「回灌后就地修改再保存会被回退」。
- *
- * 只复制受影响的 path 值（leaf patch / 外部变更值），不做整状态深拷贝：
- * `toWriteSnapshot()` 已经为快照做过一次完整序列化，这里再整份复制会白白翻倍开销。
- * `cloneDeep` 保留 Date / Map / Set / RegExp 等类型，且不是 Vue 代理，可直接写进 store。
+ * 复制并安全化一段「要写入 store」的值：
+ * 1. 使其与基线（syncedSnapshot）/ 合并结果（toWrite）不共享可变子树（持久化回灌别名）；
+ * 2. 在所有嵌套深度剥离普通对象上的 `__proto__` / `constructor` / `prototype` 自有键
+ *    （避免 `es-toolkit` 的 `cloneDeep` 或 Pinia 的 `mergeReactiveObjects` 触发原型链改写）；
+ * 3. 保留 Date / Map / Set / RegExp / URL 等类型（G4），且不携带 Vue 代理。
  */
-function cloneForStore<T>(value: T): T {
-  return cloneDeep(value);
+function cloneForStore<T>(value: T, seen: WeakMap<object, any> = new WeakMap()): T {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  if ((value as { __v_isRef?: unknown }).__v_isRef === true) {
+    if (seen.has(value as object)) {
+      return seen.get(value as object);
+    }
+    const unwrapped = unref(value);
+    if (unwrapped === value) {
+      return value;
+    }
+    return cloneForStore(unwrapped, seen);
+  }
+
+  const raw = toRaw(value) as any;
+  if (raw === null || typeof raw !== "object") {
+    return raw;
+  }
+
+  if (seen.has(raw)) {
+    return seen.get(raw);
+  }
+
+  if (raw instanceof Date) {
+    return new Date(raw.getTime()) as unknown as T;
+  }
+  if (raw instanceof RegExp) {
+    const copy = new RegExp(raw.source, raw.flags);
+    copy.lastIndex = raw.lastIndex;
+    return copy as unknown as T;
+  }
+  if (raw instanceof URL) {
+    return new URL(raw.href) as unknown as T;
+  }
+  if (raw instanceof Map) {
+    const out = new Map();
+    seen.set(raw, out);
+    for (const [k, v] of raw.entries()) {
+      out.set(cloneForStore(k, seen), cloneForStore(v, seen));
+    }
+    return out as unknown as T;
+  }
+  if (raw instanceof Set) {
+    const out = new Set();
+    seen.set(raw, out);
+    for (const item of raw.values()) {
+      out.add(cloneForStore(item, seen));
+    }
+    return out as unknown as T;
+  }
+  if (Array.isArray(raw)) {
+    const out: any[] = new Array(raw.length);
+    seen.set(raw, out);
+    for (let i = 0; i < raw.length; i++) {
+      out[i] = cloneForStore(raw[i], seen);
+    }
+    return out as unknown as T;
+  }
+  if (isPlain(raw)) {
+    const out: Record<string, any> = {};
+    seen.set(raw, out);
+    for (const key of Object.keys(raw)) {
+      if (isUnsafePathSegment(key)) {
+        continue;
+      }
+      out[key] = cloneForStore(raw[key], seen);
+    }
+    return out as unknown as T;
+  }
+
+  return cloneDeep(raw);
 }
 
 /**
@@ -134,8 +198,9 @@ function cloneForStore<T>(value: T): T {
  * 自有的 `__proto__` 在 JSON / 结构化克隆语义下是**普通数据属性**（被篡改的备份、Sync 数据都可能带来），
  * 而把它当路径段重放时 `cursor["__proto__"] = x` 写的是 [[Prototype]]、`cursor["constructor"]` 落到
  * Function 构造器 —— 即外部数据可以改掉 store state 的原型（此后 `value.__v_raw ?? value` 这类读取
- * 会沿新原型链拿到外部对象）。三个路径入口（applyPathChanges / resolvePathContainer /
- * applyExternalChangesToStore）统一用它判定，避免再出现「修一处漏一处」。
+ * 会沿新原型链拿到外部对象）。所有写入 store 的入口（cloneForStore / restore 水合 /
+ * buildMinimalPatch / applyMinimalPatch / applyPathChanges / resolvePathContainer）统一用它判定，
+ * 避免再出现「修一处漏一处」。
  */
 function isUnsafePathSegment(segment: string): boolean {
   return segment === "__proto__" || segment === "constructor" || segment === "prototype";
@@ -337,7 +402,25 @@ function readOwnPath(root: Record<string, any>, path: string[]): { exists: boole
 function hasLocalChangeAtPath(base: Record<string, any>, current: Record<string, any>, path: string[]): boolean {
   const before = readOwnPath(base, path);
   const now = readOwnPath(current, path);
-  return before.exists !== now.exists || (before.exists && !isDeepEqual(before.value, now.value));
+  if (before.exists !== now.exists) {
+    return true;
+  }
+  if (!before.exists) {
+    return false;
+  }
+  if (isDeepEqual(before.value, now.value)) {
+    return false;
+  }
+  // base 可能来自 toWriteSnapshot（Date/Map/Set/RegExp 已按 JSON 语义序列化），
+  // 若当前值为未序列化的同类对象且序列化后仍与 base 一致，不应误判为本地并发修改。
+  if (now.value !== null && typeof now.value === "object") {
+    try {
+      return !isDeepEqual(before.value, toWriteSnapshot(now.value));
+    } catch {
+      return true;
+    }
+  }
+  return true;
 }
 
 /**
@@ -360,7 +443,10 @@ function buildMinimalPatch(
   let changed = false;
 
   for (const key of Object.keys(next)) {
-    const prevValue = prev[key];
+    if (isUnsafePathSegment(key)) {
+      continue;
+    }
+    const prevValue = Object.hasOwn(prev, key) ? prev[key] : undefined;
     const nextValue = next[key];
 
     if (isDeepEqual(prevValue, nextValue)) {
@@ -382,6 +468,9 @@ function buildMinimalPatch(
 
   // 外部删除：prev 中存在、next 中已消失的键（递归到每一层）
   for (const key of Object.keys(prev)) {
+    if (isUnsafePathSegment(key)) {
+      continue;
+    }
     if (!Object.hasOwn(next, key)) {
       removalsOut.push([...path, key]);
     }
@@ -527,7 +616,9 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
       // （storage 为空时返回初始值，此刻 writeDefaults 刚好把它写进去）。
       // B-10 的三方合并依赖这条基线来判断"本地改了什么、外部改了什么"。
       syncedSnapshot = toWriteSnapshot(value);
-      store.$patch(value as unknown as typeof store.$state);
+      // 必须经 cloneForStore 剥离 __proto__/constructor/prototype 后再 $patch，
+      // 避免 Pinia mergeReactiveObjects 在初始水合时改写 store.$state 或嵌套对象的原型链。
+      store.$patch(cloneForStore(value) as unknown as typeof store.$state);
       $ready.value = true;
       afterRestore?.(context);
     })
@@ -580,8 +671,11 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
     const removals: string[][] = [];
 
     for (const topKey of Object.keys(newValue)) {
+      if (isUnsafePathSegment(topKey)) {
+        continue;
+      }
       const next = newValue[topKey];
-      const prev = current[topKey];
+      const prev = Object.hasOwn(current, topKey) ? current[topKey] : undefined;
 
       if (isDeepEqual(prev, next)) {
         continue;
@@ -601,6 +695,9 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
     // 递归删除只对子对象生效，于是外部（另一上下文 / 备份恢复）整份写入时删掉的**顶层键**
     // 会留在本地 store，之后任何一次 $save 又把它写回 storage（「恢复备份」被自己撤销）。
     for (const topKey of Object.keys(current)) {
+      if (isUnsafePathSegment(topKey)) {
+        continue;
+      }
       if (!Object.hasOwn(newValue, topKey)) {
         removals.push([topKey]);
       }
@@ -777,8 +874,8 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    * 合并规则（三方合并，基线 = syncedSnapshot）：
    * - 只保留**本地真正改动过**的路径（相对基线），其余字段一律采用 storage 现值；
    * - 同一路径既被外部改又被本地改 → **本地改动优先**（用户当前操作可见，冲突可预期）；
-   * - 合并结果与本地 state 的差异会回灌到 store，避免下一次 `$save()` 把这次保住的外部改动
-   *   误判成「本地删除」再写回去（那样只是把回滚推迟一轮）。
+   * - 合并结果与本地 state 的差异返回给 `doWrite`，在确认写盘代际未过期后、以 `localSnapshot`
+   *   为基线回灌到 store，避免覆盖 `storage.get` 在途期间的新本地编辑或由已超时的旧代污染 state。
    *
    * 删除语义（G6，Info 级观察，明确记录而不是留白）：**本地删除同样算「本地改动」并优先**。
    * 若用户在 options 页删除了站点 A（本地 state 已无 A），而 SW 刚为 A 写入了新的 `lastUserInfo`，
@@ -793,26 +890,28 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
    * 但没有引入版本号/CAS，跨标签页的高频并发写仍非严格线性化。
    * 另一条残余：非扩展宿主（本地预览页等）没有 storage，直接走整份写；此时没有第二个写者，无影响。
    */
-  async function mergeBeforeWrite(localSnapshot: any): Promise<any> {
+  async function mergeBeforeWrite(
+    localSnapshot: any,
+  ): Promise<{ merged: any; survivingExternalChanges: IPathChange[] }> {
     const usableStorage = getUsableStorageArea(storageArea);
     const base = syncedSnapshot;
 
     if (!usableStorage || base === null) {
-      return localSnapshot; // 无 storage / 无基线：保持旧的整份写语义
+      return { merged: localSnapshot, survivingExternalChanges: [] }; // 无 storage / 无基线：保持旧的整份写语义
     }
 
     const { [key]: stored } = await usableStorage.get(key);
 
     // 现值不是普通对象（被清空、被别的写者换成了别的形态）：没有可合并的内容，整份写
     if (!isPlain(stored) || !isPlain(base)) {
-      return localSnapshot;
+      return { merged: localSnapshot, survivingExternalChanges: [] };
     }
 
     const externalChanges: IPathChange[] = [];
     collectPathChanges(base, stored, [], externalChanges);
     if (externalChanges.length === 0) {
       // 常见路径：$save 的间隙里没有其它写者 → 与旧实现完全一致（代价是多一次 get）
-      return localSnapshot;
+      return { merged: localSnapshot, survivingExternalChanges: [] };
     }
 
     const localChanges: IPathChange[] = [];
@@ -823,11 +922,8 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
 
     const survivingExternalChanges: IPathChange[] = [];
     collectPathChanges(localSnapshot, merged, [], survivingExternalChanges);
-    if (survivingExternalChanges.length > 0) {
-      applyExternalChangesToStore(survivingExternalChanges);
-    }
 
-    return merged;
+    return { merged, survivingExternalChanges };
   }
 
   /**
@@ -947,14 +1043,20 @@ export function piniaWebExtPersistencePlugin(context: PiniaPluginContext) {
           const snapshot = toWriteSnapshot(getState());
           // 落盘前先与 storage 现值合并（B-10）：真正写下的内容可能包含其它上下文的并发改动，
           // 因此回声快照必须登记**合并后**的内容（否则对方改动带来的 onChanged 会被当成外部写入）。
-          const toWrite = skipMerge ? snapshot : await mergeBeforeWrite(snapshot);
+          const { merged: toWrite, survivingExternalChanges } = skipMerge
+            ? { merged: snapshot, survivingExternalChanges: [] }
+            : await mergeBeforeWrite(snapshot);
 
-          // 合并期间可能已超时并由更新的一代接手：丢弃这次迟到的写入，避免旧内容覆盖新内容。
+          // 合并期间可能已超时并由更新的一代接手：丢弃这次迟到的写入，避免旧内容覆盖新内容或污染 store state。
           if (generation !== writeGeneration) {
             console.warn(
               `[PTD] stale persistence write discarded for store "${store.$id}" (storage key: ${key}): generation ${generation} < ${writeGeneration}`,
             );
             return;
+          }
+
+          if (survivingExternalChanges.length > 0) {
+            applyExternalChangesToStore(survivingExternalChanges, isPlain(snapshot) ? snapshot : undefined);
           }
 
           rememberSelfWrite(toWrite);

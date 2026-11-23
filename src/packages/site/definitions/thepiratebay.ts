@@ -51,8 +51,11 @@ export const siteMetadata: ISiteMetadata = {
       // apibay 返回的是**顶层 JSON 数组**，用 `:self` 直接把数组本身作为行集合
       rows: {
         selector: ":self",
-        // 无结果时 TPB 会返回 `[{"name":"No results returned", ...}]` 这样的哨兵对象，按 info_hash 过滤掉
-        filter: (rows: any[]) => (Array.isArray(rows) ? rows.filter((row) => row?.info_hash) : []),
+        // 无结果时 TPB 会返回 `[{"id":"0","name":"No results returned","info_hash":"0000...0000",...}]` 哨兵对象，需排除全零 hash / id=0
+        filter: (rows: any[]) =>
+          Array.isArray(rows)
+            ? rows.filter((row) => row?.info_hash && !/^0+$/.test(String(row.info_hash)) && String(row.id) !== "0")
+            : [],
       },
       id: { selector: "id" },
       title: {

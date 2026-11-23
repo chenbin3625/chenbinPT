@@ -189,6 +189,17 @@ function resolveStrings(ctx: ExtractContext, node: ts.Expression, depth = 0): st
     }
     return dedupe(out);
   }
+  if (ts.isArrayLiteralExpression(node)) {
+    const values: string[] = [];
+    for (const element of node.elements) {
+      const expr = ts.isSpreadElement(element) ? element.expression : element;
+      const resolved = resolveStrings(ctx, expr, depth + 1);
+      if (resolved) {
+        values.push(...resolved);
+      }
+    }
+    return values.length > 0 ? dedupe(values) : null;
+  }
   if (ts.isIdentifier(node)) {
     const declarations = ctx.scope.get(node.text);
     if (!declarations) {
@@ -521,6 +532,101 @@ const FIXTURE_GENERIC = `
   <div id="azusa"><div id="az-seed">Seeding 1 | 2 | 3</div><div id="az-up">Upload 4 | 5 | 6</div></div>
 </div>`;
 
+/** 站点用户详情页（NexusPHP td.rowhead / Gazelle ratio-bar / Unit3D panel），覆盖数组形式动态选择器池 */
+const FIXTURE_USER_DETAILS = `
+<div id="user-details-fixture">
+  <table id="userdetails-table"><tbody>
+    <tr><td class="rowhead">Class</td><td><b>Power User</b><img title="Power User" alt="Power User"></td></tr>
+    <tr><td class="rowhead">Uploaded</td><td>1.5 TB</td></tr>
+    <tr><td class="rowhead">Downloaded</td><td>500 GB</td></tr>
+    <tr><td class="rowhead">Real Uploaded</td><td>1.2 TB</td></tr>
+    <tr><td class="rowhead">Real Downloaded</td><td>400 GB</td></tr>
+    <tr><td class="rowhead">Share ratio</td><td><table><tbody><tr><td><font>3.0</font></td></tr></tbody></table></td></tr>
+    <tr><td class="rowhead">Real share ratio</td><td>3.0</td></tr>
+    <tr><td class="rowhead">Ratio</td><td>3.0</td></tr>
+    <tr><td class="rowhead">Bonus</td><td>12345</td></tr>
+    <tr><td class="rowhead">Karma Points</td><td>6789</td></tr>
+    <tr><td class="rowhead">Points earning</td><td>12.5</td></tr>
+    <tr><td class="rowhead">UCoin</td><td><span>88</span></td></tr>
+    <tr><td class="rowhead">Join date</td><td><span class="datetime">2020-01-01</span></td></tr>
+    <tr><td class="rowhead">JOIN date</td><td>2020-01-01</td></tr>
+    <tr><td class="rowhead">Last seen</td><td><span class="datetime">2024-01-01</span></td></tr>
+    <tr><td class="rowhead">Last access</td><td>2024-01-01</td></tr>
+    <tr><td class="rowhead">Last visit</td><td>2024-01-01</td></tr>
+    <tr><td class="rowhead">Last Action</td><td>2024-01-01</td></tr>
+    <tr><td class="rowhead">Invites</td><td>2</td></tr>
+    <tr><td class="rowhead">Available</td><td>5</td></tr>
+    <tr><td class="rowhead">Forum posts</td><td>10</td></tr>
+    <tr><td class="rowhead">Transfers</td><td>100</td></tr>
+    <tr><td class="rowhead">Seeding size</td><td>200 GB</td></tr>
+    <tr><td class="rowhead">Seed avg.</td><td>1.2</td></tr>
+    <tr><td class="rowhead">Need to Seed</td><td>0</td></tr>
+    <tr><td class="rowhead nowrap">H&amp;R</td><td>0</td></tr>
+    <tr><td class="rowhead">上传量</td><td>1.5 TB</td></tr>
+    <tr><td class="rowhead">下载量</td><td>500 GB</td></tr>
+    <tr><td class="rowhead">分享率</td><td>3.0</td></tr>
+    <tr><td class="rowhead">魔力值</td><td>9999</td></tr>
+    <tr><td class="rowhead">加入日期</td><td>2020-01-01</td></tr>
+    <tr><td class="rowhead">加入日期：</td><td>2020-01-01</td></tr>
+    <tr><td class="rowhead">最近动向</td><td>2024-01-01</td></tr>
+    <tr><td class="rowhead">最近动向：</td><td>2024-01-01</td></tr>
+    <tr><td class="rowhead">最近動向：</td><td>2024-01-01</td></tr>
+    <tr><td class="rowhead">等级</td><td>Power User</td></tr>
+    <tr><td class="rowhead">做种积分</td><td>5000</td></tr>
+    <tr><td class="rowhead">保种体积</td><td>200 GB</td></tr>
+    <tr><td class="rowhead">邀请</td><td>1</td></tr>
+    <tr><td>Bonus Points</td><td>42</td></tr>
+    <tr><td>Seed bonus</td><td><div>10</div><div>20</div><div>30</div></td></tr>
+    <tr><td>Torrent Added</td><td>2024-01-01</td></tr>
+    <tr><td>Torrent Size</td><td>1.2 GB 500 MB 2 TB</td></tr>
+    <tr><td>Hash</td><td>abcdef</td></tr>
+    <tr><td>Seeders <span class="torrentInfoData">5</span></td><td>Leechers <span class="torrentInfoData">1</span></td></tr>
+    <tr><td>[Added: <span class="torrentInfoData">2024</span>] [Completed: <span class="torrentInfoData">9</span>] [size: <span class="torrentInfoData">1 GB</span>]</td><td>[100% free!] seeders leechers snatched</td></tr>
+  </tbody></table>
+  <ul class="stats">
+    <li class="ratio-bar__uploaded"><a href="/u"><i class="fa-arrow-up"></i>1 TB</a><a href="/u2">x</a></li>
+    <li class="ratio-bar__downloaded"><a href="/d"><i class="fa-arrow-down"></i>100 GB</a></li>
+    <li class="ratio-bar__ratio"><a href="/r"><i class="fa-sync-alt"></i>10</a></li>
+    <li class="ratio-bar__points"><a href="/p"><i class="fa-coins"></i>500</a></li>
+    <li class="ratio-bar__seeding"><a href="/s"><i class="fa-upload"></i>12</a></li>
+    <li class="ratio-bar__leeching"><a href="/l"><i class="fa-download"></i>1</a></li>
+    <li>Uploaded: <span>1 TB</span><span>2 TB</span></li>
+    <li>Downloaded: 100 GB</li>
+    <li>Seeding: <span>12</span></li>
+    <li>Seeding Size: <span>200 GB</span></li>
+    <li>Snatched: <span>1</span><span>50</span></li>
+    <li>SeedBonus: 999</li>
+    <li>Joined <span class="time">2020-01-01</span></li>
+    <li>Last Seen <span class="time">2024-01-01</span></li>
+    <li>Total size <span>200 GB</span></li>
+    <li>Class: VIP</li>
+    <li>Donated: 0</li>
+    <li>HnRs: 0</li>
+    <li>Added Date <span>2024-01-01</span></li>
+    <li>Size <span>1 GB</span></li>
+    <li>Downloads <span>10</span></li>
+    <li>Category <span><a href="/c">Movies</a></span></li>
+    <li>Peers <font class="see">5</font> <font class="lee">1</font></li>
+  </ul>
+  <div class="panel">
+    <div class="panel__heading">Stats</div>
+    <div class="panel__body"><ul class="list">
+      <li>Downloaded: 100 GB</li>
+      <li>Joined: <span>2020-01-01</span></li>
+    </ul></div>
+    <div class="panel__heading">Community</div>
+    <div class="panel__body"><ul class="list">
+      <li>Uploaded: 1 TB</li>
+      <li>Seeding: 10</li>
+      <li>Seeding size: 200 GB</li>
+    </ul></div>
+    <div class="panel__heading">Personal</div>
+    <div class="panel__body"><ul class="list">
+      <li>Class: Power User</li>
+    </ul></div>
+  </div>
+</div>`;
+
 /** 空页面 */
 const FIXTURE_EMPTY = `<div id="nothing"></div>`;
 
@@ -550,6 +656,7 @@ const FIXTURES: Fixture[] = [
   { name: "nexusphp-user", html: FIXTURE_NEXUSPHP_USER },
   { name: "gazelle", html: FIXTURE_GAZELLE },
   { name: "generic", html: FIXTURE_GENERIC },
+  { name: "user-details", html: FIXTURE_USER_DETAILS },
   { name: "empty", html: FIXTURE_EMPTY },
   { name: "anidb-xml", xml: FIXTURE_ANIDB_XML },
 ];
@@ -801,7 +908,7 @@ describe("选择器层 / Sizzle 差分", () => {
   });
 
   it("站点定义动态选择器池 × 全部 fixture：元素序列与 Sizzle 完全一致", () => {
-    expect(extraction.dynamicSelectors.length).toBeGreaterThan(100);
+    expect(extraction.dynamicSelectors.length).toBeGreaterThan(500);
     const failures = runMatrix(extraction.dynamicSelectors, { fullContexts: false }, "dynamic");
     expect(failures.length, formatFailures(failures)).toBe(0);
   });

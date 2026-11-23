@@ -6,6 +6,7 @@
  * 站点为 UNIT3D 9.1.7：配置了 API Key 时搜索走 /api/torrents/filter，未配置时解析页面 HTML 搜索结果。
  * 首页列表与用户信息选择器按站点改版覆写。
  */
+import { toMerged } from "es-toolkit";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import {
   NoUserInputError,
@@ -133,7 +134,13 @@ export const siteMetadata: ISiteMetadata = {
         tags: SchemaMetadata.search.selectors!.tags,
       },
     },
-    ...SchemaMetadata.list,
+    // /torrents 列表页同样为 HTML，禁止合并 JSON API 的 search.selectors
+    {
+      ...SchemaMetadata.list[0],
+      mergeSearchSelectors: false,
+      selectors: htmlSearch.selectors,
+    },
+    ...SchemaMetadata.list.slice(1),
   ],
 
   userInfo: {
@@ -243,9 +250,9 @@ export default class Concertos extends Unit3D {
     keywords?: string,
     searchEntry: ISearchEntryRequestConfig = {},
   ): Promise<ISearchResult> {
-    // 未填写 API Key 时使用 HTML 搜索结果解析
+    // 未填写 API Key 时使用 HTML 搜索结果解析；深合并避免局部 requestConfig 覆盖 htmlSearch.requestConfig.url
     if (!this.userConfig.inputSetting?.apikey?.trim()) {
-      searchEntry = { ...htmlSearch, ...searchEntry, merge: false };
+      searchEntry = { ...toMerged(htmlSearch, searchEntry), merge: false };
     }
 
     return super.getSearchResult(keywords, searchEntry);

@@ -219,7 +219,8 @@ export const siteMetadata: ISiteMetadata = {
           bonusPerHour: {
             selector: ":self",
             filters: [
-              (bonusLog: IDigitalCoreBonusLogResp) => {
+              (bonusLog: IDigitalCoreBonusLogResp | unknown) => {
+                if (!Array.isArray(bonusLog)) return 0;
                 const item = bonusLog.find((entry) => get(entry, "msg")?.includes("hourly"));
                 if (!item) return 0;
 

@@ -257,7 +257,18 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class Gtru extends PrivateSite {
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    const name = encodeURIComponent((torrent.title || torrent.id || "") + ".torrent");
-    return `${this.url}download.php?id=${torrent.id}&rss=1&n=${name}`;
+    const torrentId = torrent.id === undefined || torrent.id === null ? "" : String(torrent.id).trim();
+    if (!torrentId) {
+      throw new Error(`[PTD] site '${this.name}' cannot build torrent download link without torrent.id`);
+    }
+    const downloadUrl = new URL("/download.php", this.url);
+    downloadUrl.searchParams.set("id", torrentId);
+    downloadUrl.searchParams.set("rss", "1");
+    downloadUrl.searchParams.set("n", `${torrent.title || torrentId}.torrent`);
+
+    const resolvedLink = downloadUrl.toString();
+    return this.userConfig.downloadLinkAppendix
+      ? `${resolvedLink}${this.userConfig.downloadLinkAppendix}`
+      : resolvedLink;
   }
 }

@@ -72,10 +72,15 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
-  list: [{ urlPattern: ["/index.php", "/lastnews", "/porno/"] }],
+  list: [
+    {
+      urlPattern: ["/index.php", "/lastnews", "/porno/"],
+      excludeUrlPattern: ["[/-]\\d+-[^/]+\\.html$"],
+    },
+  ],
 
   detail: {
-    urlPattern: ["-\\d+-[^/]+\\.html$", "/porno/"],
+    urlPattern: ["[/-]\\d+-[^/]+\\.html$"],
     selectors: {
       title: { selector: "h1" },
       // 与列表页共用同一套 id 规则（地址末段的 `<id>-<slug>`），
@@ -86,8 +91,8 @@ export const siteMetadata: ISiteMetadata = {
         filters: [(href: string) => Number(/[/-](\d+)-[^/]*$/.exec(href)?.[1]) || href],
       },
       // magnet 只在详情页（`.fr_download` 的“Магнет ссылка”）；同页另有一个 .torrent 下载链接。
-      // 注意：实测该站 magnet 里的 infohash 已在上游损坏（含 U+FFFD），回落用 .torrent 链接
-      link: { selector: ['a[href^="magnet:"]', 'a[href^="/engine/download.php"]'], attr: "href" },
+      // 注意：实测该站 magnet 里的 infohash 已在上游损坏（含 U+FFFD），因此优先取 .torrent 链接，仅在缺失时回落 magnet
+      link: { selector: ['a[href^="/engine/download.php"]', 'a[href^="magnet:"]'], attr: "href" },
     },
   },
 };

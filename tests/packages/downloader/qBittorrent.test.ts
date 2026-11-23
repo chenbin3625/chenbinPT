@@ -139,12 +139,19 @@ describe("qBittorrent：SID 过期自愈（D-3）", () => {
 });
 
 describe("qBittorrent：用户名密码请求必须携带 Cookie", () => {
+  beforeEach(() => {
+    axiosMock.request.mockReset();
+    axiosMock.post.mockReset();
+    axiosMock.post.mockResolvedValue({ data: "Ok.", status: 200 }); // /auth/login
+  });
+
   it("登录后的业务请求带 withCredentials", async () => {
     const client = createClient();
     axiosMock.request.mockResolvedValue({ data: "1.0.0" });
 
     await (client as any).getClientVersionFromRemote();
 
+    expect(axiosMock.post).toHaveBeenCalledTimes(1);
     expect(axiosMock.request.mock.calls[0][0].withCredentials).toBe(true);
   });
 });

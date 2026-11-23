@@ -36,7 +36,9 @@ const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
 
-const search = ref<string>((route.query.search as string) ?? runtimeStore.mediaServerSearch.searchKey);
+const search = ref<string>(
+  typeof route.query.search === "string" ? route.query.search : runtimeStore.mediaServerSearch.searchKey,
+);
 const isComposing = ref(false);
 const failedPosters = ref(new Set<string>());
 const hoverItemUrl = ref<string | null>(null);
@@ -171,6 +173,13 @@ onMounted(async () => {
   if (!mounted) return;
   // N1：恢复出来的 isSearching 可能没有对应的在途队列（PQueue 是内存对象），先做一次收尾
   resetSearchingStateIfIdle();
+  if (typeof route.query.search === "string") {
+    search.value = route.query.search;
+    // 从其它页面带 ?search=... 深链进入时，始终按该关键词执行搜索，
+    // 不因已有旧结果或关闭了 autoSearchWhenMount 而停留在过期数据上。
+    void doSearch({ searchKey: route.query.search.trim(), userInitiated: true });
+    return;
+  }
   if (configStore.mediaServerEntity.autoSearchWhenMount && runtimeStore.mediaServerSearch.searchResult.length === 0) {
     // noinspection ES6MissingAwait
     doSearch({ searchKey: search.value });

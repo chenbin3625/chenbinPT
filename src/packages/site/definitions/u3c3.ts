@@ -2,7 +2,15 @@
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Definitions/u3c3.yml
  */
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
-import { type ISearchEntryRequestConfig, type ISearchResult, type ISiteMetadata } from "../types";
+import {
+  EResultParseStatus,
+  type ISearchEntryRequestConfig,
+  type ISearchInput,
+  type ISearchResult,
+  type ISiteMetadata,
+  type ITorrent,
+} from "../types";
+import { classifySiteError, logMessage, siteErrorLogData } from "../utils";
 import { toMerged } from "es-toolkit";
 
 /**
@@ -11,6 +19,33 @@ import { toMerged } from "es-toolkit";
  * 实测该令牌会随时间轮换（Jackett 里硬编码的 `eelja3lfe1a1` 已失效，用旧令牌搜索会退化成未过滤的首页列表）。
  */
 const searchTokenPattern = /(?:^|\n)\s*(?:var|const|let)\s+(\w+)\s*=\s*"([^"]+)"[\s\S]{0,200}?search2="\s*\+\s*\1/;
+
+/** 令牌轮换缓存有效期（15 分钟），避免长驻实例永久使用已失效的 search2 */
+const SEARCH_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+function extractSearchToken(data: unknown): string | null {
+  if (typeof data === "string") {
+    return searchTokenPattern.exec(data)?.[2] ?? null;
+  }
+  if (data && typeof data === "object" && "documentElement" in data) {
+    const doc = data as Document;
+    const html = doc.documentElement?.outerHTML ?? "";
+    const matched = searchTokenPattern.exec(html);
+    if (matched) {
+      return matched[2];
+    }
+    const scripts = doc.querySelectorAll?.("script");
+    if (scripts) {
+      for (const script of Array.from(scripts)) {
+        const scriptMatch = searchTokenPattern.exec(script.textContent ?? "");
+        if (scriptMatch) {
+          return scriptMatch[2];
+        }
+      }
+    }
+  }
+  return null;
+}
 
 export const siteMetadata: ISiteMetadata = {
   version: 1,
@@ -104,28 +139,87 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class U3C3 extends BittorrentSite {
   private searchToken: string | null = null;
+  private searchTokenFetchedAt: number = 0;
 
   public override async getSearchResult(
     keywords?: string,
     searchEntry: ISearchEntryRequestConfig = {},
   ): Promise<ISearchResult> {
-    const search2 = await this.getSearchToken();
+    if (!this.allowSearch) {
+      return {
+        data: [],
+        status: EResultParseStatus.passParse,
+        statusMsg: "i18n.siteNotEnabled",
+      };
+    }
+
+    const baseEntry = searchEntry.id
+      ? toMerged(this.metadata.searchEntry?.[searchEntry.id] ?? {}, searchEntry)
+      : searchEntry;
+    const effectiveEnabled = baseEntry.enabled;
+    if (effectiveEnabled === false) {
+      return {
+        data: [],
+        status: EResultParseStatus.passParse,
+        statusMsg: "i18n.searchEntityNotEnabled",
+      };
+    }
+
+    let search2: string;
+    try {
+      search2 = await this.getSearchToken();
+    } catch (e) {
+      const { status, statusMsg, retryable } = classifySiteError(e);
+      logMessage(
+        `[Site] ${this.name} getSearchToken failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        {
+          site: this.metadata.id,
+          keywords,
+          status,
+          retryable,
+          error: siteErrorLogData(e),
+        },
+        retryable ? "warn" : "error",
+      );
+      return {
+        data: [],
+        status,
+        statusMsg,
+      };
+    }
+
     return super.getSearchResult(keywords, toMerged(searchEntry, { requestConfig: { params: { search2 } } }));
   }
 
-  private async getSearchToken(): Promise<string> {
-    if (this.searchToken) {
+  public override async transformSearchPage(
+    doc: Document | object | any,
+    searchConfig: ISearchInput,
+  ): Promise<ITorrent[]> {
+    // 响应页通常也带有当前最新 search2 令牌，顺带刷新缓存避免令牌轮换后失效
+    const refreshedToken = extractSearchToken(doc);
+    if (refreshedToken) {
+      this.searchToken = refreshedToken;
+      this.searchTokenFetchedAt = Date.now();
+    }
+    return super.transformSearchPage(doc, searchConfig);
+  }
+
+  private async getSearchToken(forceRefresh: boolean = false): Promise<string> {
+    if (!forceRefresh && this.searchToken && Date.now() - this.searchTokenFetchedAt < SEARCH_TOKEN_TTL_MS) {
       return this.searchToken;
     }
 
+    this.searchToken = null;
+    this.searchTokenFetchedAt = 0;
+
     const { data } = await this.request<string | Document>({ url: "/", responseType: "document" });
-    const html = typeof data === "string" ? data : ((data as Document).documentElement?.outerHTML ?? "");
-    const matched = searchTokenPattern.exec(html);
-    if (!matched) {
-      throw Error("U3C3: 未能从首页解析出 search2 令牌");
+    const token = extractSearchToken(data);
+    if (!token) {
+      throw new Error("U3C3: 未能从首页解析出 search2 令牌");
     }
 
-    this.searchToken = matched[2];
-    return this.searchToken;
+    this.searchToken = token;
+    this.searchTokenFetchedAt = Date.now();
+    return token;
   }
 }

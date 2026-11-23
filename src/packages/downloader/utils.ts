@@ -66,8 +66,8 @@ export interface ParsedTorrent {
 const utf8FilenameRegex = /filename\*=UTF-8''([\w%\-\.]+)(?:; ?|$)/i;
 const asciiFilenameRegex = /^filename=(["']?)(.*?[^\\])\1(?:; ?|$)/i;
 
-const magnetUriV1Pattern = /xt(?:\.1)?=urn:btih:(?<hash>[a-z0-9]{32}(?:[a-z0-9]{8})?)/i;
-const magnetUriV2Pattern = /xt(?:\.1)?=urn:btmh:1220(?<hash>[a-z0-9]{64})/i;
+const magnetUriV1Pattern = /(?:^|[?&])xt(?:\.\d+)?=urn:btih:(?<hash>[a-z0-9]{32}(?:[a-z0-9]{8})?)/i;
+const magnetUriV2Pattern = /(?:^|[?&])xt(?:\.\d+)?=urn:btmh:1220(?<hash>[a-z0-9]{64})/i;
 
 export function extractMagnetHash(magnetUri: string): string | null {
   // 先尝试使用 v1 模式匹配
@@ -243,7 +243,12 @@ export async function getRemoteTorrentFile(options: AxiosRequestConfig = {}): Pr
   if (disposition && disposition.includes("filename")) {
     let dispositionName = "";
     if (utf8FilenameRegex.test(disposition)) {
-      dispositionName = decodeUrlEncodedUtf8(utf8FilenameRegex.exec(disposition)![1]);
+      const rawUtf8Filename = utf8FilenameRegex.exec(disposition)![1];
+      try {
+        dispositionName = decodeUrlEncodedUtf8(rawUtf8Filename);
+      } catch {
+        dispositionName = rawUtf8Filename;
+      }
     } else {
       // prevent ReDos attacks by anchoring the ascii regex to string start and
       // slicing off everything before 'filename='

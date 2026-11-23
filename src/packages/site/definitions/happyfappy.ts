@@ -86,6 +86,7 @@ export const siteMetadata: ISiteMetadata = {
     requestConfig: {
       ...SchemaMetadata.search.requestConfig!,
       params: {
+        ...SchemaMetadata.search.requestConfig!.params,
         perPage: 100,
       },
     },

@@ -61,10 +61,36 @@ check("removeValueByPath: missing path is safe", true);
 
 // ── 2. toSerializable（消息解代理）───────────────────────────────────
 const plainCase: any = { keep: 1, dropUndefined: undefined, dropFn: () => 1, arr: [1, undefined, () => 2] };
-equal(
-  "toSerializable: matches JSON semantics for undefined/function",
-  JSON.stringify(toSerializable(plainCase)),
-  JSON.stringify(JSON.parse(JSON.stringify(plainCase))),
+const plainOut = toSerializable(plainCase) as any;
+check(
+  "toSerializable: strips undefined/function keys on objects",
+  plainOut !== plainCase &&
+    plainOut.keep === 1 &&
+    !("dropUndefined" in plainOut) &&
+    !("dropFn" in plainOut) &&
+    Object.keys(plainOut).sort().join(",") === "arr,keep",
+  plainOut,
+);
+check(
+  "toSerializable: maps undefined/function array items to null",
+  Array.isArray(plainOut.arr) &&
+    plainOut.arr.length === 3 &&
+    plainOut.arr[0] === 1 &&
+    plainOut.arr[1] === null &&
+    plainOut.arr[2] === null,
+  plainOut.arr,
+);
+check(
+  "toSerializable: stripped plain object is structuredClone-able",
+  (() => {
+    try {
+      structuredClone(plainOut);
+      return true;
+    } catch {
+      return false;
+    }
+  })(),
+  plainOut,
 );
 
 const reactiveState = reactive({ sites: { a: { name: "A", merge: { x: [1, 2] } } } });

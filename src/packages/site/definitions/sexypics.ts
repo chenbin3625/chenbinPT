@@ -33,11 +33,14 @@ export const siteMetadata: ISiteMetadata = {
       // Jackett 的 path 模板：
       //   {{ if .Keywords }}{{ 关键词首字母 }}/{{ .Keywords }}/{{ else }}browse/all/{{ end }}{{ sort }}/{{ type }}/
       // 即「有关键词走 <首字母>/<关键词>/<排序>/<方向>/，无关键词走 browse/all/…」；
-      // 关键词已按 keywordfilters 去空格 + 小写，故首字母直接取第一个字符。
+      // 关键词已按 keywordfilters 去空白 + 小写并做路径段编码，移除 params.keywords 避免拼入查询串。
       // 注意：关键词搜索结果无法指定页码，这里只生成第 1 页（Jackett 的第 2 页是它的兜底路径）。
-      if (keywords) {
-        const slug = keywords.replace(/ /g, "-").toLowerCase();
-        requestConfig!.url = `/${slug.charAt(0)}/${slug}/age/desc/`;
+      delete requestConfig!.params?.keywords;
+      const trimmed = keywords?.trim() ?? "";
+      if (trimmed) {
+        const slug = trimmed.replace(/\s+/g, "-").toLowerCase();
+        const firstChar = encodeURIComponent(slug.charAt(0));
+        requestConfig!.url = `/${firstChar}/${encodeURIComponent(slug)}/age/desc/`;
       } else {
         requestConfig!.url = "/browse/all/age/desc/";
       }

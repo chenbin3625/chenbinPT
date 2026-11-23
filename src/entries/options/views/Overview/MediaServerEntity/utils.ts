@@ -82,25 +82,25 @@ export function resetSearchingStateIfIdle(): boolean {
 }
 
 /**
- * N16：`searchStatus` 只保留「当前仍被勾选且启用」的媒体服务器。
+ * N16：`searchStatus` 只保留「当前仍处于启用状态」的媒体服务器。
  *
- * 原先只有换关键词时 `resetMediaServerSearchData()` 才清空，取消勾选的服务器条目会一直留着，
- * 使 `hasMore` 仍为 true（「加载更多」可点但只会搜当前勾选项，点完没有新增）。
+ * 仅临时取消勾选服务器筛选 chip 时不删除该服务器的 `searchStatus`：
+ * 重新勾选后可沿用原有分页游标继续「加载更多」，避免重复拉取第一页；
+ * 只有当服务器在设置里被禁用或删除时才清理其状态（`Index.vue` 的 `hasMore` 已按勾选过滤）。
  */
 function pruneSearchStatus() {
   const status = runtimeStore.mediaServerSearch.searchStatus;
   if (!status) return;
-  const enabledIds = metadataStore.getEnabledMediaServers.map((mediaServer) => mediaServer.id);
-  const keepIds = new Set(searchMediaServerIds.value.filter((id) => enabledIds.includes(id)));
+  const enabledIds = new Set(metadataStore.getEnabledMediaServers.map((mediaServer) => mediaServer.id));
   for (const mediaServerId of Object.keys(status)) {
-    if (!keepIds.has(mediaServerId)) {
+    if (!enabledIds.has(mediaServerId)) {
       delete status[mediaServerId];
     }
   }
 }
 
 watch(
-  () => [searchMediaServerIds.value.join(","), metadataStore.getEnabledMediaServers.map((item) => item.id).join(",")],
+  () => metadataStore.getEnabledMediaServers.map((item) => item.id).join(","),
   () => pruneSearchStatus(),
 );
 

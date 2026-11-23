@@ -83,7 +83,8 @@ const SENSITIVE_QUERY_PARAM_PATTERN =
   /([?&](?:authkey|auth_key|torrent_pass|passkey|pass_key|token|apikey|api_key|rsskey|csrf|downhash)=)[^&#]*/gi;
 
 const CREDENTIAL_LIKE_PATH_SEGMENT = /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,}$/;
-const URL_USERINFO_PATTERN = /^((?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)[^/?#\s]*@/g;
+const URL_USERINFO_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#\s"'<>]+@/g;
+const PROTOCOL_RELATIVE_USERINFO_PATTERN = /(^|[\s("'[])(\/\/)[^/?#\s"'<>]+@/g;
 
 function redactStringCredentials(text: string): string {
   // data URL 的 base64 内容本身就含 `/` 与长字母数字串，按路径规则脱敏会把图片数据改坏
@@ -91,7 +92,7 @@ function redactStringCredentials(text: string): string {
   if (/^data:/i.test(text)) {
     return text;
   }
-  let res = text.replace(URL_USERINFO_PATTERN, "$1***@");
+  let res = text.replace(URL_USERINFO_PATTERN, "$1***@").replace(PROTOCOL_RELATIVE_USERINFO_PATTERN, "$1$2***@");
   if (res.includes("/")) {
     res = res.replace(/(?:https?:\/\/[^/?#\s]+)?\/[^\s?#]*/g, (path) => {
       return path
@@ -189,6 +190,84 @@ function isBridgeParamValue(value: unknown, depth: number): boolean {
   return Object.values(value as Record<string, unknown>).every((item) => isBridgeParamValue(item, depth + 1));
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+const ALLOWED_SITE_SEARCH_KEYS = new Set(["siteId", "keyword", "searchEntry", "autoDetectOfficialGroupFromTitle"]);
+const DISALLOWED_PROTOTYPE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * 约束 `getSiteSearchResult` 桥接参数：拒绝宿主传入自定义 `requestConfig` / `selectors` /
+ * `keywordPath` / `merge` / `advanceKeywordParams`，防止越过 A4 只读边界发起任意认证请求或提取凭据。
+ */
+function validateSiteSearchParams(params: unknown): string | undefined {
+  if (!isPlainRecord(params)) {
+    return "params for 'getSiteSearchResult' must be a plain object";
+  }
+  for (const key of Object.keys(params)) {
+    if (!ALLOWED_SITE_SEARCH_KEYS.has(key)) {
+      return `params for 'getSiteSearchResult' contains unsupported field '${key}'`;
+    }
+  }
+  if (typeof params.siteId !== "string" || params.siteId.trim().length === 0) {
+    return "params.siteId for 'getSiteSearchResult' must be a non-empty string";
+  }
+  if (params.keyword !== undefined && typeof params.keyword !== "string") {
+    return "params.keyword for 'getSiteSearchResult' must be a string";
+  }
+  if (
+    params.autoDetectOfficialGroupFromTitle !== undefined &&
+    typeof params.autoDetectOfficialGroupFromTitle !== "boolean"
+  ) {
+    return "params.autoDetectOfficialGroupFromTitle for 'getSiteSearchResult' must be a boolean";
+  }
+  if (params.searchEntry !== undefined) {
+    if (!isPlainRecord(params.searchEntry)) {
+      return "params.searchEntry for 'getSiteSearchResult' must be a plain object";
+    }
+    for (const key of Object.keys(params.searchEntry)) {
+      if (key !== "id") {
+        return `params.searchEntry for 'getSiteSearchResult' may only specify 'id' (got '${key}')`;
+      }
+    }
+    if (params.searchEntry.id !== undefined) {
+      if (
+        typeof params.searchEntry.id !== "string" ||
+        params.searchEntry.id.trim().length === 0 ||
+        DISALLOWED_PROTOTYPE_KEYS.has(params.searchEntry.id)
+      ) {
+        return "params.searchEntry.id for 'getSiteSearchResult' must be a valid non-empty string";
+      }
+    }
+  }
+  return undefined;
+}
+
+/** 纵深防御：在转发给内部消息前按白名单投影 `getSiteSearchResult` 参数。 */
+function projectBridgeParams(method: string, params: unknown): unknown {
+  if (method !== "getSiteSearchResult" || !isPlainRecord(params)) {
+    return params;
+  }
+  const projected: Record<string, unknown> = {
+    siteId: params.siteId,
+  };
+  if (params.keyword !== undefined) {
+    projected.keyword = params.keyword;
+  }
+  if (params.autoDetectOfficialGroupFromTitle !== undefined) {
+    projected.autoDetectOfficialGroupFromTitle = params.autoDetectOfficialGroupFromTitle;
+  }
+  if (isPlainRecord(params.searchEntry) && typeof params.searchEntry.id === "string") {
+    projected.searchEntry = { id: params.searchEntry.id };
+  }
+  return projected;
+}
+
 /** 少数方法的标的 id 必须是固定基本类型，避免把任意对象塞进业务路径。 */
 const REQUIRED_PRIMITIVE_PARAM: Partial<Record<string, "string" | "number">> = {
   getDownloaderVersion: "string",
@@ -206,6 +285,9 @@ export function validateBridgeParams(method: string, params: unknown): string | 
   const required = REQUIRED_PRIMITIVE_PARAM[method];
   if (required && typeof params !== required) {
     return `params for '${method}' must be a ${required}`;
+  }
+  if (method === "getSiteSearchResult") {
+    return validateSiteSearchParams(params);
   }
   return undefined;
 }
@@ -381,6 +463,26 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(connect, delay);
 }
 
+function handleHandshakeFailure(currentPort: chrome.runtime.Port, logPrefix: string, e: any) {
+  if (port !== currentPort) return;
+  port = null;
+  clearReconnectTimer();
+  clearConnectionStableTimer();
+  try {
+    currentPort.disconnect();
+  } catch {
+    // ignore
+  }
+  state = "error";
+  lastError = e?.message ?? String(e);
+  console.debug(logPrefix, lastError);
+  if (enabled) {
+    scheduleReconnect();
+  } else {
+    void saveBridgeState();
+  }
+}
+
 function connect() {
   if (!enabled) {
     return;
@@ -415,6 +517,8 @@ function connect() {
     // 否则一次 connectNative 抛错就让桥接永久停在 error 状态。
     if (!isFatal) {
       scheduleReconnect();
+    } else {
+      void saveBridgeState();
     }
     return;
   }
@@ -436,27 +540,18 @@ function connect() {
           capabilities: ["bridge-v1"],
         });
       } catch (e: any) {
-        state = "error";
-        lastError = e?.message ?? String(e);
-        console.debug("[PTD] Failed to send native hello message:", lastError);
+        handleHandshakeFailure(currentPort, "[PTD] Failed to send native hello message:", e);
         return;
       }
 
       state = "connected";
+      void saveBridgeState();
       // 不在这里清零 reconnectAttempt：宿主可能「连上即退」，需等连接稳定存活后才清零
       // （见 scheduleConnectionStableReset / CONNECTION_STABLE_MS）。
       scheduleConnectionStableReset(currentPort);
     })
     .catch((e: any) => {
-      if (port !== currentPort) return;
-      state = "error";
-      lastError = e?.message ?? String(e);
-      console.debug("[PTD] Failed to get or create native instance id:", lastError);
-      try {
-        currentPort.disconnect();
-      } catch {
-        // ignore
-      }
+      handleHandshakeFailure(currentPort, "[PTD] Failed to get or create native instance id:", e);
     });
 
   currentPort.onMessage.addListener(async (msg: any) => {
@@ -488,7 +583,7 @@ function connect() {
 
     try {
       await setupOffscreenDocument();
-      const result = await sendMessage(method as any, params);
+      const result = await sendMessage(method as any, projectBridgeParams(method, params));
       if (port === currentPort) {
         // A4：返回值深度脱敏（URL 凭据参数、敏感字段名），避免把站点/下载器返回的凭据转给宿主。
         currentPort.postMessage({ type: "response", id, result: sanitizeBridgeResult(result) });
@@ -527,6 +622,7 @@ function connect() {
     if (FATAL_ERRORS.some((e) => lowerErrMsg.includes(e.toLowerCase()))) {
       state = "error";
       lastError = errMsg;
+      void saveBridgeState();
       console.debug("[PTD] Native host not available, CLI bridge disabled.");
       return;
     }
@@ -556,6 +652,7 @@ async function init() {
     disconnect(true);
     state = "disabled";
     lastError = undefined;
+    await saveBridgeState();
     return;
   }
 

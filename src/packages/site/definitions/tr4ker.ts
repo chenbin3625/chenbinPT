@@ -101,7 +101,7 @@ export const siteMetadata: ISiteMetadata = {
         attr: "value",
         filters: [torznabCategoryName(categories)],
       },
-      ext_imdb: { selector: "[name=imdbid]", attr: "value" },
+      ext_imdb: { selector: "[name=imdbid]", attr: "value", filters: [{ name: "extImdbId" }] },
       ext_tmdb: { selector: "[name=tmdbid]", attr: "value" },
       ext_tvdb: { selector: "[name=tvdbid]", attr: "value" },
     },

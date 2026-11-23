@@ -299,10 +299,12 @@ export default class Flood extends AbstractBittorrentClient {
       };
 
       let state = CTorrentState.unknown;
-      // error 优先于其它状态：Flood 的状态是数组，失败的任务可能同时带 downloading/seeding/stopped，
-      // 若把它放在最后会被前面的分支吞掉，导致错误任务永远显示为下载中/做种/已暂停。
+      // error 与 checking 优先于其它状态：Flood 的状态是数组，失败或校验中的任务会同时带
+      // downloading/seeding/stopped/complete，若放在后面会被前面的分支吞掉。
       if (statusInclude(["error"])) {
         state = CTorrentState.error;
+      } else if (statusInclude(["checking"])) {
+        state = CTorrentState.checking;
       } else if (statusInclude(["downloading"])) {
         state = CTorrentState.downloading;
       } else if (statusInclude(["seeding"])) {
@@ -312,8 +314,6 @@ export default class Flood extends AbstractBittorrentClient {
       } else if (statusInclude(["complete"])) {
         // jesec 的完成种子只带 complete 状态（不再提供 isComplete 字段），归入做种
         state = CTorrentState.seeding;
-      } else if (statusInclude(["checking"])) {
-        state = CTorrentState.checking;
       }
 
       return {
@@ -398,10 +398,8 @@ export default class Flood extends AbstractBittorrentClient {
   // ─────────────────────────────────────────────
 
   private getTorrentHash(torrent: string | CTorrent): string {
-    if (typeof torrent === "string") {
-      return torrent;
-    }
-    return (torrent.infoHash ?? torrent.id) as string;
+    const raw = typeof torrent === "string" ? torrent : torrent.infoHash || torrent.id;
+    return String(raw).toUpperCase();
   }
 
   // 文件列表: GET /api/torrents/{hash}/contents

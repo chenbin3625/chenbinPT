@@ -351,7 +351,8 @@ function multiOpen() {
 
   // #1663：未勾选站点时，按「是否处于筛选状态」决定打开范围，避免筛选后仍然打开全部站点
   if (openSiteIds.length === 0) {
-    if (tableFilterRef.value.trim().length > 0) {
+    const isFiltered = tableFilterRef.value.trim().length > 0 || quickFilter.value !== null || groupFilterActive.value;
+    if (isFiltered) {
       openSiteIds = filteredTableData.value.map((item) => item.site);
       if (openSiteIds.length === 0) {
         runtimeStore.showSnackbar(t("MyData.index.noSiteSelectedCancelOpen"), { color: "warning" });
@@ -974,8 +975,8 @@ function goToSiteSettings() {
               @click="() => flushSiteLastUserInfo([record.site])"
               type="primary"
               size="small"
-              ><template #icon><SyncOutlined /></template
-            ></a-button>
+              ><template #icon><SyncOutlined /></template>
+            </a-button>
           </a-button-group>
         </template>
       </template>

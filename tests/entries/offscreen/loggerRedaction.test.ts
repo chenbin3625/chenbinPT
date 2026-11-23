@@ -7,7 +7,7 @@
  * 修复：写入缓冲前对 `msg` 与 `data` 中的 URL 做 query 脱敏（保留 path 与 query 键名，值替换为 `***`）。
  * 语义与 `node -e` 的一次性对比一致（见修复报告）。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.stubGlobal("__BROWSER__", "chrome");
 vi.stubGlobal("chrome", {
@@ -31,7 +31,12 @@ async function loadLoggerModule() {
 
 describe("logger 脱敏（L-7）", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
     vi.useRealTimers();
   });
 
@@ -166,18 +171,13 @@ describe("logger 脱敏（L-7）", () => {
   });
 
   it("落盘到 sessionStorage 的内容也已经是脱敏后的（不会绕过脱敏）", async () => {
-    vi.useFakeTimers();
-    try {
-      const { logger } = await loadLoggerModule();
+    const { logger } = await loadLoggerModule();
 
-      logger({ msg: "url: https://pt.site/dl?passkey=secret" });
-      vi.advanceTimersByTime(500);
+    logger({ msg: "url: https://pt.site/dl?passkey=secret" });
+    vi.advanceTimersByTime(500);
 
-      const saved = sessionStorage.getItem("logger") as string;
-      expect(saved).toContain("passkey=***");
-      expect(saved).not.toContain("secret");
-    } finally {
-      vi.useRealTimers();
-    }
+    const saved = sessionStorage.getItem("logger") as string;
+    expect(saved).toContain("passkey=***");
+    expect(saved).not.toContain("secret");
   });
 });

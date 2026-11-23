@@ -62,18 +62,7 @@ export const siteMetadata: ISiteMetadata = {
     {
       name: "格式",
       key: "format",
-      options: buildCategoryOptionsFromList([
-        "FLAC",
-        "WAV",
-        "DSD",
-        "MP3",
-        "AAC",
-        "AC3",
-        "DTS",
-        "Lossless",
-        "24bit Lossless",
-        "Other",
-      ]),
+      options: buildCategoryOptionsFromList(["FLAC", "WAV", "DSD", "MP3", "AAC", "AC3", "DTS", "Other"]),
       cross: false,
     },
     {
@@ -373,7 +362,7 @@ export default class DICMusic extends GazelleJSONAPI {
   /**
    * E2-05/E2b-10：bprates 页（`/bonus.php?action=bprates`）是「每小时收益」表，无法同时提供做种体积。
    * 这里只从该页取 bonusPerHour / bonus，做种体积交回父类按 `torrents.php?type=seeding` 分页统计，
-   * 避免两个字段读同一单元格、至少一个是错值。
+   * 避免两个字段读同一单元格、至少一个是错值；两路请求各自捕获错误，互不连累。
    */
   protected override async getSeedingSize(userId: number, sizeIndex: number = 0): Promise<Partial<IUserInfo>> {
     let seedingSizeInfo: Partial<IUserInfo> = {};
@@ -388,16 +377,27 @@ export default class DICMusic extends GazelleJSONAPI {
       );
     }
 
-    await this.sleepAction(this.metadata.userInfo?.requestDelay);
+    let bonusInfo: Partial<IUserInfo> = {};
+    try {
+      await this.sleepAction(this.metadata.userInfo?.requestDelay);
 
-    const { data: bonusPage } = await this.request<Document>({
-      url: "/bonus.php?action=bprates",
-      responseType: "document",
-    });
-    const bonusInfo = this.getFieldsData(bonusPage, this.metadata.userInfo!.selectors!, [
-      "bonus",
-      "bonusPerHour",
-    ] as (keyof Partial<IUserInfo>)[]) as Partial<IUserInfo>;
+      const { data: bonusPage } = await this.request<Document>({
+        url: "/bonus.php?action=bprates",
+        responseType: "document",
+      });
+      bonusInfo = this.getFieldsData(
+        bonusPage,
+        this.metadata.userInfo!.selectors!,
+        ["bonus", "bonusPerHour"] as (keyof Partial<IUserInfo>)[],
+        { dropEmptyMisses: true },
+      ) as Partial<IUserInfo>;
+    } catch (e) {
+      logMessage(
+        `[Site] ${this.name} bonus rates fetch failed, keep seeding size info`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
+    }
 
     return { ...seedingSizeInfo, ...bonusInfo };
   }

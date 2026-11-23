@@ -319,6 +319,11 @@ let writeChain: Promise<unknown> = Promise.resolve();
  * 缓存已经被改成「从未落盘的值」，后续所有读路径都会拿到这份假数据。
  */
 function cloneAlongPath<T>(source: T, keys: Array<string | number>): T {
+  for (const key of keys) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new Error("Prototype pollution attempt detected");
+    }
+  }
   if (source === null || typeof source !== "object") {
     return source;
   }
@@ -334,9 +339,6 @@ function cloneAlongPath<T>(source: T, keys: Array<string | number>): T {
       break; // 中间层缺失/不是容器：交给 setValueByPath 自行补建
     }
     const childClone = Array.isArray(child) ? [...child] : { ...child };
-    if (key === "__proto__" || key === "constructor" || key === "prototype") {
-      throw new Error("Prototype pollution attempt detected");
-    }
     cloneCursor[key] = childClone;
     sourceCursor = child;
     cloneCursor = childClone;
@@ -473,8 +475,24 @@ onMessage("getExtStoragePath", async ({ data: { key, path, defaultValue = null }
   return await getExtStoragePathCached(key, path, defaultValue);
 });
 
+function omitUndefinedFields(obj: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) continue;
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      const proto = Object.getPrototypeOf(value);
+      if (proto === Object.prototype || proto === null) {
+        result[key] = omitUndefinedFields(value);
+        continue;
+      }
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
 function sanitizeDownloaderForContentScript(downloader: Record<string, any>): Record<string, any> {
-  return {
+  return omitUndefinedFields({
     id: downloader.id,
     type: downloader.type,
     name: downloader.name,
@@ -486,7 +504,7 @@ function sanitizeDownloaderForContentScript(downloader: Record<string, any>): Re
     excludedSites: downloader.excludedSites,
     feature: downloader.feature,
     advanceAddTorrentOptions: downloader.advanceAddTorrentOptions,
-  };
+  });
 }
 
 onMessage("getContentScriptBootstrapData", async () => {
@@ -497,23 +515,30 @@ onMessage("getContentScriptBootstrapData", async () => {
       .map(([id, downloader]) => [id, sanitizeDownloaderForContentScript({ ...downloader, id: downloader.id ?? id })]),
   );
 
+  const bootstrapDownload = omitUndefinedFields({
+    allowDownloaderFilterForSite: config?.download?.allowDownloaderFilterForSite,
+    allowDirectSendToClient: config?.download?.allowDirectSendToClient,
+    saveLastDownloader: false,
+    useQuickSendToClient: config?.download?.useQuickSendToClient,
+  });
+
+  const bootstrapConfig = omitUndefinedFields({
+    lang: config?.lang,
+    theme: config?.theme,
+    contentScript: config?.contentScript,
+    searchEntifyControl: config?.searchEntifyControl,
+    download: bootstrapDownload,
+  });
+
   return {
-    config: {
-      contentScript: config?.contentScript,
-      download: {
-        allowDownloaderFilterForSite: config?.download?.allowDownloaderFilterForSite,
-        allowDirectSendToClient: config?.download?.allowDirectSendToClient,
-        saveLastDownloader: false,
-        useQuickSendToClient: config?.download?.useQuickSendToClient,
-      },
-    },
-    metadata: {
+    config: bootstrapConfig,
+    metadata: omitUndefinedFields({
       siteHostMap: metadata?.siteHostMap ?? {},
       defaultDownloader: metadata?.defaultDownloader ?? {},
       downloaders,
       defaultSolutionId: metadata?.defaultSolutionId ?? "default",
       solutions: metadata?.solutions ?? {},
-    },
+    }),
   };
 });
 

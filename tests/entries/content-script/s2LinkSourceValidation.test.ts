@@ -13,10 +13,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { createApp, defineComponent, h, nextTick, provide, reactive } from "vue";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-// utils.ts 静态导入三个页面组件（SFC 不在 vitest 的转换范围内），只关心 utils 的逻辑，直接替身
+// utils.ts 静态导入三个页面组件；此处仅对未在下方挂载测试的组件做轻量替身
 vi.mock("@/content-script/app/pages/SocialSitePage.vue", () => ({ default: { name: "SocialSitePage" } }));
 vi.mock("@/content-script/app/pages/SiteListPage.vue", () => ({ default: { name: "SiteListPage" } }));
 vi.mock("@/content-script/app/pages/SiteDetailPage.vue", () => ({ default: { name: "SiteDetailPage" } }));
@@ -24,16 +25,37 @@ vi.mock("@/content-script/app/pages/SiteDetailPage.vue", () => ({ default: { nam
 // updatePageType / getTrustedLinkHosts 会读 metadata store（内部走 extStorage），这里给一个可控替身
 const mocks = vi.hoisted(() => ({
   siteHostMap: {} as Record<string, string>,
+  sendMessage: vi.fn(),
 }));
+vi.mock("@/messages.ts", () => ({ sendMessage: mocks.sendMessage, onMessage: vi.fn() }));
 vi.mock("@/options/stores/metadata.ts", () => ({
   useMetadataStore: () => ({
     siteHostMap: mocks.siteHostMap,
     getSiteUserConfig: async () => ({}),
+    getEnabledDownloadersBySite: () => [{ id: "d1", name: "d1", enabled: true }],
+    defaultDownloader: {},
   }),
 }));
 
-// 内容脚本侧 messages.ts 依赖构建期注入的 __BROWSER__（vite define），vitest 下需自行补上
-(globalThis as any).__BROWSER__ = "chrome";
+// 内容脚本侧 messages.ts / Pinia 持久化依赖构建期 __BROWSER__ 与 chrome API
+vi.stubGlobal("__BROWSER__", "chrome");
+vi.stubGlobal("chrome", {
+  runtime: {
+    id: "test",
+    getURL: (path: string) => `chrome-extension://test/${path}`,
+    sendMessage: () => Promise.resolve(undefined),
+    onMessage: { addListener: () => undefined, removeListener: () => undefined },
+  },
+  storage: {
+    local: {
+      get: () => Promise.resolve({}),
+      set: () => Promise.resolve(),
+      remove: () => Promise.resolve(),
+      onChanged: { addListener: () => undefined, removeListener: () => undefined },
+    },
+    onChanged: { addListener: () => undefined, removeListener: () => undefined },
+  },
+});
 
 const {
   CUSTOM_DRAG_MIME,
@@ -101,6 +123,7 @@ let showSnackbar: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   setActivePinia(createPinia());
   showSnackbar = vi.spyOn(useRuntimeStore(), "showSnackbar").mockImplementation(() => {});
+  mocks.sendMessage.mockReset();
 
   siteInstance.value = makeSiteInstance();
   mocks.siteHostMap = {
@@ -435,11 +458,80 @@ describe("S-2 · 页面解析出的链接（下载列里可以是异站 <a href>
     expect(showSnackbar).not.toHaveBeenCalled();
   });
 
-  it("详情页链接被 fixLink 拒为空串（危险 scheme）时，空串不会被当成可信下载地址放行", async () => {
+  it("详情页链接被 fixLink 拒为空串（危险 scheme）时，SiteDetailPage 以 !link 拦截并提示无法解析", async () => {
     // 站点会返回空串，且 url 是当前页面（可信）→ host 校验无从拒绝，
     // 因此 SiteDetailPage 必须用真值判定（!link）拦下来，而不是 typeof === "undefined"
     const emptyLink = makeTorrent({ link: "", url: "https://pt.example.com/details.php?id=1" });
     await expect(ensureTrustedTorrentLink(emptyLink, SITE_ID)).resolves.toBe(true);
-    expect(emptyLink.link).toBe(""); // 交回页面层：!link ⇒ 「无法解析当前页面种子链接」
+
+    const { default: SiteDetailPage } = await vi.importActual<{ default: any }>(
+      "@/content-script/app/pages/SiteDetailPage.vue",
+    );
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const { antdInstance } = await import("@/options/plugins/antd.ts");
+    const { useConfigStore } = await import("@/options/stores/config.ts");
+
+    const pinia = createPinia();
+    pinia.use(({ store }) => {
+      (store as any).$onReady = async () => {};
+    });
+    setActivePinia(pinia);
+    const configStore = useConfigStore(pinia);
+    configStore.contentScript.stackedButtons = true;
+    const runtimeSnackbar = vi.spyOn(useRuntimeStore(pinia), "showSnackbar").mockImplementation(() => undefined);
+
+    siteInstance.value = {
+      ...makeSiteInstance(),
+      transformDetailPage: vi.fn(async () => emptyLink),
+    } as any;
+
+    const remoteDialog = reactive({ show: false, torrents: [] as ITorrent[], isDefaultSend: false });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const Root = defineComponent({
+      setup() {
+        provide("ptd_data", { siteId: SITE_ID });
+        provide("remoteDownloadDialogData", remoteDialog);
+        return () => h(SiteDetailPage);
+      },
+    });
+    const app = createApp(Root).use(pinia).use(i18nInstance).use(antdInstance);
+
+    const settle = async () => {
+      for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+      await nextTick();
+    };
+
+    try {
+      app.mount(host);
+      await settle();
+
+      const cannotParseMsg = i18nInstance.global.t("contentScript.cannotParseDetailLink");
+      const actionLabels = [
+        i18nInstance.global.t("contentScript.speedDial.copyLink"),
+        i18nInstance.global.t("contentScript.speedDial.pushTo"),
+      ];
+
+      for (const label of actionLabels) {
+        const button = Array.from(host.querySelectorAll<HTMLElement>(".ant-float-btn")).find(
+          (btn) => btn.querySelector(".ant-float-btn-description")?.textContent?.trim() === label,
+        );
+        expect(button, `应渲染详情页按钮「${label}」`).toBeDefined();
+
+        runtimeSnackbar.mockClear();
+        mocks.sendMessage.mockClear();
+        button!.click();
+        await settle();
+
+        expect(runtimeSnackbar, `点击「${label}」应提示无法解析链接`).toHaveBeenCalledTimes(1);
+        expect(runtimeSnackbar).toHaveBeenCalledWith(cannotParseMsg, { color: "error" });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(remoteDialog.show).toBe(false);
+      }
+    } finally {
+      app.unmount();
+      host.remove();
+      runtimeSnackbar.mockRestore();
+    }
   });
 });

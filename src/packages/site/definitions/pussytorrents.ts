@@ -55,7 +55,7 @@ export const siteMetadata: ISiteMetadata = {
       const baseUrl = requestConfig!.url || "";
       if (keywords) {
         delete requestConfig!.params?.keywords;
-        keywords = keywords.replace(/(^|\s)-/, "");
+        keywords = keywords.replace(/(^|\s)-/g, "$1");
         requestConfig!.url = baseUrl + "?query=" + encodeURIComponent(keywords);
       }
       return requestConfig!;
@@ -162,16 +162,10 @@ export const siteMetadata: ISiteMetadata = {
             bSortable_6: true,
             bSortable_7: true,
             bSortable_8: true,
-            userID: "PLACEHOLDER",
+            userID: "$numericId$",
           },
         },
-        requestConfigTransformer: (config: any, lastUserInfo: any) => {
-          if (lastUserInfo && lastUserInfo.numericId) {
-            config.data.userID = lastUserInfo.numericId;
-          }
-          return config;
-        },
-        assertion: { id: "userID" },
+        assertion: { numericId: "data.userID" },
         fields: ["seeding", "seedingSize"],
       },
       {
@@ -219,16 +213,10 @@ export const siteMetadata: ISiteMetadata = {
             bSortable_2: true,
             bSortable_3: true,
             bSortable_4: true,
-            userID: "PLACEHOLDER",
+            userID: "$numericId$",
           },
         },
-        requestConfigTransformer: (config: any, lastUserInfo: any) => {
-          if (lastUserInfo && lastUserInfo.numericId) {
-            config.data.userID = lastUserInfo.numericId;
-          }
-          return config;
-        },
-        assertion: { id: "userID" },
+        assertion: { numericId: "data.userID" },
         fields: ["uploads"],
       },
     ],

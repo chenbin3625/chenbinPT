@@ -46,6 +46,7 @@ export async function getDownloaderMetaData(type: string): Promise<TorrentClient
  * 调用方（如 offscreen 的 downloaderInstanceCache）仍可自行决定是否复用实例。
  */
 const downloaderInstanceCache = new Map<string, AbstractBittorrentClient>();
+const downloaderPendingCache = new Map<string, Promise<AbstractBittorrentClient>>();
 const MAX_CACHED_DOWNLOADER_INSTANCES = 16;
 
 function stableSerialize(value: any): string {
@@ -100,23 +101,37 @@ export async function getDownloader(config: DownloaderBaseConfig): Promise<Abstr
     return cached;
   }
 
-  const DownloaderClass = (await getDownloaderModule(config.type)).default;
-
-  // @ts-expect-error
-  // 原因：DownloaderClass 来自动态 import 的实体模块，其构造签名无法被静态收窄（构造后已断言为 AbstractBittorrentClient）
-  const instance = new DownloaderClass(config) as AbstractBittorrentClient;
-
-  downloaderInstanceCache.set(cacheKey, instance);
-  if (downloaderInstanceCache.size > MAX_CACHED_DOWNLOADER_INSTANCES) {
-    // 包级缓存不拥有实例的完整生命周期：offscreen 还可能在自己的缓存中持有它。
-    // 自动淘汰只能移除本缓存引用；真正不再使用时由持有者调用 releaseDownloaderInstance()。
-    const oldestKey = downloaderInstanceCache.keys().next().value;
-    if (oldestKey !== undefined && oldestKey !== cacheKey) {
-      downloaderInstanceCache.delete(oldestKey);
-    }
+  const pending = downloaderPendingCache.get(cacheKey);
+  if (pending) {
+    return await pending;
   }
 
-  return instance;
+  const createPromise = (async () => {
+    const DownloaderClass = (await getDownloaderModule(config.type)).default;
+
+    // @ts-expect-error
+    // 原因：DownloaderClass 来自动态 import 的实体模块，其构造签名无法被静态收窄（构造后已断言为 AbstractBittorrentClient）
+    const instance = new DownloaderClass(config) as AbstractBittorrentClient;
+
+    downloaderInstanceCache.set(cacheKey, instance);
+    if (downloaderInstanceCache.size > MAX_CACHED_DOWNLOADER_INSTANCES) {
+      // 包级缓存不拥有实例的完整生命周期：offscreen 还可能在自己的缓存中持有它。
+      // 自动淘汰只能移除本缓存引用；真正不再使用时由持有者调用 releaseDownloaderInstance()。
+      const oldestKey = downloaderInstanceCache.keys().next().value;
+      if (oldestKey !== undefined && oldestKey !== cacheKey) {
+        downloaderInstanceCache.delete(oldestKey);
+      }
+    }
+
+    return instance;
+  })().finally(() => {
+    if (downloaderPendingCache.get(cacheKey) === createPromise) {
+      downloaderPendingCache.delete(cacheKey);
+    }
+  });
+
+  downloaderPendingCache.set(cacheKey, createPromise);
+  return await createPromise;
 }
 
 export function getDownloaderIcon(type: string) {

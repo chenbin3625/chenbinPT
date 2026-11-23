@@ -157,9 +157,15 @@ describe("选择器层行为契约（自研实现 vs 冻结的 Sizzle 2.3.10）"
   });
 
   it("原生伪类 :first-of-type 按原生语义透传 —— audiobookbay 形状", () => {
-    setup(`<table id="t1"><tbody><tr id="r1"><td id="c11">a</td><td id="c12">b</td></tr></tbody></table>`);
-    // 原生 :first-of-type 每行都会命中第一个 td，而不是全局只取第 1 个
-    expect(ids(both("#t1 tbody tr td:first-of-type"))).toEqual(["c11"]);
+    setup(`
+      <table id="t1"><tbody>
+        <tr id="r1"><td id="c11">a</td><td id="c12">b</td></tr>
+        <tr id="r2"><td id="c21">c</td><td id="c22">d</td></tr>
+      </tbody></table>
+    `);
+    // 原生 :first-of-type 每行都会命中第一个 td，而不是像位置伪类 :first 那样全局只取第 1 个
+    expect(ids(both("#t1 tbody tr td:first-of-type"))).toEqual(["c11", "c21"]);
+    expect(ids(both("#t1 tbody tr td:first"))).toEqual(["c11"]);
   });
 
   it("属性前缀匹配 + :contains + :first 组合 —— bibliotik 形状", () => {

@@ -485,10 +485,11 @@ export default class GazelleJSONAPI extends GazelleBase {
     }
 
     const artistField = group.artist ? `${group.artist} - ` : "";
+    const releaseTypeField = group.releaseType ? ` [${group.releaseType}]` : "";
     return {
       site: this.metadata.id, // 补全种子的 site 属性
       id: torrent.torrentId,
-      title: `${artistField}${extractTextFromHtmlFragment(group.groupName)} [${group.groupYear}] [${group.releaseType}]`,
+      title: `${artistField}${extractTextFromHtmlFragment(group.groupName)} [${group.groupYear}]${releaseTypeField}`,
       subTitle:
         `${torrent.format} / ${torrent.encoding} / ${torrent.media}` +
         (torrent.hasLog ? ` / Log(${torrent.logScore})` : "") +
@@ -624,7 +625,9 @@ export default class GazelleJSONAPI extends GazelleBase {
     // H-6 家族：`{status:"success"}` 但没有 response 时不能把全空字段当成功写回（见 assertUserInfoFieldsMatched）
     this.assertUserInfoFieldsMatched(apiInfo, fields);
 
-    return this.getFieldsData(apiInfo, this.metadata.userInfo!.selectors!, fields) as Partial<IUserInfo>;
+    return this.getFieldsData(apiInfo, this.metadata.userInfo!.selectors!, fields, {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected async getUserExtendInfo(userId: number): Promise<Partial<IUserInfo>> {
@@ -648,17 +651,19 @@ export default class GazelleJSONAPI extends GazelleBase {
     // H-6 家族：action=user 同样只查了 status，零命中时 joinTime/lastAccessAt 等会被空值覆盖
     this.assertUserInfoFieldsMatched(apiUser, fields);
 
-    return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, fields) as Partial<IUserInfo>;
+    return this.getFieldsData(apiUser, this.metadata.userInfo!.selectors!, fields, {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected cleanupUserInfo(flushUserInfo: IUserInfo): IUserInfo {
-    if (!flushUserInfo.bonus) {
+    if ((flushUserInfo.bonus as unknown) === "") {
       delete flushUserInfo.bonus;
     }
-    if (!flushUserInfo.bonusPerHour) {
+    if ((flushUserInfo.bonusPerHour as unknown) === "") {
       delete flushUserInfo.bonusPerHour;
     }
-    if (!flushUserInfo.perfectFlacs) {
+    if ((flushUserInfo.perfectFlacs as unknown) === "") {
       delete flushUserInfo["perfectFlacs"];
     }
 

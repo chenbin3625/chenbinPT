@@ -22,6 +22,26 @@ import {
   siteErrorLogData,
 } from "../utils";
 
+/**
+ * 解析 BeyondHD 的时长格式（如 "1Y 2M 3D 1h 7m 1s"、"1h 7m 1s"、"5m 10s"）：
+ * 区分大小写的大写 M（月）与小写 m（分钟），分别组装日期与时间段后再交由 convertIsoDurationToSeconds。
+ */
+function parseBeyondHDDuration(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const datePart = (trimmed.match(/\d+(?:[YyWwDd]|M)/g) ?? []).map((token) => token.toUpperCase()).join("");
+  const timePart = (trimmed.match(/\d+(?:[HhSs]|m)/g) ?? []).map((token) => token.toUpperCase()).join("");
+  if (!datePart && !timePart) {
+    return undefined;
+  }
+
+  const isoDuration = `P${datePart}${timePart ? `T${timePart}` : ""}`;
+  return convertIsoDurationToSeconds(isoDuration);
+}
+
 export const siteMetadata: ISiteMetadata = {
   version: 2,
   id: "beyondhd",
@@ -219,7 +239,7 @@ export const siteMetadata: ISiteMetadata = {
       seeders: { selector: "seeders" },
       leechers: { selector: "leechers" },
       completed: { selector: "times_completed" },
-      comments: { text: "N/A" },
+      // API 不返回评论数，留空（避免以字符串 "N/A" 污染数字字段）
       category: { selector: "category" },
       // tags 交由 parseTorrentRowForTags 处理
       ext_imdb: { selector: "imdb_id" },
@@ -293,12 +313,15 @@ export const siteMetadata: ISiteMetadata = {
       },
       leeching: {
         selector: [".button-right .bhd-block:nth-child(2) .bhd-tidbit-icon"],
+        filters: [{ name: "parseNumber" }],
       },
       snatches: {
         selector: [".button-right .bhd-block:nth-child(4) .bhd-tidbit-icon"],
+        filters: [{ name: "parseNumber" }],
       },
       trueRatio: {
         selector: ["td.bhd-user-left:contains('Real Ratio') + td span.badge-user"],
+        filters: [{ name: "parseNumber" }],
       },
       joinTime: {
         selector: ["div.button-holder h5:contains('Member Since: ')"],
@@ -324,26 +347,12 @@ export const siteMetadata: ISiteMetadata = {
       },
       seedingTime: {
         selector: ["td.bhd-user-left:contains('Total Seedtime') + td span.badge-user"],
-        // 该站点提供 "1Y 2M 3D 1h 7m 1s"，需转换至秒存储
-        elementProcess: (element: HTMLElement) => {
-          const raw = element.textContent?.trim() || "";
-          const isoDuration =
-            "P" +
-            raw
-              .replace(/\s+/g, "") // 去除空格: "1Y2M3D1h7m1s"
-              .replace(/(\d+[YMD])(\d+[hms])/i, "$1T$2"); // 在时间部分前加T: "P1Y2M3DT1h7m1s"
-
-          return convertIsoDurationToSeconds(isoDuration);
-        },
+        // 该站点提供 "1Y 2M 3D 1h 7m 1s"，需区分大小写 M/m 并转换至秒存储
+        elementProcess: (element: HTMLElement) => parseBeyondHDDuration(element.textContent ?? ""),
       },
       averageSeedingTime: {
         selector: ["td.bhd-user-left:contains('Average Seedtime') + td span.badge-user"],
-        elementProcess: (element: HTMLElement) => {
-          const raw = element.textContent?.trim() || "";
-          const isoDuration = "P" + raw.replace(/\s+/g, "").replace(/(\d+[YMD])(\d+[hms])/i, "$1T$2");
-
-          return convertIsoDurationToSeconds(isoDuration);
-        },
+        elementProcess: (element: HTMLElement) => parseBeyondHDDuration(element.textContent ?? ""),
       },
       specialSeedingSize: {
         selector: ["td.bhd-user-left:contains('Special Seed Size') + td span.badge-user"],
@@ -575,16 +584,13 @@ export default class BeyondHD extends PrivateSite {
       // 获取基础信息
       flushUserInfo = toMerged(flushUserInfo, await this.getUserBaseInfoFromSite());
 
-      // 获取扩展信息
-      if (lastUserInfo !== null && lastUserInfo.name && lastUserInfo.id) {
+      // 获取扩展信息：优先使用本次首页解析出的最新 name/id，缺失时再回落到 lastUserInfo
+      const userName = flushUserInfo.name || lastUserInfo?.name;
+      const userId = flushUserInfo.id || lastUserInfo?.id;
+      if (userName && userId) {
         flushUserInfo = toMerged(
           flushUserInfo,
-          await this.getUserExtendInfoFromDetails(lastUserInfo.name, lastUserInfo.id as string),
-        );
-      } else {
-        flushUserInfo = toMerged(
-          flushUserInfo,
-          await this.getUserExtendInfoFromDetails(flushUserInfo.name as string, flushUserInfo.id as string),
+          await this.getUserExtendInfoFromDetails(String(userName), String(userId)),
         );
       }
 
@@ -622,7 +628,9 @@ export default class BeyondHD extends PrivateSite {
       throw new Error(`用户信息页未命中 id/name（${matches.declared} 个 selector 全部落空），页面可能已改版`);
     }
 
-    return this.getFieldsData(dataDocument, selectors, ["id", "name"]) as Partial<IUserInfo>;
+    return this.getFieldsData(dataDocument, selectors, ["id", "name"], {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected async getUserExtendInfoFromDetails(userName: string, userId: string): Promise<Partial<IUserInfo>> {
@@ -632,7 +640,7 @@ export default class BeyondHD extends PrivateSite {
     });
 
     const selectors = this.metadata.userInfo?.selectors!;
-    const selectorFields = Object.keys(omit(selectors, ["id", "name"]));
+    const selectorFields = Object.keys(omit(selectors, ["id", "name", "bonusPerHour"]));
     // E1b-C12 / H-6：关键字段（uploaded/downloaded）未命中由 checkUserInfoSelectorMatches 直接抛错；
     // 其余字段全落空时也抛错，避免把空值当成 success 写进历史。
     const matches = this.checkUserInfoSelectorMatches(dataDocument, selectors, selectorFields);
@@ -642,13 +650,17 @@ export default class BeyondHD extends PrivateSite {
       );
     }
 
-    return this.getFieldsData(dataDocument, selectors, selectorFields) as Partial<IUserInfo>;
+    return this.getFieldsData(dataDocument, selectors, selectorFields, {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected async getBonusPerHourFromBonus(): Promise<Partial<IUserInfo>> {
     const { data: dataDocument } = await this.request<Document>({ url: "/bp", responseType: "document" });
 
-    return this.getFieldsData(dataDocument, this.metadata.userInfo?.selectors!, ["bonusPerHour"]) as Partial<IUserInfo>;
+    return this.getFieldsData(dataDocument, this.metadata.userInfo?.selectors!, ["bonusPerHour"], {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   public override async request<T>(axiosConfig: AxiosRequestConfig, checkLogin = true): Promise<AxiosResponse<T>> {

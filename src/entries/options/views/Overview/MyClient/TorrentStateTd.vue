@@ -23,16 +23,16 @@ const { t } = useI18n();
 const stateDisplay: Record<CTorrentState, { color: string; icon: Component; label: string }> = {
   [CTorrentState.downloading]: { color: "blue", icon: DownloadOutlined, label: "MyClient.state.downloading" },
   [CTorrentState.seeding]: { color: "green", icon: UploadOutlined, label: "MyClient.state.seeding" },
-  [CTorrentState.paused]: { color: "grey", icon: PauseOutlined, label: "MyClient.state.paused" },
+  [CTorrentState.paused]: { color: "default", icon: PauseOutlined, label: "MyClient.state.paused" },
   [CTorrentState.queued]: { color: "orange", icon: ClockCircleOutlined, label: "MyClient.state.queued" },
   [CTorrentState.checking]: { color: "cyan", icon: SyncOutlined, label: "MyClient.state.checking" },
   [CTorrentState.error]: { color: "red", icon: ExclamationCircleOutlined, label: "MyClient.state.error" },
-  [CTorrentState.unknown]: { color: "grey", icon: QuestionCircleOutlined, label: "MyClient.state.unknown" },
+  [CTorrentState.unknown]: { color: "default", icon: QuestionCircleOutlined, label: "MyClient.state.unknown" },
 };
 </script>
 
 <template>
-  <a-tag
+  <a-tag :color="stateDisplay[item.state]?.color ?? 'default'"
     ><component :is="stateDisplay[item.state]?.icon" class="torrent-state__icon" />
     {{ t(stateDisplay[item.state]?.label ?? "MyClient.state.unknown") }}
   </a-tag>

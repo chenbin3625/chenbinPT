@@ -1,6 +1,7 @@
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import { NeedLoginError } from "../types";
+import { isElementNode } from "../schemas/AbstractBittorrentSite";
 import PrivateSite from "../schemas/AbstractPrivateSite";
 
 const categoryMap: Record<string, string> = {
@@ -163,11 +164,11 @@ export const siteMetadata: ISiteMetadata = {
       {
         requestConfig: { url: "/api/v1/me/stats" },
         selectors: {
-          uploaded: { selector: "billed_uploaded" },
-          downloaded: { selector: "billed_downloaded" },
+          uploaded: { selector: "billed_uploaded_bytes" },
+          downloaded: { selector: "billed_downloaded_bytes" },
           ratio: { selector: "ratio", filters: [Number] },
-          trueUploaded: { selector: "raw_uploaded" },
-          trueDownloaded: { selector: "raw_downloaded" },
+          trueUploaded: { selector: "raw_uploaded_bytes" },
+          trueDownloaded: { selector: "raw_downloaded_bytes" },
           seeding: { selector: "seeding" },
           leeching: { selector: "leeching" },
           snatches: { selector: "completions" },
@@ -287,13 +288,25 @@ export default class ColaPT extends PrivateSite {
     row: Element | Document | object,
     searchConfig: ISearchInput,
   ): Partial<ITorrent> {
-    if (row instanceof Element) return super.parseTorrentRowForTags(torrent, row, searchConfig);
+    if (isElementNode(row)) return super.parseTorrentRowForTags(torrent, row, searchConfig);
 
     // promotion 的 num/den 就是「实际计费比例」，直接作为量系数，标签交给归一层派生
-    const promotion = (row as IReelCoreGroup).versions[0].promotion;
+    const promotion = (row as Partial<IReelCoreGroup>).versions?.[0]?.promotion;
     if (promotion) {
-      torrent.downloadVolumeFactor = promotion.download.num / promotion.download.den;
-      torrent.uploadVolumeFactor = promotion.upload.num / promotion.upload.den;
+      if (
+        typeof promotion.download?.num === "number" &&
+        typeof promotion.download?.den === "number" &&
+        promotion.download.den > 0
+      ) {
+        torrent.downloadVolumeFactor = promotion.download.num / promotion.download.den;
+      }
+      if (
+        typeof promotion.upload?.num === "number" &&
+        typeof promotion.upload?.den === "number" &&
+        promotion.upload.den > 0
+      ) {
+        torrent.uploadVolumeFactor = promotion.upload.num / promotion.upload.den;
+      }
     }
 
     return torrent;

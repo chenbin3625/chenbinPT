@@ -11,7 +11,7 @@ import { SchemaMetadata } from "../schemas/NexusPHP";
  * `import { userInfoWithInvitesInUserDetailsPage } from "./kunlun.ts"`，把活站配置绑在死站文件上
  * （kunlun 被清理时本文件在 import 阶段即失败），且该对象是模块级共享可变对象。
  * 这里内联一份等价定义（基于 NexusPHP SchemaMetadata，只在 userdetails 页追加 invites 字段），
- * 与 52pt / yinguskg 的处理方式一致；选择器逐字取自 kunlun 原导出，未做猜测。
+ * 与 52pt / yinguskg 的处理方式一致；选择器收窄到 rowhead 邻接单元格，避免匹配外层布局 td。
  */
 const userInfoWithInvitesInUserDetailsPage = {
   ...SchemaMetadata.userInfo,
@@ -20,12 +20,9 @@ const userInfoWithInvitesInUserDetailsPage = {
     invites: {
       selector: [
         "td.rowhead:contains('邀请') + td",
+        "td.rowhead:contains('邀請') + td",
         "td.rowhead:contains('Invites') + td",
         "td.rowhead:contains('Available') + td",
-        "td:contains('邀请')",
-        "td:contains('邀請')",
-        "td:contains('Invites')",
-        "td:contains('Available')",
       ],
       filters: [
         (query: string) => {

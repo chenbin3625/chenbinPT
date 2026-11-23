@@ -143,7 +143,6 @@ describe("搜索结果表：优惠列", () => {
     const pinia = prepareOptionsPinia();
     const { useConfigStore } = await import("@/options/stores/config.ts");
     const configStore = useConfigStore(pinia);
-    configStore.searchEntifyControl.promotionDisplay = promotionDisplay;
     // 关掉「记住表格行为」：否则联动逻辑会调 updateTableBehavior → $save()，
     // 而测试用的 pinia 没有持久化插件（与真实运行时无关，这里只验证列配置本身）
     configStore.saveTableBehavior = false;
@@ -157,6 +156,10 @@ describe("搜索结果表：优惠列", () => {
     const { default: SearchEntityView } = await import("@/options/views/Overview/SearchEntity/Index.vue");
     const view = mountOptionsView(SearchEntityView, { pinia, plugins: [router] });
     await view.settle(80);
+
+    // 挂载完成后切换模式，验证非 immediate 的 showPromoColumn 监听在模式切换时自动增删「优惠」列
+    configStore.searchEntifyControl.promotionDisplay = promotionDisplay;
+    await view.settle(40);
 
     const runtimeModule = await import("@/options/stores/runtime.ts");
     const runtimeStore = runtimeModule.useRuntimeStore(pinia);

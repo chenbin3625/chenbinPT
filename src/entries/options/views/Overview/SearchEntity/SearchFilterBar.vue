@@ -176,13 +176,14 @@ function setCustomDate(values: [dayjs.Dayjs, dayjs.Dayjs] | null) {
   updateTableFilterValueFn();
 }
 
-const customDateValue = computed<[dayjs.Dayjs, dayjs.Dayjs | null] | null>(() => {
+const customDateValue = computed<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(() => {
   const [start, end] = advanceFilterDictRef.value.time ?? [-Infinity, Infinity];
   if (Number.isFinite(start) && Number.isFinite(end)) return [dayjs(start), dayjs(end)];
-  // OPTIONSOVERVIEW-8：预设的上界是 Infinity，而 a-range-picker 不接受非有限值 —— 直接给 null
-  // 会让选中预设后区间选择器整个空白，用户看不出当前生效的起点。这里退化成「只有起点、终点留空」，
-  // 既显示生效的起点，又保留继续挑选自定义区间的能力；两端都无效时（未筛选）仍是空的占位。
+  // OPTIONSOVERVIEW-8：单边日期筛选有一端为 ±Infinity，而 a-range-picker 不接受非有限值 —— 直接给 null
+  // 会让选择器整个空白，用户看不出当前生效的边界。这里保留有限一端、另一端留空，
+  // 两端都无效时（未筛选）仍是空的占位。
   if (Number.isFinite(start)) return [dayjs(start), null];
+  if (Number.isFinite(end)) return [null, dayjs(end)];
   return null;
 });
 
@@ -210,10 +211,12 @@ function firstValue(field: FilterField): string {
     const selected = selectedDate();
     if (selected === "all") return "";
     if (selected !== "custom") return t(`SearchEntity.index.filters.dates.${selected}`);
-    const [start, end] = advanceFilterDictRef.value.time;
-    // OPTIONSOVERVIEW-8：预设的上界是 Infinity，跨天后预设名匹配不上而落到这里；
-    // 与人数/体积的自定义分支一致地显示 ∞，避免 formatDate(Infinity) 渲染出 "Invalid Date"。
-    return `${formatDate(start, "yyyy-MM-dd")} ~ ${Number.isFinite(end) ? formatDate(end, "yyyy-MM-dd") : "∞"}`;
+    const [start, end] = advanceFilterDictRef.value.time ?? [-Infinity, Infinity];
+    // OPTIONSOVERVIEW-8：上/下界均可为 ±Infinity（例如手输 `time:-20260401` 仅设上界，或预设跨天后上界为 Infinity）；
+    // 非有限端避免传给 formatDate，防止渲染出 "-Infinity" 或 "Invalid Date"。
+    const startText = Number.isFinite(start) ? formatDate(start, "yyyy-MM-dd") : "";
+    const endText = Number.isFinite(end) ? formatDate(end, "yyyy-MM-dd") : "∞";
+    return startText ? `${startText} ~ ${endText}` : `~ ${endText}`;
   }
   const selected = selectedThreshold(field);
   if (selected === "all") return "";

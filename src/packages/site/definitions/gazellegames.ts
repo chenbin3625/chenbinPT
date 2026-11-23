@@ -24,10 +24,12 @@ import GazelleJSONAPI from "../schemas/GazelleJSONAPI.ts";
 import { SchemaMetadata, jsonResponse, infoJsonResponse, userJsonResponse } from "../schemas/GazelleJSONAPI.ts";
 
 interface groupResult {
-  Artists: {
-    id: number;
-    name: string;
-  }[];
+  Artists?:
+    | {
+        id: number;
+        name: string;
+      }[]
+    | null;
   Year: string;
   Torrents?: Record<string, groupTorrent>;
 }
@@ -135,6 +137,7 @@ export const siteMetadata: ISiteMetadata = {
     keywordPath: "params.searchstr",
     requestConfig: {
       url: "/api.php",
+      responseType: "json",
       params: {
         request: "search",
         search_type: "torrents",
@@ -244,22 +247,36 @@ export default class GazelleGames extends GazelleJSONAPI {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
-    const token = this.userConfig.inputSetting?.token;
-    if (!token) {
-      // M-7：未填写 API Key 时直接拦截（与 huno / beyondhd 一致），而不是带空 key 请求后被判成「0 结果」
-      throw new NoUserInputError("Token");
+    const targetUrl = this.resolveRequestTarget(axiosConfig);
+    if (!targetUrl || !this.isTrustedSiteUrl(targetUrl)) {
+      throw new Error(`Rejected request URL outside site host allowlist for ${this.metadata.id}`);
     }
 
-    // 设置默认的 responseType，这样其他配置不需要显式声明
-    axiosConfig.responseType = "json";
+    const config: AxiosRequestConfig = { ...axiosConfig };
+    let isApiRequest = false;
+    try {
+      const pathname = new URL(targetUrl).pathname;
+      isApiRequest = pathname === "/api.php" || pathname.endsWith("/api.php");
+    } catch {
+      isApiRequest = false;
+    }
 
-    // 在请求的 headers 中添加 存取令牌
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      "X-API-Key": token,
-    };
+    // 仅对 /api.php 注入 X-API-Key 与 JSON responseType，保留父类对 HTML 页面的 document 请求
+    if (isApiRequest) {
+      const token = this.userConfig.inputSetting?.token?.trim();
+      if (!token) {
+        // M-7：未填写 API Key 时直接拦截（与 huno / beyondhd 一致），而不是带空 key 请求后被判成「0 结果」
+        throw new NoUserInputError("Token");
+      }
 
-    return super.request<T>(axiosConfig, checkLogin);
+      config.responseType = "json";
+      config.headers = {
+        ...(config.headers ?? {}),
+        "X-API-Key": token,
+      };
+    }
+
+    return super.request<T>(config, checkLogin);
   }
 
   protected override async requestApi<T extends jsonResponse>(
@@ -268,6 +285,7 @@ export default class GazelleGames extends GazelleJSONAPI {
   ): Promise<AxiosResponse<T>> {
     return await this.request<T>({
       url: "/api.php",
+      responseType: "json",
       params: { request: action, ...params },
     });
   }
@@ -323,7 +341,7 @@ export default class GazelleGames extends GazelleJSONAPI {
         }
 
         // GGn 每一个平台对应一个 Artist，每一个种子一般只有一个平台
-        const platform = group.Artists.length > 0 ? group.Artists[0].name : "";
+        const platform = Array.isArray(group.Artists) && group.Artists.length > 0 ? (group.Artists[0]?.name ?? "") : "";
 
         results.push({
           site: this.metadata.id, // 补全种子的 site 属性

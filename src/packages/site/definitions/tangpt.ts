@@ -140,6 +140,7 @@ export const siteMetadata: ISiteMetadata = {
         { value: 36, name: "UBWEB" },
         { value: 38, name: "CSPT" },
       ],
+      cross: { mode: "append" },
     },
     CategoryIncldead,
     CategorySpstate,
@@ -165,7 +166,7 @@ export const siteMetadata: ISiteMetadata = {
       id: 1,
       name: "Peasant",
       privilege:
-        "	被降级的用户，他们有30天时间来提升分享率，否则他们会被踢。不能发表趣味盒内容；不能申请友情链接；不能上传字幕。",
+        "\t被降级的用户，他们有30天时间来提升分享率，否则他们会被踢。不能发表趣味盒内容；不能申请友情链接；不能上传字幕。",
     },
     {
       id: 2,

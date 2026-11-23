@@ -109,9 +109,9 @@ interface IBangumiApiResp {
   id: number;
   name: string;
   name_cn: string;
-  images: Record<"small" | "grid" | "large" | "medium" | "common", string>;
-  infobox: Array<{ key: string; value: string | Array<{ v: string }> }>;
-  ranking: {
+  images?: Record<"small" | "grid" | "large" | "medium" | "common", string>;
+  infobox?: Array<{ key: string; value: string | Array<{ v?: string }> }> | null;
+  rating?: {
     rank: number;
     total: number;
     count: Record<"1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10", number>;
@@ -153,14 +153,14 @@ export async function fetchInformation(
     });
 
     const titles = [data.name_cn ?? "", data.name ?? ""];
-    // 处理 infobox 中的别名
-    const aka = data.infobox
-      .filter((item) => item.key === "别名")
+    // 处理 infobox 中的别名（Bangumi API v0 中 infobox 可选且可能为 null）
+    const aka = (Array.isArray(data.infobox) ? data.infobox : [])
+      .filter((item) => item?.key === "别名")
       .flatMap((item) => {
         if (typeof item.value === "string") {
-          return [item.value];
+          return item.value ? [item.value] : [];
         } else if (Array.isArray(item.value)) {
-          return item.value.map((v) => v.v);
+          return item.value.map((v) => v?.v).filter((v): v is string => typeof v === "string" && v.length > 0);
         }
         return [];
       });
@@ -170,10 +170,13 @@ export async function fetchInformation(
       .join(" / ");
 
     resDict.poster = normalizeSocialPosterUrl(data.images?.large ?? data.images?.common ?? data.images?.medium) ?? "";
-    resDict.ratingScore = data.ranking?.score ?? 0;
-    resDict.ratingCount = data.ranking?.total ?? 0;
+    resDict.ratingScore = data.rating?.score ?? 0;
+    resDict.ratingCount = data.rating?.total ?? 0;
   } catch (error) {
-    console.warn(error);
+    // 不直接打印原始 AxiosError，避免 error.config.headers.Authorization 中的 Bangumi apikey 泄露到控制台
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[Bangumi] fetchInformation failed:", status ? `${message} (status ${status})` : message);
   } finally {
     resDict.createAt = +Date.now();
   }

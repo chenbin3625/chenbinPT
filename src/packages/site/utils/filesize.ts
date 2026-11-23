@@ -7,8 +7,8 @@
  * 早期实现对逗号一律 `replace(/,/g, "")`，会把 `"1,5 GB"` 放大 10 倍、把
  * `"1.234,56 MB"` 缩小约 1000 倍，而且静默无日志。`parseLocalizedNumber` 统一处理：
  * - 同时出现 `,` 与 `.` 时，**最后出现的**那个视为小数分隔符，另一个视为千分位；
- * - 只有 `,` 时，若逗号后每段都是 3 位数字则按千分位，否则按欧式小数逗号；
- * - 只有 `.` 时保留为小数（与既有行为一致；出现多段且每段 3 位时按千分位）；
+ * - 只有 `,` 时，若首段为 1~3 位非零开头的整数（不含内部空格）且逗号后每段都是 3 位数字则按千分位，否则按欧式小数逗号；
+ * - 只有 `.` 时保留为小数（与既有行为一致；出现多段且符合千分位分组时按千分位）；
  * - 空格（含不换行空格）一律按千分位分隔符处理。
  */
 
@@ -34,6 +34,9 @@ export const ZB = Math.pow(2, 70);
 // sizePattern 匹配到的单位（如 KiB / MB）首字母到倍数的查表，未命中时倍数同原实现的 default 分支为 1
 const sizeUnitMultipliers: Record<string, number> = { Z: ZB, E: EB, P: PB, T: TB, G: GB, M: MB, K: KB };
 
+const leadingThousandsGroupPattern = /^[+-]?[1-9]\d{0,2}$/;
+const trailingThousandsGroupPattern = /^\d{3}$/;
+
 /**
  * 解析带区域格式的数字字符串；无法解析时返回 `NaN`。
  *
@@ -53,13 +56,22 @@ export function parseLocalizedNumber(raw: string): number {
     const thousandsSeparator = decimalSeparator === "," ? "." : ",";
     normalized = token.split(thousandsSeparator).join("").replace(decimalSeparator, ".");
   } else if (lastComma >= 0) {
-    const groups = token.split(",");
-    // 逗号后每段都是 3 位数字时按千分位（"1,024"），否则按欧式小数逗号（"1,5"）
-    normalized =
-      groups.length > 1 && groups.slice(1).every((group) => group.length === 3) ? groups.join("") : groups.join(".");
+    // 先修剪逗号两侧空白（支持 `"1, 234"` / `"1, 234, 567"`），但保留首段内部空格
+    // 以便识别 `"1 234,500"` 为「空格千分位 + 欧式小数逗号」；同时校验首段为非零 1~3 位整数，
+    // 避免 `"0,500"` / `"-0,500"` / `"1000,500"` 被误判为千分位放大 1000 倍
+    const groups = token.split(",").map((group) => group.trim());
+    const isThousandsGrouped =
+      groups.length > 1 &&
+      leadingThousandsGroupPattern.test(groups[0]) &&
+      groups.slice(1).every((group) => trailingThousandsGroupPattern.test(group));
+    normalized = isThousandsGrouped ? groups.join("") : groups.join(".");
   } else if (lastDot >= 0) {
-    const groups = token.split(".");
-    normalized = groups.length > 2 && groups.slice(1).every((group) => group.length === 3) ? groups.join("") : token;
+    const groups = token.split(".").map((group) => group.trim());
+    const isThousandsGrouped =
+      groups.length > 2 &&
+      leadingThousandsGroupPattern.test(groups[0]) &&
+      groups.slice(1).every((group) => trailingThousandsGroupPattern.test(group));
+    normalized = isThousandsGrouped ? groups.join("") : token;
   } else {
     normalized = token;
   }

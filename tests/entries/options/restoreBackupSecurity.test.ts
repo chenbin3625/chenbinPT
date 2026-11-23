@@ -64,10 +64,12 @@ describe("S-1：含 backupServers 的备份", () => {
     expect(summary.sensitiveFields).toEqual(["cookies", "metadata"]);
   });
 
-  it("开关默认关闭：未勾选时提示将不恢复其中的 N 个服务器配置", () => {
+  it("开关默认关闭：未勾选或省略该字段时提示将不恢复其中的 N 个服务器配置", () => {
     const summary = analyzeRestoreSecurity(backupWithServers as any, optionsOf(["metadata"]));
-
     expect(summary.skippedBackupServerCount).toBe(2);
+
+    const omittedOptionSummary = analyzeRestoreSecurity(backupWithServers as any, { fields: ["metadata"] } as any);
+    expect(omittedOptionSummary.skippedBackupServerCount).toBe(2);
   });
 
   it("勾选后才恢复，且勾选会通过 restoreOptions 原样传递给 offscreen", () => {
@@ -91,8 +93,6 @@ describe("S-1：不含 backupServers 的普通备份", () => {
     expect(summary.skippedBackupServerCount).toBe(0);
     expect(summary.sensitiveFields).toEqual([]);
     expect(summary.showSecurityWarning).toBe(false);
-    // 未勾选开关时必须原样传 false（不会被透传成 true）
-    expect(optionsOf([]).restoreBackupServers).toBe(false);
   });
 
   it("备份里没有服务器配置时，警示只来自「本次将恢复敏感字段」，不含服务器配置那一行", () => {

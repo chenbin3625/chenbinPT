@@ -96,27 +96,35 @@ export default class PornXLab extends BittorrentSite {
    * 列表页与详情页本身都没有 .torrent / magnet，所以只能在这里补。
    */
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    if (!torrent.link && torrent.url) {
+    let resolvedLink = torrent.link;
+
+    if (!resolvedLink && torrent.url) {
       const detailPage = await this.request<Document>({ url: torrent.url, responseType: "document" });
-      const relayUrl = this.getFieldData(detailPage.data, {
-        selector: "a.download-button",
-        attr: "href",
-      }) as string;
+      const rawRelayUrl = this.getFieldData(
+        detailPage.data,
+        {
+          selector: "a.download-button",
+          attr: "href",
+        },
+        "link",
+      ) as string;
+      const relayUrl = rawRelayUrl ? this.fixLink(rawRelayUrl, detailPage.config ?? { url: torrent.url }) : "";
 
       if (relayUrl) {
         const relayPage = await this.request<Document>({ url: relayUrl, responseType: "document" });
-        torrent.link = this.getFieldData(relayPage.data, {
-          selector: "a.download-button",
-          attr: "href",
-        }) as string;
+        const rawTorrentLink = this.getFieldData(
+          relayPage.data,
+          {
+            selector: "a.download-button",
+            attr: "href",
+          },
+          "link",
+        ) as string;
+        resolvedLink = rawTorrentLink ? this.fixLink(rawTorrentLink, relayPage.config ?? { url: relayUrl }) : "";
       }
     }
 
-    // 与基类保持一致（AbstractBittorrentSite.ts:787-790）
-    if (this.userConfig.downloadLinkAppendix) {
-      torrent.link = `${torrent.link ?? ""}${this.userConfig.downloadLinkAppendix}`;
-    }
-
-    return torrent.link!;
+    // 委托基类处理空链接守卫与 downloadLinkAppendix，避免原地修改 torrent.link 造成重复拼接
+    return super.getTorrentDownloadLink({ ...torrent, link: resolvedLink });
   }
 }

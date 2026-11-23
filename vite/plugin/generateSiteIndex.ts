@@ -69,6 +69,9 @@ const CACHE_DIR = path.join("node_modules", ".cache", "ptd-depiler");
 const CACHE_FILE = path.join(CACHE_DIR, "site-metadata-index.json");
 const BUILD_WORK_DIR = path.join(CACHE_DIR, "site-metadata-index-build");
 
+/** 每次嵌套构建分配唯一子目录，避免 Node ESM URL 缓存返回旧模块以及并发构建互相清理 */
+let buildRunSeq = 0;
+
 /**
  * 嵌套构建必须的 `define`：站点定义链会用到 `__BROWSER__`（`definitions/hdsky.ts` 的
  * 选择器按浏览器分支）与 `__RESOURCE_SITE_ICONS__`（`utils/favicon.ts`）。
@@ -122,79 +125,92 @@ function computeSourceHash(root: string): string {
  * 站点定义链路上有依赖在**模块顶层**就摸 DOM（例如 `AbstractBittorrentSite` 引入的选择器工具），
  * 而生成器跑在 Node 里。桩必须「看起来像 document」，否则会在求值期直接抛。
  *
- * ⚠️ 只补 Node 上**不存在**的键，并在用完立刻删掉：Vite 自己也在同一个进程里跑，
- * 不能让 `window` / `document` 在整个构建期间一直存在 —— 有些库靠
+ * ⚠️ 只补 Node 上**不存在**的键，并在用完立刻删掉（按引用计数管理以支持并发构建）：Vite 自己也在
+ * 同一个进程里跑，不能让 `window` / `document` 在整个构建期间一直存在 —— 有些库靠
  * `typeof window !== "undefined"` 选分支，留着会把构建带偏。
  */
+let browserStubRefCount = 0;
+let browserStubAddedKeys: string[] = [];
+
 function installBrowserStubs(): () => void {
-  const noop = () => {};
-  const createElement = (tag = "div") => {
-    const node: Record<string, unknown> = {
-      nodeType: 1,
-      nodeName: tag.toUpperCase(),
-      tagName: tag.toUpperCase(),
-      style: {},
-      dataset: {},
-      attributes: {},
-      childNodes: [],
-      parentNode: null,
-      innerHTML: "",
-      setAttribute: noop,
-      removeAttribute: noop,
-      getAttribute: () => null,
-      hasAttribute: () => false,
-      appendChild: (child: Record<string, unknown>) => (child.parentNode = node),
-      removeChild: noop,
-      insertBefore: noop,
-      cloneNode: () => createElement(tag),
-      compareDocumentPosition: () => 0,
-      contains: () => false,
-      getElementsByTagName: () => [],
-      getElementsByClassName: () => [],
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener: noop,
-      removeEventListener: noop,
-      matches: () => false,
-      getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
+  if (browserStubRefCount === 0) {
+    const noop = () => {};
+    const createElement = (tag = "div") => {
+      const node: Record<string, unknown> = {
+        nodeType: 1,
+        nodeName: tag.toUpperCase(),
+        tagName: tag.toUpperCase(),
+        style: {},
+        dataset: {},
+        attributes: {},
+        childNodes: [],
+        parentNode: null,
+        innerHTML: "",
+        setAttribute: noop,
+        removeAttribute: noop,
+        getAttribute: () => null,
+        hasAttribute: () => false,
+        appendChild: (child: Record<string, unknown>) => (child.parentNode = node),
+        removeChild: noop,
+        insertBefore: noop,
+        cloneNode: () => createElement(tag),
+        compareDocumentPosition: () => 0,
+        contains: () => false,
+        getElementsByTagName: () => [],
+        getElementsByClassName: () => [],
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        addEventListener: noop,
+        removeEventListener: noop,
+        matches: () => false,
+        getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
+      };
+      return node;
     };
-    return node;
-  };
 
-  const htmlElement = createElement("html");
-  const documentStub: Record<string, unknown> = {
-    ...createElement("#document"),
-    nodeType: 9,
-    documentElement: htmlElement,
-    head: htmlElement,
-    body: createElement("body"),
-    createElement,
-    createElementNS: (_ns: string, tag: string) => createElement(tag),
-    createTextNode: (text: string) => ({ nodeType: 3, textContent: text, parentNode: null }),
-    createDocumentFragment: () => createElement("#fragment"),
-    getElementsByTagName: () => [],
-  };
-  documentStub.implementation = { createHTMLDocument: () => documentStub };
+    const htmlElement = createElement("html");
+    const documentStub: Record<string, unknown> = {
+      ...createElement("#document"),
+      nodeType: 9,
+      documentElement: htmlElement,
+      head: htmlElement,
+      body: createElement("body"),
+      createElement,
+      createElementNS: (_ns: string, tag: string) => createElement(tag),
+      createTextNode: (text: string) => ({ nodeType: 3, textContent: text, parentNode: null }),
+      createDocumentFragment: () => createElement("#fragment"),
+      getElementsByTagName: () => [],
+    };
+    documentStub.implementation = { createHTMLDocument: () => documentStub };
 
-  const addedKeys: string[] = [];
-  const stub = (key: string, value: unknown) => {
-    if (key in globalThis) return; // navigator 之类 Node 自带的就别动
-    addedKeys.push(key);
-    (globalThis as Record<string, unknown>)[key] = value;
-  };
+    browserStubAddedKeys = [];
+    const stub = (key: string, value: unknown) => {
+      if (key in globalThis) return; // navigator 之类 Node 自带的就别动
+      browserStubAddedKeys.push(key);
+      (globalThis as Record<string, unknown>)[key] = value;
+    };
 
-  stub("window", globalThis);
-  stub("self", globalThis);
-  stub("document", documentStub);
-  stub("location", {
-    href: "chrome-extension://site-index-gen/index.html",
-    origin: "chrome-extension://site-index-gen",
-  });
-  stub("localStorage", { getItem: () => null, setItem: noop, removeItem: noop });
-  stub("matchMedia", () => ({ matches: false, addEventListener: noop, removeEventListener: noop }));
+    stub("window", globalThis);
+    stub("self", globalThis);
+    stub("document", documentStub);
+    stub("location", {
+      href: "chrome-extension://site-index-gen/index.html",
+      origin: "chrome-extension://site-index-gen",
+    });
+    stub("localStorage", { getItem: () => null, setItem: noop, removeItem: noop });
+    stub("matchMedia", () => ({ matches: false, addEventListener: noop, removeEventListener: noop }));
+  }
 
+  browserStubRefCount++;
+  let restored = false;
   return () => {
-    for (const key of addedKeys) delete (globalThis as Record<string, unknown>)[key];
+    if (restored) return;
+    restored = true;
+    browserStubRefCount--;
+    if (browserStubRefCount === 0) {
+      for (const key of browserStubAddedKeys) delete (globalThis as Record<string, unknown>)[key];
+      browserStubAddedKeys = [];
+    }
   };
 }
 
@@ -214,18 +230,19 @@ export async function generateSiteMetadataIndex(
   context: IGenerateSiteIndexContext,
 ): Promise<TGeneratedSiteMetadataIndex> {
   const { root } = context;
-  const workDir = path.join(root, BUILD_WORK_DIR);
-  fs.rmSync(workDir, { recursive: true, force: true });
+  const runId = `run-${process.pid}-${Date.now()}-${++buildRunSeq}`;
+  const workDir = path.join(root, BUILD_WORK_DIR, runId);
   fs.mkdirSync(workDir, { recursive: true });
 
-  // 这个入口交给 Vite 打包；`import.meta.glob` 由 Vite 展开，所以走的是 app 相同的那条路
-  const entryFile = path.join(workDir, "entry.ts");
-  const toModuleSpecifier = (file: string) => JSON.stringify(file.replace(/\\/g, "/"));
-  const siteIndexPath = path.join(root, SITE_PACKAGE_DIR, "index.ts");
-  const metadataIndexPath = path.join(root, SITE_PACKAGE_DIR, "utils", "metadataIndex.ts");
-  fs.writeFileSync(
-    entryFile,
-    `import { definitionList, getDefinedSiteMetadata } from ${toModuleSpecifier(siteIndexPath)};
+  try {
+    // 这个入口交给 Vite 打包；`import.meta.glob` 由 Vite 展开，所以走的是 app 相同的那条路
+    const entryFile = path.join(workDir, "entry.ts");
+    const toModuleSpecifier = (file: string) => JSON.stringify(file.replace(/\\/g, "/"));
+    const siteIndexPath = path.join(root, SITE_PACKAGE_DIR, "index.ts");
+    const metadataIndexPath = path.join(root, SITE_PACKAGE_DIR, "utils", "metadataIndex.ts");
+    fs.writeFileSync(
+      entryFile,
+      `import { definitionList, getDefinedSiteMetadata } from ${toModuleSpecifier(siteIndexPath)};
 import { pickSiteMetadataIndexEntry } from ${toModuleSpecifier(metadataIndexPath)};
 
 export async function buildAllSiteMetadataIndex() {
@@ -236,52 +253,55 @@ export async function buildAllSiteMetadataIndex() {
   return index;
 }
 `,
-    "utf8",
-  );
+      "utf8",
+    );
 
-  // 复用主构建的 alias / define，避免两处各写一份而漂移。
-  // configFile: false 保证不会把本插件再加载一遍（否则递归）。
-  const buildOutput = await build({
-    configFile: false,
-    root,
-    mode: context.mode,
-    logLevel: "error",
-    publicDir: false,
-    define: { ...FALLBACK_DEFINE, ...context.define },
-    resolve: { alias: context.alias },
-    build: {
-      ssr: true,
-      write: false,
-      minify: false,
-      target: "esnext",
-      emptyOutDir: false,
-      rollupOptions: {
-        input: entryFile,
-        output: { format: "es", entryFileNames: "entry.mjs", chunkFileNames: "chunks/[name]-[hash].mjs" },
+    // 复用主构建的 alias / define，避免两处各写一份而漂移。
+    // configFile: false 保证不会把本插件再加载一遍（否则递归）。
+    const buildOutput = await build({
+      configFile: false,
+      root,
+      mode: context.mode,
+      logLevel: "error",
+      publicDir: false,
+      define: { ...FALLBACK_DEFINE, ...context.define },
+      resolve: { alias: context.alias },
+      build: {
+        ssr: true,
+        write: false,
+        minify: false,
+        target: "esnext",
+        emptyOutDir: false,
+        rollupOptions: {
+          input: entryFile,
+          output: { format: "es", entryFileNames: "entry.mjs", chunkFileNames: "chunks/[name]-[hash].mjs" },
+        },
       },
-    },
-  });
+    });
 
-  // write: false ⇒ 不会是 RollupWatcher；Vite 的返回类型是三者的联合，这里收窄一下
-  const bundle = (Array.isArray(buildOutput) ? buildOutput[0] : buildOutput) as Extract<
-    Awaited<ReturnType<typeof build>>,
-    { output: unknown }
-  >;
-  for (const output of bundle.output) {
-    const dest = path.join(workDir, output.fileName);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, output.type === "chunk" ? output.code : output.source);
-  }
+    // write: false ⇒ 不会是 RollupWatcher；Vite 的返回类型是三者的联合，这里收窄一下
+    const bundle = (Array.isArray(buildOutput) ? buildOutput[0] : buildOutput) as Extract<
+      Awaited<ReturnType<typeof build>>,
+      { output: unknown }
+    >;
+    for (const output of bundle.output) {
+      const dest = path.join(workDir, output.fileName);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, output.type === "chunk" ? output.code : output.source);
+    }
 
-  const restoreStubs = installBrowserStubs();
-  try {
-    const entryModule = (await import(pathToFileURL(path.join(workDir, "entry.mjs")).href)) as {
-      buildAllSiteMetadataIndex: () => Promise<TGeneratedSiteMetadataIndex>;
-    };
-    // 抽取（pickSiteMetadataIndexEntry）已经在生成的入口里做完 —— 与 app 走完全同一条路
-    return await entryModule.buildAllSiteMetadataIndex();
+    const restoreStubs = installBrowserStubs();
+    try {
+      const entryModule = (await import(pathToFileURL(path.join(workDir, "entry.mjs")).href)) as {
+        buildAllSiteMetadataIndex: () => Promise<TGeneratedSiteMetadataIndex>;
+      };
+      // 抽取（pickSiteMetadataIndexEntry）已经在生成的入口里做完 —— 与 app 走完全同一条路
+      return await entryModule.buildAllSiteMetadataIndex();
+    } finally {
+      restoreStubs();
+    }
   } finally {
-    restoreStubs();
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
 
@@ -315,13 +335,13 @@ export interface IVitePluginGenerateSiteIndexOptions {
 }
 
 export function vitePluginGenerateSiteIndex(options: IVitePluginGenerateSiteIndexOptions = {}): Plugin {
-  let config: ResolvedConfig;
+  let config: ResolvedConfig | undefined;
 
   const resolveContext = (): IGenerateSiteIndexContext => ({
-    root: options.context?.root ?? config.root,
-    mode: options.context?.mode ?? config.mode,
-    define: { ...options.context?.define, ...config.define },
-    alias: options.context?.alias ?? config.resolve.alias,
+    root: options.context?.root ?? config?.root ?? process.cwd(),
+    mode: options.context?.mode ?? config?.mode ?? "production",
+    define: { ...config?.define, ...options.context?.define },
+    alias: options.context?.alias ?? config?.resolve?.alias,
   });
 
   const loadIndex = (): Promise<TGeneratedSiteMetadataIndex> => {
@@ -387,7 +407,7 @@ export function vitePluginGenerateSiteIndex(options: IVitePluginGenerateSiteInde
 
     // dev 下改了站点定义 / schema 要让索引重新生成，否则一直用旧的
     configureServer(server) {
-      const root = options.context?.root ?? config.root;
+      const root = options.context?.root ?? config?.root ?? server.config.root;
       const watchedDirs = ["definitions", "schemas"].map((subDir) => path.join(root, SITE_PACKAGE_DIR, subDir));
       server.watcher.add(watchedDirs);
 

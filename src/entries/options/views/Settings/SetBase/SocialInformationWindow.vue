@@ -10,6 +10,11 @@ import { useSetBaseConfigDraft } from "./configDraft.ts";
 const { t } = useI18n();
 const config = useSetBaseConfigDraft();
 
+const DEFAULT_SOCIAL_CACHE_DAY = 7;
+const MIN_SOCIAL_CACHE_DAY = 3;
+const DEFAULT_SOCIAL_TIMEOUT_MS = 10e3;
+const MIN_SOCIAL_TIMEOUT_MS = 1000;
+
 // B-31：Bangumi API Key 是可代表用户调用 API 的凭据，默认掩码显示（与 BackupWindow 的加密密钥一致）
 const showBangumiApiKey = ref<boolean>(false);
 
@@ -19,6 +24,24 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
   const text = `${option?.label ?? ""} ${option?.value ?? ""}`.toUpperCase();
   return text.includes(String(input).toUpperCase());
 }
+
+async function beforeSave() {
+  const rawCacheDay = config.value.socialSiteInformation.cacheDay;
+  config.value.socialSiteInformation.cacheDay =
+    typeof rawCacheDay === "number" && Number.isFinite(rawCacheDay)
+      ? Math.max(MIN_SOCIAL_CACHE_DAY, Math.round(rawCacheDay))
+      : DEFAULT_SOCIAL_CACHE_DAY;
+
+  const rawTimeout = config.value.socialSiteInformation.timeout;
+  config.value.socialSiteInformation.timeout =
+    typeof rawTimeout === "number" && Number.isFinite(rawTimeout)
+      ? Math.max(MIN_SOCIAL_TIMEOUT_MS, Math.round(rawTimeout))
+      : DEFAULT_SOCIAL_TIMEOUT_MS;
+}
+
+defineExpose({
+  beforeSave,
+});
 </script>
 
 <template>
@@ -40,7 +63,11 @@ function filterPtGenApi(input: string, option: { label?: string; value?: string 
       </div>
       <div class="ptd-settings-row">
         <a-typography-text>{{ t("socialConfig.requestTimeoutMs") }}</a-typography-text>
-        <a-input-number v-model:value="config.socialSiteInformation.timeout" style="width: min(100%, 420px)" />
+        <a-input-number
+          v-model:value="config.socialSiteInformation.timeout"
+          :min="1000"
+          style="width: min(100%, 420px)"
+        />
       </div>
     </section>
 

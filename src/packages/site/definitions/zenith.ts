@@ -126,6 +126,15 @@ export const siteMetadata: ISiteMetadata = {
     },
   },
 
+  list: [
+    {
+      ...SchemaMetadata.list![0],
+      mergeSearchSelectors: false,
+      selectors: SchemaMetadata.search.selectors,
+    },
+    ...SchemaMetadata.list!.slice(1),
+  ],
+
   levelRequirements: [
     {
       id: 1,

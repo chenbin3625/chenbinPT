@@ -343,6 +343,7 @@ export const siteMetadata: ISiteMetadata = {
     {
       id: 208,
       name: "Staff Leader",
+      nameAka: ["网站主管"],
       groupType: "manager",
       privilege: "网站主管, 可以做任何事.",
     },
@@ -361,8 +362,12 @@ export default class sjtu extends NexusPHP {
     });
     const userSeedingRequestString = userSeedingRequestResponse.data;
 
-    let seedStatus = { seeding: 0, seedingSize: 0 };
-    if (userSeedingRequestString && userSeedingRequestString?.includes("<table")) {
+    if (typeof userSeedingRequestString !== "string" || !userSeedingRequestString.trim()) {
+      throw new Error("sjtu: empty seeding page response");
+    }
+
+    if (userSeedingRequestString.includes("<table")) {
+      const seedStatus = { seeding: 0, seedingSize: 0 };
       const userSeedingDocument = createDocument(userSeedingRequestString);
 
       const rows = Array.from(userSeedingDocument.querySelectorAll("tr")).slice(1); // 从第二行开始获取全部 tr
@@ -374,13 +379,24 @@ export default class sjtu extends NexusPHP {
           seedStatus.seedingSize += parseSizeString(sizeElement.textContent || "0");
         }
       });
+
+      return mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) => {
+        return typeof srcValue === "undefined" ? objValue : srcValue;
+      });
     }
 
-    flushUserInfo = mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) => {
-      return typeof srcValue === "undefined" ? objValue : srcValue;
-    });
+    if (
+      /No record\.?|没有记录|沒有記錄|暂无数据|暫無數據|没有正在做种|没有找到|Nothing found/i.test(
+        userSeedingRequestString,
+      )
+    ) {
+      return mergeWith(flushUserInfo, { seeding: 0, seedingSize: 0 }, (objValue, srcValue) => {
+        return typeof srcValue === "undefined" ? objValue : srcValue;
+      });
+    }
 
-    return flushUserInfo;
+    // 未包含种子表格也非明确无记录提示（如权限受限/异常页）时不得伪造 0 覆盖已有值
+    throw new Error("sjtu: unrecognized seeding page response");
   }
 
   // 用户的发种信息
@@ -392,6 +408,10 @@ export default class sjtu extends NexusPHP {
     });
 
     const userUploadsRequestString = userUploadsRequestResponse.data;
+    if (typeof userUploadsRequestString !== "string" || !userUploadsRequestString) {
+      return flushUserInfo;
+    }
+
     const match = userUploadsRequestString.match(/<\/a>\s*[^<]*<div id="ka"/);
     if (match) {
       const textBetween = match[0]; // 提取出 </a> 和 <div id="ka"> 之间的文本内容

@@ -11,6 +11,19 @@ import { normalizeSocialPosterUrl } from "../utils.ts";
 
 const imdbUrlPattern = /^(?:https?:\/\/)?(?:[\w-]+\.)?imdb\.com\/title\/(tt\d+)\/?/;
 
+function parseFiniteNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 export function build(id: string): string {
   return `https://www.imdb.com/title/${id}/`;
 }
@@ -24,13 +37,11 @@ export function parse(query: string | number | undefined): string {
       return imdbUrlMatch[1] as string;
     }
 
-    if (/^tt(\d+)/.test(query)) {
-      query = query.replace(/^tt(\d+)/, "$1");
-    }
-
-    // 如果是纯数字的字符串，则补齐并返回
-    if (/^\d+$/.test(query)) {
-      return "tt" + (query.length < 7 ? query.padStart(7, "0") : query);
+    // 仅当整个输入是 `tt<digits>` 或纯数字时才做补齐，避免带尾随字符的输入被截去 `tt` 前缀
+    const idMatch = query.match(/^(?:tt)?(\d+)$/);
+    if (idMatch) {
+      const digits = idMatch[1];
+      return "tt" + (digits.length < 7 ? digits.padStart(7, "0") : digits);
     }
   }
 
@@ -69,8 +80,8 @@ interface IImdbPtGen extends IPtgenApiResponse {
   name: string;
   aka: string[];
   poster: string;
-  imdb_votes: number;
-  imdb_rating_average: number;
+  imdb_votes: number | string;
+  imdb_rating_average: number | string;
   details?: {
     "Also known as": string[];
   };
@@ -85,8 +96,8 @@ export function transformPtGen(data: IImdbPtGen): ISocialInformation {
     id: parse(data.sid),
     title: titles.join(" / "),
     poster: normalizeSocialPosterUrl(data.poster) ?? "",
-    ratingScore: data.imdb_rating_average ?? 0,
-    ratingCount: data.imdb_votes ?? 0,
+    ratingScore: parseFiniteNumber(data.imdb_rating_average),
+    ratingCount: parseFiniteNumber(data.imdb_votes),
     createAt: +Date.now(),
   };
 }

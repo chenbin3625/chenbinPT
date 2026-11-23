@@ -11,8 +11,8 @@ describe("saveAs（替代 file-saver）", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       clicked.push({ href: this.href, download: this.download, connected: this.isConnected });
     });
-    URL.createObjectURL = vi.fn(() => "blob:mock-url");
-    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock-url");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   });
 
   afterEach(() => {

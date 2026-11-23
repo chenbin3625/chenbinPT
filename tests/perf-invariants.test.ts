@@ -130,7 +130,7 @@ const invariants: Invariant[] = [
     description: "搜索进行中只落小状态，不序列化仍在增长的结果集",
     file: "src/entries/options/stores/runtime.ts",
     mustMatch:
-      /state\.search\.isSearching \|\| state\.mediaServerSearch\.isSearching[\s\S]{0,120}writeState\(state, false\)/,
+      /!state\.search\.isSearching[\s\S]{0,200}!state\.mediaServerSearch\.isSearching[\s\S]{0,250}writeState\(state,/,
   },
   {
     id: "audit-8",

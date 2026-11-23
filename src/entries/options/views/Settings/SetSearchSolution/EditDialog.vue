@@ -64,6 +64,7 @@ const siteWaitFilter = ref("");
 const siteFilter = refDebounced(siteWaitFilter, 500); // 延迟搜索过滤词的生成
 
 const addedSiteInfo = shallowRef<Array<{ siteId: string; isDead: boolean; siteName: string; siteUrl: string }>>([]);
+const addedSiteInfoById = computed(() => new Map(addedSiteInfo.value.map((site) => [site.siteId, site])));
 
 // 每个站点在当前方案右侧已添加的方案数（同一站点允许以不同参数多次添加）
 const addedCountBySite = computed<Record<string, number>>(() => {
@@ -108,10 +109,18 @@ const filteredSolutions = computed(() => {
   const filter = (siteFilter.value ?? "").toLowerCase();
   if (!filter) return solution.value.solutions;
   return solution.value.solutions.filter((item) => {
+    const siteInfo = addedSiteInfoById.value.get(item.siteId);
     const meta = metadataStore.sites[item.siteId];
-    const siteKey = [item.siteId, meta?.name, meta?.url]
-      .filter(Boolean)
-      .map((x: string) => x.toLowerCase())
+    const siteKey = [
+      item.siteId,
+      siteInfo?.siteName,
+      meta?.merge?.name,
+      metadataStore.siteNameMap[item.siteId],
+      siteInfo?.siteUrl,
+      meta?.url,
+    ]
+      .filter((x): x is string => Boolean(x))
+      .map((x) => x.toLowerCase())
       .join("|");
     return siteKey.includes(filter);
   });

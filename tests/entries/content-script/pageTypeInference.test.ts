@@ -164,6 +164,27 @@ describe("CS-1 · 页面类型推断（detectPageType）", () => {
       detectPageType(makeMetadata({ detail: { urlPattern: [/\/Torrent\/\d+/] } }), "https://pt.example.com/torrent/12"),
     ).toBe("detail");
 
+    // 带 u flag 的 Unicode 属性转义：若 u 被丢弃会退化为字面匹配而失败；同时应补上 i 忽略大小写
+    const unicodePattern = makeMetadata({ detail: { urlPattern: [/\/Torrent\/\p{Nd}+/u] } });
+    expect(detectPageType(unicodePattern, "https://pt.example.com/torrent/12")).toBe("detail");
+    expect(detectPageType(unicodePattern, "https://pt.example.com/torrent/abc")).toBe("unknown");
+
+    // 已经带 i 与 u 时不能重复拼接 i 导致构造失败
+    expect(
+      detectPageType(
+        makeMetadata({ detail: { urlPattern: [/\/Torrent\/\p{Nd}+/iu] } }),
+        "https://pt.example.com/torrent/12",
+      ),
+    ).toBe("detail");
+
+    // 带 s (dotAll) flag：`.` 必须继续匹配换行，同时补上 i
+    expect(
+      detectPageType(
+        makeMetadata({ detail: { urlPattern: [/\/Torrent\/.+12/s] } }),
+        "https://pt.example.com/torrent/a\nb/12",
+      ),
+    ).toBe("detail");
+
     // 站点/用户配置里的非法正则不能让整块面板失效
     const invalid = makeMetadata({ list: [{ urlPattern: ["("] }], detail: { urlPattern: ["("] } });
     expect(() => detectPageType(invalid, "https://pt.example.com/anything")).not.toThrow();

@@ -54,7 +54,8 @@ export const siteMetadata: ISiteMetadata = {
       params: { field: "time_add", sorder: "desc" },
     },
     requestConfigTransformer: (input: ISearchInput) => {
-      input.requestConfig!.url = `/usearch/${encodeURIComponent(input.keywords ?? "")}/`;
+      const keywords = input.keywords?.trim();
+      input.requestConfig!.url = keywords ? `/usearch/${encodeURIComponent(keywords)}/` : "/new/";
       return input.requestConfig!;
     },
     selectors: {
@@ -71,7 +72,7 @@ export const siteMetadata: ISiteMetadata = {
       size: { selector: "td:nth-child(2)" },
       seeders: { selector: "td:nth-child(4)" },
       leechers: { selector: "td:nth-child(5)" },
-      completed: { selector: "a.icommentjs" },
+      comments: { selector: "a.icommentjs" },
     },
   },
 

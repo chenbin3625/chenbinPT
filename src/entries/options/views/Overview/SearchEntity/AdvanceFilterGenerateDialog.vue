@@ -32,10 +32,49 @@ const {
   advanceItemPropsRef,
   advanceFilterDictRef,
   reBuildFilterCountRef,
-  toggleKeywordStateFn,
   reBuildAdvanceFilter,
   updateTableFilterValueFn,
 } = tableCustomFilter;
+
+/**
+ * 三态循环：未勾选 → 只保留（required） → 排除（exclude） → 未勾选。
+ * 必须配合 @click.prevent.stop 使用，避免 antd a-checkbox 同步发射 update:checked 覆写三态。
+ */
+function cycleKeywordState(field: "site" | "tags" | "status", value: string | ETorrentStatus) {
+  const dict = advanceFilterDictRef.value[field] as {
+    required: (string | ETorrentStatus)[];
+    exclude: (string | ETorrentStatus)[];
+  };
+  if (dict.required.includes(value)) {
+    dict.required = dict.required.filter((x) => x !== value);
+    dict.exclude = Array.from(new Set([...dict.exclude, value]));
+  } else if (dict.exclude.includes(value)) {
+    dict.exclude = dict.exclude.filter((x) => x !== value);
+  } else {
+    dict.required = Array.from(new Set([...dict.required, value]));
+  }
+}
+
+const customDateRangeValue = computed<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(() => {
+  const [start, end] = advanceFilterDictRef.value.time ?? [-Infinity, Infinity];
+  const hasStart = Number.isFinite(start);
+  const hasEnd = Number.isFinite(end);
+  if (hasStart || hasEnd) {
+    return [hasStart ? dayjs(start) : null, hasEnd ? dayjs(end) : null];
+  }
+  return null;
+});
+
+function isCustomDateDisabled(date: dayjs.Dayjs): boolean {
+  const [minTime, maxTime] = advanceItemPropsRef.value.time?.range ?? [-Infinity, Infinity];
+  if (Number.isFinite(minTime) && date.isBefore(dayjs(startOfDay(new Date(minTime))), "day")) {
+    return true;
+  }
+  if (Number.isFinite(maxTime) && date.isAfter(dayjs(addDays(new Date(maxTime), 1)), "day")) {
+    return true;
+  }
+  return false;
+}
 
 // 种子状态选项 - 使用 i18n 支持。
 // F11：必须是 computed，setup 期常量只会求值一次，切语言后选项名停留在旧语言。
@@ -175,15 +214,7 @@ watch(showDialog, (open) => {
           <a-checkbox
             :checked="advanceFilterDictRef.site.required.includes(site)"
             :indeterminate="advanceFilterDictRef.site.exclude.includes(site)"
-            @click.stop="() => toggleKeywordStateFn('site', site)"
-            @update:checked="
-              (checked: boolean) => {
-                const current = advanceFilterDictRef.site.required;
-                advanceFilterDictRef.site.required = checked
-                  ? Array.from(new Set([...current, site]))
-                  : current.filter((x: any) => x !== site);
-              }
-            "
+            @click.prevent.stop="() => cycleKeywordState('site', site)"
           >
             <SiteFavicon :site-id="site" :size="16" style="margin-right: 8px" />
             <SiteName :site-id="site" tag="span" style="text-decoration: none" />
@@ -231,15 +262,7 @@ watch(showDialog, (open) => {
             <a-checkbox
               :checked="advanceFilterDictRef.tags.required.includes(tag.name)"
               :indeterminate="advanceFilterDictRef.tags.exclude.includes(tag.name)"
-              @click.stop="() => toggleKeywordStateFn('tags', tag.name)"
-              @update:checked="
-                (checked: boolean) => {
-                  const current = advanceFilterDictRef.tags.required;
-                  advanceFilterDictRef.tags.required = checked
-                    ? Array.from(new Set([...current, tag.name]))
-                    : current.filter((x: any) => x !== tag.name);
-                }
-              "
+              @click.prevent.stop="() => cycleKeywordState('tags', tag.name)"
             >
               <a-tag style="margin-right: 4px"
                 ><component
@@ -266,15 +289,7 @@ watch(showDialog, (open) => {
           <a-checkbox
             :checked="advanceFilterDictRef.status.required.includes(status.value)"
             :indeterminate="advanceFilterDictRef.status.exclude.includes(status.value)"
-            @click.stop="() => toggleKeywordStateFn('status', status.value)"
-            @update:checked="
-              (checked: boolean) => {
-                const current = advanceFilterDictRef.status.required;
-                advanceFilterDictRef.status.required = checked
-                  ? Array.from(new Set([...current, status.value]))
-                  : current.filter((x: any) => x !== status.value);
-              }
-            "
+            @click.prevent.stop="() => cycleKeywordState('status', status.value)"
           >
             <component :is="status.icon" style="margin-right: 8px" />
             <span>{{ status.label }}</span>
@@ -299,16 +314,16 @@ watch(showDialog, (open) => {
             <a-popover placement="top" trigger="click">
               <template #content>
                 <a-range-picker
-                  :value="[dayjs(advanceItemPropsRef.time.range[0]), dayjs(advanceItemPropsRef.time.range[1])]"
-                  :disabled-date="
-                    (date: any) =>
-                      date.isBefore(dayjs(startOfDay(new Date(advanceItemPropsRef.time.range[0]))), 'day') ||
-                      date.isAfter(dayjs(addDays(new Date(advanceItemPropsRef.time.range[1]), 1)), 'day')
-                  "
+                  :value="customDateRangeValue"
+                  :disabled-date="isCustomDateDisabled"
                   @change="
                     (values: any) => {
-                      // 清空日期时 antd 会传 null，不判空会抛 TypeError
-                      if (!values) return;
+                      // 清空日期时 antd 会传 null，重置为不限日期范围
+                      if (!values) {
+                        advanceFilterDictRef.time = [-Infinity, Infinity];
+                        return;
+                      }
+                      if (!values[0] || !values[1]) return;
                       advanceFilterDictRef.time = setDateRangeByDatePicker(values.map((v: any) => v.toDate()));
                     }
                   "

@@ -8,7 +8,7 @@ import {
   SaveOutlined,
   SyncOutlined,
 } from "@ant-design/icons-vue";
-import { ref, watch, computed } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { ITorrent } from "@ptd/site";
@@ -58,6 +58,38 @@ const baseTorrent = ref<ITorrentInfoForVerification | null>(null);
 const verifiedCount = ref(0);
 const creating = ref(false);
 
+// 校验轮次与单条请求版本：防止移除基准项、单条重试、关闭或卸载弹窗后，旧请求/旧定时器写回过期状态
+let verificationEpoch = 0;
+const itemRequestVersions = new Map<string, number>();
+const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function clearPendingTimers() {
+  for (const timer of pendingTimers) {
+    clearTimeout(timer);
+  }
+  pendingTimers.clear();
+}
+
+function bumpItemRequestVersion(id: string): number {
+  const next = (itemRequestVersions.get(id) ?? 0) + 1;
+  itemRequestVersions.set(id, next);
+  return next;
+}
+
+function isRequestCurrent(id: string, epoch: number, itemVersion: number): boolean {
+  return epoch === verificationEpoch && itemRequestVersions.get(id) === itemVersion;
+}
+
+function invalidateVerification() {
+  verificationEpoch += 1;
+  clearPendingTimers();
+  itemRequestVersions.clear();
+}
+
+onBeforeUnmount(() => {
+  invalidateVerification();
+});
+
 /**
  * F5：`verifiedCount` 改为「按当前条目重算」而不是 `++/--`。
  * 移除基准项会触发整批重新校验，同一项可能因为旧一轮的迟到回调被再次验证；
@@ -99,12 +131,17 @@ watch(
   (val) => {
     if (val) {
       startVerification();
+    } else {
+      invalidateVerification();
     }
   },
   { immediate: true },
 );
 
 function startVerification() {
+  invalidateVerification();
+  const epoch = verificationEpoch;
+
   verifiedItems.value = new Map();
   verifiedItemsOrder.value = [];
   baseTorrent.value = null;
@@ -122,9 +159,10 @@ function startVerification() {
     ? remembered?.label || ""
     : metadataStore.defaultDownloader?.tags || "";
 
-  const pending: { item: ITorrent; id: string }[] = [];
+  const pending: { item: ITorrent; id: string; itemVersion: number }[] = [];
   torrentItems.forEach((item) => {
     const id = crypto.randomUUID();
+    const itemVersion = bumpItemRequestVersion(id);
 
     // 下载链接可能需要后台根据站点和种子 ID 动态解析，不能在此处过滤未提供 link 的选中项。
     verifiedItems.value.set(id, {
@@ -137,28 +175,39 @@ function startVerification() {
       error: false,
     });
     verifiedItemsOrder.value.push(id);
-    pending.push({ item, id });
+    pending.push({ item, id, itemVersion });
   });
 
   // 限并发拉取：避免选中大量种子时一次性打出几百个消息请求
-  void mapWithConcurrency(pending, VERIFY_CONCURRENCY, async ({ item, id }) => {
+  void mapWithConcurrency(pending, VERIFY_CONCURRENCY, async ({ item, id, itemVersion }) => {
+    if (!isRequestCurrent(id, epoch, itemVersion)) return;
     try {
-      verification(await getTorrent(item, id), id);
+      const result = await getTorrent(item, id, epoch, itemVersion);
+      if (!isRequestCurrent(id, epoch, itemVersion)) return;
+      verification(result, id, epoch, itemVersion);
     } catch {
-      verification(null, id);
+      if (!isRequestCurrent(id, epoch, itemVersion)) return;
+      verification(null, id, epoch, itemVersion);
     }
   });
 }
 
-async function getTorrent(torrent: ITorrent, id: string): Promise<ITorrentInfoForVerification | null> {
+async function getTorrent(
+  torrent: ITorrent,
+  id: string,
+  epoch: number,
+  itemVersion: number,
+): Promise<ITorrentInfoForVerification | null> {
   try {
     const result = await sendMessage("getTorrentInfoForVerification", torrent);
+    if (!isRequestCurrent(id, epoch, itemVersion)) return null;
     // 边界检查：确保项仍然存在
     const item = verifiedItems.value.get(id);
     if (!item) return null;
     item.status = "waiting";
     return result;
   } catch (e) {
+    if (!isRequestCurrent(id, epoch, itemVersion)) return null;
     // 边界检查：确保项仍然存在
     const item = verifiedItems.value.get(id);
     if (item) {
@@ -169,7 +218,8 @@ async function getTorrent(torrent: ITorrent, id: string): Promise<ITorrentInfoFo
   }
 }
 
-function verification(torrent: ITorrentInfoForVerification | null, id: string) {
+function verification(torrent: ITorrentInfoForVerification | null, id: string, epoch: number, itemVersion: number) {
+  if (!isRequestCurrent(id, epoch, itemVersion)) return;
   // 边界检查：确保项仍然存在
   const item = verifiedItems.value.get(id);
   if (!item) return;
@@ -195,7 +245,11 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
     // 等待基准种子下载完成
     const baseItem = verifiedItems.value.get(verifiedItemsOrder.value[0]);
     if (baseItem?.loading) {
-      setTimeout(() => verification(torrent, id), 200);
+      const timer = setTimeout(() => {
+        pendingTimers.delete(timer);
+        verification(torrent, id, epoch, itemVersion);
+      }, 200);
+      pendingTimers.add(timer);
       return;
     }
 
@@ -213,6 +267,7 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string) {
 
     if (!torrent || !baseItem?.verified) {
       Object.assign(item, result);
+      recalcVerifiedCount();
       return;
     }
 
@@ -273,27 +328,41 @@ async function addToVerified(id: string) {
 /**
  * F5：移除基准项（index 0）后，其余条目是针对「旧基准」得出的验证结果，不能继续沿用 ——
  * 否则新 index 0 会被标成「基准种子」，但其它条目的对比结果与创建出的辅种任务仍基于旧基准。
- * 这里清空 baseTorrent 并按新顺序重新触发整批校验（新 index 0 自动成为基准）。
+ * 这里递增 epoch、清空旧定时器并同步重置所有条目（含并发上限之后的第 5+ 项），再按新顺序触发整批校验。
  */
 function restartVerification() {
+  invalidateVerification();
+  const epoch = verificationEpoch;
   baseTorrent.value = null;
   verifiedCount.value = 0;
 
-  // 与首次校验一致限制并发；新 index 0 仍是第一个被取到的条目（worker 按下标顺序领取任务）
-  void mapWithConcurrency([...verifiedItemsOrder.value], VERIFY_CONCURRENCY, async (id) => {
+  const targets: { id: string; itemVersion: number }[] = [];
+  for (const id of verifiedItemsOrder.value) {
     const item = verifiedItems.value.get(id);
-    if (!item) return;
+    if (!item) continue;
 
+    const itemVersion = bumpItemRequestVersion(id);
     item.loading = true;
     item.verified = false;
     item.torrent = null;
     item.error = false;
     item.status = "downloading";
+    targets.push({ id, itemVersion });
+  }
+
+  // 与首次校验一致限制并发；新 index 0 仍是第一个被取到的条目（worker 按下标顺序领取任务）
+  void mapWithConcurrency(targets, VERIFY_CONCURRENCY, async ({ id, itemVersion }) => {
+    if (!isRequestCurrent(id, epoch, itemVersion)) return;
+    const item = verifiedItems.value.get(id);
+    if (!item) return;
 
     try {
-      verification(await getTorrent(item.data, id), id);
+      const result = await getTorrent(item.data, id, epoch, itemVersion);
+      if (!isRequestCurrent(id, epoch, itemVersion)) return;
+      verification(result, id, epoch, itemVersion);
     } catch {
-      verification(null, id);
+      if (!isRequestCurrent(id, epoch, itemVersion)) return;
+      verification(null, id, epoch, itemVersion);
     }
   });
 }
@@ -303,18 +372,26 @@ function removeVerifiedItem(id: string) {
   if (!item) return;
 
   const wasBase = verifiedItemsOrder.value[0] === id;
+  itemRequestVersions.delete(id);
   verifiedItems.value.delete(id);
   verifiedItemsOrder.value = verifiedItemsOrder.value.filter((itemId) => itemId !== id);
   recalcVerifiedCount();
 
-  if (wasBase && verifiedItemsOrder.value.length > 0) {
-    restartVerification();
+  if (wasBase) {
+    if (verifiedItemsOrder.value.length > 0) {
+      restartVerification();
+    } else {
+      invalidateVerification();
+      baseTorrent.value = null;
+    }
   }
 }
 
 function reDownload(id: string) {
   const item = verifiedItems.value.get(id);
   if (!item) return;
+  const epoch = verificationEpoch;
+  const itemVersion = bumpItemRequestVersion(id);
   item.loading = true;
   item.status = "downloading";
   // 校验结果必须与上一轮彻底脱钩：否则下载失败/不匹配时旧的 verified:true 会残留。
@@ -323,12 +400,14 @@ function reDownload(id: string) {
   item.torrent = null;
   recalcVerifiedCount();
 
-  getTorrent(item.data, id)
+  getTorrent(item.data, id, epoch, itemVersion)
     .then((result) => {
-      verification(result, id);
+      if (!isRequestCurrent(id, epoch, itemVersion)) return;
+      verification(result, id, epoch, itemVersion);
     })
     .catch(() => {
-      verification(null, id);
+      if (!isRequestCurrent(id, epoch, itemVersion)) return;
+      verification(null, id, epoch, itemVersion);
     });
 }
 

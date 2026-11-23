@@ -24,6 +24,7 @@ import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import type { TDownloaderKey } from "@/shared/types.ts";
 import { getDownloaderIcon, getDownloaderMetaData, type TorrentClientMetaData } from "@ptd/downloader";
 import { useTableCustomFilter } from "@/options/directives/useAdvanceFilter.ts";
+import { cycleKeywordFilterState } from "@/options/views/Overview/DownloadHistory/advanceFilter.ts";
 import {
   applyTableActionColumn,
   useTableActionColumnLayout,
@@ -85,7 +86,6 @@ const {
   advanceFilterDictRef,
   updateTableFilterValueFn,
   buildFilterDictFn,
-  toggleKeywordStateFn,
 } = useTableCustomFilter({
   parseOptions: {
     keywords: ["type", ...Object.keys(booleanField)],
@@ -195,11 +195,8 @@ function isKeywordExcluded(field: string, value: string): boolean {
   return (advanceFilterDictRef.value[field]?.exclude ?? []).includes(value);
 }
 
-function setKeywordRequired(field: string, value: string, checked: boolean) {
-  const current = (advanceFilterDictRef.value[field]?.required ?? []) as unknown[];
-  advanceFilterDictRef.value[field].required = checked
-    ? Array.from(new Set([...current, value]))
-    : current.filter((x: any) => x !== value);
+function cycleKeywordState(field: string, value: string) {
+  cycleKeywordFilterState(advanceFilterDictRef.value[field] as any, value);
   updateTableFilterValueFn();
 }
 
@@ -298,8 +295,8 @@ function pruneTableSelected() {
                     <a-checkbox
                       :checked="isKeywordRequired(filterKey, '1')"
                       :indeterminate="isKeywordExcluded(filterKey, '1')"
-                      @click.stop="toggleKeywordStateFn(filterKey, '1')"
-                      @update:checked="(checked: boolean) => setKeywordRequired(filterKey, '1', checked)"
+                      @change="() => cycleKeywordState(filterKey, '1')"
+                      @click.stop
                     >
                       {{ t(transKey) }}
                     </a-checkbox>
@@ -316,8 +313,8 @@ function pruneTableSelected() {
                     <a-checkbox
                       :checked="isKeywordRequired('type', type)"
                       :indeterminate="isKeywordExcluded('type', type)"
-                      @click.stop="toggleKeywordStateFn('type', type)"
-                      @update:checked="(checked: boolean) => setKeywordRequired('type', type, checked)"
+                      @change="() => cycleKeywordState('type', type)"
+                      @click.stop
                     >
                       {{ `${type} (${count})` }}
                     </a-checkbox>

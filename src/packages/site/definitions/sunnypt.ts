@@ -3,7 +3,7 @@
  */
 import { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
-import { ISearchInput, type ISiteMetadata, type ITorrent } from "../types";
+import { ISearchInput, NeedLoginError, type ISiteMetadata, type ITorrent } from "../types";
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
 
 interface ISunnyPtResponse<T> {
@@ -410,13 +410,32 @@ export default class SunnyPT extends PrivateSite {
         url: `/torrents/${encodeURIComponent(String(torrent.id))}/download-token`,
         responseType: "json",
       },
-      false, // 不检查登录状态（token 端点即使未登录也有合理返回）
+      false, // 手动校验响应码，便于区分鉴权失败与业务错误
     );
 
-    let downloadUrl = response.data?.data?.download_url ?? "";
+    const payload = response.data;
+    if (response.status === 401 || response.status === 403 || payload?.code === 401 || payload?.code === 403) {
+      throw new NeedLoginError();
+    }
+    if (payload?.code !== 0) {
+      throw new Error(
+        `[PTD] site '${this.metadata.id}' download-token failed ` +
+          `(torrentId=${torrent.id ?? ""}, code=${payload?.code ?? "unknown"}, msg=${payload?.msg ?? ""})`,
+      );
+    }
+
+    let downloadUrl = (payload.data?.download_url ?? "").trim();
+    if (!downloadUrl) {
+      throw new Error(`[PTD] site '${this.metadata.id}' download_url unavailable (torrentId=${torrent.id ?? ""})`);
+    }
 
     // 260729 api 返回的url并不能直接请求，需要做一层替换？是他们写的bug吗？先做一层兼容吧，也反馈给官方了。
     downloadUrl = downloadUrl.replace("https://sunnypt.top/", "https://api.sunnypt.top/");
+
+    if (this.userConfig.downloadLinkAppendix) {
+      downloadUrl = `${downloadUrl}${this.userConfig.downloadLinkAppendix}`;
+    }
+
     return downloadUrl;
   }
 }

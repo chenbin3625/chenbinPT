@@ -77,7 +77,7 @@ interface File {
   name: string;
   mimeType: string;
 
-  size: string;
+  size?: string;
   createdTime: string;
 }
 
@@ -191,7 +191,7 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       const req = await this.request<FileListResponse>({
         url: this.ApiEndpoint,
         params: {
-          q: `'root' in parents and mimeType='application/vnd.google-apps.folder' and name='${this.rootFolderName}'`,
+          q: `'root' in parents and mimeType='application/vnd.google-apps.folder' and name='${this.rootFolderName}' and trashed = false`,
         },
       });
 
@@ -315,7 +315,7 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
 
     const params: AxiosRequestConfig["params"] = {
       spaces: await this.getScope(),
-      q: `'${await this.getParentId()}' in parents and trashed = false`,
+      q: `'${await this.getParentId()}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'`,
       fields: "nextPageToken, files(kind, id, name, mimeType, size, createdTime)",
       pageSize: 1000,
     };
@@ -352,11 +352,12 @@ export default class GoogleDrive extends AbstractBackupServer<GoogleDriveConfig>
       });
       if (data.files.length > 0) {
         data.files.forEach((value) => {
+          const parsedSize = value.size != null ? parseInt(value.size, 10) : NaN;
           files.push({
             filename: value.name,
             path: value.id,
             time: +new Date(value.createdTime),
-            size: parseInt(value.size),
+            size: Number.isFinite(parsedSize) ? parsedSize : "N/A",
           });
         });
       }

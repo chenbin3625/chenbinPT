@@ -555,8 +555,12 @@ export default class Piggo extends PrivateSite {
    * 除公告拦截外，信封 code 与 HTTP 状态相同，原因在 msg。
    */
   protected override loggedCheck(raw: AxiosResponse): boolean {
-    const body = raw.data as Partial<IApiEnvelope<any>> | undefined;
-    const envelopeCode = Number(body?.code);
+    const body =
+      raw.data && typeof raw.data === "object" && !Array.isArray(raw.data)
+        ? (raw.data as Partial<IApiEnvelope<any>>)
+        : undefined;
+    const hasNumericCode = typeof body?.code === "number" && Number.isFinite(body.code);
+    const envelopeCode = hasNumericCode ? body.code! : NaN;
 
     if (raw.status === 401 || envelopeCode === 401) {
       // 令牌无效也是 401；这里没法靠前台登录态兜底，直接让用户去填 / 换令牌
@@ -576,7 +580,10 @@ export default class Piggo extends PrivateSite {
     if (raw.status >= 400) {
       throw new Error(`猪猪接口返回 HTTP ${raw.status}${body?.msg ? `：${body.msg}` : ""}`);
     }
-    if (Number.isFinite(envelopeCode) && envelopeCode !== 0) {
+    if (!hasNumericCode) {
+      throw new Error("猪猪接口返回了无效的响应格式（缺少数值状态码 code）");
+    }
+    if (envelopeCode !== 0) {
       throw new Error(String(body?.msg || `猪猪接口返回 code ${envelopeCode}`));
     }
 
@@ -594,7 +601,11 @@ export default class Piggo extends PrivateSite {
       throw new Error(`猪猪：种子 ${String(torrent.id)} 没有可用的 id，无法签发下载链接`);
     }
 
-    const { url } = await this.api<{ url: string }>(`/torrents/${id}/download-link`);
+    const res = await this.api<{ url?: string }>(`/torrents/${id}/download-link`);
+    const url = typeof res?.url === "string" ? res.url.trim() : "";
+    if (!url) {
+      throw new Error(`猪猪：种子 ${id} 未返回有效的下载链接`);
+    }
     return url;
   }
 }

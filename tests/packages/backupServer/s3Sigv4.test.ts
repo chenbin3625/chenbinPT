@@ -5,6 +5,7 @@
  * - 修复点：`host` 只参与 canonical request / SignedHeaders，不进入 axios 请求头 ——
  *   否则全局 unsafe-header 拦截器会为每条 S3 请求安装一条 DNR(SET host) 会话规则。
  */
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
@@ -19,6 +20,47 @@ const AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 /** AWS SigV4 官方样例的期望签名（GET https://examplebucket.s3.amazonaws.com/test.txt，20130524T000000Z） */
 const AWS_DOC_SIGNATURE = "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41";
+
+function computeReferenceSigV4(params: {
+  method: string;
+  canonicalUri: string;
+  canonicalQueryString: string;
+  canonicalHeaders: Record<string, string>;
+  payloadHash: string;
+  amzDate: string;
+  region: string;
+  secretAccessKey: string;
+}): { signedHeaders: string; signature: string } {
+  const sortedKeys = Object.keys(params.canonicalHeaders).sort();
+  const signedHeaders = sortedKeys.join(";");
+  const canonicalHeadersBlock = sortedKeys.map((key) => `${key}:${params.canonicalHeaders[key]}\n`).join("");
+  const canonicalRequest = [
+    params.method,
+    params.canonicalUri,
+    params.canonicalQueryString,
+    canonicalHeadersBlock,
+    signedHeaders,
+    params.payloadHash,
+  ].join("\n");
+
+  const dateStamp = params.amzDate.slice(0, 8);
+  const credentialScope = `${dateStamp}/${params.region}/s3/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    params.amzDate,
+    credentialScope,
+    createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+
+  const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+  const kDate = hmac(`AWS4${params.secretAccessKey}`, dateStamp);
+  const kRegion = hmac(kDate, params.region);
+  const kService = hmac(kRegion, "s3");
+  const kSigning = hmac(kService, "aws4_request");
+  const signature = createHmac("sha256", kSigning).update(stringToSign).digest("hex");
+
+  return { signedHeaders, signature };
+}
 
 function createClient(overrides: Record<string, unknown> = {}) {
   return new S3Ctor({
@@ -88,8 +130,43 @@ describe("C2-B-5：S3 SigV4 与 AWS 官方样例一致", () => {
       new Date("2026-10-23T00:00:00Z"),
     );
 
+    const expected = computeReferenceSigV4({
+      method: "PUT",
+      canonicalUri: "/examplebucket/PTD_backup_test.zip",
+      canonicalQueryString: "",
+      canonicalHeaders: {
+        "content-type": "application/zip",
+        host: "127.0.0.1:9000",
+        "x-amz-content-sha256": EMPTY_SHA256,
+        "x-amz-date": "20261023T000000Z",
+      },
+      payloadHash: EMPTY_SHA256,
+      amzDate: "20261023T000000Z",
+      region: "us-east-1",
+      secretAccessKey: AWS_SECRET_ACCESS_KEY,
+    });
+    const withoutBucketUri = computeReferenceSigV4({
+      method: "PUT",
+      canonicalUri: "/PTD_backup_test.zip",
+      canonicalQueryString: "",
+      canonicalHeaders: {
+        "content-type": "application/zip",
+        host: "127.0.0.1:9000",
+        "x-amz-content-sha256": EMPTY_SHA256,
+        "x-amz-date": "20261023T000000Z",
+      },
+      payloadHash: EMPTY_SHA256,
+      amzDate: "20261023T000000Z",
+      region: "us-east-1",
+      secretAccessKey: AWS_SECRET_ACCESS_KEY,
+    });
+
     expect(headers.host).toBeUndefined();
-    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE\//);
+    expect(Object.keys(headers).map((key) => key.toLowerCase())).not.toContain("host");
+    expect(headers.Authorization).toBe(
+      `AWS4-HMAC-SHA256 Credential=${AWS_ACCESS_KEY_ID}/20261023/us-east-1/s3/aws4_request, SignedHeaders=${expected.signedHeaders}, Signature=${expected.signature}`,
+    );
+    expect(expected.signature).not.toBe(withoutBucketUri.signature);
   });
 });
 

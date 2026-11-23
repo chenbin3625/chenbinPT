@@ -10,9 +10,51 @@ import {
   parseValidTimeStringInZone,
   parseSizeString,
   buildCategoryOptionsFromList,
+  logMessage,
+  siteErrorLogData,
 } from "../utils";
 import type { ISiteMetadata, ITorrent, ISearchInput } from "../types";
 import { ETorrentStatus, NoTorrentsError } from "../types";
+
+/**
+ * 从脚本内容中按 JSON 字符串与大括号配平提取 `var PageData = { ... }` 对象字面量，
+ * 避免非贪婪正则 `/var PageData\s*=\s*({.*?});/s` 在 JSON 字符串值内部出现 `});` 时提前截断。
+ */
+function extractPageDataJson(scriptContent: string): string | null {
+  const assignMatch = /var\s+PageData\s*=\s*/.exec(scriptContent);
+  if (!assignMatch) return null;
+
+  const start = scriptContent.indexOf("{", assignMatch.index + assignMatch[0].length);
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < scriptContent.length; i++) {
+    const ch = scriptContent[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return scriptContent.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
 
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
@@ -325,75 +367,95 @@ export default class PassThePopcorn extends Gazelle {
   protected createTempDiv(rawHtml: string): ParentNode {
     return parseInertHtmlFragment(rawHtml).body ?? document.createElement("div");
   }
-  protected parsePageData(movie: any, authKey: string, torrentPass: string): Partial<ITorrent> {
-    const torrent = movie.GroupingQualities?.[0]?.Torrents?.[0];
+
+  protected parseMovieTorrent(movie: any, torrent: any, authKey: string, torrentPass: string): Partial<ITorrent> {
+    if (!torrent) return {};
+
     const movieId = movie.GroupId || "";
     const movieName = movie.Title || "";
     const movieYear = movie.Year || "";
     const movieImdbId = movie.ImdbId ? `tt${movie.ImdbId}` : "";
     const category = movie.CategoryName || "";
-    if (torrent) {
-      const id = torrent.TorrentId;
-      const tempTitleDiv = this.createTempDiv(torrent.Title);
-      const rawTitle = selectElements("a", tempTitleDiv)[0]?.getAttribute("title") || "";
-      const titleParts = rawTitle.split("\n");
-      const title = titleParts.length > 1 ? titleParts[1].trim() : rawTitle.trim();
-      const subTitlePart = selectElements("a", tempTitleDiv)[0]?.textContent?.trim() || "";
-      const subTitle = `${movieName} ${movieYear} ${movieImdbId} ${subTitlePart}`.trim();
 
-      const url = `${this.url}torrents.php?id=${movieId}&torrentid=${id}`;
-      const link = `${this.url}torrents.php?action=download&id=${id}&authkey=${authKey}&torrent_pass=${torrentPass}`;
+    const id = torrent.TorrentId;
+    const tempTitleDiv = this.createTempDiv(torrent.Title);
+    const rawTitle = selectElements("a", tempTitleDiv)[0]?.getAttribute("title") || "";
+    const titleParts = rawTitle.split("\n");
+    const title = titleParts.length > 1 ? titleParts[1].trim() : rawTitle.trim();
+    const subTitlePart = selectElements("a", tempTitleDiv)[0]?.textContent?.trim() || "";
+    const subTitle = `${movieName} ${movieYear} ${movieImdbId} ${subTitlePart}`.trim();
 
-      const tempTimeDiv = this.createTempDiv(torrent.Time);
-      const timeStr = selectElements("span", tempTimeDiv)[0]?.getAttribute("title") || "";
-      // SITECORE-1：API 返回的 Time 是站点墙上时间，按 metadata.timezoneOffset 解析；
-      // 未声明时区时退回宿主时区解析，避免把时间戳变成 0
-      const time = (
-        this.metadata.timezoneOffset
-          ? parseValidTimeStringInZone(timeStr, ["MMM dd yyyy, HH:mm"], this.metadata.timezoneOffset)
-          : parseValidTimeString(timeStr, ["MMM dd yyyy, HH:mm"])
-      ) as number;
-      const size = parseSizeString(torrent.Size);
-      const seeders = parseFloat(torrent.Seeders);
-      const leechers = parseFloat(torrent.Leechers);
-      const completed = parseFloat(torrent.Snatched);
+    const url = `${this.url}torrents.php?id=${movieId}&torrentid=${id}`;
+    const link = `${this.url}torrents.php?action=download&id=${id}&authkey=${authKey}&torrent_pass=${torrentPass}`;
 
-      const colorType = torrent.ColorType;
-      let status = ETorrentStatus.unknown;
-      let progress = 0;
-      switch (colorType) {
-        case "seeding":
-          status = ETorrentStatus.seeding;
-          progress = 100;
-          break;
-        case "snatched":
-          status = ETorrentStatus.completed;
-          progress = 100;
-          break;
-        case "downloaded":
-          status = ETorrentStatus.inactive;
-          break;
-      }
+    const tempTimeDiv = this.createTempDiv(torrent.Time);
+    const timeStr = selectElements("span", tempTimeDiv)[0]?.getAttribute("title") || "";
+    // SITECORE-1：API 返回的 Time 是站点墙上时间，按 metadata.timezoneOffset 解析；
+    // 解析失败时返回 undefined，避免把原始字符串当成 number 写入 torrent.time
+    const parsedTime = this.metadata.timezoneOffset
+      ? parseValidTimeStringInZone(timeStr, ["MMM dd yyyy, HH:mm"], this.metadata.timezoneOffset)
+      : parseValidTimeString(timeStr, ["MMM dd yyyy, HH:mm"]);
+    const time = typeof parsedTime === "number" && Number.isFinite(parsedTime) ? parsedTime : undefined;
 
-      return {
-        site: this.metadata.id,
-        id,
-        category,
-        title,
-        subTitle,
-        url,
-        link,
-        time,
-        size,
-        seeders,
-        leechers,
-        completed,
-        status,
-        progress,
-      };
+    const size = parseSizeString(torrent.Size);
+    const seeders = parseFloat(torrent.Seeders);
+    const leechers = parseFloat(torrent.Leechers);
+    const completed = parseFloat(torrent.Snatched);
+
+    const colorType = torrent.ColorType;
+    let status = ETorrentStatus.unknown;
+    let progress = 0;
+    switch (colorType) {
+      case "seeding":
+        status = ETorrentStatus.seeding;
+        progress = 100;
+        break;
+      case "snatched":
+        status = ETorrentStatus.completed;
+        progress = 100;
+        break;
+      case "downloaded":
+        status = ETorrentStatus.inactive;
+        break;
     }
-    return {};
+
+    return {
+      site: this.metadata.id,
+      id,
+      category,
+      title,
+      subTitle,
+      url,
+      link,
+      time,
+      size,
+      seeders,
+      leechers,
+      completed,
+      status,
+      progress,
+    };
   }
+
+  protected parseMovieTorrents(movie: any, authKey: string, torrentPass: string): Partial<ITorrent>[] {
+    const results: Partial<ITorrent>[] = [];
+    const qualities = Array.isArray(movie?.GroupingQualities) ? movie.GroupingQualities : [];
+    for (const quality of qualities) {
+      const groupTorrents = Array.isArray(quality?.Torrents) ? quality.Torrents : [];
+      for (const torrent of groupTorrents) {
+        const parsed = this.parseMovieTorrent(movie, torrent, authKey, torrentPass);
+        if (parsed.id) {
+          results.push(parsed);
+        }
+      }
+    }
+    return results;
+  }
+
+  protected parsePageData(movie: any, authKey: string, torrentPass: string): Partial<ITorrent> {
+    return this.parseMovieTorrents(movie, authKey, torrentPass)[0] ?? {};
+  }
+
   public override async transformSearchPage(doc: Document, searchConfig: ISearchInput): Promise<ITorrent[]> {
     const torrents: ITorrent[] = [];
 
@@ -407,12 +469,16 @@ export default class PassThePopcorn extends Gazelle {
     }
     let pageData: any = {};
     if (pageDataContent) {
-      const pageDataMatch = pageDataContent.match(/var PageData\s*=\s*({.*?});/s);
-      if (pageDataMatch && pageDataMatch[1]) {
+      const pageDataJson = extractPageDataJson(pageDataContent);
+      if (pageDataJson) {
         try {
-          pageData = JSON.parse(pageDataMatch[1]);
+          pageData = JSON.parse(pageDataJson);
         } catch (error) {
-          console.error("[Site] PassThePopcorn Error parsing PageData:", error);
+          logMessage(
+            `[Site] PassThePopcorn Error parsing PageData`,
+            { site: this.metadata.id, error: siteErrorLogData(error) },
+            "warn",
+          );
         }
       }
     }
@@ -421,9 +487,11 @@ export default class PassThePopcorn extends Gazelle {
       const authKey = pageData.AuthKey;
       const torrentPass = pageData.TorrentPass;
       pageData.Movies.forEach((movie: any) => {
-        const torrent = this.parsePageData(movie, authKey, torrentPass) as ITorrent;
-        if (torrent.id && torrent.title && torrent.link) {
-          torrents.push(torrent);
+        for (const parsed of this.parseMovieTorrents(movie, authKey, torrentPass)) {
+          const torrent = parsed as ITorrent;
+          if (torrent.id && torrent.title && torrent.link) {
+            torrents.push(torrent);
+          }
         }
       });
     }

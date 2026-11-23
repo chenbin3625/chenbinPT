@@ -62,10 +62,10 @@ const advanceFilterFormat: Record<TAdvanceFilterFormat, IValueFormat> = {
     },
     build: (value: string | number) => filesize(value, { spacer: "" }) as string,
   },
-  // 对 number 全部转为字符串比较
+  // 对 number 全部转为字符串比较（兼容 null/undefined 防御，避免抛 TypeError）
   number: {
-    parse: (value: string | number) => value.toString(),
-    build: (value: string | number) => value.toString(),
+    parse: (value: string | number | null | undefined) => (value == null ? "" : String(value)),
+    build: (value: string | number | null | undefined) => (value == null ? "" : String(value)),
   },
   // B-15：显式判断（见 toBooleanFilterValue 的说明）
   boolean: {
@@ -220,8 +220,9 @@ export function generateRangeField(data: (number | undefined)[]): IRangedField {
   const uniqueValues = new Set<number>();
 
   // 不要用 Math.min(...data)：种子数上万时参数栈会被打爆，而且明显更慢。
-  // 同时只接受有限数字（`undefined` / `N/A` / NaN 这类未知值不参与求范围）。
+  // 同时只接受有限数字（`undefined` / `null` / `N/A` / NaN 这类未知值不参与求范围）。
   for (const raw of data) {
+    if (raw === undefined || raw === null) continue;
     const value = Number(raw);
     if (!Number.isFinite(value)) continue;
     if (value < min) min = value;
@@ -266,14 +267,16 @@ export function checkKeywordValue(
 ): boolean | undefined {
   const itemValue = get(rawItem, keyword); // true    filter[keyword] = ['1']
   if (filter[keyword]) {
-    // 如果原始数据中没有该 keyword 字段，则直接返回 false
-    if (typeof itemValue == "undefined") {
+    // 如果原始数据中没有该 keyword 字段（undefined 或 null），则直接返回 false
+    if (itemValue === undefined || itemValue === null) {
       return false;
     }
 
     const valueFormat = getValueFormat(keyword as string, format);
     if (Array.isArray(itemValue)) {
-      const parsedValues = itemValue.map((v: any) => valueFormat.parse(v) as string);
+      const parsedValues = itemValue
+        .filter((v: any) => v !== undefined && v !== null)
+        .map((v: any) => valueFormat.parse(v) as string);
       const filterVals = filter[keyword] as string[];
       // 如果是正向关键词则要求全部包含，如果是排除关键词则要求有任意一个包含
       return exclude
@@ -295,6 +298,21 @@ export function checkKeywordValue(
  */
 const rangeBoundCache = new WeakMap<object, Map<string, { format: TFormat; from: number; to: number }>>();
 
+/**
+ * 将单个范围边界解析为数字；`undefined` / `null` / 空串（含纯空白）视为无界并返回 fallback。
+ * search-query-parser 解析开区间（如 `seeders:10-` / `size:1GB-`）时会给缺省端赋 `""`，
+ * 不能让 `""` 落入 `valueFormat.parse("")` 或 `Number("")` 被误判为 0。
+ */
+function parseRangeBound(rawBound: unknown, valueFormat: Required<IValueFormat>, fallback: number): number {
+  if (rawBound === undefined || rawBound === null) return fallback;
+  if (typeof rawBound === "string" && rawBound.trim() === "") return fallback;
+  const parsed = valueFormat.parse(rawBound);
+  if (parsed === undefined || parsed === null || (typeof parsed === "string" && parsed.trim() === "")) {
+    return fallback;
+  }
+  return Number(parsed);
+}
+
 function getParsedRangeBounds(filter: TFilter, keyword: string, format: TFormat) {
   let keywordCache = rangeBoundCache.get(filter as unknown as object);
   if (!keywordCache) {
@@ -306,10 +324,11 @@ function getParsedRangeBounds(filter: TFilter, keyword: string, format: TFormat)
   if (cached && cached.format === format) return cached;
 
   const valueFormat = getValueFormat(keyword, format);
+  const rawRange = filter[keyword] as { from?: unknown; to?: unknown };
   const bounds = {
     format,
-    from: valueFormat.parse((filter[keyword] as any).from ?? -Infinity) as number,
-    to: valueFormat.parse((filter[keyword] as any).to ?? Infinity) as number,
+    from: parseRangeBound(rawRange.from, valueFormat, -Infinity),
+    to: parseRangeBound(rawRange.to, valueFormat, Infinity),
   };
   keywordCache.set(keyword, bounds);
   return bounds;
@@ -325,12 +344,20 @@ export function checkRangeValue(
   if (!range) return undefined; // 该 range 未参与筛选：调用方据 undefined 跳过
 
   const itemValue = get(rawItem, keyword);
-  // 与 checkKeywordValue 保持一致：字段缺失视为不匹配。
+  // 与 checkKeywordValue 保持一致：字段缺失（undefined / null）视为不匹配。
   // 否则「按优惠筛选（downloadVolumeFactor ≤ 0.5）」会把系数未知（旧快照 / 站点没给促销信息）的种子也列进来。
-  if (typeof itemValue === "undefined") return false;
+  if (itemValue === undefined || itemValue === null) return false;
 
   const valueFormat = getValueFormat(keyword, format);
-  const value = Number(valueFormat.parse(itemValue));
+  const parsedItemValue = valueFormat.parse(itemValue);
+  if (
+    parsedItemValue === undefined ||
+    parsedItemValue === null ||
+    (typeof parsedItemValue === "string" && parsedItemValue.trim() === "")
+  ) {
+    return false;
+  }
+  const value = Number(parsedItemValue);
   if (!Number.isFinite(value)) return false;
 
   const { from, to } = getParsedRangeBounds(filter, keyword, format);

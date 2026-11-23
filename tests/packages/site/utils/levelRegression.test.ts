@@ -77,7 +77,9 @@ describe("E10：等级名匹配优先全等，避免较短高等级名被低等�
   });
 
   it("没有全等命中时仍保留「包含」匹配", () => {
-    expect(guessUserLevelId({ levelName: "魔法师 " } as any, magicLevels)).toBe(3);
+    // 必须使用清洗后无法全等命中的真子串，且目标不是无门槛兜底会返回的最高等级
+    expect(guessUserLevelId({ levelName: "Trainee" } as any, pornLevels)).toBe(3);
+    expect(guessUserLevelId({ levelName: "准魔" } as any, magicLevels)).toBe(2);
   });
 });
 

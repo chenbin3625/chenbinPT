@@ -29,14 +29,16 @@ const buttonRef = ref<ComponentPublicInstance | null>(null);
 
 onLongPress(
   buttonRef,
-  () => {
-    if (!disabled) emit("move", direction === "up" ? "top" : "bottom");
+  (event) => {
+    if (!disabled && event.button === 0) emit("move", direction === "up" ? "top" : "bottom");
   },
   {
     delay: LONG_PRESS_DELAY,
     modifiers: { prevent: true },
-    onMouseUp: (_duration, _distance, isLongPress) => {
-      if (!isLongPress && !disabled) emit("move", direction);
+    onMouseUp: (_duration, _distance, isLongPress, event) => {
+      if (!isLongPress && !disabled && event.type === "pointerup" && event.button === 0) {
+        emit("move", direction);
+      }
     },
   },
 );

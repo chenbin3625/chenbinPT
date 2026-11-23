@@ -456,6 +456,7 @@ export const siteMetadata: ISiteMetadata = {
       downloaded: "10TB",
       ratio: 10,
       seedingBonus: 1000000,
+      isKept: true,
       privilege: "得到1个邀请名额，账号永久保留",
     },
   ],

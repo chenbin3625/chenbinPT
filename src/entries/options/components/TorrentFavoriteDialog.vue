@@ -32,7 +32,9 @@ const runtimeStore = useRuntimeStore();
 const favCategories = ref<string[]>([]); // 收藏分类（用户自设，类似文件夹，同一种子可入多个）
 const comment = ref<string>(""); // 备注
 const status = shallowRef<ITorrentFavoriteStatus>({ favorites: [], favCategories: [] });
+const loading = ref(false);
 const saving = ref(false);
+let loadSeq = 0;
 
 const favCategoryOptions = computed(() =>
   status.value.favCategories.map((category) => ({ label: category, value: category })),
@@ -59,25 +61,38 @@ function toStatusQuery(torrents: ITorrent[]) {
 watch(
   showDialog,
   async (show) => {
+    const seq = ++loadSeq;
     if (!show) {
+      loading.value = false;
       return;
     }
 
+    loading.value = true;
     status.value = { favorites: [], favCategories: [] };
     favCategories.value = [];
     comment.value = "";
 
+    const itemsSnapshot = [...torrentItems];
+    let nextStatus: ITorrentFavoriteStatus = { favorites: [], favCategories: [] };
     try {
-      status.value = await sendMessage("getTorrentFavoriteStatus", { torrents: toStatusQuery(torrentItems) });
+      nextStatus = await sendMessage("getTorrentFavoriteStatus", { torrents: toStatusQuery(itemsSnapshot) });
     } catch {
       // 读取失败时按「尚未收藏」处理：对话框仍可保存（保存失败会单独提示），本组件不新增 console（no-console 门禁）
-      status.value = { favorites: [], favCategories: [] };
+      nextStatus = { favorites: [], favCategories: [] };
     }
 
+    if (seq !== loadSeq || !showDialog.value) {
+      return;
+    }
+
+    status.value = nextStatus;
+
     // 回填第一个种子的收藏信息（新建收藏时通常为空）
-    const exist = torrentItems.length > 0 ? favoriteMap.value.get(getTorrentFavoriteKey(torrentItems[0]!)) : undefined;
+    const exist =
+      itemsSnapshot.length > 0 ? favoriteMap.value.get(getTorrentFavoriteKey(itemsSnapshot[0]!)) : undefined;
     favCategories.value = [...(exist?.favCategories ?? [])];
     comment.value = exist?.comment ?? "";
+    loading.value = false;
   },
   // 调用方可能按需挂载（v-if 与 v-model 同时为 true），挂载时就要加载一次
   { immediate: true },
@@ -100,6 +115,9 @@ function successMessage(count: number) {
 }
 
 async function save() {
+  if (loading.value || saving.value) {
+    return;
+  }
   saving.value = true;
   try {
     // 传入空数组 / 空字符串表示清空该项，缺省才表示保持原值；此处始终以输入框中的内容为准
@@ -132,6 +150,8 @@ async function save() {
       <a-form-item :extra="t('MyCollection.dialog.favCategoriesHint')" :label="t('MyCollection.dialog.favCategories')">
         <a-select
           v-model:value="favCategories"
+          :disabled="loading || saving"
+          :loading="loading"
           :options="favCategoryOptions"
           allow-clear
           mode="tags"
@@ -139,7 +159,12 @@ async function save() {
         />
       </a-form-item>
       <a-form-item :label="t('MyCollection.dialog.comment')">
-        <a-textarea v-model:value="comment" :auto-size="{ minRows: 2, maxRows: 6 }" allow-clear />
+        <a-textarea
+          v-model:value="comment"
+          :disabled="loading || saving"
+          :auto-size="{ minRows: 2, maxRows: 6 }"
+          allow-clear
+        />
       </a-form-item>
     </a-form>
 
@@ -171,7 +196,7 @@ async function save() {
         </a-typography-text>
         <a-space>
           <a-button :disabled="saving" @click="showDialog = false">{{ t("common.dialog.cancel") }}</a-button>
-          <a-button :loading="saving" type="primary" @click="save">
+          <a-button :disabled="loading" :loading="saving" type="primary" @click="save">
             <template #icon><StarOutlined /></template>
             {{ t("common.dialog.ok") }}
           </a-button>

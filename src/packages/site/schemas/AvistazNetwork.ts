@@ -14,6 +14,7 @@ import {
   type ITorrentTag,
   type ISearchInput,
   type IElementQuery,
+  NeedLoginError,
   NoTorrentsError,
   NoUserInputError,
   type TSchemaMetadata,
@@ -582,9 +583,10 @@ export default class AvistazNetwork extends PrivateSite {
     // E-6：基础信息（profile 页）是「必须成功」的一步：它的失败必须保留错误、
     // 经 classifySiteError 归类后返回，而不是被 mergeUserInfo 吞掉后
     // 统一误判成「站点没有该数据」的 parseError（且没有可展示的 statusMsg）。
-    this.profileFieldHits = 0;
+    // M-11：按本次调用局部计数统计 profile 页上 selector 的真实命中，避免并发调用互相污染实例状态。
+    const profileFieldHits = { count: 0 };
     try {
-      flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite(userName)) };
+      flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite(userName, profileFieldHits)) };
     } catch (error) {
       const { status, statusMsg, retryable } = classifySiteError(error);
       flushUserInfo.status = status;
@@ -608,13 +610,13 @@ export default class AvistazNetwork extends PrivateSite {
     if (flushUserInfo.name) {
       flushUserInfo = await mergeUserInfo(
         flushUserInfo,
-        () => this.getExtendInfoFromProfile(flushUserInfo.name as string),
+        () => this.getExtendInfoFromProfile(flushUserInfo.name as string, profileFieldHits),
         "extendInfo",
       );
     }
 
     // M-11：按 profile 页上 selector 的真实命中判断，而不是按过滤后的值（"" 解析成 0 也算「有值」）
-    const hasProfileInfo = this.profileFieldHits > 0;
+    const hasProfileInfo = profileFieldHits.count > 0;
 
     if (hasProfileInfo) {
       flushUserInfo = await mergeUserInfo(
@@ -641,6 +643,7 @@ export default class AvistazNetwork extends PrivateSite {
 
   protected async getBaseInfoFromSite(
     userName: string = this.userConfig.inputSetting?.username ?? "",
+    hitCounter?: { count: number },
   ): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
@@ -650,18 +653,13 @@ export default class AvistazNetwork extends PrivateSite {
     });
 
     const fields = ["name", "levelName", "uploaded", "downloaded", "ratio", "bonus"] as const;
-    this.profileFieldHits += this.countFieldHits(pageDocument, fields);
+    if (hitCounter) {
+      hitCounter.count += this.countFieldHits(pageDocument, fields);
+    }
     return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields], {
       dropEmptyMisses: true,
     }) as Partial<IUserInfo>;
   }
-
-  /**
-   * M-11：本次刷新在 profile 页上真正命中 selector 的字段数。
-   * 不能拿解析后的值判断「有没有资料」：parseSize("") / parseNumber("") 都是 0，
-   * `typeof 0 !== "undefined"` 恒真，于是 profile 页零命中（改版 / 受限账号）也被当成「有数据且全 0」。
-   */
-  private profileFieldHits = 0;
 
   private countFieldHits(pageDocument: Document, fields: readonly string[]): number {
     const selectors = this.metadata.userInfo?.selectors ?? {};
@@ -671,7 +669,10 @@ export default class AvistazNetwork extends PrivateSite {
     }).length;
   }
 
-  protected async getExtendInfoFromProfile(userName: string): Promise<Partial<IUserInfo>> {
+  protected async getExtendInfoFromProfile(
+    userName: string,
+    hitCounter?: { count: number },
+  ): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
       url: urlJoin("/profile", String(userName)),
@@ -687,7 +688,9 @@ export default class AvistazNetwork extends PrivateSite {
       "leeching",
       "hnrUnsatisfied",
     ] as const;
-    this.profileFieldHits += this.countFieldHits(pageDocument, fields);
+    if (hitCounter) {
+      hitCounter.count += this.countFieldHits(pageDocument, fields);
+    }
     return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields], {
       dropEmptyMisses: true,
     }) as Partial<IUserInfo>;
@@ -827,6 +830,11 @@ export default class AvistazNetwork extends PrivateSite {
         throw new NoTorrentsError();
       }
 
+      if (req.status === 401 || req.status === 403) {
+        const failMessage = isAuthFailResp(req.data) ? req.data.message.trim() : "";
+        throw new NeedLoginError(failMessage || `AvistaZ authorization failed (${req.status})`);
+      }
+
       // 用 ServerError（可重试）而不是裸 Error，避免被 classifySiteError 归成 parseError
       throw new ServerError(`Network Error: ${req.status} ${req.statusText || ""}`.trim());
     }
@@ -877,14 +885,14 @@ export default class AvistazNetwork extends PrivateSite {
       } else if (isAuthFailResp(apiAuth)) {
         // 检查 message 属性是否存在且为字符串
         const message = apiAuth.message.trim() || "Authorization failed";
-        throw new Error(`AvistaZ authorization failed: ${message}`);
+        throw new NeedLoginError(`AvistaZ authorization failed: ${message}`);
       } else {
         throw new Error("AvistaZ authorization failed: Unexpected response format or missing required properties.");
       }
     } catch (error) {
-      // D1-1：授权请求本身遇到网络/5xx（已由基类包装为 NetworkError/ServerError）时必须保留原始分类，
-      // 否则会被重新包装成普通 Error → 上层归成不可重试的 parseError。
-      if (isNetworkLikeError(error) || error instanceof NoUserInputError) {
+      // D1-1：授权请求本身遇到网络/5xx（已由基类包装为 NetworkError/ServerError）或认证失败（NeedLoginError）时
+      // 必须保留原始分类，否则会被重新包装成普通 Error → 上层归成不可重试的 parseError。
+      if (isNetworkLikeError(error) || error instanceof NoUserInputError || error instanceof NeedLoginError) {
         throw error;
       }
       throw new Error(`Error during authorization request: ${(error as Error).message}`);

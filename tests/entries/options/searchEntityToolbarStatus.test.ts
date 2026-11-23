@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EResultParseStatus } from "@ptd/site";
+import { useDisplay } from "@/options/composables/useDisplay.ts";
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
@@ -21,13 +22,20 @@ const MOBILE_WIDTH = 600;
 
 let SearchEntityView: any;
 
+/** 确保 useDisplay 单例已挂载 resize 监听器后再更新视口宽度，消除用例执行顺序依赖 */
+function setViewportWidth(width: number) {
+  useDisplay();
+  window.innerWidth = width;
+  window.dispatchEvent(new Event("resize"));
+}
+
 beforeEach(async () => {
   prepareOptionsPinia();
   SearchEntityView = (await import("@/options/views/Overview/SearchEntity/Index.vue")).default;
 });
 
 afterEach(() => {
-  window.innerWidth = DESKTOP_WIDTH;
+  setViewportWidth(DESKTOP_WIDTH);
 });
 
 async function mountSearchEntity(
@@ -35,8 +43,7 @@ async function mountSearchEntity(
   search: Record<string, unknown> = {},
   options: { sites?: Record<string, unknown>; siteNameMap?: Record<string, string> } = {},
 ) {
-  window.innerWidth = viewportWidth;
-  window.dispatchEvent(new Event("resize"));
+  setViewportWidth(viewportWidth);
 
   const pinia = prepareOptionsPinia();
   const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
@@ -213,7 +220,7 @@ describe("搜索结果页空状态引导", () => {
   it("搜索进行中且还没有结果时提示正在搜索，不再让用户去开始搜索", async () => {
     const view = await mountSearchEntity(DESKTOP_WIDTH, completedSearch);
 
-    // 挂载时 reconcileRestoredSearchState 会收敛没有队列任务的在途状态，因此在挂载后再切到搜索中
+    // 挂载时 reconcileRestoredSearchState 会把没有队列任务的在途状态收敛掉，因此在挂载后再切到搜索中
     const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
     const runtimeStore = useRuntimeStore();
     runtimeStore.search.isSearching = true;

@@ -4,8 +4,9 @@
  * 站点使用 AngularJS SPA，数据通过 JSON API（/api/v1/）获取
  */
 import type { AxiosRequestConfig } from "axios";
-import type { ITorrent, TSchemaMetadata } from "../types";
+import type { ISearchInput, ITorrent, TSchemaMetadata } from "../types";
 import PrivateSite from "./AbstractPrivateSite";
+import { isDocumentNode } from "./AbstractBittorrentSite";
 import { GB } from "../utils";
 
 export const statusRequestConfig: AxiosRequestConfig = {
@@ -129,8 +130,8 @@ export default class Rartracker extends PrivateSite {
     // E12：`statusRequestConfig` 是模块级共享常量，传给 request() 时必须拷贝一层。
     // 基类 request() 现在也不会原地修改入参，这里再显式拷贝一次作为纵深防御
     // （否则 A/B 两个 Rartracker 站点会共用第一个站点的 baseURL，把 A 站 passkey 写进 B 站）。
-    const { data: statResp } = await this.request<{ user: { passkey: string } }>({ ...statusRequestConfig });
-    const passKey = (statResp.user.passkey ?? "").trim();
+    const { data: statResp } = await this.request<{ user?: { passkey?: string } | null }>({ ...statusRequestConfig });
+    const passKey = (statResp?.user?.passkey ?? "").trim();
 
     // 空 passkey 不写入持久化缓存：否则后续 12 小时内的下载链接都会复用空凭据；
     // 读取侧本来就有非空校验，因此跳过写缓存即可。实例级记忆由 getPassKey 负责。
@@ -142,6 +143,23 @@ export default class Rartracker extends PrivateSite {
     }
 
     return passKey;
+  }
+
+  public override async transformSearchPage(
+    doc: Document | object | any,
+    searchConfig: ISearchInput,
+  ): Promise<ITorrent[]> {
+    // 存在候选行时先预取一次 passkey：避免 /api/v1/status 失败时在父类逐行 try/catch 中
+    // 反复重置 _passKeyPromise 并触发 N 倍请求风暴，同时保留 NeedLoginError/CFBlockedError/ServerError 等原始错误分类。
+    const rowsSelector = searchConfig.searchEntry?.selectors?.rows;
+    if (rowsSelector) {
+      const rows = this.findElementsBySelectors(rowsSelector.selector, doc, { isJson: !isDocumentNode(doc) });
+      if (rows.length > 0) {
+        await this.getPassKey();
+      }
+    }
+
+    return await super.transformSearchPage(doc, searchConfig);
   }
 
   protected async parseTorrentRowForLink(torrent: Partial<ITorrent>): Promise<Partial<ITorrent>> {

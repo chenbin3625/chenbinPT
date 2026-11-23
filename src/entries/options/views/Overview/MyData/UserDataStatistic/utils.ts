@@ -22,6 +22,11 @@ const numericFields: (keyof IStoredUserInfo)[] = [
   "seedingBonus",
 ];
 
+function isValidDateKey(dateStr: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  return !Number.isNaN(new Date(dateStr + "T00:00:00").getTime());
+}
+
 // 新增：计算单日增量数据的函数
 function calculateDailyIncremental(
   prevDateData: IStoredUserInfo | null,
@@ -64,11 +69,14 @@ export async function loadFullData(): Promise<IUserDataStatistic> {
     Object.entries(rawData).filter(([siteId]) => addedSiteIds.includes(siteId as TSiteID)),
   );
 
-  // 提取所有日期并去重（只处理有效站点的数据）
+  // 提取所有日期并去重（只处理有效站点与合法日期键的数据）
   const allDatesSet = new Set<string>();
   for (const perSiteUserInfoHistory of Object.values(filteredRawData)) {
+    if (!perSiteUserInfoHistory || typeof perSiteUserInfoHistory !== "object") continue;
     for (const dateStr in perSiteUserInfoHistory) {
-      allDatesSet.add(dateStr);
+      if (isValidDateKey(dateStr)) {
+        allDatesSet.add(dateStr);
+      }
     }
   }
   const allDates = Array.from(allDatesSet);
@@ -103,7 +111,10 @@ export async function loadFullData(): Promise<IUserDataStatistic> {
 
   // 遍历过滤后的站点数据
   for (const [siteId, perSiteUserInfoHistory] of Object.entries(filteredRawData)) {
-    const thisSiteDateRange = Object.keys(perSiteUserInfoHistory);
+    if (!perSiteUserInfoHistory || typeof perSiteUserInfoHistory !== "object") continue;
+    const thisSiteDateRange = Object.keys(perSiteUserInfoHistory).filter(isValidDateKey);
+    if (thisSiteDateRange.length === 0) continue;
+
     const sortedSiteDates = thisSiteDateRange.sort();
     const thisSiteMinDateStr = sortedSiteDates[0];
     const thisSiteMaxDateStr = sortedSiteDates[sortedSiteDates.length - 1];
@@ -248,7 +259,7 @@ export function buildPerSiteTooltipFormatter(options: IPerSiteTooltipOptions) {
         options.translate("UserDataStatistic.chart.totalLabel"),
       )}</td><td style="text-align: right; padding-right: 12px">${options.formatValue(
         totalCount,
-      )}</td><td style="text-align: right">100%</td></tr>`;
+      )}</td><td style="text-align: right">${totalCount === 0 ? "-" : "100%"}</td></tr>`;
 
       // 复制后再排序：不原地改写 ECharts 传进来的数组
       const sortedParams = [...params].sort((a, b) => b.data - a.data);
@@ -260,10 +271,10 @@ export function buildPerSiteTooltipFormatter(options: IPerSiteTooltipOptions) {
         const site = data.seriesName;
         const siteName = escapeHtml(options.siteName(site));
         const siteFavicon = escapeHtml(options.siteFavicon(site));
-        const precentValue = (dataValue / totalCount) * 100;
+        const percentValue = totalCount !== 0 ? (dataValue / totalCount) * 100 : null;
         const isHighlightSite = options.isHighlighted(data.seriesIndex);
 
-        if (!isHighlightSite && Math.abs(precentValue) < options.hideThreshold) {
+        if (!isHighlightSite && percentValue !== null && Math.abs(percentValue) < options.hideThreshold) {
           thresholdSite++;
           continue;
         }
@@ -271,7 +282,7 @@ export function buildPerSiteTooltipFormatter(options: IPerSiteTooltipOptions) {
         ret += `<tr style='${isHighlightSite ? `color: ${escapeHtml(data.color)};` : ""}'>
 <td style="padding-right: 12px"><div style="display: inline-flex; align-items: center"><img src="${siteFavicon}" style="width:16px; height: 16px; ; margin-right: 4px" alt="${siteName}">${siteName}</div></td>
 <td style="text-align: right; padding-right: 12px">${options.formatValue(dataValue)}</td>
-<td style="text-align: right">${precentValue.toFixed(2)}%</td>
+<td style="text-align: right">${percentValue === null ? "-" : `${percentValue.toFixed(2)}%`}</td>
 </tr>`;
       }
 

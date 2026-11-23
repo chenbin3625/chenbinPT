@@ -333,7 +333,9 @@ export default class HDRoute extends PrivateSite {
         .map((v) => v?.trim())
         .find((v) => v && v.length > 0) || "";
 
-    torrent.link = fullLink || (torrent.id ? `/download.php?id=${torrent.id}` : torrent.link);
+    const rawLink = fullLink || (torrent.id ? `/download.php?id=${torrent.id}` : torrent.link);
+    const baseUrl = torrent.url && this.isTrustedSiteUrl(torrent.url) ? torrent.url : this.url;
+    torrent.link = rawLink ? this.fixLink(rawLink, { baseURL: baseUrl }) : "";
     return torrent;
   }
 
@@ -344,7 +346,12 @@ export default class HDRoute extends PrivateSite {
       torrent.link.trim().length > 0 &&
       torrent.link.includes(":COOKIE:")
     ) {
-      return torrent.link.trim();
+      const baseUrl = torrent.url && this.isTrustedSiteUrl(torrent.url) ? torrent.url : this.url;
+      const normalized = this.fixLink(torrent.link.trim(), { baseURL: baseUrl });
+      if (!normalized) {
+        throw new Error(`[PTD] site '${this.metadata.id}' blocked invalid download link`);
+      }
+      return normalized;
     }
     return await super.getTorrentDownloadLink(torrent);
   }

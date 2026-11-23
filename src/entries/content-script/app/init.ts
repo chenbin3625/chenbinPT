@@ -25,6 +25,50 @@ import { useMetadataStore } from "@/options/stores/metadata.ts";
  */
 const remountGuard = createRemountGuard();
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * 递归剥离普通对象中的 `undefined` 自有属性：
+ * Pinia 的 `$patch` 会把 `{ contentScript: undefined }` 直接赋给目标对象，覆盖默认配置并引发 TypeError。
+ */
+export function stripUndefinedProps<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedProps(item)) as T;
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined) continue;
+    result[key] = stripUndefinedProps(entry);
+  }
+  return result as T;
+}
+
+function sanitizeConfigPatch(raw: unknown): Record<string, any> | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  const cleaned = stripUndefinedProps(raw);
+  // 嵌套对象分区只能是普通对象，避免 null / 非对象覆盖 configStore 默认结构
+  for (const nestedKey of ["contentScript", "download", "searchEntifyControl"] as const) {
+    if (nestedKey in cleaned && !isPlainObject(cleaned[nestedKey])) {
+      delete cleaned[nestedKey];
+    }
+  }
+  return cleaned;
+}
+
+function sanitizeMetadataPatch(raw: unknown): Record<string, any> | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  return stripUndefinedProps(raw);
+}
+
 export function mountApp(document: Document, data: any = {}) {
   // 创建一个全局的 div 并挂载到 body 中，作为 shadow DOM 的挂载点
   const contentRoot = document.createElement("div");
@@ -113,6 +157,18 @@ export function mountApp(document: Document, data: any = {}) {
   const app = createApp(Root).use(pinia).use(i18n).use(antd);
   const configStore = useConfigStore(pinia);
   const metadataStore = useMetadataStore(pinia);
+
+  const sanitizedConfig = sanitizeConfigPatch(data?.config);
+  const sanitizedMetadata = sanitizeMetadataPatch(data?.metadata);
+
+  // 挂载前先同步 patch 一次，保证 Root setup 里的 useAntdConfig() 首次渲染即读到正确的 lang/theme/contentScript
+  if (sanitizedConfig) {
+    configStore.$patch(sanitizedConfig);
+  }
+  if (sanitizedMetadata) {
+    metadataStore.$patch(sanitizedMetadata);
+  }
+
   /**
    * 两个 store 都水合并把 bootstrap 注入的 config/metadata patch 完成之后才 resolve。
    *
@@ -122,11 +178,11 @@ export function mountApp(document: Document, data: any = {}) {
    * 这里把该 Promise 提供给 App.vue，让它等「水合 + patch」都完成后再初始化。
    */
   const dataReady = Promise.all([configStore.$onReady(), metadataStore.$onReady()]).then(() => {
-    if (data.config && typeof data.config === "object") {
-      configStore.$patch(data.config);
+    if (sanitizedConfig) {
+      configStore.$patch(sanitizedConfig);
     }
-    if (data.metadata && typeof data.metadata === "object") {
-      metadataStore.$patch(data.metadata);
+    if (sanitizedMetadata) {
+      metadataStore.$patch(sanitizedMetadata);
     }
   });
   app.provide("ptd_data", data); // 提供数据给 Vue 应用
@@ -140,15 +196,14 @@ export function mountApp(document: Document, data: any = {}) {
   remountGuard.noteMounted();
   const mutationObserver = new MutationObserver(() => {
     if (!document.body || document.body.contains(contentRoot)) return;
-    // L-4：重挂载预算由模块级 guard 持有。旧实现在函数体内声明计数器，而重挂载是递归调用
-    // mountApp()，每次进入函数体计数器都会归零 ⇒ 上限永远触发不到（宿主持续删 DOM 时无限循环）。
-    if (!remountGuard.allowRemount()) {
-      mutationObserver.disconnect();
-      return;
-    }
     mutationObserver.disconnect();
     setClipboardFallbackContainer(undefined);
     app.unmount();
+    // L-4：重挂载预算由模块级 guard 持有。旧实现在函数体内声明计数器，而重挂载是递归调用
+    // mountApp()，每次进入函数体计数器都会归零 ⇒ 上限永远触发不到（宿主持续删 DOM 时无限循环）。
+    if (!remountGuard.allowRemount()) {
+      return;
+    }
     mountApp(document, data);
   });
 

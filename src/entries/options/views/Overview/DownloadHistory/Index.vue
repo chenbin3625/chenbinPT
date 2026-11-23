@@ -128,8 +128,16 @@ const toolbarItems = computed<ToolbarAction[]>(() => [
   { key: "refresh", label: t("DownloadHistory.refresh"), icon: SyncOutlined },
 ]);
 
+let isMounted = false;
+
+function refreshDownloadHistory() {
+  if (!isMounted) return;
+  // N4：loadDownloadHistory 内部已经 catch 并提示；这里 return 的 promise 只是让 lint 知道已被处理
+  void throttleLoadDownloadHistory();
+}
+
 function onToolbarAction(key: string) {
-  if (key === "refresh") void throttleLoadDownloadHistory();
+  if (key === "refresh") refreshDownloadHistory();
 }
 
 /**
@@ -202,11 +210,14 @@ function downloadStatusMeta(status: ITorrentDownloadMetadata["downloadStatus"]) 
 }
 
 onMounted(() => {
-  // N4：loadDownloadHistory 内部已经 catch 并提示；这里 return 的 promise 只是让 lint 知道已被处理
-  void throttleLoadDownloadHistory();
+  isMounted = true;
+  refreshDownloadHistory();
 });
 
 onUnmounted(() => {
+  isMounted = false;
+  // 取消节流器的尾部定时调用：避免在 1s 窗口内离开页面后 trailing 回调重新拉起轮询
+  (throttleLoadDownloadHistory as { cancel?: () => void }).cancel?.();
   clearWatchingMap();
   // 卸载时加载可能仍在途：复位 loading，否则重新进入页面时重入保护会把新一轮加载直接挡掉，
   // 页面会停在「加载中」直到旧请求返回（而旧请求已经因 epoch 失效不会写回数据）。
@@ -336,7 +347,7 @@ onUnmounted(() => {
   <ReDownloadSelectDialog
     v-model="showReDownloadSelectDialog"
     :torrent-items="reDownloadTorrentListRef"
-    @re-download-complete="() => throttleLoadDownloadHistory()"
+    @re-download-complete="refreshDownloadHistory"
   />
 
   <AdvanceFilterGenerateDialog v-model="showAdvanceFilterDialog" />
@@ -345,7 +356,7 @@ onUnmounted(() => {
     v-model="showDeleteDialog"
     :to-delete-ids="toDeleteIds"
     :confirm-delete="confirmDeleteDownloadHistory"
-    @all-delete="() => void throttleLoadDownloadHistory()"
+    @all-delete="refreshDownloadHistory"
   >
     <!-- N3：确认框列出待删除的下载记录标题 -->
     <template #append-text>

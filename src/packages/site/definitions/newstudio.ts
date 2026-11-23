@@ -31,11 +31,11 @@ const normalizeNewStudioDate = (query: string): string => {
   // Jackett 中记录过 "Today 01:34" / "Сегодня 12:34" 这类相对时间（本次抓取未出现，属未验证分支）
   const relative = s.match(/^(Today|Сегодня|Yesterday|Вчера)\s+(\d{1,2}):(\d{2})$/);
   if (relative) {
-    const date = new Date();
-    if (relative[1] === "Yesterday" || relative[1] === "Вчера") {
-      date.setDate(date.getDate() - 1);
-    }
-    return `${pad2(date.getDate())} ${enMonths[date.getMonth()]} ${pad2(date.getFullYear() % 100)} ${relative[2]}:${relative[3]}:00`;
+    // 按站点时区 MSK (+03:00) 计算墙上日期，避免宿主本地时区与 MSK 跨日时偏差 1 天
+    const mskOffsetMs = 3 * 3600 * 1000;
+    const dayOffsetMs = relative[1] === "Yesterday" || relative[1] === "Вчера" ? 24 * 3600 * 1000 : 0;
+    const mskDate = new Date(Date.now() + mskOffsetMs - dayOffsetMs);
+    return `${pad2(mskDate.getUTCDate())} ${enMonths[mskDate.getUTCMonth()]} ${pad2(mskDate.getUTCFullYear() % 100)} ${pad2(Number(relative[2]))}:${relative[3]}:00`;
   }
 
   // "13-Sep-24, 18:20" → "13 Sep 24 18:20:00"

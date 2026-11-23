@@ -199,6 +199,7 @@ export const siteMetadata: ISiteMetadata = {
           "joinTime",
           "seeding",
           "seedingSize",
+          "averageSeedingTime",
           "hnrUnsatisfied",
           "hnrPreWarning",
           "lastAccessAt",

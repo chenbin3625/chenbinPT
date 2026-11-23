@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, toRaw, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { computedAsync } from "@vueuse/core";
 import { cloneDeep } from "es-toolkit";
@@ -85,6 +85,32 @@ function createDefaultRetention(): IBackupRetention {
   };
 }
 
+function mergeRetentionWithDefaults(saved?: IBackupRetention): IBackupRetention {
+  const draft = createDefaultRetention();
+  if (!saved) {
+    return draft;
+  }
+
+  const mergedRules = { ...draft.sample!.rules };
+  for (const [type, rule] of Object.entries(saved.sample?.rules ?? {}) as Array<
+    [keyof typeof mergedRules, (typeof mergedRules)[keyof typeof mergedRules]]
+  >) {
+    if (rule) {
+      mergedRules[type] = { ...mergedRules[type], ...rule };
+    }
+  }
+
+  return {
+    time: { ...draft.time, ...saved.time },
+    count: { ...draft.count, ...saved.count },
+    sample: {
+      ...draft.sample,
+      ...saved.sample,
+      rules: mergedRules,
+    },
+  };
+}
+
 const retentionDraft = ref<IBackupRetention>(createDefaultRetention());
 const advancedBackupConfigOpen = ref<string[]>([]);
 
@@ -94,7 +120,9 @@ function hasEnabledRetentionRule(value: IBackupRetention): boolean {
     (value.time?.enabled && (value.time.maxAge ?? 0) > 0) ||
     (value.count?.enabled && (value.count.maxCount ?? 0) > 0) ||
     (value.sample?.enabled &&
-      Object.values(value.sample.rules ?? {}).some((rule) => rule && rule.interval > 0 && rule.horizon > 0))
+      Object.values(value.sample.rules ?? {}).some(
+        (rule) => rule && (rule.interval ?? 0) > 0 && (rule.horizon ?? 0) > 0,
+      ))
   );
 }
 
@@ -111,39 +139,36 @@ const retentionSampleColumns = computed(() => [
 /**
  * 把已保存的保留策略同步到本地草稿，使界面回显保存过的配置。
  *
- * 这里监听 `clientConfig.retention` 而不是只在挂载时初始化一次：
- * `EditDialog` 关闭后并不会销毁 Editor，再次编辑另一台服务器时需要跟着切换草稿。
- * 保存的配置可能是旧版本写入的、字段不全，因此以默认配置为基础再合并。
+ * 这里监听 `clientConfig` 与 `clientConfig.retention`：
+ * `EditDialog` 关闭后并不会销毁 Editor，再次编辑另一台服务器或外部替换 `retention` 时需要跟着切换草稿。
+ * 保存的配置可能是旧版本写入的、字段不全，因此以默认配置为基础再深度合并。
  *
- * 注意：本同步与下面的「草稿 → 配置」写入互为对方的输入，若不加标记会来回互相触发，
- * 因此用 `syncingFromConfig` 打断回环，并额外比较内容避免无意义的重复写入。
+ * 注意：下面的 `watch(retentionDraft)` 会把草稿写回 `clientConfig.value.retention`（含清空数值或关闭最后一条规则时
+ * 写回 `undefined`）。由于两个 watcher 都是异步 `flush: 'pre'`，不能靠同步布尔标志打断回环；这里记录自身写回的
+ * `clientConfig` 与 `retention` 原始引用，反向 watcher 命中自写时跳过，避免编辑中途把草稿重置成默认值。
  */
-let syncingFromConfig = false;
+let lastSyncedConfigRaw: IBackupServerMetadata | undefined;
+let lastWrittenRetentionRaw: IBackupRetention | undefined;
+let hasSelfWrittenRetention = false;
 let lastSyncedRetention: string | undefined;
 
 watch(
-  () => clientConfig.value?.retention,
-  (saved) => {
-    syncingFromConfig = true;
-    try {
-      const draft = createDefaultRetention();
-
-      retentionDraft.value = saved
-        ? {
-            time: { ...draft.time, ...saved.time },
-            count: { ...draft.count, ...saved.count },
-            sample: {
-              ...draft.sample,
-              ...saved.sample,
-              rules: { ...draft.sample!.rules, ...saved.sample?.rules },
-            },
-          }
-        : draft;
-
-      lastSyncedRetention = JSON.stringify(retentionDraft.value);
-    } finally {
-      syncingFromConfig = false;
+  [clientConfig, () => clientConfig.value?.retention] as const,
+  ([config, saved]) => {
+    const configRaw = config ? toRaw(config) : undefined;
+    const savedRaw = saved ? toRaw(saved) : undefined;
+    if (configRaw === lastSyncedConfigRaw && hasSelfWrittenRetention && savedRaw === lastWrittenRetentionRaw) {
+      hasSelfWrittenRetention = false;
+      return;
     }
+
+    hasSelfWrittenRetention = false;
+    lastSyncedConfigRaw = configRaw;
+    lastWrittenRetentionRaw = savedRaw;
+
+    const nextDraft = mergeRetentionWithDefaults(saved);
+    retentionDraft.value = nextDraft;
+    lastSyncedRetention = JSON.stringify(hasEnabledRetentionRule(nextDraft) ? nextDraft : null);
   },
   { immediate: true },
 );
@@ -160,8 +185,7 @@ watch(
 watch(
   retentionDraft,
   (value) => {
-    // 本次变化来自上面的「配置 → 草稿」同步，无需再写回配置
-    if (syncingFromConfig || !clientConfig.value) {
+    if (!clientConfig.value) {
       return;
     }
 
@@ -173,6 +197,12 @@ watch(
     }
 
     lastSyncedRetention = nextSerialized;
+    if (clientConfig.value.retention === nextRetention) {
+      return;
+    }
+
+    hasSelfWrittenRetention = true;
+    lastWrittenRetentionRaw = nextRetention;
     clientConfig.value.retention = nextRetention;
   },
   { deep: true },

@@ -179,7 +179,7 @@ export function getTorrentVolumeFactors(
 /**
  * 单点归一：让种子的 factor 与 tag 两种表示同时成立、且相互一致（幂等）。
  *
- * - 已有 factor（来自定义的选择器 / 覆写方法）→ 以 factor 为准，重建优惠标签；
+ * - 已有 factor（来自定义的选择器 / 覆写方法）→ 按轴以显式 factor 优先，缺失轴从 tags 反推，再重建优惠标签；
  * - 只有 tag → 反推 factor（`Free` 只推下载轴），再按 factor 重建优惠标签（`2x` → `2xUp`）；
  * - 两者都没有 → 清理选择器可能写入的非法值（`""` / `"N/A"`），不新增任何字段。
  *
@@ -191,19 +191,19 @@ export function normalizeTorrentPromotion<T extends Partial<ITorrent>>(torrent: 
   const download = toFactor(target.downloadVolumeFactor, "download");
   const upload = toFactor(target.uploadVolumeFactor, "upload");
 
-  if (download === undefined && upload === undefined) {
-    // 没有 factor：要么反过来从标签推断，要么什么都不写
-    const inferred = tagsToPromotion(target.tags);
-    if (inferred.downloadVolumeFactor === undefined && inferred.uploadVolumeFactor === undefined) {
-      // 清掉 selector 未命中时写入的空串 / 哨兵值，保持「未知」语义
-      delete target.downloadVolumeFactor;
-      delete target.uploadVolumeFactor;
-      return torrent;
-    }
-    return rebuild(torrent, target, inferred.downloadVolumeFactor, inferred.uploadVolumeFactor);
+  // 按轴合并：当某一轴缺少显式 factor 时从 tags 补全，避免只给单轴 factor 时误删另一轴的优惠标签
+  const inferred = download === undefined || upload === undefined ? tagsToPromotion(target.tags) : undefined;
+  const finalDownload = download ?? inferred?.downloadVolumeFactor;
+  const finalUpload = upload ?? inferred?.uploadVolumeFactor;
+
+  if (finalDownload === undefined && finalUpload === undefined) {
+    // 清掉 selector 未命中时写入的空串 / 哨兵值，保持「未知」语义
+    delete target.downloadVolumeFactor;
+    delete target.uploadVolumeFactor;
+    return torrent;
   }
 
-  return rebuild(torrent, target, download, upload);
+  return rebuild(torrent, target, finalDownload, finalUpload);
 }
 
 function rebuild<T extends Partial<ITorrent>>(

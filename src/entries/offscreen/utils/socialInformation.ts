@@ -18,6 +18,36 @@ interface IGetSocialInformationOptions {
 const enrichmentAttemptedKeys = new Set<string>();
 
 /**
+ * 缓存失效代际追踪：clearSocialInformation / deleteSocialInformation 清掉 IndexedDB 后，
+ * `@ptd/social` 进程内仍有 10 分钟的 `socialInformationInFlight` 缓存；
+ * 通过记录失效代际并在下次读取时透传 `force: true`，强制 `@ptd/social` 绕过并覆盖旧条目。
+ */
+let cacheInvalidationEpoch = 0;
+let lastFullClearEpoch = 0;
+const deletedPrefixEpoch = new Map<string, number>();
+const deletedStorageKeyEpoch = new Map<string, number>();
+const refreshedStorageKeyEpoch = new Map<string, number>();
+const MAX_INVALIDATION_TRACKING_ENTRIES = 1000;
+
+function setBoundedMapEntry<K, V>(map: Map<K, V>, key: K, value: V): void {
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, value);
+  if (map.size > MAX_INVALIDATION_TRACKING_ENTRIES) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey !== undefined) {
+      map.delete(oldestKey);
+    }
+  }
+}
+
+function getRequiredInvalidationEpoch(site: TSupportSocialSite$1, sid: string, storageKey: string): number {
+  const prefix = `${site}:${sid}`;
+  return Math.max(lastFullClearEpoch, deletedPrefixEpoch.get(prefix) ?? 0, deletedStorageKeyEpoch.get(storageKey) ?? 0);
+}
+
+/**
  * 影响抓取结果的配置指纹。IndexedDB 的旧 key 只有 `site:sid`，
  * 用户改了 ptGenEndpoint / preferPtGen / socialSite 后仍会命中旧缓存直到 cacheDay 过期。
  * cacheDay 只控制 TTL、force 只表示绕过缓存，二者不参与指纹（与 social 包的进程内 key 一致）。
@@ -102,14 +132,36 @@ export async function getSocialInformation(
   const shouldMarkEnrichmentAttempted = isMissingRequiredSummary || isMissingRequiredMetadata;
 
   if (options.force || !stored || isExpired || shouldMarkEnrichmentAttempted) {
-    // 强制刷新必须一路透传到 social 包的进程内缓存：否则只绕过 IndexedDB，
-    // 仍可能命中 getSocialSiteInformation 的 10 分钟缓存，force 相当于无效。
-    stored = await getSocialSiteInformation(site, sid, { ...socialInformationConfig, force: options.force === true });
-    if (shouldMarkEnrichmentAttempted) {
-      enrichmentAttemptedKeys.add(key);
+    const requiredEpoch = getRequiredInvalidationEpoch(site, sid, key);
+    const refreshedEpoch = refreshedStorageKeyEpoch.get(key) ?? 0;
+    const forceForInvalidation = requiredEpoch > refreshedEpoch;
+    const effectiveForce = options.force === true || forceForInvalidation;
+
+    if (effectiveForce && requiredEpoch > 0) {
+      // 同步记录已刷新代际：getSocialSiteInformation 在首个 await 前就会覆盖进程内缓存，
+      // 并发到来的同 key 请求仍可复用本次新发起的 in-flight Promise，不会重复请求远端。
+      setBoundedMapEntry(refreshedStorageKeyEpoch, key, requiredEpoch);
     }
-    if (stored && (stored.title !== "" || stored.poster !== "")) {
-      await setSocialInformation(site, sid, stored, fingerprint);
+
+    // 强制刷新或缓存失效后必须一路透传到 social 包的进程内缓存：否则只绕过 IndexedDB，
+    // 仍可能命中 getSocialSiteInformation 的 10 分钟缓存，force / 清缓存相当于无效。
+    try {
+      stored = await getSocialSiteInformation(site, sid, { ...socialInformationConfig, force: effectiveForce });
+    } catch (error) {
+      if (forceForInvalidation && refreshedStorageKeyEpoch.get(key) === requiredEpoch) {
+        refreshedStorageKeyEpoch.delete(key);
+      }
+      throw error;
+    }
+
+    const invalidatedDuringFetch = getRequiredInvalidationEpoch(site, sid, key) > requiredEpoch;
+    if (!invalidatedDuringFetch) {
+      if (shouldMarkEnrichmentAttempted) {
+        enrichmentAttemptedKeys.add(key);
+      }
+      if (stored && (stored.title !== "" || stored.poster !== "")) {
+        await setSocialInformation(site, sid, stored, fingerprint);
+      }
     }
     logger({ msg: `getSocialInformation for ${site} with sid: ${sid}`, data: stored });
   }
@@ -136,14 +188,31 @@ export async function setSocialInformation(
 }
 
 export async function deleteSocialInformation(site: TSupportSocialSite$1, sid: string, fingerprint: string = "") {
+  cacheInvalidationEpoch += 1;
+  const prefix = `${site}:${sid}`;
   const db = await ptdIndexDb;
   if (fingerprint) {
-    return await db.delete("social_information", getSocialInformationStorageKey(site, sid, fingerprint));
+    const storageKey = getSocialInformationStorageKey(site, sid, fingerprint);
+    enrichmentAttemptedKeys.delete(storageKey);
+    refreshedStorageKeyEpoch.delete(storageKey);
+    setBoundedMapEntry(deletedStorageKeyEpoch, storageKey, cacheInvalidationEpoch);
+    return await db.delete("social_information", storageKey);
   }
 
   // 未指定 fingerprint 时删除该 sid 的全部缓存：只删 `${site}:${sid}` 命不中
   // 实际以 `${site}:${sid}:${fingerprint}` 存储的条目。
-  const prefix = `${site}:${sid}`;
+  for (const attemptedKey of enrichmentAttemptedKeys) {
+    if (attemptedKey === prefix || attemptedKey.startsWith(`${prefix}:`)) {
+      enrichmentAttemptedKeys.delete(attemptedKey);
+    }
+  }
+  for (const refreshedKey of refreshedStorageKeyEpoch.keys()) {
+    if (refreshedKey === prefix || refreshedKey.startsWith(`${prefix}:`)) {
+      refreshedStorageKeyEpoch.delete(refreshedKey);
+    }
+  }
+  setBoundedMapEntry(deletedPrefixEpoch, prefix, cacheInvalidationEpoch);
+
   const keys = await db.getAllKeys("social_information");
   const targetKeys = keys.filter((key) => key === prefix || key.startsWith(`${prefix}:`));
   if (targetKeys.length === 0) return;
@@ -153,6 +222,12 @@ export async function deleteSocialInformation(site: TSupportSocialSite$1, sid: s
 }
 
 export async function clearSocialInformation() {
+  cacheInvalidationEpoch += 1;
+  lastFullClearEpoch = cacheInvalidationEpoch;
+  enrichmentAttemptedKeys.clear();
+  deletedPrefixEpoch.clear();
+  deletedStorageKeyEpoch.clear();
+  refreshedStorageKeyEpoch.clear();
   return await (await ptdIndexDb).clear("social_information");
 }
 

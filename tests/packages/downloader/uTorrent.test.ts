@@ -12,11 +12,13 @@ const axiosMock = vi.hoisted(() => ({
   post: vi.fn(),
 }));
 
-vi.mock("@ptd/downloader/utils.ts", () => ({
+const utilsMock = vi.hoisted(() => ({
   getRemoteTorrentFile: vi.fn(),
   extractMagnetHash: vi.fn(),
   sanitizeDownloadUrlForLog: vi.fn((url: string) => String(url)),
 }));
+
+vi.mock("@ptd/downloader/utils.ts", () => utilsMock);
 vi.mock("@ptd/site/utils/adapter.ts", () => ({
   logMessage: vi.fn(),
 }));
@@ -105,6 +107,8 @@ describe("uTorrent：C1 修复轮", () => {
   beforeEach(() => {
     axiosMock.get.mockReset();
     axiosMock.post.mockReset();
+    utilsMock.extractMagnetHash.mockReset();
+    utilsMock.getRemoteTorrentFile.mockReset();
   });
 
   it("UT-1：token 失效（HTTP 400）时重新取 token 并重试一次", async () => {
@@ -143,6 +147,8 @@ describe("uTorrent：C1 修复轮", () => {
   });
 
   it("UT-2：添加成功但后置设置失败时 success 仍为 true，并回传 warning message", async () => {
+    const infoHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    utilsMock.extractMagnetHash.mockReturnValue(infoHash);
     axiosMock.post.mockResolvedValue({ data: { build: 1 } });
     axiosMock.get.mockImplementation(async (url: string) => {
       if (url === "/token.html") {
@@ -150,17 +156,24 @@ describe("uTorrent：C1 修复轮", () => {
       }
       throw Object.assign(new Error("pause failed"), { response: { status: 500 } });
     });
-    const utils = await import("@ptd/downloader/utils.ts");
-    vi.mocked(utils.getRemoteTorrentFile); // 保持 mock 状态
     const client = new UTorrent({ address: "http://127.0.0.1:8080/gui/" });
     (client as any)._sid = "sid";
 
-    const result = await client.addTorrent("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+    const result = await client.addTorrent(`magnet:?xt=urn:btih:${infoHash}`, {
       addAtPaused: true,
     });
 
     expect(result.success).toBe(true);
-    expect(String(result.message)).toContain("暂停");
+    expect(axiosMock.get).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/gui/",
+      expect.objectContaining({
+        params: expect.objectContaining({
+          action: "pause",
+          hash: infoHash,
+        }),
+      }),
+    );
+    expect(String(result.message)).toBe("种子已添加，但以下设置未生效：暂停（可稍后重试）");
   });
 
   it("UT-3：状态位按 ERROR → CHECKING → PAUSED → STARTED 的优先级判断", async () => {

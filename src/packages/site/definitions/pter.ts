@@ -44,6 +44,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "电影 (Movie)", value: 401 },
         { name: "电视剧 (TV Series)", value: 404 },
         { name: "动画 (Animation)", value: 403 },
+        { name: "短剧 (Short)", value: 419 },
         { name: "综艺 (TV Show)", value: 405 },
         { name: "音乐短片 (MV)", value: 413 },
         { name: "音乐 (Music)", value: 406 },
@@ -247,17 +248,18 @@ export const siteMetadata: ISiteMetadata = {
             return rows;
           },
         },
+        id: {
+          selector: "a[href*='download.php?id=']",
+          attr: "href",
+          filters: [{ name: "querystring", args: ["id"] }],
+        },
         url: {
           selector: "a[href*='download.php?id=']",
-          elementProcess: (element: HTMLAnchorElement) => {
-            // 处理游戏种子下载链接
-            const url = URL.parse(element.href);
-            if (!url) {
-              return "";
-            }
-            url.pathname = "detailsgame.php";
-            return url.toString();
-          },
+          attr: "href",
+          filters: [
+            { name: "querystring", args: ["id"] },
+            { name: "prepend", args: ["/detailsgame.php?id="] },
+          ],
         },
         link: {
           selector: "a[href*='download.php?id=']",

@@ -99,12 +99,13 @@ async function main() {
   const commitUrl = `${repoUrl}/commit/${commitInfo.commitHash}`; // 构建 Commit 链接
   const actionRunUrl = `${repoUrl}/actions/runs/${triggerInfo.runId}`; // 构建 GitHub Action 运行链接
 
-  let message = `
+  const moreMessageSection = commitInfo.moreMessage ? `\n\n${escapeLegacyMarkdownPre(commitInfo.moreMessage)}` : "";
+
+  const message = `
 #${escapeLegacyMarkdown(triggerInfo.eventName)} #${escapeLegacyMarkdown(commitInfo.author)} #${commitInfo.commitHash}
 
 \`\`\`
-${escapeLegacyMarkdownPre(commitInfo.message)}
-|$|moreMessage|$|
+${escapeLegacyMarkdownPre(commitInfo.message)}${moreMessageSection}
 \`\`\`
 
 🔢 \`v${buildVersion}\`
@@ -113,14 +114,6 @@ ${escapeLegacyMarkdownPre(commitInfo.message)}
 ⚙️ Workflow: [${triggerInfo.runId}](${actionRunUrl})
 📦 *由 GitHub Action 自动构建*
 `;
-
-  message = message.replace(
-    "|$|moreMessage|$|",
-    commitInfo.moreMessage
-      ? `
-${escapeLegacyMarkdownPre(commitInfo.moreMessage)}`
-      : "",
-  );
 
   console.log(message);
 

@@ -47,11 +47,11 @@ const userInfoWithInvitesInUserDetailsPage = {
   },
   process: [
     ...SchemaMetadata.userInfo.process!.map((item) => {
-      // 在用户详情页面添加 invites 字段
+      // 在用户详情页面添加 invites 和 levelId 字段
       if (item.requestConfig.url === "/userdetails.php") {
         return {
           ...item,
-          fields: [...(item.fields || []), "invites"],
+          fields: [...(item.fields || []), "invites", "levelId"],
         };
       }
       return item;

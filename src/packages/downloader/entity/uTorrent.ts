@@ -259,9 +259,11 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
         timeout: this.config.timeout,
       });
 
-      const match = />([^<]+)</.exec(req.data);
-      if (match) {
-        this._sid = match[match.length - 1];
+      const match =
+        typeof req.data === "string" ? /<div[^>]*\bid=['"]token['"][^>]*>([^<]+)<\/div>/i.exec(req.data) : null;
+      const token = match?.[1]?.trim();
+      if (token) {
+        this._sid = token;
         return true;
       }
       this._sid = null;
@@ -322,6 +324,8 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
             t: Date.now().toString(),
             ...params,
           },
+          // 数组参数（如 setprio 的多个 f=）按重复键名序列化，不加 [] 下标
+          paramsSerializer: { indexes: null },
           auth: {
             username: this.config.username,
             password: this.config.password,
@@ -354,13 +358,15 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
        * UT-1：uTorrent WebUI 的 token 会在客户端重启或空闲超时后失效，
        * 此时接口返回 HTTP 400 `invalid request`。以前 token 永久缓存、失败不重取，
        * 实例（被 offscreen 长期持有）生命周期内所有请求都会失败。
-       * 这里清空 token、重新登录并重试一次。
+       * 仅当缓存仍是本次失效的 sid 时才置空（且不清空 `_sidPromise`），
+       * 避免并发请求打断单飞刷新或覆盖已刷新好的新 token。
        */
       if (!isUtorrentAuthError(e)) {
         throw e;
       }
-      this._sid = null;
-      this._sidPromise = null;
+      if (this._sid === sid) {
+        this._sid = null;
+      }
       sid = await this.getSessionId();
       return assertNoBusinessError(await doRequest(sid));
     }
@@ -418,12 +424,13 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
       try {
         addResponse = await postTorrent(sid);
       } catch (e) {
-        // UT-1：token 失效（400 invalid request）时重取 token 并重试一次
+        // UT-1：token 失效（400 invalid request）时重取 token 并重试一次（保护并发单飞）
         if (!isUtorrentAuthError(e)) {
           throw e;
         }
-        this._sid = null;
-        this._sidPromise = null;
+        if (this._sid === sid) {
+          this._sid = null;
+        }
         sid = await this.getSessionId();
         addResponse = await postTorrent(sid);
       }
@@ -691,7 +698,7 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
     });
   }
 
-  // 文件优先级/选择: action=setprio（一次一个优先级，多文件以逗号分隔）
+  // 文件优先级/选择: action=setprio（uTorrent 要求重复的 f= 参数而非逗号分隔，大批量按块发送避免超长 URL）
   override async setTorrentFilePriority(
     torrent: string | CTorrent,
     selections: CTorrentFileSelection[],
@@ -700,24 +707,28 @@ export default class UTorrent extends AbstractBittorrentClient<TorrentClientConf
       return true;
     }
     const hash = this.getTorrentHash(torrent);
+    const MAX_FILES_PER_SETPRIO = 100;
 
-    const grouped = new Map<number, string[]>();
+    const grouped = new Map<number, number[]>();
     for (const { index, priority } of selections) {
       const utorrentPriority = mapTorrentFilePriorityToUtorrent(priority);
       const indices = grouped.get(utorrentPriority) ?? [];
-      indices.push(String(index));
+      indices.push(index);
       grouped.set(utorrentPriority, indices);
     }
 
     for (const [priority, indices] of grouped) {
-      try {
-        await this.request<BaseUtorrentResponse>("setprio", {
-          hash,
-          p: priority,
-          f: indices.join(","),
-        });
-      } catch (e) {
-        return false;
+      for (let i = 0; i < indices.length; i += MAX_FILES_PER_SETPRIO) {
+        const chunk = indices.slice(i, i + MAX_FILES_PER_SETPRIO);
+        try {
+          await this.request<BaseUtorrentResponse>("setprio", {
+            hash,
+            p: priority,
+            f: chunk,
+          });
+        } catch (e) {
+          return false;
+        }
       }
     }
     return true;

@@ -21,18 +21,29 @@ const MONTHS: Record<string, number> = {
 };
 
 /**
- * 详情页的 Creation Time 是 `Oct. 13, 2026, 2:22 p.m.`（12 小时制、英文月份）。
+ * 详情页的 Creation Time 是 Django AP 风格（如 `Oct. 13, 2026, 2:22 p.m.` / `March 5, 2026, 2 p.m.` / `June 15, 2026, noon`）。
  * 站点时间就是 UTC：该页面同时由前端请求 `/api/json_info`，接口里同一颗种子返回
  * `"create_time": "2026-10-13T14:22:11"`，与页面上的 `2:22 p.m.` 完全对得上，故按 UTC 解析。
  */
 function parseCreationTime(text: string): number {
-  const match = /([A-Za-z]{3})\.?\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([ap])\.?m/i.exec(String(text));
+  const match =
+    /\b([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),\s*(\d{4}),\s*(?:(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?|(noon|midnight))/i.exec(
+      String(text),
+    );
   const month = match ? MONTHS[match[1].toLowerCase()] : undefined;
   if (!match || month === undefined) {
     return 0;
   }
-  const hour = (+match[4] % 12) + (match[6].toLowerCase() === "p" ? 12 : 0);
-  return Date.UTC(+match[3], month, +match[2], hour, +match[5]);
+  let hour: number;
+  let minute: number;
+  if (match[7]) {
+    hour = match[7].toLowerCase() === "noon" ? 12 : 0;
+    minute = 0;
+  } else {
+    hour = (+match[4] % 12) + (match[6].toLowerCase() === "p" ? 12 : 0);
+    minute = match[5] ? +match[5] : 0;
+  }
+  return Date.UTC(+match[3], month, +match[2], hour, minute);
 }
 
 export const siteMetadata: ISiteMetadata = {

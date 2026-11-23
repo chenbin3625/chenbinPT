@@ -172,7 +172,8 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
       // 三者落到同一个元素上时取值方式不同（attr url / 元素文本 / attr value），故用 elementProcess 统一取。
       link: {
         selector: ["enclosure", "link", "[name=magneturl]"],
-        elementProcess: (el: Element) => el.getAttribute("url") || el.getAttribute("value") || el.textContent || "",
+        elementProcess: (el: Element) =>
+          (el.getAttribute("url") || el.getAttribute("value") || el.textContent || "").trim() || undefined,
       },
       // <pubDate> 是 RFC 822/2822（如 "Sun, 06 Jun 2010 17:29:23 +0100"），parseTime 最终由原生 Date 解析。
       time: { selector: "pubDate", filters: [{ name: "parseTime" }] },
@@ -196,7 +197,7 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
       // 部分 feed 没有扩展属性、只有 RSS 的人类可读 <category>，这里一并兜底。
       category: {
         selector: ["[name=category]", "category"],
-        elementProcess: (el: Element) => (el.getAttribute("value") ?? el.textContent ?? "").trim(),
+        elementProcess: (el: Element) => (el.getAttribute("value") ?? el.textContent ?? "").trim() || undefined,
       },
       // 优惠系数（规范 1.2）：decimal，0 = 免费；Jackett 多数站点写 0/1。
       // 这两个不走基类的 tryToNumber，需要显式 parseNumber（选择器未命中时不会应用 filters，保持「未知」）。

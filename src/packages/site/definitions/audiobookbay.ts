@@ -4,7 +4,7 @@
 import { selectElements } from "../utils/selector";
 import type { ISearchInput, ISiteMetadata, ITorrent } from "../types";
 import BittorrentSite from "../schemas/AbstractBittorrentSite";
-import { definedFilters, infoHashToMagnet } from "../utils";
+import { definedFilters, infoHashToMagnet, logMessage, siteErrorLogData } from "../utils";
 
 const titleSelector = { selector: "div.postTitle" };
 const categoryOptions = [
@@ -204,20 +204,44 @@ export default class AudioBookBay extends BittorrentSite {
     searchConfig: ISearchInput,
   ): Promise<ITorrent[]> {
     const torrents = await super.transformSearchPage(doc, searchConfig);
-    if (selectElements("a[href^='/page/2/']:first-of-type", doc).length < 1) {
+    // 已在第 2 页及以上（如在 /page/2/ 或 /page/3/ 触发列表页解析）时不再重复抓取 /page/2/
+    const currentUrl = String(searchConfig.requestConfig?.url ?? "") || (typeof doc?.URL === "string" ? doc.URL : "");
+    const currentPageMatch = currentUrl.match(/\/page\/(\d+)(?:\/|\?|$)/i);
+    if (currentPageMatch && Number(currentPageMatch[1]) >= 2) {
+      return torrents;
+    }
+
+    const page2Link = selectElements("a[href^='/page/2/']:first-of-type", doc)[0] as Element | undefined;
+    if (!page2Link) {
       return torrents;
     }
 
     try {
+      const page2Href = page2Link.getAttribute("href") ?? "/page/2/";
+      const nextParams = searchConfig.requestConfig?.params;
+      let nextUrl = "/page/2/";
+      if (!nextParams) {
+        // transformListPage 场景下 requestConfig.params 可能为空，保留分页链接或当前页 URL 上的查询串
+        if (page2Href.includes("?")) {
+          nextUrl = page2Href;
+        } else if (currentUrl.includes("?")) {
+          nextUrl = `/page/2/?${currentUrl.split("?")[1]}`;
+        }
+      }
+
       const nextPageDoc = await this.request<Document>({
-        url: `/page/2/`,
-        params: searchConfig.requestConfig!.params!,
+        url: nextUrl,
+        ...(nextParams ? { params: nextParams } : {}),
         responseType: "document",
       });
       const nextPageTorrents = await super.transformSearchPage(nextPageDoc.data, searchConfig);
       torrents.push(...nextPageTorrents);
     } catch (e) {
-      console.debug(`[PTD] site '${this.name}' transformSearchPage Error:`, e, torrents);
+      logMessage(
+        `[Site] ${this.name} transformSearchPage page 2 fetch failed`,
+        { site: this.metadata.id, error: siteErrorLogData(e) },
+        "warn",
+      );
     }
 
     return torrents;

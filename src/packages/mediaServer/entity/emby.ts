@@ -268,11 +268,24 @@ export abstract class MediaBrowser<
     "Taglines",
   ];
 
-  /** 只在详情弹窗按需拉取时才要的字段（含列表里刻意不要的重字段） */
-  protected readonly detailExtraFields: string[] = [...this.listExtraFields, "People", "MediaStreams", "MediaSources"];
+  /** 只在详情弹窗按需拉取时才要的字段（包含列表基础字段及列表里刻意不要的重字段） */
+  protected readonly detailExtraFields: string[] = [
+    "Path",
+    "Status",
+    "ExternalUrls",
+    "CommunityRating",
+    "Genres",
+    "DateCreated",
+    "Overview",
+    ...this.listExtraFields,
+    "People",
+    "MediaStreams",
+    "MediaSources",
+  ];
 
-  /** 概览遍历每页要的字段：比列表多要 MediaStreams/MediaSources，用于统计分辨率与码率 */
+  /** 概览遍历每页要的字段：比列表多要 MediaStreams/MediaSources，用于统计分辨率与码率；含 Path 以便剧集按库根聚合 */
   protected readonly overviewFields: string[] = [
+    "Path",
     "MediaSources",
     "MediaStreams",
     "DateCreated",

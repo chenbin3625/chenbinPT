@@ -10,14 +10,6 @@ import PrivateSite from "../schemas/AbstractPrivateSite";
 import { EResultParseStatus, type ISiteMetadata, type IUserInfo } from "../types";
 import { classifySiteError, logMessage, mapWithConcurrency, parseSizeString, siteErrorLogData } from "../utils";
 
-const categoryMap: Record<string, number> = {
-  Applications: 1,
-  Audiobooks: 3,
-  Comics: 4,
-  Ebooks: 5,
-  Magazines: 7,
-};
-
 export const siteMetadata: ISiteMetadata = {
   version: 1,
   id: "bibliotik",
@@ -100,8 +92,9 @@ export const siteMetadata: ISiteMetadata = {
         elementProcess: (row: HTMLElement) => {
           // 优先使用行内 data-bytecount 属性（字节数），失败则回落文本解析
           const byteCountSpan = row.querySelector(".t_files_size_added span[data-bytecount]");
-          const byteCount = byteCountSpan?.getAttribute("data-bytecount");
-          if (byteCount) return parseInt(byteCount, 10);
+          const byteCount = byteCountSpan?.getAttribute("data-bytecount")?.trim() ?? "";
+          const parsedBytes = byteCount ? Number.parseInt(byteCount, 10) : Number.NaN;
+          if (Number.isFinite(parsedBytes) && parsedBytes >= 0) return parsedBytes;
           const sizeText = row.querySelector(".t_files_size_added")?.textContent?.replace(/,/g, "");
           return sizeText?.match(/([\d.]+ ?[ZEPTGMK]?i?B)/)?.[1] ?? "0";
         },
@@ -110,9 +103,9 @@ export const siteMetadata: ISiteMetadata = {
       leechers: { selector: ".leechers", filters: [{ name: "parseNumber" }] },
       completed: { selector: ".snatches", filters: [{ name: "parseNumber" }] },
       category: {
+        // div[title] 已直接提供可读分类名（如 Audiobooks / Ebooks），不再反向映射为数字 ID
         selector: "td:first-child div[title]",
         attr: "title",
-        filters: [(title: string) => categoryMap[title] ?? title],
       },
       tags: [{ name: "Free", selector: "td:contains('[100% free!]')", color: "blue" }],
     },
@@ -188,7 +181,7 @@ export const siteMetadata: ISiteMetadata = {
             attr: "datetime",
             filters: [{ name: "parseTime" }],
           },
-          bonus: { text: "N/A" },
+          // Bibliotik 无魔力值系统，不填字符串 "N/A" 以免污染数字字段
         },
       },
     ],
@@ -274,11 +267,16 @@ export default class Bibliotik extends PrivateSite {
       const sizes: number[] = [];
       rows.forEach((row) => {
         const sizeSpan = selectElements(".t_files_size_added span[data-bytecount]", row as Element)[0];
-        if (sizeSpan) {
-          sizes.push(parseInt(sizeSpan.getAttribute("data-bytecount") ?? "0", 10));
+        const rawBytes = sizeSpan?.getAttribute("data-bytecount")?.trim() ?? "";
+        const parsedBytes = rawBytes ? Number.parseInt(rawBytes, 10) : Number.NaN;
+        if (Number.isFinite(parsedBytes) && parsedBytes >= 0) {
+          sizes.push(parsedBytes);
         } else {
           const sizeText = selectElements(".t_files_size_added", row as Element)[0]?.textContent?.replace(/,/g, "");
-          sizes.push(parseSizeString(sizeText?.match(/([\d.]+ ?[ZEPTGMK]?i?B)/)?.[1] ?? ""));
+          const parsedSize = parseSizeString(sizeText?.match(/([\d.]+ ?[ZEPTGMK]?i?B)/)?.[1] ?? "");
+          if (Number.isFinite(parsedSize) && parsedSize >= 0) {
+            sizes.push(parsedSize);
+          }
         }
       });
       return { rowCount: rows.length, sizes };

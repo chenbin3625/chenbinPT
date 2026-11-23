@@ -6,7 +6,6 @@
 import { set } from "es-toolkit/compat";
 
 import PrivateSite from "../schemas/AbstractPrivateSite.ts";
-import { SchemaMetadata } from "../schemas/NexusPHP.ts";
 import { parseSizeString } from "../utils";
 import { type ISearchInput, type ISiteMetadata, type ITorrent, type ITorrentTag } from "../types";
 
@@ -16,8 +15,6 @@ const linkQuery = {
 };
 
 export const siteMetadata: ISiteMetadata = {
-  ...SchemaMetadata,
-
   version: 1,
   id: "filelist",
   name: "FileList",
@@ -84,6 +81,7 @@ export const siteMetadata: ISiteMetadata = {
     keywordPath: "params.search",
     requestConfig: {
       url: "/browse.php",
+      responseType: "document",
     },
     advanceKeywordParams: {
       imdb: {
@@ -151,6 +149,31 @@ export const siteMetadata: ISiteMetadata = {
       leechers: { selector: "div:nth-child(10)" },
       author: { selector: "div:nth-child(11)" },
     },
+  },
+
+  list: [
+    {
+      urlPattern: ["/browse\\.php"],
+    },
+  ],
+
+  detail: {
+    urlPattern: ["/details\\.php"],
+    selectors: {
+      title: {
+        selector: ["div.cblock-header h4", "div.cblock-header", "h1", "head > title"],
+        filters: [{ name: "trim" }],
+      },
+      link: {
+        selector: ['a[href*="download.php?id="]'],
+        attr: "href",
+      },
+    },
+  },
+
+  noLoginAssert: {
+    urlPatterns: [/(?:^|\/)login\.php(?:[?#]|$)/i, /[?&]returnto=/i],
+    httpStatusCodes: [401, 403, 302],
   },
 
   userInfo: {

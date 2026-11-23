@@ -12,7 +12,7 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { decryptData, encryptData, zipBlobToBackupData } from "@ptd/backupServer/utils.ts";
+import { backupDataToZipBlob, zipBlobToBackupData } from "@ptd/backupServer/utils.ts";
 
 import { legacyBackupEncrypt, md5Hex } from "./helpers/nodeCryptoOracle.ts";
 
@@ -84,12 +84,36 @@ describe("C2-B-1：legacy 加密 zip 备份恢复", () => {
   });
 
   it("新格式（v2）篡改仍然被 MAC 拒绝（放开 legacy 不影响认证性）", async () => {
-    const encrypted = encryptData({ secret: "value" }, ENCRYPTION_KEY);
-    const envelope = JSON.parse(encrypted.slice("PTD-AES-HMAC-v1:".length));
-    envelope.mac = envelope.mac.replace(/^./, envelope.mac.startsWith("0") ? "1" : "0");
+    const origin = { config: { secret: "value" } };
+    const blob = await backupDataToZipBlob(origin, ENCRYPTION_KEY);
 
-    expect(() => decryptData(`PTD-AES-HMAC-v1:${JSON.stringify(envelope)}`, ENCRYPTION_KEY)).toThrow(
-      /integrity|authentication/i,
+    // 对照组：未篡改的 v2 备份走完整恢复路径可以正常解密
+    const restored = await zipBlobToBackupData(blob, ENCRYPTION_KEY);
+    expect(restored.config).toEqual(origin.config);
+
+    // 拆包确认产物是 v2 封套格式，只篡改 MAC 并同步更新 manifest.files.config.hash
+    // 使前置 MD5 校验通过，从而真正验证 zipBlobToBackupData -> decryptData 的 v2 MAC 校验分支
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    const manifestRaw = await zip.file("manifest.json")?.async("string");
+    const configRaw = await zip.file("config.json")?.async("string");
+    expect(manifestRaw).toBeDefined();
+    expect(configRaw).toBeDefined();
+
+    const manifest = JSON.parse(manifestRaw!);
+    expect(manifest.encryptionFormat).toBe("PTD-AES-HMAC-v2");
+    expect(configRaw!.startsWith("PTD-AES-HMAC-v2:")).toBe(true);
+
+    const envelope = JSON.parse(configRaw!.slice("PTD-AES-HMAC-v2:".length));
+    envelope.mac = envelope.mac.replace(/^./, envelope.mac.startsWith("0") ? "1" : "0");
+    const tamperedConfig = `PTD-AES-HMAC-v2:${JSON.stringify(envelope)}`;
+
+    zip.file("config.json", tamperedConfig);
+    manifest.files.config.hash = md5Hex(tamperedConfig);
+    zip.file("manifest.json", JSON.stringify(manifest));
+    const tamperedBlob = await zip.generateAsync({ type: "blob" });
+
+    await expect(zipBlobToBackupData(tamperedBlob, ENCRYPTION_KEY)).rejects.toThrow(
+      /Failed to decrypt file: config\.json/,
     );
   });
 });

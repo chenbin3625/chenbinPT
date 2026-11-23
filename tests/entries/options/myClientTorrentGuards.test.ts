@@ -106,7 +106,7 @@ describe("B-30：复用弹窗丢弃「迟到响应」", () => {
     const requestKeyOfA = guard.begin();
     expect(requestKeyOfA).toBe("qb-1:aaa");
 
-    // 关闭 A、打开 B（弹窗复用）
+    // 关闭 A、打开 B（弹窗复用，resetDialog 会先清空 trackers）
     dialogOpen.value = false;
     guard.reset();
     current.value = torrentOf("tr-2", "bbb");
@@ -114,10 +114,14 @@ describe("B-30：复用弹窗丢弃「迟到响应」", () => {
 
     expect(guard.isLoaded.value).toBe(false); // B 不会因 A 的陈旧标记而跳过加载
 
-    let trackers = ["http://tracker-a.example/announce"];
+    let trackers: string[] = [];
+    const staleCommit = vi.fn(() => {
+      trackers = ["http://tracker-a.example/announce"];
+    });
     // A 的响应迟到：必须被丢弃，否则 Tracker 页签会在 B 名下显示 A 的 tracker（removeTracker 会打错目标）
-    expect(guard.commit(requestKeyOfA, () => (trackers = ["http://tracker-a.example/announce"]))).toBe(false);
-    expect(trackers).toEqual(["http://tracker-a.example/announce"]);
+    expect(guard.commit(requestKeyOfA, staleCommit)).toBe(false);
+    expect(staleCommit).not.toHaveBeenCalled();
+    expect(trackers).toEqual([]);
 
     // B 自己的响应
     const requestKeyOfB = guard.begin();

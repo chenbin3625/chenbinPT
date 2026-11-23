@@ -102,7 +102,7 @@ describe("ruTorrent：system.multicall 多剥一层（B-6）", () => {
   it("文件列表解析出真实的行与字段（修复前得到 1 行 path=整行数组、size=NaN）", async () => {
     const { client } = createClient(
       multicallXml([
-        ["video/a.mkv", 1073741824, 10, 20, 2],
+        ["video/a.mkv", 1073741824, 10, 20, 1],
         ["video/b.srt", 2048, 20, 20, 0],
       ]),
     );
@@ -131,7 +131,7 @@ describe("ruTorrent：system.multicall 多剥一层（B-6）", () => {
   });
 
   it("只有一行数据时不会把数据行连同包装一起剥掉", async () => {
-    const { client } = createClient(multicallXml([["only.mkv", 1024, 1, 2, 3]]));
+    const { client } = createClient(multicallXml([["only.mkv", 1024, 1, 2, 2]]));
 
     const files = await client.getTorrentFiles("HASH");
 
@@ -166,7 +166,9 @@ describe("ruTorrent：system.multicall 多剥一层（B-6）", () => {
   });
 
   it("Tracker 列表解析出真实字段", async () => {
-    const { client } = createClient(multicallXml([["http://tracker.local/announce", 1, 1, 12, 3, 1700000000, 0]]));
+    const { client } = createClient(
+      multicallXml([["http://tracker.local/announce", 1, 0, 12, 3, 1700000000, 0, 0, 1]]),
+    );
 
     const trackers = await client.getTorrentTrackersDetail("HASH");
 
@@ -324,10 +326,11 @@ describe("ruTorrent：XML 转义与真实返回值（D-6）", () => {
   it("system.multicall 请求体会转义 & < >（修复前会产生 XML 解析 fault，操作静默无效）", async () => {
     const { client, requestHttpRpc } = createClient(intResultXml());
 
-    await client.setTorrentLabel("HASH", "A&B <C>");
+    await client.setTorrentLabel("HA&SH<1>", "A&B <C>");
 
     const xml = requestHttpRpc.mock.calls[0][0] as string;
-    expect(xml).toContain("<string>A&amp;B &lt;C&gt;</string>");
+    expect(xml).toContain("<string>HA&amp;SH&lt;1&gt;</string>");
+    expect(xml).toContain("<string>A%26B%20%3CC%3E</string>");
     expect(xml).not.toContain("A&B <C>");
     // 结构本身不受影响
     expect(xml).toContain("<methodName>system.multicall</methodName>");

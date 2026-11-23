@@ -228,6 +228,14 @@ export default class Fappaizuri extends PrivateSite {
       return flushUserInfo;
     }
 
+    // 复用上次缓存的 pickLast 字段（如 id / name），空值不复用
+    for (const key of this.metadata.userInfo?.pickLast ?? []) {
+      const value = lastUserInfo[key];
+      if (value != null && (typeof value !== "string" || value.trim() !== "")) {
+        (flushUserInfo as Record<string, any>)[key] = value;
+      }
+    }
+
     try {
       // 站点未登录时各页面返回空体（而非跳转），因此以「是否取到页面标题」判定登录态
       const { data: userDetailDocument } = await this.request<Document>(
@@ -243,22 +251,19 @@ export default class Fappaizuri extends PrivateSite {
       }
 
       const selectors = this.metadata.userInfo!.selectors!;
-      const fields = ["name", "uploaded", "downloaded", "ratio", "levelName", "joinTime"] as const;
+      const fields = ["id", "name", "uploaded", "downloaded", "ratio", "levelName", "joinTime"] as const;
       if (!fields.some((field) => this.hasFieldMatch(userDetailDocument, selectors[field]!))) {
         throw new Error("用户信息页未命中任何字段");
       }
 
       flushUserInfo = {
         ...flushUserInfo,
-        ...(this.getFieldsData(userDetailDocument, this.metadata.userInfo?.selectors!, [
-          "name",
-          "uploaded",
-          "downloaded",
-          "ratio",
-          "levelName",
-          "joinTime",
-          "bonus",
-        ]) as Partial<IUserInfo>),
+        ...(this.getFieldsData(
+          userDetailDocument,
+          this.metadata.userInfo!.selectors!,
+          ["id", "name", "uploaded", "downloaded", "ratio", "levelName", "joinTime", "bonus"],
+          { dropEmptyMisses: true },
+        ) as Partial<IUserInfo>),
       };
 
       if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
@@ -287,12 +292,28 @@ export default class Fappaizuri extends PrivateSite {
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
     const downloadLink = await super.getTorrentDownloadLink(torrent);
     // 列表页已给出 download.php?id= 直链；若拿到的是详情页，则再取一次真实下载链接
-    if (downloadLink && !downloadLink.includes("download.php")) {
-      const { data: detailDocument } = await this.request<Document>({
-        url: downloadLink,
+    if (downloadLink && !downloadLink.startsWith("magnet:") && !downloadLink.includes("download.php")) {
+      const appendix = this.userConfig.downloadLinkAppendix ?? "";
+      const detailUrl =
+        appendix && downloadLink.endsWith(appendix) ? downloadLink.slice(0, -appendix.length) : downloadLink;
+      const detailResponse = await this.request<Document>({
+        url: detailUrl,
         responseType: "document",
       });
-      return this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!);
+      const linkSelector = this.metadata.detail?.selectors?.link ?? this.metadata.search?.selectors?.link;
+      const rawLink = linkSelector
+        ? (this.getFieldData(detailResponse.data, linkSelector, "link") as string | undefined)
+        : "";
+      const resolvedLink = rawLink
+        ? this.fixLink(rawLink, detailResponse.config ?? { baseURL: this.url, url: detailUrl })
+        : "";
+      if (!resolvedLink) {
+        const safeUrl = detailUrl.split("?")[0];
+        throw new Error(
+          `[PTD] site '${this.name}' cannot parse torrent download link (torrentId=${torrent.id ?? ""}, url=${safeUrl})`,
+        );
+      }
+      return await super.getTorrentDownloadLink({ ...torrent, link: resolvedLink });
     }
 
     return downloadLink;

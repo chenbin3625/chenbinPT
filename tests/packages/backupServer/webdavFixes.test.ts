@@ -46,8 +46,13 @@ describe("C2-B-2：WebDAV 请求带 AbortSignal", () => {
     await expect(server.getFile("a.zip")).resolves.toEqual({});
     await expect(server.deleteFile("a.zip")).resolves.toBe(true);
 
+    // ping 与 list 都会调用 getDirectoryContents，必须逐次校验两次调用的 options
+    expect(client.getDirectoryContents).toHaveBeenCalledTimes(2);
+    expect(client.getDirectoryContents.mock.calls[1]?.[1]?.glob).toBe("*.zip");
+
     const optionsList = [
-      client.getDirectoryContents.mock.calls[0]?.[1],
+      client.getDirectoryContents.mock.calls[0]?.[1], // ping()
+      client.getDirectoryContents.mock.calls[1]?.[1], // list()
       client.putFileContents.mock.calls[0]?.[2],
       client.getFileContents.mock.calls[0]?.[1],
       client.deleteFile.mock.calls[0]?.[1],

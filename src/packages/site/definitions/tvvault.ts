@@ -278,8 +278,9 @@ function parseXmlSearch(xml: Document, siteUrl: string, authkey: string, torrent
   const torrents = Array.from(root.getElementsByTagName("*")).filter((element) => {
     if (["torrent", "release"].includes(element.localName.toLowerCase())) return true;
     const details = field(element, ["details", "detailsurl", "link", "url"]);
+    if (!details) return false;
     try {
-      return new URL(details).searchParams.has("torrentid");
+      return new URL(details, siteUrl).searchParams.has("torrentid");
     } catch {
       return false;
     }
@@ -447,6 +448,8 @@ export default class TVVault extends PrivateSite {
     if (lastSearchAt > 0 && currentTime < lastSearchAt + SEARCH_INTERVAL_SECONDS) {
       return rateLimitResult(lastSearchAt);
     }
+    const previousLastSearchAt = lastSearchAt;
+    let slotCommitted = false;
     lastSearchAt = currentTime;
 
     try {
@@ -457,10 +460,12 @@ export default class TVVault extends PrivateSite {
           ? Math.floor(stored > 1e12 ? stored / 1000 : stored)
           : 0;
       if (saved > 0 && currentTime < saved + SEARCH_INTERVAL_SECONDS) {
+        lastSearchAt = saved;
         return rateLimitResult(saved);
       }
       // Save the request timestamp before contacting the API. Failed requests also consume this slot.
       await this.storeRuntimeSettings("xmlSearchLastRequestAt", currentTime);
+      slotCommitted = true;
       const params: Record<string, string | number> = { query: "get", authkey, enablegrouping: 1 };
       const categorySelection = selected.filter_cat;
       if (categorySelection && typeof categorySelection === "object" && !Array.isArray(categorySelection)) {
@@ -490,6 +495,9 @@ export default class TVVault extends PrivateSite {
       const parsed = parseXmlSearch(xml, this.url, authkey, torrentPass);
       return { status: parsed.length ? EResultParseStatus.success : EResultParseStatus.noResults, data: parsed };
     } catch (error) {
+      if (!slotCommitted && lastSearchAt === currentTime) {
+        lastSearchAt = previousLastSearchAt;
+      }
       const message = error instanceof Error ? error.message : "";
       const code = message.match(/^TV-Vault XML search error (\d+)$/)?.[1];
       const reason: Record<string, string> = {

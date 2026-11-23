@@ -26,10 +26,10 @@
  *   并检查「schema 引擎既不提供 rows、站点也没写、引擎又不自动生成」这种必然搜不到东西的组合；
  * - `tags` 每项必须有 `name` 与非空 `selector`；`timezoneOffset` 必须是 `^[+-]\d{4}$`；
  * - `requestConfig` 里出现的 `$field$` 占位符必须在该步骤的 `assertion` 里声明；
- * - **ratchet（暂不硬失败）**：几类需要站点语义/产品裁决才能判定的可疑点先按「数量不得超过当前已知值」
- *   的棘轮守住 —— ① 两个字段共享同一查询（`0magnet` 的 url/id 是有意复用）；② `assertion` 声明了依赖
- *   但路径是静态串（teamhd / wihd，E6 遗留）；③ 等级阶梯倒挂（含插入在阶梯中间的特殊等级，不能简单判错）。
- *   这些条目在 fix report 里列为「待收紧」，修好之后请把上界一起下调。
+ * - **ratchet（暂不硬失败）**：几类需要站点语义/产品裁决才能判定的可疑点先按已知白名单守住 ——
+ *   ① 两个字段共享同一查询（`0magnet` 的 url/id 是有意复用）；
+ *   ② 等级阶梯倒挂（含插入在阶梯中间的特殊等级，不能简单判错）。
+ *   原先的 schema 缺失与 assertion 静态路径已全部清零并收紧为 `toEqual([])`。
  *
  * 对照上游 182140c2 的 `vite/checkSiteDefinition.ts`（上游挂在 `pnpm check`；fork 没有这个脚本，
  * 站点定义静态校验统一放在本文件，随 `npm test` 运行）补齐的检查：
@@ -64,6 +64,8 @@ import { fileURLToPath } from "node:url";
 import { get } from "es-toolkit/compat";
 import ts from "typescript";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+
+import { parseSizeString, sizePattern } from "@ptd/site/utils/filesize.ts";
 
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
 (globalThis as any).__BROWSER__ ??= "chrome";
@@ -674,19 +676,7 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
       missing.push(`${metadata.id}: ${metadata.schema}`);
     }
 
-    // 棘轮：以下 6 个定义的 schema 指向未实现的引擎，`getSite` 会静默回落到 Abstract*Site
-    // （定义层修复属 DEF 分片：实现 schemas/<name>.ts 或改 schema）。修好后请删掉对应条目。
-    const knownMissingSchemas = new Set([
-      "ccfbits: TBSource",
-      "cnlang: Discuz",
-      "fsm: FSM",
-      "hdspace: XBTIT",
-      "hdtorrents: XBTIT",
-      "minept: meanTorrent",
-    ]);
-    const unexpected = missing.filter((item) => !knownMissingSchemas.has(item));
-    if (missing.length) console.warn("[static] 已知的 schema 缺失：", missing);
-    expect(unexpected, "schema 指向不存在的引擎时站点会悄悄改用 Abstract*Site，选择器/分页整体变样").toEqual([]);
+    expect(missing, "schema 指向不存在的引擎时站点会悄悄改用 Abstract*Site，选择器/分页整体变样").toEqual([]);
   });
 
   it("rows 结构在 search / searchEntry / list 三处都合法，且 DOM 引擎必须能拿到 rows（M3）", () => {
@@ -1111,7 +1101,7 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
     expect(undeclared, "未声明的占位符会被原样发到站点，等于请求参数写错").toEqual([]);
   });
 
-  it("[ratchet] assertion 声明的路径若已在 requestConfig 里，就必须真的用到 $field$", () => {
+  it("assertion 声明的路径若已在 requestConfig 里，就必须真的用到 $field$", () => {
     const staticPaths: string[] = [];
 
     for (const { fileId, metadata } of definitions) {
@@ -1127,25 +1117,48 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
       }
     }
 
-    // E6 遗留（定义层修复属 DEF 分片）：teamhd / wihd 声明了 assertion 但路径是静态串，
-    // 断言「依赖 id/name」实际没有进入请求。修好后请把上界下调到 0 并改成 toEqual([])。
-    if (staticPaths.length) console.warn("[static] assertion 静态路径：", staticPaths);
-    expect(staticPaths.length, "assertion 声明了依赖但请求里没用到，属于静默失效").toBeLessThanOrEqual(2);
+    expect(staticPaths, "assertion 声明了依赖但请求里没用到，属于静默失效").toEqual([]);
   });
 
-  it("[ratchet] 等级阶梯倒挂只允许当前已知的少量条目（含插在阶梯中间的特殊等级）", () => {
-    // 注意：这里刻意不做硬断言 —— darkpeers 的 Seeder(3)/SuperUser(4) 这类「特殊等级插在普通阶梯中间」
-    // 会让做种量门槛有意回退，不能简单判成缺陷。先用数量棘轮防止新增，具体站点语义交 DEF 组/产品裁决。
+  it("[ratchet] 等级阶梯倒挂只允许当前已知白名单条目（含插在阶梯中间的特殊等级）", () => {
+    // 与 src/packages/site/utils/level.ts 对齐：
+    // - uploaded / downloaded / seedingSize 可能是数字或尺寸字符串（如 "1TiB" / "500GiB"），需经 parseSizeString 解析；
+    // - ratio 可能是数字或二元区间数组 [min, max]，按 Math.min(...value) 取下界；
+    // - 任何不可解析的值必须立即报错，避免静默转成 NaN 让 `<` 比较恒假。
+    const sizeFields = new Set(["uploaded", "downloaded", "seedingSize"]);
+    const parseThreshold = (field: string, raw: unknown): number => {
+      if (typeof raw === "number") return raw;
+      if (field === "ratio" && Array.isArray(raw) && raw.length > 0 && raw.every((n) => typeof n === "number")) {
+        return Math.min(...raw);
+      }
+      if (sizeFields.has(field) && typeof raw === "string") {
+        if (!sizePattern.test(raw.trim())) return Number.NaN;
+        return parseSizeString(raw.trim());
+      }
+      if (typeof raw === "string" && raw.trim() !== "") return Number(raw);
+      return Number.NaN;
+    };
+
     const inversions: string[] = [];
+    const unparseable: string[] = [];
+    let checkedSizeValues = 0;
 
     for (const { fileId, metadata } of definitions) {
       const userLevels = ((metadata?.levelRequirements ?? []) as any[]).filter(
         (level) => (level.groupType ?? "user") === "user",
       );
       for (const field of ["uploaded", "downloaded", "ratio", "seedingSize"] as const) {
-        const values = userLevels
-          .filter((level) => level[field] !== undefined)
-          .map((level) => ({ id: level.id, value: Number(level[field] instanceof Object ? 0 : level[field]) }));
+        const values: Array<{ id: number; value: number }> = [];
+        for (const level of userLevels) {
+          if (level[field] === undefined) continue;
+          const value = parseThreshold(field, level[field]);
+          if (!Number.isFinite(value)) {
+            unparseable.push(`${fileId}: ${field} id${level.id} = ${JSON.stringify(level[field])}`);
+            continue;
+          }
+          if (sizeFields.has(field)) checkedSizeValues++;
+          values.push({ id: level.id, value });
+        }
         for (let i = 1; i < values.length; i++) {
           if (values[i].value < values[i - 1].value) {
             inversions.push(`${fileId}: ${field} id${values[i - 1].id} > id${values[i].id}`);
@@ -1154,8 +1167,31 @@ describe("站点点定义的跨定义静态不变量（TESTS-9）", () => {
       }
     }
 
-    if (inversions.length) console.warn("[static] 等级阶梯倒挂：", inversions);
-    // 当前已知 6 处（均为 ratio，DEF 组正在逐站确认）；留 2 个余量避免并行修复期间误红。
-    expect(inversions.length, "等级阶梯倒挂数量增加，可能把高等级用户判低").toBeLessThanOrEqual(8);
+    expect(checkedSizeValues, "没有解析到尺寸门槛值，说明 size 字段解析失效").toBeGreaterThan(500);
+    expect(unparseable, "等级门槛值不可解析，会导致阶梯倒挂检查静默跳过").toEqual([]);
+
+    // F0374：解析尺寸字符串（parseSizeString）与数组区间 ratio（Math.min）后，
+    // 全仓 341 个站点定义真实存在的 15 条已知倒挂白名单（防止新增倒挂，也防止过期白名单滞留）
+    const knownInversions = new Set([
+      "animelovers: ratio id6 > id7",
+      "cinematik: ratio id6 > id7",
+      "concertos: ratio id1 > id2",
+      "darkpeers: seedingSize id3 > id4",
+      "darkpeers: seedingSize id5 > id6",
+      "lst: ratio id6 > id7",
+      "nordicquality: ratio id5 > id6",
+      "onlyencodes: uploaded id5 > id6",
+      "onlyencodes: uploaded id7 > id8",
+      "onlyencodes: uploaded id10 > id11",
+      "onlyencodes: seedingSize id6 > id7",
+      "onlyencodes: seedingSize id10 > id11",
+      "onlyencodes: seedingSize id11 > id12",
+      "pixelcove: ratio id3 > id4",
+      "uploadcx: ratio id4 > id5",
+    ]);
+    const unexpected = inversions.filter((entry) => !knownInversions.has(entry));
+    const stale = [...knownInversions].filter((entry) => !inversions.includes(entry));
+    expect(unexpected, "出现未登记的新增等级阶梯倒挂").toEqual([]);
+    expect(stale, "以下已知倒挂已修复，请从 knownInversions 中移除").toEqual([]);
   });
 });

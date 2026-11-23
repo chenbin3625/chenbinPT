@@ -44,15 +44,20 @@ async function getQueueConcurrency(): Promise<number> {
  * 且每处理一个站点就多一次 SW 往返。
  *
  * 现在：
- *   - 调用方显式传入（options 每次刷新都会带当前配置值）→ 直接采用，并记为最近一次的配置值；
- *   - 未显式传入（background 自动刷新）→ 首次读一次 config 并记住；之后沿用缓存值，
- *     直到某次调用方显式传入新值（config 只可能被 options 修改，而 options 总会显式传入）。
+ *   - 调用方显式传入（options 每次刷新都会带当前配置值）→ 直接采用；
+ *   - 未显式传入（background 自动刷新 / native messaging）：
+ *     - 在支持 `chrome.storage.onChanged` 的环境（Firefox 后台页等）里缓存最近一次并发度，
+ *       并在 `config` 变更时失效缓存；
+ *     - 在不支持 `chrome.storage.onChanged` 的环境（Chrome MV3 offscreen 文档）里不长期缓存，
+ *       通过 SW 读缓存的 `getExtStoragePath` 获取最新配置，且并发调用共享同一 in-flight 请求。
  */
 let memoizedQueueConcurrency: number | null = null;
-/** 首次从 config 读取并发度的 in-flight promise：并发的首批调用共享同一次 SW 往返 */
+/** 从 config 读取并发度的 in-flight promise：并发的调用共享同一次 SW 往返 */
 let configConcurrencyInFlight: Promise<number> | null = null;
+const canInvalidateMemoizedConcurrency =
+  typeof chrome !== "undefined" && Boolean(chrome.storage?.onChanged?.addListener);
 
-if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
+if (canInvalidateMemoizedConcurrency) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && ("config" in changes || "userInfo.queueConcurrency" in changes)) {
       memoizedQueueConcurrency = null;
@@ -72,7 +77,9 @@ function setQueueConcurrency(queueConcurrency: number) {
   if (!isValidQueueConcurrency(next)) {
     return;
   }
-  memoizedQueueConcurrency = next;
+  if (canInvalidateMemoizedConcurrency) {
+    memoizedQueueConcurrency = next;
+  }
   if (flushQueue.concurrency !== next) {
     flushQueue.concurrency = next;
     logger({
@@ -87,7 +94,7 @@ async function applyQueueConcurrency(queueConcurrency?: number) {
     return;
   }
 
-  if (memoizedQueueConcurrency === null) {
+  if (!canInvalidateMemoizedConcurrency || memoizedQueueConcurrency === null) {
     try {
       configConcurrencyInFlight ??= getQueueConcurrency().finally(() => {
         configConcurrencyInFlight = null;

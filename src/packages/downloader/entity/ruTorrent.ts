@@ -65,8 +65,8 @@ export const clientMetaData: TorrentClientMetaData = {
     },
     FilePriority: {
       allowed: true,
-      // rTorrent 的 f.priority 只有 0..3（off/low/normal/high），没有 Highest 档（DOWNLOADER-2）
-      unsupportedPriorities: ["highest"],
+      // rTorrent 的 f.priority 只有 0..2（0=off, 1=normal, 2=high），没有 Low 与 Highest 档
+      unsupportedPriorities: ["low", "highest"],
     },
     PeerList: {
       allowed: true,
@@ -674,10 +674,10 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     }
   }
 
-  // 设置单个种子的标签（rTorrent: d.custom1.set）
+  // 设置单个种子的标签（rTorrent: d.custom1.set，按 ruTorrent 约定以 URL 编码存放，与 decodeLabel 对称）
   override async setTorrentLabel(id: any, label: string): Promise<boolean> {
     try {
-      const postData = buildRequestXML([["d.custom1.set", [id.toUpperCase(), label]]]);
+      const postData = buildRequestXML([["d.custom1.set", [id.toUpperCase(), encodeURIComponent(label)]]]);
       const { data: responseXML } = await this.requestHttpRpc<string>(postData);
       // 返回真实结果：httprpc 以 HTTP 200 + fault 报文返回失败，硬编码 true 会让「标签没设置上」显示成功
       const success = this.isHttpRpcSuccess(responseXML);
@@ -729,7 +729,7 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     });
   }
 
-  // 文件优先级/选择（rTorrent: f.priority.set，一次 system.multicall 批量）
+  // 文件优先级/选择（rTorrent: f.priority.set + d.update_priorities，一次 system.multicall 批量）
   override async setTorrentFilePriority(
     torrent: string | CTorrent,
     selections: CTorrentFileSelection[],
@@ -738,10 +738,14 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
       return true;
     }
     const hash = this.getTorrentHash(torrent).toUpperCase();
-    const calls = selections.map(({ index, priority }) => ({
-      methodName: "f.priority.set",
-      params: [`${hash}:f${index}`, String(mapTorrentFilePriorityToRtorrent(priority))],
-    }));
+    const calls = [
+      ...selections.map(({ index, priority }) => ({
+        methodName: "f.priority.set",
+        params: [`${hash}:f${index}`, String(mapTorrentFilePriorityToRtorrent(priority))],
+      })),
+      // rTorrent 要求在 f.priority.set 之后调用 d.update_priorities，否则优先级修改不会生效
+      { methodName: "d.update_priorities", params: [hash] },
+    ];
 
     const postData = buildSystemMulticallXML(calls);
     try {
@@ -790,8 +794,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
         ip: String(ip),
         port: Number(port),
         client: String(client),
-        // p.completed_percent 为千分比 0-1000
-        progress: Number(completedPercent) / 10,
+        // p.completed_percent 为百分比 0-100（非千分比）
+        progress: Math.min(100, Math.max(0, Number(completedPercent) || 0)),
         downloadSpeed: Number(downRate),
         uploadSpeed: Number(upRate),
         incoming: incoming === 1,
@@ -818,6 +822,8 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
           "t.scrape_incomplete=",
           "t.scrape_time_last=",
           "t.group=",
+          "t.failed_counter=",
+          "t.success_counter=",
         ],
       ],
     ]);
@@ -825,7 +831,7 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
     const trackers = parseMultiCallRows(responseXML);
 
     return trackers.map((tracker) => {
-      const [url, enabled, open, seeds, leeches, lastScrape, tier] = tracker as [
+      const [url, enabled, open, seeds, leeches, lastScrape, tier, failedCounter, successCounter] = tracker as [
         string,
         number,
         number,
@@ -833,19 +839,27 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
         number,
         number,
         number,
+        number | undefined,
+        number | undefined,
       ];
       const enabledNum = Number(enabled);
       const seedsNum = Number(seeds);
       const leechesNum = Number(leeches);
       const lastScrapeNum = Number(lastScrape);
+      const failedCount = Number(failedCounter) || 0;
+      const successCount = Number(successCounter) || 0;
 
+      // rTorrent 中 t.is_open=1 表示当前正在进行 tracker 请求（updating），
+      // 成功/失败状态由 t.failed_counter / t.success_counter 判定。
       let status = CTrackerState.unknown;
       if (enabledNum === 0) {
         status = CTrackerState.disabled;
       } else if (Number(open) === 1) {
-        status = CTrackerState.working;
-      } else {
         status = CTrackerState.updating;
+      } else if (failedCount > 0) {
+        status = CTrackerState.error;
+      } else if (successCount > 0) {
+        status = CTrackerState.working;
       }
 
       return {
@@ -862,16 +876,14 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   }
 }
 
-// rTorrent 文件优先级: 0=skip, 1=low, 2=normal, 3=high
+// rTorrent 文件优先级: 0=off(skip), 1=normal, 2=high
 function mapRtorrentFilePriority(priority: number): TorrentFilePriority {
   switch (priority) {
     case 0:
       return "skip";
-    case 1:
-      return "low";
-    case 3:
-      return "high";
     case 2:
+      return "high";
+    case 1:
     default:
       return "normal";
   }
@@ -881,13 +893,12 @@ function mapTorrentFilePriorityToRtorrent(priority: TorrentFilePriority): number
   switch (priority) {
     case "skip":
       return 0;
-    case "low":
-      return 1;
     case "high":
     case "highest":
-      return 3;
+      return 2;
+    case "low":
     case "normal":
     default:
-      return 2;
+      return 1;
   }
 }

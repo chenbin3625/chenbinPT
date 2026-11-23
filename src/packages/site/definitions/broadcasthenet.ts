@@ -221,16 +221,19 @@ export const siteMetadata: ISiteMetadata = {
       snatches: {
         selector: "ul.nobullet:has( > li:contains('Snatched:'))",
         elementProcess: (element: HTMLElement) => {
-          // 查找所有包含 "Snatched:" 的元素
+          // 查找所有包含 "Snatched:" 的元素（支持千分位逗号，避免 1,234 被截断为 1）
           const snatchedElements = Array.from(element.querySelectorAll("li")) as HTMLElement[];
           let totalSnatches = 0;
 
           snatchedElements.forEach((el) => {
             const text = el.textContent || "";
             if (text.includes("Snatched:")) {
-              const match = text.match(/Snatched:\s*(\d+)/);
+              const match = text.match(/Snatched:\s*([\d,]+)/);
               if (match) {
-                totalSnatches += parseInt(match[1]);
+                const parsed = Number.parseInt(match[1].replace(/,/g, ""), 10);
+                if (Number.isFinite(parsed)) {
+                  totalSnatches += parsed;
+                }
               }
             }
           });

@@ -10,6 +10,8 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { itAcrossTimezones } from "../../../helpers/timezoneMatrix.ts";
+
 // 站点定义会连带引入 @ptd/site 的运行时依赖（messages.ts 用到 __BROWSER__ 与 chrome API），
 // 这里给出最小桩（与 definitionFixes.test.ts / defs-1.review-fixes.test.ts 一致）。
 vi.mock("@ptd/site/utils/adapter.ts", () => ({ logMessage: vi.fn() }));
@@ -149,7 +151,7 @@ describe("E1-B1 / B2 / B3 与 E1-C2 aidoruonline", () => {
 });
 
 describe("E1-B4 animetosho：Today/Yesterday 按 UTC 日历补全", () => {
-  it("宿主时区为 +0800 时，Today 仍取 UTC 的当天", async () => {
+  itAcrossTimezones("跨宿主时区（含 +0800）时，Today/Yesterday 仍取 UTC 的当天", async () => {
     vi.useFakeTimers();
     // UTC 2024-01-01 20:00 = 宿主（+0800）2024-01-02 04:00
     vi.setSystemTime(new Date("2024-01-01T20:00:00Z"));

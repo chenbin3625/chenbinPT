@@ -121,13 +121,13 @@ describe("nordicbytes 做种/下载计数取不到时不再静默记 0（DEFS2-1
   it("文本带 (n) 时正常取数，只有体积时返回 undefined", async () => {
     const { siteMetadata } = await import("@ptd/site/definitions/nordicbytes.ts");
     const step = siteMetadata.userInfo!.process![0];
-    const seedingFilter = ((step.selectors as any).seeding.filters as any[])[0];
-    const leechingFilter = ((step.selectors as any).leeching.filters as any[])[0];
+    const seedingProcess = (step.selectors as any).seeding.elementProcess as (el: { textContent: string }) => unknown;
+    const leechingProcess = (step.selectors as any).leeching.elementProcess as (el: { textContent: string }) => unknown;
 
-    expect(seedingFilter("1.23 GB (5)")).toBe(5);
-    expect(seedingFilter("1.23 GB")).toBeUndefined();
-    expect(leechingFilter("4.00 GB (0)")).toBe(0);
-    expect(leechingFilter("4.00 GB")).toBeUndefined();
+    expect(seedingProcess({ textContent: "1.23 GB (5)" })).toBe(5);
+    expect(seedingProcess({ textContent: "1.23 GB" })).toBeUndefined();
+    expect(leechingProcess({ textContent: "4.00 GB (0)" })).toBe(0);
+    expect(leechingProcess({ textContent: "4.00 GB" })).toBeUndefined();
   });
 });
 
@@ -165,8 +165,8 @@ describe("hdtorrents 的 BiT 单位（DEFS2-13 复核：有意归零，不是数
     // 归零的机制：先剥掉单位，再让 parseSize 拿无单位串；两种写法的用户可见结果都是 0
     expect(runChain("1.50 BiT")).toBe(0);
     expect(definedFilters.parseSize("1.50")).toBe(0);
-    // 反面：若不剥单位，parseSize 会把 "1.50 BiT" 截成 "1.50B" 并当成 1.5 字节 —— 这正是修复前的错误数值
-    expect(definedFilters.parseSize("1.50 BiT")).toBe(1.5);
+    // F0100 修复后 parseSize 要求单位后边界完整，不再把 "1.50 BiT" 误截成 "1.50B" = 1.5 字节
+    expect(definedFilters.parseSize("1.50 BiT")).toBe(0);
   });
 
   it("正常单位（1.5 GB / 2.00 GB）不受影响，且不会被误剥单位", async () => {

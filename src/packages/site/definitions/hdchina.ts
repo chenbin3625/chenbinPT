@@ -3,12 +3,14 @@
  *
  */
 import {
+  NeedLoginError,
   type ILevelRequirement,
   type ISearchInput,
   type ISiteMetadata,
   type ITorrent,
   type ITorrentTag,
 } from "../types";
+import { isDocumentNode } from "../schemas/AbstractBittorrentSite.ts";
 import NexusPHP, {
   CategoryInclbookmarked,
   CategoryIncldead,
@@ -458,8 +460,11 @@ export const siteMetadata: ISiteMetadata = {
 };
 
 export default class HDChina extends NexusPHP {
-  /** 站点所有 AJAX 接口都要求带上页面里的 CSRF token，取到后缓存复用 */
+  private static readonly CSRF_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+  /** 站点所有 AJAX 接口都要求带上页面里的 CSRF token，短期缓存并在失效时刷新重试 */
   private csrfToken: string | null = null;
+  private csrfTokenFetchedAt = 0;
 
   /**
    * 站点把优惠状态（Free / 2X / …）从列表页里剥离，改为前端 POST /ajax_promotion.php 批量获取。
@@ -472,7 +477,7 @@ export default class HDChina extends NexusPHP {
    */
   public override async transformSearchPage(doc: Document | any, searchConfig: ISearchInput): Promise<ITorrent[]> {
     const torrents = await super.transformSearchPage(doc, searchConfig);
-    if (!(doc instanceof Document) || torrents.length === 0) {
+    if (!isDocumentNode(doc) || torrents.length === 0) {
       return torrents;
     }
 
@@ -539,20 +544,41 @@ export default class HDChina extends NexusPHP {
    * 且返回的是 JSON（真正的内容在 message 字段里），另外必须带 CSRF token。
    */
   protected override async requestUserSeedingPage(userId: number, type: string = "seeding"): Promise<string | null> {
-    const csrf = await this.fetchCsrfToken();
-    if (!csrf) {
-      return null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const csrf = await this.fetchCsrfToken(attempt > 0);
+      if (!csrf) {
+        return null;
+      }
+
+      try {
+        const { data } = await this.request<{ status: number; message?: string }>({
+          url: "/ajax_getusertorrentlist.php",
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          data: { userid: userId, type, csrf },
+          responseType: "json",
+        });
+
+        if (data?.message) {
+          return data.message;
+        }
+
+        // 非成功或空载荷时视为 CSRF 可能已过期，清缓存后重试一次
+        this.csrfToken = null;
+        this.csrfTokenFetchedAt = 0;
+        if (attempt === 1) {
+          return null;
+        }
+      } catch (e) {
+        this.csrfToken = null;
+        this.csrfTokenFetchedAt = 0;
+        if (e instanceof NeedLoginError || attempt === 1) {
+          throw e;
+        }
+      }
     }
 
-    const { data } = await this.request<{ status: number; message?: string }>({
-      url: "/ajax_getusertorrentlist.php",
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      data: { userid: userId, type, csrf },
-      responseType: "json",
-    });
-
-    return data?.message ?? null;
+    return null;
   }
 
   /**
@@ -569,14 +595,27 @@ export default class HDChina extends NexusPHP {
 
     // 只有详情页 / 按 id 下载的链接需要回详情页解析签名链接；其它外部链接保持原样，
     // 避免把从别的站点拖进来的种子地址误当成详情页请求。
-    const isDetailLink =
-      link.includes("details.php") || link.includes("torrents.php?id=") || link.includes("download.php?id=");
-    let detailUrl = isDetailLink ? link : "";
-    if (!detailUrl && !link && (torrent.url?.includes("details.php") || torrent.url?.includes("torrents.php?id="))) {
+    let detailUrl = "";
+    if (link.includes("download.php?id=")) {
+      if (torrent.url?.includes("details.php")) {
+        detailUrl = torrent.url;
+      } else {
+        let id: string | null = null;
+        try {
+          id = new URL(link, this.url).searchParams.get("id");
+        } catch {
+          id = link.match(/[?&]id=(\d+)/)?.[1] ?? null;
+        }
+        if (id) {
+          detailUrl = this.fixLink(`/details.php?id=${encodeURIComponent(id)}`, { baseURL: this.url });
+        }
+      }
+    } else if (link.includes("details.php") || link.includes("torrents.php?id=")) {
+      detailUrl = link;
+    } else if (!link && (torrent.url?.includes("details.php") || torrent.url?.includes("torrents.php?id="))) {
       detailUrl = torrent.url;
-    }
-    if (!detailUrl && !link && torrent.id) {
-      detailUrl = this.fixLink(`/details.php?id=${torrent.id}`, { baseURL: this.url });
+    } else if (!link && torrent.id) {
+      detailUrl = this.fixLink(`/details.php?id=${encodeURIComponent(String(torrent.id))}`, { baseURL: this.url });
     }
 
     const linkSelector = this.metadata.detail?.selectors?.link;
@@ -584,26 +623,33 @@ export default class HDChina extends NexusPHP {
       return super.getTorrentDownloadLink(torrent);
     }
 
-    const { data } = await this.request<any>({
+    const detailResponse = await this.request<any>({
       url: detailUrl,
       responseType: "document",
       ...(this.metadata.detail?.requestConfig ?? {}),
     });
-    const signedLink = this.getFieldData(data, linkSelector) as string | undefined;
-    if (signedLink) {
-      torrent.link = this.fixLink(signedLink, { baseURL: this.url, url: detailUrl });
+    const signedLink = this.getFieldData(detailResponse.data, linkSelector, "link") as string | undefined;
+    const resolvedSignedLink = signedLink
+      ? this.fixLink(signedLink, detailResponse.config ?? { baseURL: this.url, url: detailUrl })
+      : "";
+    if (!resolvedSignedLink) {
+      const safeUrl = detailUrl.split("?")[0];
+      throw new Error(
+        `[PTD] site '${this.name}' cannot parse signed torrent download link (torrentId=${torrent.id ?? ""}, url=${safeUrl})`,
+      );
     }
 
-    return super.getTorrentDownloadLink(torrent);
+    return super.getTorrentDownloadLink({ ...torrent, link: resolvedSignedLink });
   }
 
-  private async fetchCsrfToken(): Promise<string> {
-    if (this.csrfToken) {
+  private async fetchCsrfToken(forceRefresh: boolean = false): Promise<string> {
+    if (!forceRefresh && this.csrfToken && Date.now() - this.csrfTokenFetchedAt < HDChina.CSRF_TOKEN_TTL_MS) {
       return this.csrfToken;
     }
 
     const { data } = await this.request<string>({ url: "/index.php" });
     this.csrfToken = (typeof data === "string" ? data : "").match(/<meta name="x-csrf" content="([^"]+)"/)?.[1] ?? "";
+    this.csrfTokenFetchedAt = this.csrfToken ? Date.now() : 0;
     return this.csrfToken;
   }
 }

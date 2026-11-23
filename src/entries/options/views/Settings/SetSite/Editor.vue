@@ -7,11 +7,13 @@ import type { timezoneOffset, ISiteUserConfig, TSiteID, ISiteMetadata, TSiteUrl 
 
 import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
-import { formatDate, formValidateRules } from "@/options/utils.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
+import { formValidateRules } from "@/options/utils.ts";
 import { toMerged } from "es-toolkit";
 
 const { t, te } = useI18n();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
 
 const siteId = defineModel<TSiteID>({ default: "" });
 const emit = defineEmits<{
@@ -19,6 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const siteMetaData = ref<ISiteMetadata>({} as unknown as ISiteMetadata);
+const loadError = ref<boolean>(false);
 const siteUserConfig = inject<ISiteUserConfig>("storedSiteUserConfig", {});
 const siteName = computed({
   get: () => siteUserConfig.value.merge?.name ?? siteMetaData.value.name,
@@ -54,6 +57,20 @@ function toggleInputSettingReveal(name: string) {
   revealedInputSettings.value = next;
 }
 
+function formatDurationMmSs(durationMs: number | undefined): string {
+  const totalSeconds = Math.max(0, Math.floor((durationMs ?? 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function loadErrorMessage(id?: TSiteID): string {
+  if (te("SetSite.editor.loadFailed")) {
+    return t("SetSite.editor.loadFailed", { site: id ?? "" });
+  }
+  return `Failed to load site metadata${id ? ` (${id})` : ""}`;
+}
+
 const siteNameOptions = computed(() =>
   [siteMetaData.value.name, ...(siteMetaData.value.aka ?? [])].filter(Boolean).map((value) => ({ value })),
 );
@@ -77,8 +94,13 @@ const sortIndexRequiredRule = (v: unknown): boolean | string =>
   t("common.form.required");
 const sortIndexError = computed(() => firstError([sortIndexRequiredRule], siteUserConfig.value.sortIndex));
 const urlError = computed(() => firstError([formValidateRules.require()], siteUserConfig.value.url));
+const isCustomUrlSelected = computed(() => {
+  const currentUrl = siteUserConfig.value?.url;
+  const officialUrls = siteMetaData.value.urls ?? [];
+  return Boolean(customSiteUrl.value) && currentUrl === customSiteUrl.value && !officialUrls.includes(currentUrl);
+});
 const customUrlError = computed(() =>
-  customSiteUrl.value ? firstError([formValidateRules.url()], customSiteUrl.value) : undefined,
+  isCustomUrlSelected.value ? firstError([formValidateRules.url()], customSiteUrl.value) : undefined,
 );
 // OPTIONSSETTINGS-8：必填提示此前硬编码英文 "Item is required"，中文界面也会显示英文。
 // 改为走 i18n；对应的键由 locales 补充（见状态文件 cross_package_needs），
@@ -98,6 +120,7 @@ const inputSettingError = computed(() => {
 
 // 与迁移前 PtdForm 广播的「表单是否合法」语义一致（站点已标记为失效时视为合法，允许保存其它配置）
 const siteFormValid = computed(() => {
+  if (loadError.value) return false;
   if (siteMetaData.value.isDead) return true;
   return (
     !nameError.value && !sortIndexError.value && !urlError.value && !customUrlError.value && !inputSettingError.value
@@ -119,27 +142,38 @@ async function initSiteData(siteId: TSiteID, flush = false) {
   // OPTIONSSETTINGS-5：AddDialog 关闭时会把 siteId 置空（Editor 已保留实例），空 id 不做任何读取
   if (!siteId) return;
 
-  console.debug("initSiteData", siteId, flush);
   const seq = ++initSeq;
-  const siteMetadata = await metadataStore.getSiteMetadata(siteId);
-  const siteUserConfigValue = await metadataStore.getSiteUserConfig(siteId, flush);
-
-  // OPTIONSSETTINGS-5：已有更新的一次初始化发起，本次结果作废，否则旧站点配置会覆盖当前站点
-  if (seq !== initSeq) return;
-
-  siteMetaData.value = siteMetadata;
-  siteUserConfig.value = toMerged({ inputSetting: {}, url: siteMetadata.urls[0] }, siteUserConfigValue);
-  for (const inputMeta of siteMetadata.userInputSettingMeta ?? []) {
-    siteUserConfig.value.inputSetting![inputMeta.name] ??= "";
-  }
-
-  // fix: customSiteUrl not show in Editor (#726)
-  if (!siteMetaData.value.urls.includes(siteUserConfig.value.url)) {
-    customSiteUrl.value = siteUserConfig.value.url;
-  } else {
-    customSiteUrl.value = "";
-  }
+  loadError.value = false;
+  siteMetaData.value = {} as unknown as ISiteMetadata;
+  customSiteUrl.value = "";
   revealedInputSettings.value = new Set();
+
+  try {
+    const siteMetadata = await metadataStore.getSiteMetadata(siteId);
+    const siteUserConfigValue = await metadataStore.getSiteUserConfig(siteId, flush);
+
+    // OPTIONSSETTINGS-5：已有更新的一次初始化发起，本次结果作废，否则旧站点配置会覆盖当前站点
+    if (seq !== initSeq) return;
+
+    const officialUrls = siteMetadata.urls ?? [];
+    siteMetaData.value = siteMetadata;
+    siteUserConfig.value = toMerged({ inputSetting: {}, url: officialUrls[0] }, siteUserConfigValue);
+    for (const inputMeta of siteMetadata.userInputSettingMeta ?? []) {
+      siteUserConfig.value.inputSetting![inputMeta.name] ??= "";
+    }
+
+    // fix: customSiteUrl not show in Editor (#726)
+    if (siteUserConfig.value.url && !officialUrls.includes(siteUserConfig.value.url)) {
+      customSiteUrl.value = siteUserConfig.value.url;
+    } else {
+      customSiteUrl.value = "";
+    }
+    revealedInputSettings.value = new Set();
+  } catch {
+    if (seq !== initSeq) return;
+    loadError.value = true;
+    runtimeStore.showSnackbar(loadErrorMessage(siteId), { color: "error" });
+  }
 }
 
 /**
@@ -214,7 +248,8 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
 
 <template>
   <a-card class="ptd-editor-card">
-    <a-form :disabled="siteMetaData.isDead" layout="vertical">
+    <a-alert v-if="loadError" :message="loadErrorMessage(siteId)" show-icon style="margin-bottom: 12px" type="error" />
+    <a-form :disabled="loadError || siteMetaData.isDead" layout="vertical">
       <div>
         <a-typography-text strong class="ptd-editor-section-title">
           {{ t("common.basicInfo") }}
@@ -264,7 +299,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
 
         <a-row>
           <a-col :span="24">
-            <a-form-item :help="urlError" :label="t('SetSite.common.url')" required>
+            <a-form-item :help="urlError ?? customUrlError" :label="t('SetSite.common.url')" required>
               <a-radio-group v-model:value="siteUserConfig.url" class="ptd-editor-full-width">
                 <a-radio v-for="url in siteMetaData.urls" :key="url" :value="url" class="ptd-editor-radio-block">
                   <span class="ptd-editor-radio-line">
@@ -358,7 +393,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
               class="ptd-editor-grow"
             />
             <a-button type="text" @click="siteUserConfig.timeout = 30e3">
-              {{ formatDate(siteUserConfig.timeout!, "mm:ss") }}
+              {{ formatDurationMmSs(siteUserConfig.timeout) }}
             </a-button>
           </a-flex>
         </a-form-item>
@@ -373,7 +408,7 @@ const timeZone: Array<{ value: timezoneOffset; title: string }> = [
               class="ptd-editor-grow"
             />
             <a-button type="text" @click="siteUserConfig.downloadInterval = 0">
-              {{ formatDate((siteUserConfig.downloadInterval ?? 0) * 1e3, "mm:ss") }}
+              {{ formatDurationMmSs((siteUserConfig.downloadInterval ?? 0) * 1e3) }}
             </a-button>
           </a-flex>
         </a-form-item>

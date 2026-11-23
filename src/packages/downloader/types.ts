@@ -472,12 +472,14 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
     let torrents = await this.getAllTorrents();
     if (filter.ids) {
       // RT-5：ruTorrent / uTorrent / Flood 的 `id` 是小写 hash、`infoHash` 保留客户端原样（大写），
-      // 基类若按严格相等比较会查不到；hash 大小写不敏感。
+      // 基类若按严格相等比较会查不到；hash 大小写不敏感。同时兼容 id 与 infoHash 不同的客户端（如 Aria2 gid）。
       const filterIds = (Array.isArray(filter.ids) ? filter.ids : [filter.ids]).map((id: any) =>
         String(id).toLowerCase(),
       );
       torrents = torrents.filter((t) => {
-        return filterIds.includes(String(t.infoHash ?? "").toLowerCase());
+        const infoHash = String(t.infoHash ?? "").toLowerCase();
+        const torrentId = String(t.id ?? "").toLowerCase();
+        return (infoHash !== "" && filterIds.includes(infoHash)) || (torrentId !== "" && filterIds.includes(torrentId));
       });
     }
 

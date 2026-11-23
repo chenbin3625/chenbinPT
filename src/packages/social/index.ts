@@ -160,20 +160,23 @@ async function fetchSocialSiteInformation(
   config: IFetchSocialSiteInformationConfig,
 ): Promise<ISocialInformation | undefined> {
   const socialModule = getSocialModule(site);
+  const normalizedId = socialModule.parse(String(id));
   const { preferPtGen = true, ptGenEndpoint = buildInPtGenApi[0].url, timeout = 5e3 } = config;
 
   if (preferPtGen && PtGenApiSupportSite.includes(site)) {
-    console?.log("Use PtGen API to fetch social site information ", { site, id });
+    console?.log("Use PtGen API to fetch social site information ", { site, id: normalizedId });
 
     // 所有内置端点 + 用户配置端点并行请求（去重），共享同一个 deadline：任一成功即返回。
     // C2-S-2：旧候选集只有 [配置端点, buildInPtGenApi.at(-1)]，中间的 OurHelp CDN 端点永远不请求，
     // 与 types.ts 里「从默认的 buildInPtGenApi 中依次尝试」的说明不符。
     const deadline = Date.now() + timeout;
+    const encodedSite = encodeURIComponent(site);
+    const encodedSid = encodeURIComponent(normalizedId);
     const ptGenUrls = Array.from(
       new Set<string>(
         [ptGenEndpoint, ...buildInPtGenApi.map((api) => api.url)].filter((endpoint): endpoint is string => !!endpoint),
       ),
-    ).map((endpoint) => endpoint.replace("<site>", site).replace("<sid>", id));
+    ).map((endpoint) => endpoint.replace("<site>", encodedSite).replace("<sid>", encodedSid));
 
     if (ptGenUrls.length > 0) {
       const requestPtGen = async (ptGenUrl: string) => {
@@ -184,10 +187,20 @@ async function fetchSocialSiteInformation(
 
         const req = await axios.get(ptGenUrl, { timeout: Math.max(remaining, 1), responseType: "json" });
         const data = req.data as any;
-        if (req.status !== 200 || data?.success === false) {
+        if (
+          req.status !== 200 ||
+          typeof data !== "object" ||
+          data === null ||
+          Array.isArray(data) ||
+          data.success === false
+        ) {
           throw new Error("Invalid PtGen response");
         }
-        return socialModule.transformPtGen!(data);
+        const transformed = socialModule.transformPtGen!(data);
+        if (!transformed || (!transformed.title && !transformed.poster)) {
+          throw new Error("Empty PtGen response");
+        }
+        return transformed;
       };
 
       try {
@@ -197,7 +210,7 @@ async function fetchSocialSiteInformation(
         // 但必须留下原因，否则线上无法判断「内置结果」是命中还是 PtGen 全线故障。
         logMessage("[Social] PtGen API 全部失败，回落到内置解析", {
           site,
-          id,
+          id: normalizedId,
           endpoints: ptGenUrls,
           error: error instanceof AggregateError ? error.errors.map((e) => String(e)) : String(error),
         });
@@ -206,8 +219,8 @@ async function fetchSocialSiteInformation(
   }
 
   // 如果没有使用 PtGen API 或者 PtGen API 获取失败，则使用内置的解析方法
-  console?.log("Use build-in API to fetch social site information:", { site, id });
-  return await socialModule.fetchInformation(id, config);
+  console?.log("Use build-in API to fetch social site information:", { site, id: normalizedId });
+  return await socialModule.fetchInformation(normalizedId, config);
 }
 
 export async function getSocialSiteInformation(
@@ -215,7 +228,9 @@ export async function getSocialSiteInformation(
   id: string,
   config: IFetchSocialSiteInformationConfig = {},
 ): Promise<ISocialInformation | undefined> {
-  const cacheKey = buildSocialInformationCacheKey(site, id, config);
+  const socialModule = getSocialModule(site);
+  const normalizedId = socialModule ? socialModule.parse(String(id)) : String(id);
+  const cacheKey = buildSocialInformationCacheKey(site, normalizedId, config);
   const forceRefresh = config.force === true;
 
   if (!forceRefresh) {
@@ -225,7 +240,7 @@ export async function getSocialSiteInformation(
     }
   }
 
-  const promise = fetchSocialSiteInformation(site, id, config);
+  const promise = fetchSocialSiteInformation(site, normalizedId, config);
   // 强制刷新时直接覆盖旧条目（key 不含 force，天然命中同一条目）
   socialInformationInFlight.set(cacheKey, { promise, createAt: Date.now() });
 

@@ -13,6 +13,20 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function flushMicrotasks() {
+  for (let i = 0; i < 8; i++) {
+    await Promise.resolve();
+  }
+}
+
 const mocks = vi.hoisted(() => {
   /** 带延迟的内存 IndexedDB：延迟用于放大「读-改-写」的窗口。
    *  键类型是 number —— `TTorrentDownloadKey` 就是 number（types/common/download.ts:7）。 */
@@ -76,6 +90,8 @@ async function loadModule() {
   mocks.store.clear();
   mocks.db.get.mockClear();
   mocks.db.put.mockClear();
+  mocks.db.delete.mockClear();
+  mocks.db.clear.mockClear();
   mocks.sendMessage.mockImplementation(async (_name: string, payload: any) => payload?.defaultValue);
 
   return await import("@/offscreen/utils/download.ts");
@@ -126,13 +142,34 @@ describe("B-11：下载历史读改写竞态", () => {
     mocks.store.set(11, { id: 11, downloadStatus: "pending" });
     mocks.store.set(12, { id: 12, downloadStatus: "pending" });
 
-    await Promise.all([
-      patchDownloadHistory(11, { downloadStatus: "completed" }),
-      patchDownloadHistory(12, { downloadStatus: "failed" }),
-    ]);
+    const originalGet = mocks.db.get.getMockImplementation()!;
+    const key11Started = createDeferred();
+    const releaseKey11 = createDeferred();
 
-    expect(mocks.store.get(11).downloadStatus).toBe("completed");
-    expect(mocks.store.get(12).downloadStatus).toBe("failed");
+    mocks.db.get.mockImplementation(async (table: string, key: number) => {
+      if (key === 11) {
+        key11Started.resolve();
+        await releaseKey11.promise;
+        return mocks.store.has(key) ? structuredClone(mocks.store.get(key)) : undefined;
+      }
+      return await originalGet(table, key);
+    });
+
+    try {
+      const p11 = patchDownloadHistory(11, { downloadStatus: "completed" });
+      await key11Started.promise;
+
+      // downloadId=11 仍卡在读取阶段时，downloadId=12 必须能独立完成
+      await patchDownloadHistory(12, { downloadStatus: "failed" });
+      expect(mocks.store.get(12).downloadStatus).toBe("failed");
+      expect(mocks.store.get(11).downloadStatus).toBe("pending");
+
+      releaseKey11.resolve();
+      await p11;
+      expect(mocks.store.get(11).downloadStatus).toBe("completed");
+    } finally {
+      mocks.db.get.mockImplementation(originalGet);
+    }
   });
 
   it("前一次失败不阻塞后一次（各自的失败由各自调用方处理）", async () => {
@@ -176,19 +213,34 @@ describe("B-11：下载历史读改写竞态", () => {
     const { patchDownloadHistory, deleteDownloadHistoryById } = await loadModule();
     mocks.store.set(1, { id: 1, downloadStatus: "pending" });
 
-    // 让删除比 patch 的写回更快：旧实现下 delete 先完成、patch 随后把记录写回
-    mocks.db.delete.mockImplementationOnce(async (_table: string, key: number) => {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      mocks.store.delete(key);
+    const originalPut = mocks.db.put.getMockImplementation()!;
+    const putStarted = createDeferred();
+    const releasePut = createDeferred();
+
+    mocks.db.put.mockImplementationOnce(async (_table: string, value: any) => {
+      putStarted.resolve();
+      await releasePut.promise;
+      mocks.store.set(value.id, structuredClone(value));
+      return 1;
     });
 
-    const patch = patchDownloadHistory(1, { downloadStatus: "completed" });
-    // 等 patch 读完旧值、进入写回阶段
-    await new Promise((resolve) => setTimeout(resolve, 6));
-    await deleteDownloadHistoryById(1);
-    await patch;
+    try {
+      const patch = patchDownloadHistory(1, { downloadStatus: "completed" });
+      await putStarted.promise;
 
-    expect(mocks.store.has(1)).toBe(false);
+      // 在途 patch 已进入写回阶段：发起删除必须排队等待 patch 写回后再删除
+      const del = deleteDownloadHistoryById(1);
+      await flushMicrotasks();
+      expect(mocks.db.delete).not.toHaveBeenCalled();
+
+      releasePut.resolve();
+      await Promise.all([patch, del]);
+
+      expect(mocks.db.delete).toHaveBeenCalledTimes(1);
+      expect(mocks.store.has(1)).toBe(false);
+    } finally {
+      mocks.db.put.mockImplementation(originalPut);
+    }
   });
 
   it("清空等待所有在途 patch 后再执行：多条在途读改写不得把记录写回", async () => {
@@ -196,19 +248,39 @@ describe("B-11：下载历史读改写竞态", () => {
     mocks.store.set(11, { id: 11, downloadStatus: "pending" });
     mocks.store.set(12, { id: 12, downloadStatus: "pending" });
 
-    mocks.db.clear.mockImplementationOnce(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      mocks.store.clear();
+    const originalPut = mocks.db.put.getMockImplementation()!;
+    const bothPutsStarted = createDeferred();
+    const releasePuts = createDeferred();
+    let inFlightPuts = 0;
+
+    mocks.db.put.mockImplementation(async (_table: string, value: any) => {
+      inFlightPuts += 1;
+      if (inFlightPuts === 2) {
+        bothPutsStarted.resolve();
+      }
+      await releasePuts.promise;
+      mocks.store.set(value.id, structuredClone(value));
+      return 1;
     });
 
-    const first = patchDownloadHistory(11, { downloadStatus: "completed" });
-    const second = patchDownloadHistory(12, { downloadStatus: "failed" });
-    // 等两个 patch 都读完旧值、进入写回阶段
-    await new Promise((resolve) => setTimeout(resolve, 6));
-    await clearDownloadHistory();
-    await Promise.all([first, second]);
+    try {
+      const first = patchDownloadHistory(11, { downloadStatus: "completed" });
+      const second = patchDownloadHistory(12, { downloadStatus: "failed" });
+      await bothPutsStarted.promise;
 
-    expect(mocks.store.size).toBe(0);
+      // 两条在途 patch 都处于写回阶段：clear 必须等待它们全部完成后再清空
+      const clearing = clearDownloadHistory();
+      await flushMicrotasks();
+      expect(mocks.db.clear).not.toHaveBeenCalled();
+
+      releasePuts.resolve();
+      await Promise.all([first, second, clearing]);
+
+      expect(mocks.db.clear).toHaveBeenCalledTimes(1);
+      expect(mocks.store.size).toBe(0);
+    } finally {
+      mocks.db.put.mockImplementation(originalPut);
+    }
   });
 
   it("清空之后到达的 patch 不会复活记录", async () => {

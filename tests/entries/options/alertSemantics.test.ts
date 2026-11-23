@@ -23,7 +23,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick, ref } from "vue";
 
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
@@ -64,6 +64,10 @@ const alertTypesInDocument = () =>
     ["success", "info", "warning", "error"].find((type) => element.classList.contains(`ant-alert-${type}`)),
   );
 
+afterEach(() => {
+  document.body.innerHTML = "";
+});
+
 describe("S-1：恢复他人备份时的警示级别", () => {
   /** 挂一个可控的 RestoreDialog 宿主：模型值必须由 false → true 变化才会触发远端加载 */
   const mountRestoreDialog = async (remoteBackup: unknown) => {
@@ -92,26 +96,28 @@ describe("S-1：恢复他人备份时的警示级别", () => {
 
   it("备份里含植入的备份服务器配置时，渲染 warning 级警示并列出该服务器", async () => {
     const view = await mountRestoreDialog(BACKUP_WITH_IMPLANTED_SERVERS);
+    try {
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        "getRemoteBackupData",
+        expect.objectContaining({ backupServerId: "s1", path: "/backup.zip" }),
+      );
 
-    expect(sendMessageMock).toHaveBeenCalledWith(
-      "getRemoteBackupData",
-      expect.objectContaining({ backupServerId: "s1", path: "/backup.zip" }),
-    );
-
-    expect(alertTypesInDocument(), "含植入服务器配置的备份必须给出警示").toContain("warning");
-    // 不能只是"有个警示"：必须让用户看见是哪个服务器（否则无从判断）
-    const warning = document.querySelector<HTMLElement>(".ant-alert-warning")!;
-    expect(warning.textContent).toContain("attacker-dav");
-
-    view.unmount();
+      expect(alertTypesInDocument(), "含植入服务器配置的备份必须给出警示").toContain("warning");
+      // 不能只是"有个警示"：必须让用户看见是哪个服务器（否则无从判断）
+      const warning = document.querySelector<HTMLElement>(".ant-alert-warning")!;
+      expect(warning.textContent).toContain("attacker-dav");
+    } finally {
+      view.unmount();
+    }
   });
 
   it("阴性对照：无敏感字段的备份不弹警示", async () => {
     const view = await mountRestoreDialog(BENIGN_BACKUP);
-
-    expect(alertTypesInDocument()).toEqual([]);
-
-    view.unmount();
+    try {
+      expect(alertTypesInDocument()).toEqual([]);
+    } finally {
+      view.unmount();
+    }
   });
 });
 
@@ -119,13 +125,15 @@ describe("其他页面的 alert 级别与其触发条件", () => {
   it("备份设置：密钥不随备份走属于中性提示 → info（不是 warning / error）", async () => {
     const { default: BackupWindow } = await import("@/options/views/Settings/SetBase/BackupWindow.vue");
     const view = mountOptionsView(BackupWindow, { pinia: prepareOptionsPinia() });
-    await view.settle();
+    try {
+      await view.settle();
 
-    const alerts = view.$$(".ant-alert");
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]!.classList.contains("ant-alert-info")).toBe(true);
-
-    view.unmount();
+      const alerts = view.$$(".ant-alert");
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.classList.contains("ant-alert-info")).toBe(true);
+    } finally {
+      view.unmount();
+    }
   });
 
   it("界面设置：内容脚本风险提示只在启用内容脚本时出现，且是 warning", async () => {
@@ -133,34 +141,38 @@ describe("其他页面的 alert 级别与其触发条件", () => {
     const { useConfigStore } = await import("@/options/stores/config.ts");
 
     const view = mountOptionsView(UiWindow, { pinia: prepareOptionsPinia() });
-    await view.settle();
+    try {
+      await view.settle();
 
-    const configStore = useConfigStore();
+      const configStore = useConfigStore();
 
-    configStore.contentScript.enabled = false;
-    await view.settle();
-    expect(view.$$(".ant-alert"), "未启用内容脚本时不应出现该风险提示").toHaveLength(0);
+      configStore.contentScript.enabled = false;
+      await view.settle();
+      expect(view.$$(".ant-alert"), "未启用内容脚本时不应出现该风险提示").toHaveLength(0);
 
-    configStore.contentScript.enabled = true;
-    await view.settle();
-    const alerts = view.$$(".ant-alert");
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]!.classList.contains("ant-alert-warning")).toBe(true);
-
-    view.unmount();
+      configStore.contentScript.enabled = true;
+      await view.settle();
+      const alerts = view.$$(".ant-alert");
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.classList.contains("ant-alert-warning")).toBe(true);
+    } finally {
+      view.unmount();
+    }
   });
 
   it("插件重置：不可恢复的破坏性操作提示是 warning，且带图标", async () => {
     const { default: ResetWindow } = await import("@/options/views/Settings/SetBase/ResetWindow.vue");
     const view = mountOptionsView(ResetWindow, { pinia: prepareOptionsPinia() });
-    await view.settle();
+    try {
+      await view.settle();
 
-    const alerts = view.$$(".ant-alert");
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]!.classList.contains("ant-alert-warning")).toBe(true);
-    expect(alerts[0]!.querySelector(".ant-alert-icon"), "warning 应带图标以更醒目").not.toBeNull();
-
-    view.unmount();
+      const alerts = view.$$(".ant-alert");
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.classList.contains("ant-alert-warning")).toBe(true);
+      expect(alerts[0]!.querySelector(".ant-alert-icon"), "warning 应带图标以更醒目").not.toBeNull();
+    } finally {
+      view.unmount();
+    }
   });
 
   it("插件重置：「清空用户配置」确认后 siteIndex 也写成空表（M-6）", async () => {
@@ -198,17 +210,19 @@ describe("其他页面的 alert 级别与其触发条件", () => {
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 
     const view = mountOptionsView(NativeBridgeWindow, { pinia: prepareOptionsPinia() });
-    await view.settle();
+    try {
+      await view.settle();
 
-    const privacyKey = "SetNativeBridge.info.privacy";
-    const privacyText = i18nInstance.global.t(privacyKey);
-    expect(privacyText, `${privacyKey} 应有文案`).not.toBe(privacyKey);
+      const privacyKey = "SetNativeBridge.info.privacy";
+      const privacyText = i18nInstance.global.t(privacyKey);
+      expect(privacyText, `${privacyKey} 应有文案`).not.toBe(privacyKey);
 
-    const privacyAlert = view.$$(".ant-alert").find((alert) => (alert.textContent ?? "").includes(privacyText));
-    expect(privacyAlert, "隐私说明必须以 alert 形式呈现").toBeDefined();
-    expect(privacyAlert!.classList.contains("ant-alert-warning")).toBe(true);
-
-    view.unmount();
+      const privacyAlert = view.$$(".ant-alert").find((alert) => (alert.textContent ?? "").includes(privacyText));
+      expect(privacyAlert, "隐私说明必须以 alert 形式呈现").toBeDefined();
+      expect(privacyAlert!.classList.contains("ant-alert-warning")).toBe(true);
+    } finally {
+      view.unmount();
+    }
   });
 });
 

@@ -336,12 +336,24 @@ export default class MonikaDesign extends Unit3D {
     // Call the ancestor implementation from AbstractBittorrentSite directly
     // to bypass Unit3D's override when necessary.
     const downloadLink = await AbstractBittorrentSite.prototype.getTorrentDownloadLink.call(this, torrent);
-    if (downloadLink && !downloadLink.includes("/download/")) {
-      const { data: detailDocument } = await this.request<Document>({
-        url: downloadLink,
+    const appendix = this.userConfig.downloadLinkAppendix ?? "";
+    const baseDownloadLink =
+      appendix && downloadLink.endsWith(appendix) ? downloadLink.slice(0, -appendix.length) : downloadLink;
+
+    if (baseDownloadLink && !baseDownloadLink.includes("/download/")) {
+      const { data: detailDocument, config } = await this.request<Document>({
+        url: baseDownloadLink,
         responseType: "document",
       });
-      return this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!);
+      const rawLink = this.getFieldData(detailDocument, this.metadata.search?.selectors?.link!, "link");
+      const resolvedLink = rawLink ? this.fixLink(rawLink, config ?? { url: baseDownloadLink }) : "";
+      if (!resolvedLink) {
+        const safeUrl = baseDownloadLink.split("?")[0];
+        throw new Error(
+          `[PTD] site '${this.name}' cannot parse torrent download link (torrentId=${torrent.id ?? ""}, url=${safeUrl})`,
+        );
+      }
+      return appendix ? `${resolvedLink}${appendix}` : resolvedLink;
     }
 
     return downloadLink;

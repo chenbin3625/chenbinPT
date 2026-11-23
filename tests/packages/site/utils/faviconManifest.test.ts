@@ -184,18 +184,19 @@ describe("getFavicon：manifest 中的坏条目（M-32）", () => {
       if (url === "https://pt.example/") return response(page);
       if (url === "https://pt.example/manifest.json") throw new TypeError("Redirect is not allowed");
       if (url === "https://pt.example/favicon.ico") throw new Error("404");
-      if (url === "https://pt.example/icon.png") throw new TypeError("Redirect is not allowed");
-      if (url === "https://pt.example/other.svg") return response(png);
+      if (url === "https://pt.example/other.svg") throw new TypeError("Redirect is not allowed");
+      if (url === "https://pt.example/icon.png") return response(png);
       throw new Error(`unexpected ${url}`);
     });
 
     expect(await getFavicon({ id: "pt", urls: ["https://pt.example/"] })).toMatch(/^data:image\/png/);
-    // N4：svg 现在排在 png 之前（同一 source 下 svg 优先级更高），所以先尝试 other.svg 并成功
+    // N4：svg 排在 png 之前（同一 source 下 svg 优先级更高）；排名第一的 other.svg 失败后，继续尝试 icon.png 并成功
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "https://pt.example/",
       "https://pt.example/manifest.json",
       "https://pt.example/favicon.ico",
       "https://pt.example/other.svg",
+      "https://pt.example/icon.png",
     ]);
   });
 

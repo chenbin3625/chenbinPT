@@ -244,7 +244,7 @@ export const siteMetadata: ISiteMetadata = {
         "/search/",
         "/category-search/",
         "/sort-search/",
-        "/category-sort-search/",
+        "/sort-category-search/",
         "/top-100",
         "/cat/",
       ],

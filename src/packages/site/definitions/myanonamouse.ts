@@ -489,9 +489,12 @@ export default class MyAnonamouse extends AbstractPrivateSite {
         if (typeof notifResp.update === "number") {
           flushUserInfo.lastAccessAt = notifResp.update * 1000;
         }
-        if (notifResp.notifs && typeof flushUserInfo.messageCount === "undefined") {
-          flushUserInfo.messageCount = Object.values(notifResp.notifs as Record<string, number>).reduce(
-            (sum, val) => sum + val,
+        if (notifResp.notifs && typeof notifResp.notifs === "object" && !Array.isArray(notifResp.notifs)) {
+          flushUserInfo.messageCount = Object.values(notifResp.notifs as Record<string, unknown>).reduce<number>(
+            (sum, val) => {
+              const num = typeof val === "number" ? val : Number(val);
+              return Number.isFinite(num) ? sum + num : sum;
+            },
             0,
           );
         }

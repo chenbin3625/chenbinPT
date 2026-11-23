@@ -25,18 +25,23 @@ export function cfDecodeEmail(encodedString: string | undefined | null): string 
     return "";
   }
 
-  const r = parseInt(encodedString.slice(0, 2), 16);
-  if (Number.isNaN(r)) {
+  const keyHex = encodedString.slice(0, 2);
+  if (!/^[0-9a-f]{2}$/i.test(keyHex)) {
     return "";
   }
+  const r = parseInt(keyHex, 16);
 
   let email = "";
   for (let n = 2; n + 2 <= encodedString.length; n += 2) {
-    const i = parseInt(encodedString.slice(n, n + 2), 16) ^ r;
-    if (Number.isNaN(i)) {
+    const hexByte = encodedString.slice(n, n + 2);
+    if (!/^[0-9a-f]{2}$/i.test(hexByte)) {
       continue;
     }
-    email += String.fromCharCode(i);
+    const byte = parseInt(hexByte, 16);
+    if (Number.isNaN(byte)) {
+      continue;
+    }
+    email += String.fromCharCode(byte ^ r);
   }
   return email;
 }

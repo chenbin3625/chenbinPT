@@ -9,6 +9,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useDisplay } from "@/options/composables/useDisplay.ts";
+
 import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn().mockResolvedValue(undefined), onMessage: vi.fn() }));
@@ -20,10 +22,15 @@ const MOBILE_WIDTH = 600;
 
 let SearchEntityView: any;
 
-async function mountSearchEntity(viewportWidth: number) {
-  // useDisplay 走 @vueuse/core 的 useWindowSize，改窗口尺寸即可切换断点
-  window.innerWidth = viewportWidth;
+/** 确保 useDisplay 单例已挂载 resize 监听器后再更新视口宽度，消除用例执行顺序依赖 */
+function setViewportWidth(width: number) {
+  useDisplay();
+  window.innerWidth = width;
   window.dispatchEvent(new Event("resize"));
+}
+
+async function mountSearchEntity(viewportWidth: number) {
+  setViewportWidth(viewportWidth);
 
   const pinia = prepareOptionsPinia();
   const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
@@ -73,29 +80,33 @@ describe("搜索结果表格：标题列宽度自适应", () => {
   });
 
   afterEach(() => {
-    window.innerWidth = DESKTOP_WIDTH;
+    setViewportWidth(DESKTOP_WIDTH);
   });
 
   it("桌面端不给标题单元格写 max-width，让标题列吃满剩余宽度", async () => {
     const view = await mountSearchEntity(DESKTOP_WIDTH);
 
-    // 先确认整张表真的渲染出来了，避免「选择器没命中」导致下面的断言假通过
-    expect(view.host.querySelectorAll(".ant-table-tbody tr.ant-table-row").length).toBeGreaterThan(0);
+    try {
+      // 先确认整张表真的渲染出来了，避免「选择器没命中」导致下面的断言假通过
+      expect(view.host.querySelectorAll(".ant-table-tbody tr.ant-table-row").length).toBeGreaterThan(0);
 
-    const wrapper = titleCellWrapper(view);
-    expect(wrapper, "应能定位到标题列的容器").not.toBeNull();
-    expect(wrapper!.style.maxWidth, "桌面端标题内容不应再有宽度上限（否则隐藏列后列内留大片空白）").toBe("");
-
-    view.unmount();
+      const wrapper = titleCellWrapper(view);
+      expect(wrapper, "应能定位到标题列的容器").not.toBeNull();
+      expect(wrapper!.style.maxWidth, "桌面端标题内容不应再有宽度上限（否则隐藏列后列内留大片空白）").toBe("");
+    } finally {
+      view.unmount();
+    }
   });
 
   it("移动端仍保留 32vw 上限，避免标题独占窄屏可视宽度", async () => {
     const view = await mountSearchEntity(MOBILE_WIDTH);
 
-    const wrapper = titleCellWrapper(view);
-    expect(wrapper, "应能定位到标题列的容器").not.toBeNull();
-    expect(wrapper!.style.maxWidth).toBe("32vw");
-
-    view.unmount();
+    try {
+      const wrapper = titleCellWrapper(view);
+      expect(wrapper, "应能定位到标题列的容器").not.toBeNull();
+      expect(wrapper!.style.maxWidth).toBe("32vw");
+    } finally {
+      view.unmount();
+    }
   });
 });

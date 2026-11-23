@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LinkOutlined, UploadOutlined } from "@ant-design/icons-vue";
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { type ITorrent, getHostFromUrl } from "@ptd/site";
@@ -20,6 +20,37 @@ const torrentFiles = ref<File[]>([]);
 
 const showSentToDownloaderDialog = ref(false);
 const pendingTorrentItems = ref<ITorrent[]>([]);
+
+let nextFileUid = 0;
+const fileUidMap = new WeakMap<File, string>();
+
+function getFileUid(file: File): string {
+  let uid = fileUidMap.get(file);
+  if (!uid) {
+    uid = `ptd-file-${++nextFileUid}-${file.name}`;
+    fileUidMap.set(file, uid);
+  }
+  return uid;
+}
+
+const uploadFileList = computed(() =>
+  torrentFiles.value.map((file) => ({
+    uid: getFileUid(file),
+    name: file.name,
+    size: file.size,
+    status: "done" as const,
+  })),
+);
+
+function onBeforeUpload(file: File) {
+  torrentFiles.value = Array.from(new Set([...torrentFiles.value, file]));
+  return false;
+}
+
+function onRemoveFile(uploadFile: { uid: string }) {
+  torrentFiles.value = torrentFiles.value.filter((file) => getFileUid(file) !== uploadFile.uid);
+  return true;
+}
 
 function cleanStatus() {
   inputMode.value = "url";
@@ -103,23 +134,12 @@ async function submit() {
         :help="t('MyClient.pushToDownloader.fileInputHint')"
       >
         <a-upload
-          :file-list="
-            (torrentFiles ?? []).map((file: File, index: number) => ({
-              uid: `ptd-file-${index}-${file.name}`,
-              name: file.name,
-              size: file.size,
-              status: 'done',
-            }))
-          "
-          :before-upload="
-            (file: File) => {
-              torrentFiles = Array.from(new Set([...(torrentFiles ?? []), file]));
-              return false;
-            }
-          "
+          :file-list="uploadFileList"
+          :before-upload="onBeforeUpload"
           accept=".torrent"
           multiple
           show-upload-list
+          @remove="onRemoveFile"
         >
           <a-button><UploadOutlined />{{ t("MyClient.pushToDownloader.fileInputLabel") }}</a-button>
         </a-upload>

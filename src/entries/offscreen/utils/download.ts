@@ -20,6 +20,7 @@ import {
 // 直接从子路径导入，避免根入口（被 content script 使用）静态依赖 utils.ts
 // （parse-torrent / buffer polyfill 等），见 docs/performance-audit.md P2-1
 import { getRemoteTorrentFile } from "@ptd/downloader/utils.ts";
+import { datePathTemplateVars, expandPathTemplate } from "@ptd/downloader/utils/pathTemplate.ts";
 import type { ITorrent } from "@ptd/site";
 
 import { onMessage, sendMessage } from "@/messages.ts";
@@ -110,9 +111,116 @@ function getDownloaderConfigKey(config: IDownloaderMetadata): string {
   return JSON.stringify({ id, type, address, username, password, timeout, feature, advanceAddTorrentOptions });
 }
 
+const DYNAMIC_REPLACE_VALUE_MAX_LENGTH = 200;
+const INTERACTIVE_PATH_PLACEHOLDER = "<...>";
+
+/** 与 options/utils.ts 保持一致的动态模板值安全化（不引入 options/Vue 依赖） */
+function sanitizeDynamicReplaceValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/[\\/]+/g, "-")
+    .replace(/\.{2,}/g, ".")
+    .replace(/[<>:"|?*]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, DYNAMIC_REPLACE_VALUE_MAX_LENGTH);
+}
+
+function hasPathTraversalSegment(pathValue: string): boolean {
+  return pathValue.split(/[\\/]/).some((segment) => segment === "..");
+}
+
+function isSafeInteractiveSavePathSegment(segment: string): boolean {
+  if (segment.length > DYNAMIC_REPLACE_VALUE_MAX_LENGTH) {
+    return false;
+  }
+  if (segment.length === 0) {
+    return true;
+  }
+  if (/[\u0000-\u001f\u007f\\/<>:"|?*]/.test(segment)) {
+    return false;
+  }
+  if (segment === "." || segment === ".." || segment.includes("..")) {
+    return false;
+  }
+  return true;
+}
+
+interface IContentScriptSavePathContext {
+  torrent?: Partial<ITorrent>;
+  siteNames?: string[];
+  now?: Date;
+}
+
+function buildSavePathReplaceMaps(context: IContentScriptSavePathContext): Array<Record<string, string>> {
+  const { torrent, siteNames = [], now = new Date() } = context;
+  const baseMap: Record<string, string> = {
+    "torrent.title": sanitizeDynamicReplaceValue(torrent?.title),
+    "torrent.subTitle": sanitizeDynamicReplaceValue(torrent?.subTitle),
+    "torrent.category": sanitizeDynamicReplaceValue(torrent?.category),
+  };
+  // 跨午夜边界容错：弹窗在发送前瞬间构造 nowDate，这里同时接受当前时刻与 1 分钟前的日期展开
+  const dateMaps = [now, new Date(now.getTime() - 60_000)].map((date) => datePathTemplateVars(date));
+  const candidateSiteNames = torrent?.site
+    ? Array.from(new Set([...siteNames, torrent.site].filter((name): name is string => Boolean(name))))
+    : [undefined];
+
+  const maps: Array<Record<string, string>> = [];
+  for (const dateVars of dateMaps) {
+    for (const siteName of candidateSiteNames) {
+      const map: Record<string, string> = {
+        ...baseMap,
+        ...dateVars,
+      };
+      if (torrent?.site) {
+        map["torrent.site"] = sanitizeDynamicReplaceValue(torrent.site);
+        map["torrent.siteName"] = sanitizeDynamicReplaceValue(siteName ?? torrent.site);
+      }
+      maps.push(map);
+    }
+  }
+  return maps;
+}
+
+function matchesConfiguredSavePathTemplate(
+  savePath: string,
+  template: string,
+  replaceMaps: Array<Record<string, string>>,
+): boolean {
+  if (savePath === template) {
+    return true;
+  }
+  if (/[\u0000-\u001f\u007f]/.test(savePath) || hasPathTraversalSegment(savePath)) {
+    return false;
+  }
+
+  const placeholderIndex = template.indexOf(INTERACTIVE_PATH_PLACEHOLDER);
+  if (placeholderIndex === -1) {
+    return replaceMaps.some((replaceMap) => (expandPathTemplate(template, replaceMap) ?? template) === savePath);
+  }
+
+  const rawPrefix = template.slice(0, placeholderIndex);
+  const rawSuffix = template.slice(placeholderIndex + INTERACTIVE_PATH_PLACEHOLDER.length);
+
+  return replaceMaps.some((replaceMap) => {
+    const expandedPrefix = expandPathTemplate(rawPrefix, replaceMap) ?? rawPrefix;
+    const expandedSuffix = expandPathTemplate(rawSuffix, replaceMap) ?? rawSuffix;
+    if (savePath.length < expandedPrefix.length + expandedSuffix.length) {
+      return false;
+    }
+    if (!savePath.startsWith(expandedPrefix) || !savePath.endsWith(expandedSuffix)) {
+      return false;
+    }
+    const userSegment = savePath.slice(expandedPrefix.length, savePath.length - expandedSuffix.length);
+    return isSafeInteractiveSavePathSegment(userSegment);
+  });
+}
+
 /**
  * 内容脚本不能把任意 `addTorrentOptions` 原样送进下载器：
- * - `savePath` 决定下载器把文件写到哪里，只接受该下载器已配置的建议目录/默认目录；
+ * - `savePath` 决定下载器把文件写到哪里，只接受该下载器已配置的建议目录/默认目录
+ *   （支持 `$var$` 动态模板与 `<...>` 单段占位符的安全展开匹配）；
  * - `advanceAddTorrentOptions` 只接受该下载器配置里声明过的键（值仍由用户在页面侧选择）；
  * - 其余字段做类型收敛与长度限制。
  * 只有扩展自身上下文不受此限制；内容脚本（含站点页的拖拽对话框）一律走校验。
@@ -121,18 +229,25 @@ function sanitizeContentScriptAddTorrentOptions(
   options: CAddTorrentOptions,
   downloaderConfig: IDownloaderMetadata,
   defaultFolder?: string,
+  context: IContentScriptSavePathContext = {},
 ): CAddTorrentOptions {
   const configuredAdvance = downloaderConfig.advanceAddTorrentOptions ?? {};
   const requestedAdvance = options.advanceAddTorrentOptions ?? {};
-  const allowedSavePaths = new Set(
-    [...(downloaderConfig.suggestFolders ?? []), configuredAdvance.savePath, defaultFolder].filter(
-      (path): path is string => typeof path === "string" && path.length > 0,
-    ),
-  );
+  const allowedSavePathTemplates = [
+    ...(downloaderConfig.suggestFolders ?? []),
+    configuredAdvance.savePath,
+    defaultFolder,
+  ].filter((path): path is string => typeof path === "string" && path.length > 0);
   const savePath = typeof options.savePath === "string" ? options.savePath : "";
-  if (savePath && !allowedSavePaths.has(savePath)) {
-    // 不能静默改成空串：用户会以为自定义路径生效了。
-    throw new Error("Permission denied: save path is not in the configured folders of this downloader");
+  if (savePath) {
+    const replaceMaps = buildSavePathReplaceMaps(context);
+    const isAllowed = allowedSavePathTemplates.some((template) =>
+      matchesConfiguredSavePathTemplate(savePath, template, replaceMaps),
+    );
+    if (!isAllowed) {
+      // 不能静默改成空串：用户会以为自定义路径生效了。
+      throw new Error("Permission denied: save path is not in the configured folders of this downloader");
+    }
   }
 
   return {
@@ -957,8 +1072,9 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
     // 页面提供的 torrent 是不可信输入：先投影到声明字段，再进入站点绑定校验与历史写入。
     downloadOption.torrent = projectContentScriptDownloadTorrent(downloadOption.torrent);
     const targetSite = downloadOption.torrent?.site;
+    let siteInstance: Awaited<ReturnType<typeof getSiteInstance<"public">>> | undefined;
     if (targetSite) {
-      const siteInstance = await getSiteInstance<"public">(targetSite);
+      siteInstance = await getSiteInstance<"public">(targetSite);
       assertSenderMatchesSite(siteInstance, sender);
     } else if (downloadOption.torrent?.link?.startsWith("magnet:") && downloadOption.downloaderId !== "local") {
       // 无站点 magnet 是 content script 唯一被允许的无站点场景，但只能存本地文件；
@@ -967,18 +1083,32 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
     }
 
     if (downloadOption.addTorrentOptions && downloadOption.downloaderId !== "local") {
-      const [downloaderConfig, defaultDownloader] = await Promise.all([
+      const [downloaderConfig, defaultDownloader, storedSiteName] = await Promise.all([
         getDownloaderConfig(downloadOption.downloaderId ?? ""),
         sendMessage("getExtStoragePath", {
           key: "metadata",
           path: "defaultDownloader",
           defaultValue: {},
         }) as Promise<{ folder?: string }>,
+        targetSite
+          ? (sendMessage("getExtStoragePath", {
+              key: "metadata",
+              path: ["siteNameMap", targetSite],
+              defaultValue: "",
+            }) as Promise<string>)
+          : Promise.resolve(""),
       ]);
+      const siteNames = [storedSiteName, siteInstance?.metadata?.name].filter(
+        (name): name is string => typeof name === "string" && name.length > 0,
+      );
       downloadOption.addTorrentOptions = sanitizeContentScriptAddTorrentOptions(
         downloadOption.addTorrentOptions,
         downloaderConfig,
         typeof defaultDownloader?.folder === "string" ? defaultDownloader.folder : undefined,
+        {
+          torrent: downloadOption.torrent,
+          siteNames,
+        },
       );
     }
   }
@@ -1012,6 +1142,35 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
   // 通过队列限制并发，避免批量下载时对站点/下载器形成并发风暴
   return (await downloadQueue.add(() => downloadTorrent(downloadOption, prepared))) as IDownloadTorrentResult;
 });
+
+const MAX_TORRENT_FILENAME_STEM_LENGTH = 180;
+const WINDOWS_RESERVED_FILENAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+
+/**
+ * 清洗传给 `chrome.downloads.download` 的本地 `.torrent` 文件名：
+ * 剥离路径分隔符、目录穿越序列、控制字符及跨平台非法文件名字符，避免下载报 Invalid filename 或创建意外子目录。
+ */
+function sanitizeDownloadFilename(rawName: unknown): string {
+  const raw = typeof rawName === "string" ? rawName : "";
+  const withoutExt = raw.replace(/\.torrent$/i, "");
+  let stem = withoutExt
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/[\\/]+/g, "_")
+    .replace(/[<>:"|?*]/g, "_")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.]+|[\s.]+$/g, "");
+
+  if (stem.length > MAX_TORRENT_FILENAME_STEM_LENGTH) {
+    stem = stem.slice(0, MAX_TORRENT_FILENAME_STEM_LENGTH).replace(/[\s.]+$/g, "");
+  }
+  if (!stem) {
+    stem = "download";
+  } else if (WINDOWS_RESERVED_FILENAME_PATTERN.test(stem)) {
+    stem = `_${stem}`;
+  }
+  return `${stem}.torrent`;
+}
 
 async function downloadTorrentToLocalFile(
   downloadOption: TLocalDownloadOption,
@@ -1093,8 +1252,11 @@ async function downloadTorrentToLocalFile(
       let filename = torrentInstance.name;
       if (filename === "1.torrent") {
         // 如果文件名是缺省的 1.torrent，那么使用种子属性中的站点名和标题作为文件名
-        filename = `[${torrent.site}] ${torrent.title}.torrent`;
+        const fallbackPrefix = torrent.site ? `[${torrent.site}] ` : "";
+        const fallbackTitle = torrent.title || String(torrent.id ?? "download");
+        filename = `${fallbackPrefix}${fallbackTitle}.torrent`;
       }
+      filename = sanitizeDownloadFilename(filename);
 
       const chromeDownloadId = await sendMessage("downloadFile", {
         url: blobUrl,
@@ -1210,10 +1372,12 @@ const BLOB_URL_RELEASE_MAX_WAIT = 60 * 60 * 1000;
 const BLOB_URL_RELEASE_LONG_POLL = 5 * 60 * 1000;
 
 type TDownloadTerminalState = "complete" | "interrupted";
-const remoteDownloadSettlements = new Map<
-  TTorrentDownloadKey,
-  { reservation?: IPreparedDownload["siteDownloadReservation"]; blobUrl?: string }
->();
+interface IRemoteDownloadSettlement {
+  reservation?: IPreparedDownload["siteDownloadReservation"];
+  blobUrl?: string;
+  fallbackTimer?: ReturnType<typeof setTimeout>;
+}
+const remoteDownloadSettlements = new Map<TTorrentDownloadKey, IRemoteDownloadSettlement>();
 
 async function applySettledDownload(
   downloadId: TTorrentDownloadKey,
@@ -1236,6 +1400,9 @@ async function applySettledDownload(
 onMessage("settleBrowserDownload", async ({ data: { downloadId, state, reservation } }) => {
   const localTracking = remoteDownloadSettlements.get(downloadId);
   remoteDownloadSettlements.delete(downloadId);
+  if (localTracking?.fallbackTimer !== undefined) {
+    clearTimeout(localTracking.fallbackTimer);
+  }
   await applySettledDownload(downloadId, state, reservation ?? localTracking?.reservation, localTracking?.blobUrl);
 });
 
@@ -1365,8 +1532,14 @@ async function trackLocalDownload(
   blobUrl?: string,
 ): Promise<void> {
   const downloads = getChromeApi()?.downloads;
-  if (!downloads?.onChanged?.addListener || !downloads.search) {
-    remoteDownloadSettlements.set(downloadId, { reservation, blobUrl });
+  const canWatchLocally = Boolean(downloads?.onChanged?.addListener && downloads.search);
+  const trackingEntry: IRemoteDownloadSettlement | undefined = canWatchLocally ? undefined : { reservation, blobUrl };
+  if (trackingEntry) {
+    const existing = remoteDownloadSettlements.get(downloadId);
+    if (existing?.fallbackTimer !== undefined) {
+      clearTimeout(existing.fallbackTimer);
+    }
+    remoteDownloadSettlements.set(downloadId, trackingEntry);
   }
   // 即使 offscreen 能监听下载，也要让 SW 持久登记 id；长下载期间 offscreen
   // 可被回收，恢复扫描只能依据这个映射核对 Chrome 的真实状态。
@@ -1378,8 +1551,21 @@ async function trackLocalDownload(
     });
   } catch (error) {
     logger({ msg: "Failed to register browser download tracking", level: "error", data: getErrorMessage(error) });
+    if (trackingEntry && remoteDownloadSettlements.get(downloadId) === trackingEntry) {
+      // 登记失败时 SW 不会再回传 settleBrowserDownload：给下载留出读取时间后清理内存映射并释放 blob URL，
+      // 避免 remoteDownloadSettlements 条目与 blob URL 泄漏到 offscreen 关闭。
+      const fallbackTimer = setTimeout(() => {
+        if (remoteDownloadSettlements.get(downloadId) !== trackingEntry) return;
+        remoteDownloadSettlements.delete(downloadId);
+        if (trackingEntry.blobUrl) {
+          URL.revokeObjectURL(trackingEntry.blobUrl);
+        }
+      }, BLOB_URL_RELEASE_TIMEOUT);
+      (fallbackTimer as unknown as { unref?: () => void })?.unref?.();
+      trackingEntry.fallbackTimer = fallbackTimer;
+    }
   }
-  if (!downloads?.onChanged?.addListener || !downloads.search) {
+  if (!canWatchLocally) {
     return;
   }
 
@@ -1397,7 +1583,8 @@ export function releaseBlobUrlWhenDownloadSettled(blobUrl: string, chromeDownloa
         logger({ msg: "Failed to register browser blob tracking", level: "error", data: getErrorMessage(error) });
         // 登记失败就没人会在下载完成时释放 URL：给下载留出读取时间后本地兜底回收，
         // 不能让 blob URL 永久泄漏。
-        setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_URL_RELEASE_TIMEOUT);
+        const timer = setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_URL_RELEASE_TIMEOUT);
+        (timer as unknown as { unref?: () => void })?.unref?.();
       });
     } else {
       URL.revokeObjectURL(blobUrl);

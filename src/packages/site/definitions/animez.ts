@@ -1,7 +1,8 @@
 /**
  * @JackettDefinitions https://github.com/Jackett/Jackett/blob/master/src/Jackett.Common/Indexers/Definitions/AnimeZ.cs
  */
-import { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
+import urlJoin from "url-join";
+import { type IElementQuery, ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from "../types";
 import AvistazNetwork, { SchemaMetadata, IAvzNetRawTorrent } from "../schemas/AvistazNetwork.ts";
 import { definedFilters } from "../utils/filter.ts";
 
@@ -118,7 +119,7 @@ export const siteMetadata: ISiteMetadata = {
         selector: ":self",
         elementProcess: (document: Document) =>
           getText(document.querySelector(`${profileHeaderSelector} > div:first-child`)) ||
-          document.title.split(" - ")[0],
+          (document.title.includes(" - ") ? document.title.split(" - ")[0].trim() : ""),
       },
       levelName: {
         selector: ":self",
@@ -190,10 +191,8 @@ export const siteMetadata: ISiteMetadata = {
     {
       id: 3,
       name: "Member",
-      uploaded: "5GB",
-      ratio: 1,
-      alternative: [{ interval: "P1W" }],
-      privilege: "Registered users in good standing with 5 GB+ upload and a ratio of 1.0 or above.",
+      alternative: [{ uploaded: "5GB", ratio: 1 }, { interval: "P1W" }],
+      privilege: "Registered users in good standing with 5 GB+ upload and a ratio of 1.0 or above, or 1 week tenure.",
     },
     {
       id: 4,
@@ -242,15 +241,25 @@ interface IAnimeZRawTorrent extends IAvzNetRawTorrent {
 }
 
 export default class AnimeZ extends AvistazNetwork {
+  private countProfileHits(pageDocument: Document, fields: readonly string[]): number {
+    const selectors = this.metadata.userInfo?.selectors ?? {};
+    return fields.filter((field) => {
+      const query = (selectors as Record<string, IElementQuery | undefined>)[field];
+      return !!query && this.hasFieldMatch(pageDocument, query);
+    }).length;
+  }
+
   protected override async getBaseInfoFromSite(
     userName: string = this.userConfig.inputSetting?.username ?? "",
+    hitCounter?: { count: number },
   ): Promise<Partial<IUserInfo>> {
+    await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
-      url: `/profile/${userName}`,
+      url: urlJoin("/profile", String(userName)),
       responseType: "document",
     });
 
-    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [
+    const fields = [
       "name",
       "levelName",
       "uploaded",
@@ -261,19 +270,34 @@ export default class AnimeZ extends AvistazNetwork {
       "seeding",
       "leeching",
       "lastAccessAt",
-    ]) as Partial<IUserInfo>;
+    ] as const;
+    if (hitCounter) {
+      hitCounter.count += this.countProfileHits(pageDocument, fields);
+    }
+
+    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields], {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
-  protected override async getExtendInfoFromProfile(userName: string): Promise<Partial<IUserInfo>> {
+  protected override async getExtendInfoFromProfile(
+    userName: string,
+    hitCounter?: { count: number },
+  ): Promise<Partial<IUserInfo>> {
+    await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
-      url: `/profile/${userName}`,
+      url: urlJoin("/profile", String(userName)),
       responseType: "document",
     });
 
-    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [
-      "joinTime",
-      "lastAccessAt",
-    ]) as Partial<IUserInfo>;
+    const fields = ["joinTime", "lastAccessAt"] as const;
+    if (hitCounter) {
+      hitCounter.count += this.countProfileHits(pageDocument, fields);
+    }
+
+    return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [...fields], {
+      dropEmptyMisses: true,
+    }) as Partial<IUserInfo>;
   }
 
   protected override parseTorrentRowForTags(

@@ -10,16 +10,15 @@ import {
   type ISiteMetadata,
   type ITorrent,
   type IUserInfo,
-  NeedLoginError,
-  CFBlockedError,
 } from "../types.ts";
 import {
   buildCategoryOptionsFromList,
+  classifySiteError,
   logMessage,
   parseSizeString,
   parseTimeToLiveToDate,
   parseTimeWithZone,
-  parseValidTimeString,
+  parseValidTimeStringInZone,
   siteErrorLogData,
 } from "../utils.ts";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
@@ -61,11 +60,11 @@ const parseAnthelionApiBoolean = (value: unknown): boolean => {
   return false;
 };
 
-// ANT 当前用户页的时间 span 不再带 title，回退解析相对时间；保留 title 以兼容旧页面。
+// ANT 当前用户页的时间 span 不再带 title，回退解析相对时间；保留 title 以兼容旧页面（明确按 UTC 解析，不依赖宿主时区）。
 const parseAnthelionUserTime = (element: Element): number | string => {
   const title = element.getAttribute("title");
   if (title) {
-    return parseValidTimeString(title, ["MMM d yyyy, HH:mm 'UTC'"]);
+    return parseValidTimeStringInZone(title, ["MMM d yyyy, HH:mm 'UTC'"], "+0000");
   }
 
   return parseTimeToLiveToDate(element.textContent?.trim() ?? "");
@@ -398,17 +397,20 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class Anthelion extends Gazelle {
   private async getAnthelionApiUsername(lastUserInfo: Partial<IUserInfo>): Promise<string> {
-    const cachedName = typeof lastUserInfo.name === "string" ? lastUserInfo.name.trim() : "";
+    const cachedName =
+      lastUserInfo.name !== undefined && lastUserInfo.name !== null ? String(lastUserInfo.name).trim() : "";
     if (cachedName) return cachedName;
 
     const { data: indexDocument } = await this.request<Document>({ url: "/index.php", responseType: "document" });
     const nameSelector = this.metadata.userInfo?.selectors?.name;
-    const name = nameSelector ? this.getFieldData(indexDocument, nameSelector) : undefined;
-    if (typeof name !== "string" || !name.trim()) {
+    // 传入字段名 "name" 以免纯数字用户名被 getFieldData 强转为 number
+    const rawName = nameSelector ? this.getFieldData(indexDocument, nameSelector, "name" as any) : undefined;
+    const name = rawName !== undefined && rawName !== null ? String(rawName).trim() : "";
+    if (!name) {
       throw new Error("Unable to determine the Anthelion username for the API request");
     }
 
-    return name.trim();
+    return name;
   }
 
   private async getUserInfoFromAnthelionApi(lastUserInfo: Partial<IUserInfo>): Promise<IUserInfo> {
@@ -495,19 +497,15 @@ export default class Anthelion extends Gazelle {
       }
       flushUserInfo.status = EResultParseStatus.success;
     } catch (error) {
+      const { status, statusMsg, retryable } = classifySiteError(error);
+      flushUserInfo.status = status;
+      flushUserInfo.statusMsg = statusMsg;
       // fork 的 eslint 禁止直接 console（no-console），与其它定义一样走 logMessage 进日志页
       logMessage(
-        `[Site] ${this.name} API getUserInfoResult failed`,
-        { site: this.metadata.id, error: siteErrorLogData(error) },
-        "error",
+        `[Site] ${this.name} API getUserInfoResult failed (status=${EResultParseStatus[status]}, retryable=${retryable})`,
+        { site: this.metadata.id, status, retryable, error: siteErrorLogData(error) },
+        retryable ? "warn" : "error",
       );
-      flushUserInfo.status = EResultParseStatus.parseError;
-
-      if (error instanceof CFBlockedError) {
-        flushUserInfo.status = EResultParseStatus.CFBlocked;
-      } else if (error instanceof NeedLoginError) {
-        flushUserInfo.status = EResultParseStatus.needLogin;
-      }
     }
 
     return flushUserInfo;

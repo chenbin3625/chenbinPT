@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { mountOptionsView, loadScopedStyles } from "../../helpers/optionsView.ts";
+import { mountOptionsView, loadScopedStyles, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
 vi.mock("@/options/stores/config.ts", () => ({
   useConfigStore: () => ({ searchEntity: { allowSingleSiteSearch: false, showHotRecommendations: false } }),
@@ -24,6 +24,7 @@ import Topbar from "@/options/views/Layout/Topbar.vue";
 let view: ReturnType<typeof mountOptionsView>;
 
 async function mountTopbar(initialPath = "/") {
+  const pinia = prepareOptionsPinia();
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -32,9 +33,9 @@ async function mountTopbar(initialPath = "/") {
     ],
   });
   await router.push(initialPath);
-  view = mountOptionsView(Topbar, { plugins: [router] });
+  view = mountOptionsView(Topbar, { pinia, plugins: [router] });
   await view.settle();
-  return { router, input: view.$<HTMLInputElement>(".ptd-search-key input")! };
+  return { router, pinia, input: view.$<HTMLInputElement>(".ptd-search-key input")! };
 }
 
 function pressEnter(input: HTMLInputElement, isComposing = false) {
@@ -61,12 +62,30 @@ describe("顶栏搜索交互", () => {
   });
 
   it("搜索进行中仍可再次搜索：用新关键词替换当前搜索", async () => {
-    const { router, input } = await mountTopbar();
-    // 旧实现会禁用输入框回车 / 搜索按钮 / 热门推荐，用户必须先取消正在进行的搜索
-    pressEnter(input);
+    const { router, pinia, input } = await mountTopbar("/search-entity?search=first-query&plan=default");
+    const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
+    const runtimeStore = useRuntimeStore(pinia);
+    runtimeStore.search.isSearching = true;
     await view.settle();
-    expect(router.currentRoute.value.name).toBe("SearchEntity");
-    expect(view.$<HTMLButtonElement>('button[title="搜索"]')?.disabled).toBe(false);
+
+    // 旧实现会在 runtimeStore.search.isSearching=true 时禁用输入框回车 / 搜索按钮
+    const searchBtn = view.$<HTMLButtonElement>('button[title="搜索"]');
+    expect(searchBtn?.disabled).toBe(false);
+
+    const pushSpy = vi.spyOn(router, "push");
+    try {
+      input.value = "replacement-query";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      pressEnter(input);
+      await view.settle();
+
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+      expect(router.currentRoute.value.name).toBe("SearchEntity");
+      expect(router.currentRoute.value.query.search).toBe("replacement-query");
+      expect(runtimeStore.search.isSearching).toBe(true);
+    } finally {
+      pushSpy.mockRestore();
+    }
   });
 
   it("中文输入法确认候选词的回车不触发搜索", async () => {

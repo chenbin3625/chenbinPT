@@ -108,15 +108,19 @@ export function toggleTagFilter(tagName: string): boolean {
 }
 
 /**
- * V-5：等 metadata store 从 storage 恢复完成后再恢复「上次筛选」。
+ * V-5 / F0169：等 metadata store 与 config store 都从 storage 恢复完成后再恢复「上次筛选」。
  *
  * 本文件是 SearchEntity 懒加载路由的 chunk，模块求值发生在首次导航时
- * （包括右键菜单深链 `#/search-entity?search=…&plan=…&flush=1`）；此刻 `useMetadataStore()`
- * 才刚创建 store，而插件的水合（`chrome.storage.local.get`）还是异步的 —— 在模块顶层读
- * `metadataStore.lastSearchFilter` 只会拿到 state 的初始值 `""`，于是「记住上次筛选」永远失效。
- * 对照写法见 `views/Overview/MyData/utils/lastUserData.ts`（那里同样 `await $onReady()`）。
+ * （包括右键菜单深链 `#/search-entity?search=…&plan=…&flush=1`）；此刻 `useMetadataStore()` 与
+ * `useConfigStore()` 才刚创建，水合（`chrome.storage.local.get`）均是异步的 ——
+ * 必须两者都就绪后再判断 `configStore.searchEntity.saveLastFilter` 并灌入 `metadataStore.lastSearchFilter`。
  */
-void metadataStore.$onReady(() => {
+let isMetadataReady = false;
+let isConfigReady = typeof configStore.$onReady !== "function";
+
+function restoreLastSearchFilterIfReady() {
+  if (!isMetadataReady || !isConfigReady) return;
+
   // 开关关闭时不恢复旧值（此时 lastSearchFilter 是历史残留），也不回写
   if (!configStore.searchEntity.saveLastFilter) return;
 
@@ -128,7 +132,19 @@ void metadataStore.$onReady(() => {
   // 赋值是程序化的，不会触发 a-input 的 @update:value，因此字典只能由这里显式构建。
   tableCustomFilter.buildFilterDictFn(lastSearchFilter);
   tableCustomFilter.tableWaitFilterRef.value = lastSearchFilter;
+}
+
+void metadataStore.$onReady(() => {
+  isMetadataReady = true;
+  restoreLastSearchFilterIfReady();
 });
+
+if (typeof configStore.$onReady === "function") {
+  void configStore.$onReady(() => {
+    isConfigReady = true;
+    restoreLastSearchFilterIfReady();
+  });
+}
 
 watch(tableCustomFilter.tableFilterRef, (newValue) => {
   if (configStore.searchEntity.saveLastFilter) {

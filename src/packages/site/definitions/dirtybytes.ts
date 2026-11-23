@@ -150,7 +150,11 @@ export const siteMetadata: ISiteMetadata = {
   detail: {
     urlPattern: [/\/torrent\/\d+(\/(?!edit([/?#]|$))[^/?#]+)?\/?([?#].*)?$/],
     selectors: {
-      id: { selector: downloadSelector, attr: "href", filters: [{ name: "split", args: ["/", 5] }] },
+      id: {
+        selector: downloadSelector,
+        attr: "href",
+        filters: [(href: string) => href.match(/\/api\/v1\/torrents\/download\/(\d+)/)?.[1] ?? ""],
+      },
       title: { selector: "h1.torrent-release-title" },
       link: { selector: downloadSelector, attr: "href" },
     },
@@ -223,9 +227,24 @@ export const siteMetadata: ISiteMetadata = {
 
 export default class DirtyBytes extends Rartracker {
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
-    // 新版页面的下载按钮仅含种子 ID，复制和远程下载时补上 passkey。
-    await this.parseTorrentRowForLink(torrent);
-    torrent.link = this.fixLink(torrent.link!, { baseURL: this.url });
-    return super.getTorrentDownloadLink(torrent);
+    const resolvedId =
+      torrent.id ||
+      (torrent.link ?? "").match(/\/api\/v1\/torrents\/download\/(\d+)/)?.[1] ||
+      (torrent.url ?? "").match(/\/torrent\/(\d+)/)?.[1];
+
+    if (!resolvedId) {
+      return super.getTorrentDownloadLink(torrent);
+    }
+
+    // 新版页面的下载按钮仅含种子 ID，在副本上补齐 passkey，避免原地修改入参或拼出缺 passkey 的坏链。
+    const draft: Partial<ITorrent> = { id: resolvedId };
+    await this.parseTorrentRowForLink(draft);
+    const hasPasskey = /\/api\/v1\/torrents\/download\/[^/]+\/([^/?#]+)$/.test(draft.link ?? "");
+    if (!draft.link || !hasPasskey) {
+      throw new Error("DirtyBytes: failed to resolve passkey for torrent download link");
+    }
+
+    const link = this.fixLink(draft.link, { baseURL: this.url });
+    return super.getTorrentDownloadLink({ ...torrent, link });
   }
 }

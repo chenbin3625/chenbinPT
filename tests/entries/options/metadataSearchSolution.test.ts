@@ -366,12 +366,44 @@ describe("V-7 站点映射重建合并", () => {
     defineSite("siteA");
     await store.addSite("siteA", { url: "https://siteA.example/" } as any, { reBuildMap: false });
 
-    const addPromise = store.addSite("siteB", { url: "https://siteB.example/" } as any, { reBuildMap: false });
+    const nameMapSpy = vi.spyOn(store, "buildSiteNameMap");
+    const hostMapSpy = vi.spyOn(store, "buildSiteHostMap");
+
+    let markFirstPassStarted!: () => void;
+    const firstPassStarted = new Promise<void>((resolve) => {
+      markFirstPassStarted = resolve;
+    });
+    let releaseFirstPass!: () => void;
+    const firstPassGate = new Promise<void>((resolve) => {
+      releaseFirstPass = resolve;
+    });
+
+    const baseImpl = getDefinedSiteMetadataMock.getMockImplementation()!;
+    let blockedOnce = false;
+    getDefinedSiteMetadataMock.mockImplementation(async (siteId: string) => {
+      if (!blockedOnce && siteId === "siteA") {
+        blockedOnce = true;
+        markFirstPassStarted();
+        await firstPassGate;
+      }
+      return await baseImpl(siteId);
+    });
+
+    // 第一轮重建启动后停在 siteA 元数据读取阶段
+    const rebuild1 = store.buildSiteMapCache();
+    await firstPassStarted;
+
+    // 重建在途期间新增 siteB，并再次触发 buildSiteMapCache
     defineSite("siteB");
-    await addPromise;
+    await store.addSite("siteB", { url: "https://siteB.example/" } as any, { reBuildMap: false });
+    const rebuild2 = store.buildSiteMapCache();
 
-    await Promise.all([store.buildSiteMapCache(), store.buildSiteMapCache()]);
+    // 放行第一轮：应自动补跑第二轮以覆盖在途期间新增的 siteB
+    releaseFirstPass();
+    await Promise.all([rebuild1, rebuild2]);
 
+    expect(nameMapSpy).toHaveBeenCalledTimes(2);
+    expect(hostMapSpy).toHaveBeenCalledTimes(2);
     expect(store.siteHostMap).toEqual({ "sitea.example": "siteA", "siteb.example": "siteB" });
   });
 });

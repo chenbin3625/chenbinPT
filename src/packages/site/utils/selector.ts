@@ -81,7 +81,7 @@ type Combinator = " " | ">" | "+" | "~";
 interface PseudoToken {
   /** 小写化后的伪类名（不含 `:`） */
   name: string;
-  /** 去掉外层引号并做 CSS 反转义后的参数；无参数时为空串 */
+  /** 伪类参数：`:has` / `:not` 保留原始选择器文本，其它伪类去引号并做 CSS 反转义；无参数时为空串 */
   argument: string;
   /** 求值类别 */
   kind: PseudoKind;
@@ -273,7 +273,9 @@ function scanPseudos(text: string): PseudoToken[] {
             : name === "not"
               ? classifyNotArgument(argument)
               : "native";
-    pseudos.push({ name, argument: stripQuotes(unescapeCss(argument)), kind, start: i, end });
+    // `:has()` 与 `:not()` 的参数是 CSS 选择器，不能提前反转义（否则 `#foo\:bar` / `.a\.b` 会被破坏）
+    const parsedArgument = name === "has" || name === "not" ? argument : unescapeCss(stripQuotes(argument));
+    pseudos.push({ name, argument: parsedArgument, kind, start: i, end });
     i = end;
   }
   return pseudos;
@@ -584,7 +586,10 @@ function nativeQuery(selector: string, context: ParentNode): Element[] {
       return queryWithIdPrefix(parent as ParentNode, element, text);
     }
     if (supportsScope(context)) {
-      return Array.from(element.querySelectorAll(":scope " + text)) as Element[];
+      const scoped = splitSelectorGroups(text)
+        .map((group) => ":scope " + group)
+        .join(",");
+      return Array.from(element.querySelectorAll(scoped)) as Element[];
     }
     return queryWithIdPrefix(element, element, text);
   }
@@ -862,31 +867,50 @@ function complementIndices(all: Set<number>, matched: Set<number>): Set<number> 
   return keep;
 }
 
-/** 对给定集合求 `:not(argument)` 的补集（argument 可能是复合条件 + 位置伪类） */
+/** 对给定集合求 `:not(argument)` 的补集（argument 可能是逗号列表、复合条件或嵌套 `:not()`） */
 function notPositionalComplement(elements: Element[], argument: string): Set<number> {
   const all = new Set<number>(elements.map((_elem, index) => index));
-  const tokens = parseGroupTokens(argument);
-  if (tokens.length === 0 || tokens.some((token) => token.combinator !== null && token.combinator !== " ")) {
-    // 含组合符的 `:not(位置伪类)` 没有调用点，保守地视为「不排除任何元素」
+  const groups = splitSelectorGroups(argument);
+  if (groups.length === 0) {
     return all;
   }
-  let matched = elements.slice();
-  for (const token of tokens) {
+
+  const excludedElements = new Set<Element>();
+  for (const group of groups) {
+    const tokens = parseGroupTokens(group);
+    if (tokens.length === 0) {
+      continue;
+    }
+    if (tokens.length !== 1 || tokens[0].combinator !== null) {
+      // 含组合符的分组：不含位置伪类时走常规作用域匹配，含位置伪类时保守跳过
+      if (!tokens.some((token) => token.compound.hasPositional)) {
+        for (const elem of elements) {
+          if (elementMatchesAnyScope(elem, group)) {
+            excludedElements.add(elem);
+          }
+        }
+      }
+      continue;
+    }
+
+    const token = tokens[0];
+    let matched = elements.slice();
     if (token.compound.nativeText.length > 0 || token.compound.hasCustom) {
       matched = matched.filter((elem) => matchesCompound(elem, token.compound));
     }
-  }
-  for (const token of tokens) {
     for (const pseudo of token.compound.pseudos) {
       if (pseudo.kind === "positional") {
-        matched = filterByIndices(matched, positionalIndices(matched.length, pseudo));
+        matched = applyPositional(matched, pseudo);
       }
     }
+    for (const elem of matched) {
+      excludedElements.add(elem);
+    }
   }
-  const matchedSet = new Set(matched);
+
   const matchedIndices = new Set<number>();
   elements.forEach((elem, index) => {
-    if (matchedSet.has(elem)) {
+    if (excludedElements.has(elem)) {
       matchedIndices.add(index);
     }
   });
@@ -955,7 +979,7 @@ function collectCandidates(tokens: GroupToken[], context: ParentNode, xml: boole
     let anchors: Element[];
     if (leading === ">") {
       anchors = Array.from((context as Element).children ?? []);
-    } else if (leading === "+") {
+    } else if (leading === "+" && !tokens.slice(1).some((t) => t.combinator === "+" || t.combinator === "~")) {
       const next = (context as Element).nextElementSibling;
       anchors = next ? [next] : [];
     } else {
@@ -1054,7 +1078,12 @@ function evalTokenStages(tokens: GroupToken[], contexts: ParentNode[]): Element[
     hasCustom: remainingPseudos.some((pseudo) => pseudo.kind === "custom"),
   };
   const prefixHasContent =
-    prefixCompound.nativeText.length > 0 || remainingPseudos.length > 0 || prefixTokens.length > 0;
+    prefixCompound.nativeText.length > 0 ||
+    remainingPseudos.length > 0 ||
+    prefixTokens.length > 0 ||
+    token.combinator === ">" ||
+    token.combinator === "+" ||
+    token.combinator === "~";
   if (prefixHasContent) {
     prefixTokens.push({ combinator: token.combinator, compound: prefixCompound });
   }
@@ -1256,6 +1285,13 @@ export function matchesSelector(elem: Element, selector: string): boolean {
       }
       continue;
     }
+    if (position < tokens.length - 1) {
+      // 非末尾位置伪类（如 `tr:first td` / `div:eq(0) > span`）：按上下文分阶段求值再检查是否包含 elem
+      if (evalPositionalGroup(tokens, context).includes(elem)) {
+        return true;
+      }
+      continue;
+    }
     // 位置伪类之前的部分（含位置 compound 去掉位置伪类后的剩余条件）必须命中 elem
     const remainingPseudos = tokens[position].compound.pseudos.filter((pseudo) => pseudo.kind !== "positional");
     const prefixTokens: GroupToken[] = tokens.slice(0, position).map((item) => ({ ...item }));
@@ -1278,23 +1314,8 @@ export function matchesSelector(elem: Element, selector: string): boolean {
         survivors = applyPositional(survivors, pseudo);
       }
     }
-    if (survivors.length === 0) {
-      continue;
-    }
-    const rest = tokens.slice(position + 1);
-    if (rest.length === 0) {
+    if (survivors.length > 0) {
       return true;
-    }
-    // 有剩余选择器时，Sizzle 只把「同时命中剩余选择器且属于 seed」的元素算作命中
-    for (const survivor of survivors) {
-      if (
-        evalTokens(
-          rest.map((item) => ({ ...item })),
-          survivor,
-        ).includes(elem)
-      ) {
-        return true;
-      }
     }
   }
   return false;

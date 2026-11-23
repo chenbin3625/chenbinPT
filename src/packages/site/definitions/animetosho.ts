@@ -99,7 +99,7 @@ export const siteMetadata: ISiteMetadata = {
 
   list: [
     {
-      urlPattern: [/\.org\/$/, /\/\?page=/, "/?filter", "/search"],
+      urlPattern: [/\.org\/$/, /\/\?page=/, /\/\?filter/, "/search"],
       excludeUrlPattern: ["/view/"],
       mergeSearchSelectors: true,
       selectors: {

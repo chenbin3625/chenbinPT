@@ -1,7 +1,7 @@
 /**
  * OS-6 / B1-7：推荐海报抓取的主机白名单、重定向校验与大小上限。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const isolatedAxios = { get: vi.fn() };
@@ -98,31 +98,47 @@ describe("OS-6：海报 URL 主机/协议白名单", () => {
     expect(result.items[0].poster).toMatch(/^data:image\//);
   });
 
-  it("重定向到白名单之外时丢弃该候选（不缓存、不透传）", async () => {
+  it("重定向到白名单之外时丢弃响应体（不转 data URL、不缓存，非豆瓣 https 回落原始地址）", async () => {
     const { handler } = await loadModule();
-    mocks.isolatedAxios.get.mockResolvedValue(
+    mocks.isolatedAxios.get.mockResolvedValueOnce(
       makeImageResponse(4096, { request: { responseURL: "http://127.0.0.1/redirected.png" } }),
     );
     makeResult("https://image.tmdb.org/t/p/w500/x.jpg");
 
     const result = await handler({ data: {} });
     // 白名单域名（非豆瓣，无防盗链）允许作为 <img src> 回落到原始 URL，但绝不能是 data URL / 内网地址
+    expect(mocks.isolatedAxios.get).toHaveBeenCalledTimes(1);
     expect(result.items[0].poster).toBe("https://image.tmdb.org/t/p/w500/x.jpg");
     expect(result.items[0].poster).not.toMatch(/^data:/);
+    const messages = mocks.logger.mock.calls.map(([item]: any[]) => String(item?.msg ?? ""));
+    expect(messages.some((msg: string) => msg.includes("redirected outside allowlist"))).toBe(true);
+
+    // 验证未写入缓存：同 URL 下一次抓取若返回合法响应，会重新请求并转 data URL
+    mocks.isolatedAxios.get.mockResolvedValueOnce(makeImageResponse(2048));
+    const retryResult = await handler({ data: {} });
+    expect(mocks.isolatedAxios.get).toHaveBeenCalledTimes(2);
+    expect(retryResult.items[0].poster).toMatch(/^data:image\//);
   });
 });
 
 describe("B1-7：海报体积上限", () => {
   it("超过上限的图片被跳过（不 base64 化、不缓存）", async () => {
     const { handler } = await loadModule();
-    mocks.isolatedAxios.get.mockResolvedValue(makeImageResponse(5 * 1024 * 1024 + 1));
+    mocks.isolatedAxios.get.mockResolvedValueOnce(makeImageResponse(5 * 1024 * 1024 + 1));
     makeResult("https://image.tmdb.org/t/p/original/x.jpg");
 
     const result = await handler({ data: {} });
+    expect(mocks.isolatedAxios.get).toHaveBeenCalledTimes(1);
     expect(result.items[0].poster).toBe("https://image.tmdb.org/t/p/original/x.jpg");
     expect(result.items[0].poster).not.toMatch(/^data:/);
     const messages = mocks.logger.mock.calls.map(([item]: any[]) => String(item?.msg ?? ""));
     expect(messages.some((msg: string) => msg.includes("oversized recommendation poster"))).toBe(true);
+
+    // 验证未写入缓存：同 URL 下一次请求会重新抓取而非命中失败缓存
+    mocks.isolatedAxios.get.mockResolvedValueOnce(makeImageResponse(2048));
+    const retryResult = await handler({ data: {} });
+    expect(mocks.isolatedAxios.get).toHaveBeenCalledTimes(2);
+    expect(retryResult.items[0].poster).toMatch(/^data:image\//);
   });
 
   it("体积合法的图片正常返回", async () => {

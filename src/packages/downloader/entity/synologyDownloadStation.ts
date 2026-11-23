@@ -503,14 +503,16 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
 
       /**
        * 105 / 106（会话超时、会话被顶替）说明缓存的 sid 已失效：
-       * 清空缓存并重登一次再重试。此前 `_sessionId` 永久缓存，
-       * 会话一旦过期，整个实例生命周期内所有请求都会失败。
+       * 若并发请求已经刷新了 `_sessionId`，直接复用新 sid 重试；否则重登一次再重试，
+       * 避免并发报错请求清掉刚拿到的新 sid 或触发二次登录把有效会话顶掉（106）。
        *
        * SY-3：105 同时也表示「权限不足」，对确定需要管理员权限的调用（如获取版本）传 authRetry=false，
        * 避免把权限错误当成会话过期去重登、并顶掉当前有效 sid。
        */
       if (authRetry && !skipAuthRetry && typeof code === "number" && SYNOLOGY_SESSION_ERROR_CODES.includes(code)) {
-        this._sessionId = undefined;
+        if (this._sessionId && this._sessionId !== sid) {
+          return await this.requestEntryCGI<T>(field, true, authRetry);
+        }
         if (await this.ensureLogin(true)) {
           return await this.requestEntryCGI<T>(field, true, authRetry);
         }
@@ -732,7 +734,7 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
 
     if (filter.ids) {
       params.method = "get";
-      params.id = filter.ids;
+      params.id = Array.isArray(filter.ids) ? filter.ids : [filter.ids];
     }
 
     // requestEntryCGI 已负责校验 success：会话失效（105/106）会自动重登重试，其余错误直接抛出，
@@ -861,11 +863,11 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
     return returnTorrents;
   }
 
-  async pauseTorrent(id: string): Promise<boolean> {
+  async pauseTorrent(id: string | string[]): Promise<boolean> {
     try {
       return (
         await this.requestEntryCGI({
-          id: id,
+          id: Array.isArray(id) ? id : [id],
           api: "SYNO.DownloadStation2.Task",
           method: "pause",
           version: 2,
@@ -876,11 +878,11 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
     }
   }
 
-  async resumeTorrent(id: string): Promise<boolean> {
+  async resumeTorrent(id: string | string[]): Promise<boolean> {
     try {
       return (
         await this.requestEntryCGI({
-          id: id,
+          id: Array.isArray(id) ? id : [id],
           api: "SYNO.DownloadStation2.Task",
           method: "resume",
           version: 2,
@@ -911,7 +913,7 @@ export default class SynologyDownloadStation extends AbstractBittorrentClient<To
     try {
       const success = (
         await this.requestEntryCGI({
-          id: id,
+          id: Array.isArray(id) ? id : [id],
           api: "SYNO.DownloadStation2.Task",
           method: "delete",
           version: 2,

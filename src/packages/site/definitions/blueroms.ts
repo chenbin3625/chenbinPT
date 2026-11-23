@@ -83,7 +83,18 @@ export default class BlueRoms extends BittorrentSite {
       const { data } = await this.request<Document>({ url: torrent.link, responseType: "document" });
       const encoded = this.getFieldData(data, { selector: "button#magnet-button", attr: "data-link" }) as string;
       if (encoded) {
-        return atob(encoded.replace(/\s+/g, ""));
+        let decoded = "";
+        try {
+          decoded = atob(encoded.replace(/\s+/g, "")).trim();
+        } catch {
+          decoded = "";
+        }
+        // 经 fixLink 校验协议白名单（允许 magnet:/http:/https:，拒绝 javascript:/file:/data: 等协议）
+        const safeLink = decoded ? this.fixLink(decoded, { baseURL: this.url }) : "";
+        if (safeLink) {
+          return super.getTorrentDownloadLink({ ...torrent, link: safeLink });
+        }
+        throw new Error("BlueRoms: decoded download link is invalid or uses an unsupported protocol");
       }
     }
 

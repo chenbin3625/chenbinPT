@@ -42,7 +42,7 @@ export const siteMetadata: ISiteMetadata = {
 
   list: [
     {
-      urlPattern: ["/team/", "/user/", "/series/", "/page/", "rip/\\d+$", "/\?term="],
+      urlPattern: ["/team/", "/user/", "/series/", "/page/", "rip/\\d+$", "/\\?term="],
       excludeUrlPattern: ["/t/"],
       mergeSearchSelectors: true,
       selectors: {

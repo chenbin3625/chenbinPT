@@ -98,6 +98,7 @@ describe("S-2 · 引导入口不会从原型链上取 siteId", () => {
   });
 
   it("注入失败时重试一次，仍失败则由引导链兜底 catch 记录", async () => {
+    vi.useFakeTimers();
     const consoleSpies = [
       vi.spyOn(console, "debug").mockImplementation(() => {}),
       vi.spyOn(console, "warn").mockImplementation(() => {}),
@@ -115,15 +116,20 @@ describe("S-2 · 引导入口不会从原型链上取 siteId", () => {
       });
 
       await import("@/content-script/index.ts");
-      await flushAsync();
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(injectRequests()).toHaveLength(1);
 
+      await vi.advanceTimersByTimeAsync(299);
+      expect(injectRequests()).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1);
       expect(injectRequests()).toHaveLength(2);
       expect(consoleSpies[2]).toHaveBeenCalledWith(
         "[PTD] content script bootstrap failed, app will not be mounted:",
         expect.any(Error),
       );
     } finally {
+      vi.useRealTimers();
       consoleSpies.forEach((spy) => spy.mockRestore());
     }
   });

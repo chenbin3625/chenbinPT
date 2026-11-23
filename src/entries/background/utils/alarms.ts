@@ -4,16 +4,13 @@ import { EResultParseStatus, type TSiteID } from "@ptd/site/types/base.ts";
 
 import { onMessage, sendMessage } from "@/messages.ts";
 import { IDownloadTorrentOption, type ITorrentDownloadMetadata } from "@/shared/types.ts";
+import { EJobType } from "@/shared/types/jobs.ts";
 
 import { getExtStoragePathCached, logBackgroundError, patchExtStoragePathLocal } from "./base.ts";
 import { showNotificationSafely } from "./contextMenus.ts";
 import { setupOffscreenDocument } from "./offscreen.ts";
 
-export enum EJobType {
-  FlushUserInfo = "flushUserInfo",
-  ReDownloadTorrent = "reDownloadTorrent",
-  AutoBackup = "autoBackup",
-}
+export { EJobType };
 
 const jobs = defineJobScheduler();
 
@@ -645,7 +642,10 @@ async function notifyAutoBackupFailure(serverId: string, serverName: string, rea
 
 /** 成功一次后清理该服务器的去重记录（内存 + session），之后再失败会重新通知 */
 async function clearAutoBackupFailureNotifyAt(serverId: string): Promise<void> {
-  autoBackupFailureNotifyAt.delete(serverId);
+  await loadAutoBackupFailureNotifyAt();
+  if (!autoBackupFailureNotifyAt.delete(serverId)) {
+    return;
+  }
   await persistAutoBackupFailureNotifyAt();
 }
 
@@ -846,12 +846,17 @@ async function executePendingOnceJob(job: TPendingOnceJob): Promise<IAutoFlushRe
  * G1：SW 回收后的「重放」是否应该真的再执行一次重下任务。
  *
  * 租期重放是 at-least-once 语义：首次执行期间 SW 被回收时，上一次可能已经产生副作用
- * （把种子推给了下载器 / 已开始本地下载），盲目重放会重复投递。这里按下载历史的状态保守判定：
+ * （把种子推给了下载器 / 已开始本地下载），盲目重放会重复投递。
+ * 注意 `prepareDownloadTorrent` 在排程 `reDownloadTorrent` 之前就已经写入了一条
+ * `downloadStatus: "pending"` 且尚未包含 `downloadRequestConfig` 的历史记录，因此不能仅凭
+ * 「存在 pending 记录」就跳过重放，否则所有被 SW 回收打断的延迟重下都无法恢复。这里按实际
+ * 投递进度判定：
  * - `downloadId` 为负数/缺失：关闭下载历史时用的是 ephemeral id，没有可对账记录 → 不重放；
- * - `completed` / `failed`：已是终态 → 不重放；
- * - `pending` / `downloading`：首次执行可能已投递或仍在 offscreen 队列/执行中 → 视为已投递，不重放；
- * - 历史里没有该 id：首次执行尚未落任何记录 → 重放（唯一允许重放的分支）；
- * - 读取历史失败：无法判定 → 继续执行（宁可贵 at-least-once 也不静默丢任务；见项 1）。
+ * - 读取历史失败或返回非数组：无法判定 → 继续执行（宁可保持 at-least-once 也不静默丢任务）；
+ * - 历史里找不到该 id：用户已手动删除该待下载记录 → 不重放（避免复活已删除任务）；
+ * - `completed` / `failed` / `downloading`：已终态或已进入投递阶段 → 不重放；
+ * - `pending` 且已写入 `downloadRequestConfig` 或已有存活浏览器下载：首次执行已开始投递 → 不重放；
+ * - `pending` 且未写入 `downloadRequestConfig`、无存活浏览器下载：尚未真正投递 → 允许重放。
  */
 async function shouldReplayReDownloadJob(job: TPendingReDownloadTorrent): Promise<"execute" | "skip"> {
   if (!(job.downloadId > 0)) {
@@ -869,16 +874,32 @@ async function shouldReplayReDownloadJob(job: TPendingReDownloadTorrent): Promis
     return "execute";
   }
 
-  const record = Array.isArray(history) ? history.find((item) => item.id === job.downloadId) : undefined;
-  if (!record) {
-    return "execute"; // 首次执行还没写入历史：视为未执行
+  if (!Array.isArray(history)) {
+    logBackgroundError("Download history response is not an array before replaying re-download job, continue once");
+    return "execute";
   }
 
-  // completed/failed 终态、pending/downloading 可能已投递 —— 一律不重放
-  logBackgroundError(
-    `Skip replaying re-download job #${job.downloadId}: download history status is "${record.downloadStatus}"`,
-  );
-  return "skip";
+  const record = history.find((item) => item.id === job.downloadId);
+  if (!record) {
+    logBackgroundError(`Skip replaying re-download job #${job.downloadId}: download history record no longer exists`);
+    return "skip";
+  }
+
+  if (record.downloadStatus !== "pending") {
+    logBackgroundError(
+      `Skip replaying re-download job #${job.downloadId}: download history status is "${record.downloadStatus}"`,
+    );
+    return "skip";
+  }
+
+  if (record.downloadRequestConfig != null || (await hasLiveBrowserDownload(job.downloadId))) {
+    logBackgroundError(
+      `Skip replaying re-download job #${job.downloadId}: download dispatch already started while pending`,
+    );
+    return "skip";
+  }
+
+  return "execute";
 }
 
 async function runPendingOnceJob(alarmName: string): Promise<void> {

@@ -14,6 +14,8 @@ const baseLinkQuery = {
   attr: "href",
 };
 
+const noRecordPattern = /No record\.?|没有记录|沒有記錄|暂无数据|暫無數據/i;
+
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
 
@@ -250,10 +252,16 @@ export default class Pttime extends NexusPHP {
     const userId = flushUserInfo.id as number;
     const userSeedingRequestString = await this.requestUserSeedingPage(userId);
 
-    let seedStatus = { seeding: 0, seedingSize: 0 };
+    // D1-3 同型：空响应或不可识别响应不能静默写成 { seeding: 0, seedingSize: 0 }，抛错交由基类可选步骤守卫捕获
+    if (!userSeedingRequestString) {
+      throw new Error("[PTD] getusertorrentlist returned an empty response");
+    }
 
-    if (userSeedingRequestString && userSeedingRequestString.includes("<table")) {
+    let seedStatus: { seeding: number; seedingSize: number } | undefined;
+
+    if (userSeedingRequestString.includes("<table")) {
       const userSeedingDocument = createDocument(userSeedingRequestString);
+      seedStatus = { seeding: 0, seedingSize: 0 };
 
       // E5-8：零命中时 getFieldData 返回 ""，`"" ?? 0` 仍是 ""，会被当作数值写进 IUserInfo。
       const seeding = this.getFieldData(userSeedingDocument, {
@@ -270,6 +278,12 @@ export default class Pttime extends NexusPHP {
         },
       });
       seedStatus.seedingSize = typeof seedingSize === "number" ? seedingSize : 0;
+    } else if (noRecordPattern.test(userSeedingRequestString)) {
+      seedStatus = { seeding: 0, seedingSize: 0 };
+    }
+
+    if (!seedStatus) {
+      throw new Error("[PTD] getusertorrentlist returned an unrecognized response");
     }
 
     flushUserInfo = mergeWith(flushUserInfo, seedStatus, (objValue, srcValue) => {

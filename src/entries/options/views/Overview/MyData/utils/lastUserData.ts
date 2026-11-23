@@ -113,9 +113,10 @@ export async function initTableData() {
   isTableDataLoading.value = true;
 
   try {
-    // metadata store 从 chrome.storage 的恢复是异步的：水合完成前 metadataStore.sites 还是空对象，
-    // 直接建表会渲染出「暂无数据」，需要先等水合完成（页面上的 loading 也正好覆盖这段时间）。
-    await metadataStore.$onReady();
+    // metadata store 与 config store 从 chrome.storage 的恢复均为异步：
+    // 水合完成前 metadataStore.sites 为空、configStore.userInfo 的展示开关也为默认值，
+    // 直接建表会渲染出「暂无数据」或误过滤已配置显示的站点，这里一并等待水合完成。
+    await Promise.all([metadataStore.$onReady?.(), configStore.$onReady?.()]);
 
     // 预加载所有已配置的站点基本属性，同时预加载的变量在全局统一，这样可以加快 Timeline 和 Statistic 的加载速度
     const addedSiteMetaData = await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));

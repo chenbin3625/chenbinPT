@@ -351,6 +351,7 @@ export const siteMetadata: ISiteMetadata = {
 
 const groupPageSelectors: TSchemaMetadataListSelectors & { rows: { selector: string } } = {
   rows: { selector: "table.torrent_table tr.torrent" },
+  id: { selector: "a[href*='torrents.php?id=']", attr: "href", filters: [{ name: "querystring", args: ["id"] }] },
   subTitle: { selector: "a.codecs[href*='torrents.php?id=']" },
   size: { selector: "> td:nth-child(2)", filters: [{ name: "parseSize" }] },
   url: { selector: "a[href*='torrents.php?id=']", attr: "href" },

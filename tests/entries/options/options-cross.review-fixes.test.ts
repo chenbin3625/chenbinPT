@@ -370,7 +370,7 @@ describe("OPTIONSOVERVIEW-3 孪生：批量本地下载失败不再静默", () =
   });
 
   it("全部成功时不打扰用户", async () => {
-    const { view, snackbar } = await mountActionTd({ downloadId: 2, downloadStatus: "success" });
+    const { view, snackbar } = await mountActionTd({ downloadId: 2, downloadStatus: "completed" });
     try {
       const btn = view.$<HTMLButtonElement>(`button[title="${t("SearchEntity.ActionTd.localDownload")}"]`);
       btn!.click();

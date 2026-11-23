@@ -24,20 +24,19 @@ vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn(), onMessage: vi.fn() }));
 const TAGS = [{ name: "中字", color: "pink-darken-1" }, { name: "Free", color: "#1976D2" }, { name: "完结" }] as any;
 
 let TorrentTitleTd: any;
+let pinia: ReturnType<typeof prepareOptionsPinia>;
 
 beforeEach(async () => {
-  const pinia = prepareOptionsPinia();
+  pinia = prepareOptionsPinia();
   TorrentTitleTd = (await import("@/options/components/TorrentTitleTd.vue")).default;
 
   const { useConfigStore } = await import("@/options/stores/config.ts");
-  const configStore = useConfigStore();
+  const configStore = useConfigStore(pinia);
   configStore.searchEntifyControl.showTorrentTag = true;
   configStore.searchEntifyControl.showTorrentSubtitle = false;
   configStore.searchEntifyControl.showSocialInformation = false;
   configStore.searchEntifyControl.maxTagCountBeforeGroup = 0;
   configStore.searchEntifyControl.hiddenTagNames = [];
-
-  return pinia;
 });
 
 describe("搜索结果表格展示", () => {
@@ -51,7 +50,7 @@ describe("种子标题单元格（渲染行为）", () => {
     const { resolveColor } = await import("@/shared/colors.ts");
     const view = mountOptionsView(TorrentTitleTd, {
       props: { item: { title: "种子标题", tags: TAGS } },
-      pinia: prepareOptionsPinia(),
+      pinia,
       router: true,
     });
     await view.settle();
@@ -84,7 +83,7 @@ describe("种子标题单元格（渲染行为）", () => {
   it("点击标签不会把它从列表里移除（没有临时隐藏逻辑）", async () => {
     const view = mountOptionsView(TorrentTitleTd, {
       props: { item: { title: "种子标题", tags: TAGS } },
-      pinia: prepareOptionsPinia(),
+      pinia,
       router: true,
     });
     await view.settle();
@@ -101,7 +100,7 @@ describe("种子标题单元格（渲染行为）", () => {
   it("maxWidth prop 真的落到省略容器的内联 max-width 上（不传时用样式表兜底 20rem）", async () => {
     const withProp = mountOptionsView(TorrentTitleTd, {
       props: { item: { title: "很长的种子标题", tags: [] }, maxWidth: "24vw" },
-      pinia: prepareOptionsPinia(),
+      pinia,
       router: true,
     });
     await withProp.settle();
@@ -113,7 +112,7 @@ describe("种子标题单元格（渲染行为）", () => {
 
     const withoutProp = mountOptionsView(TorrentTitleTd, {
       props: { item: { title: "很长的种子标题", tags: [] } },
-      pinia: prepareOptionsPinia(),
+      pinia,
       router: true,
     });
     await withoutProp.settle();
@@ -132,9 +131,8 @@ describe("种子标题单元格的省略规则（样式行为）", () => {
     loadOptionsStyles();
     loadScopedStyles("src/entries/options/components/TorrentTitleTd.vue");
 
-    const pinia = prepareOptionsPinia();
     const { useConfigStore } = await import("@/options/stores/config.ts");
-    useConfigStore().searchEntifyControl.showTorrentSubtitle = true;
+    useConfigStore(pinia).searchEntifyControl.showTorrentSubtitle = true;
 
     const view = mountOptionsView(TorrentTitleTd, {
       props: { item: { title: "很长的种子标题", subTitle: "很长的副标题", tags: [] } },

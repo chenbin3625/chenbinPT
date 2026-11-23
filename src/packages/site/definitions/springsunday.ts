@@ -266,7 +266,7 @@ export const siteMetadata: ISiteMetadata = {
             return 100;
           } else if (element.classList.contains("p_downloading")) {
             const title = element.previousElementSibling?.getAttribute("style") || "";
-            const titleMatch = title.match(/(\d.+)%/);
+            const titleMatch = title.match(/width\s*:\s*([\d.]+)%/i) ?? title.match(/([\d.]+)%/);
             return titleMatch && titleMatch.length >= 2 ? parseFloat(titleMatch[1]) : 0;
           } else {
             return 0;

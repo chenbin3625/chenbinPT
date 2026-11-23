@@ -8,7 +8,7 @@
  * - Yata-Dash（2026-10-10 更新）：该站 def 为 API-only，`/api/user`（2026-10）返回全部统计；
  *   扩展字段名（avg_seed_time / seed_size / uploads_approved / fl_tokens / warnings 等）取自其 api_field_map。
  */
-import { NoUserInputError, type IAdvancedSearchRequestConfig, type ISiteMetadata } from "../types";
+import { ETorrentStatus, NoUserInputError, type IAdvancedSearchRequestConfig, type ISiteMetadata } from "../types";
 import Unit3D, { SchemaMetadata } from "../schemas/Unit3D.ts";
 import { buildCategoryOptionsFromDict } from "../utils.ts";
 import { set } from "es-toolkit/compat";
@@ -115,7 +115,7 @@ export const siteMetadata: ISiteMetadata = {
       },
       completed: { selector: ["times_completed", "attributes.times_completed", "completed", "attributes.completed"] },
       comments: { text: 0 }, // API 未提供
-      status: { text: 0 }, // API 未提供个人做种/下载状态
+      status: { text: ETorrentStatus.unknown }, // API 未提供个人做种/下载状态
       progress: { text: 0 },
     },
   },
@@ -258,23 +258,29 @@ export default class InfinityHD extends Unit3D {
     axiosConfig: AxiosRequestConfig,
     checkLogin: boolean = true,
   ): Promise<AxiosResponse<T>> {
-    // 仅对官方 JSON API 请求注入 API Key：fork 的站点请求还覆盖下载/图标/页面等非 API 路径，
-    // 无条件加 Authorization 会把 passkey 级别的凭据带到第三方下载 CDN（与上游 #1656 的收窄一致）。
-    if (!(axiosConfig.url ?? "").includes("/api/")) {
+    const targetUrl = this.resolveRequestTarget(axiosConfig);
+    if (!targetUrl || !this.isTrustedSiteUrl(targetUrl)) {
+      throw new Error(`[PTD] site '${this.metadata.id}' blocked request to untrusted host (infinityhd api token)`);
+    }
+
+    const isApiRequest = new URL(targetUrl).pathname.startsWith("/api/");
+    if (!isApiRequest) {
       return super.request<T>(axiosConfig, checkLogin);
     }
 
-    const token = this.userConfig.inputSetting?.token;
+    const token = this.userConfig.inputSetting?.token?.trim();
     if (!token) {
       throw new NoUserInputError("API Key"); // 未填写 API Key 时直接拦截，避免请求被误判为需要登录
     }
 
-    axiosConfig.headers = {
-      ...(axiosConfig.headers ?? {}),
-      Authorization: `Bearer ${token}`, // Jackett 实证：Authorization: Bearer <apikey>
-      origin: this.url,
+    const config: AxiosRequestConfig = {
+      ...axiosConfig,
+      headers: {
+        ...(axiosConfig.headers ?? {}),
+        Authorization: `Bearer ${token}`, // Jackett 实证：Authorization: Bearer <apikey>
+      },
     };
 
-    return super.request<T>(axiosConfig, checkLogin);
+    return super.request<T>(config, checkLogin);
   }
 }

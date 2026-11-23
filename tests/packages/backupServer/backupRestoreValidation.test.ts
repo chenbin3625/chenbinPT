@@ -44,7 +44,10 @@ describe("备份解析：不可信输入的防线（S-1）", () => {
     });
 
     it("嵌套层的 __proto__ 同样被剥离", () => {
-      decryptData('{"a":{"__proto__":{"deepPolluted":"yes"}}}');
+      const parsed = decryptData<{ a: Record<string, unknown> }>('{"a":{"__proto__":{"deepPolluted":"yes"}}}');
+
+      expect(Object.hasOwn(parsed.a, "__proto__")).toBe(false);
+      expect(parsed.a.deepPolluted).toBeUndefined();
       expect(({} as Record<string, unknown>).deepPolluted).toBeUndefined();
     });
 

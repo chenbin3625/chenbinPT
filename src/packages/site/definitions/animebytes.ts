@@ -111,11 +111,11 @@ interface IAnimeBytesTorrentGroup {
 
 interface IAnimeBytesTorrent {
   ID: number;
-  EditionData: {
-    CatalogNumber: string;
-    ReleaseDate: string;
-    EditionTitle: string;
-  };
+  EditionData?: {
+    CatalogNumber?: string;
+    ReleaseDate?: string;
+    EditionTitle?: string;
+  } | null;
   RawDownMultiplier: number;
   RawUpMultiplier: number;
   Link: string;
@@ -542,9 +542,9 @@ export default class AnimeBytes extends Gazelle {
       expiry?: number;
     }>(AnimeBytes.baseUserInfoCacheKey);
 
+    // 写入缓存时允许 username 为空串（RSS 链接可能只含 passkey），读取缓存也保持同一口径，避免空 username 永远未命中缓存
     if (
       typeof cachedBaseUserInfo?.username === "string" &&
-      cachedBaseUserInfo.username.trim().length > 0 &&
       typeof cachedBaseUserInfo?.passkey === "string" &&
       cachedBaseUserInfo.passkey.trim().length > 0 &&
       typeof cachedBaseUserInfo?.expiry === "number" &&
@@ -641,20 +641,27 @@ export default class AnimeBytes extends Gazelle {
     const delimiter = searchType === "music" ? " / " : " | ";
     const torrentPage = searchType === "music" ? "torrents2.php" : "torrents.php";
 
-    const rows = doc.Groups;
+    const rows = doc?.Groups;
+    if (!Array.isArray(rows)) {
+      return torrents;
+    }
     for (const group of rows) {
-      const title = extractContent(group.FullName);
+      if (!group || !Array.isArray(group.Torrents)) {
+        continue;
+      }
+      const title = extractContent(group.FullName ?? "");
       for (const torrent of group.Torrents) {
         const tags: { name: string; color: string }[] = [];
         if (torrent.RawDownMultiplier === 0) {
           tags.push({ name: "Free", color: "blue" });
         }
         try {
+          const editionTitle = torrent.EditionData?.EditionTitle;
           torrents.push({
             site: this.metadata.id, // 补全种子的 site 属性
             id: torrent.ID,
             title,
-            subTitle: `${torrent.EditionData.EditionTitle ? `${extractContent(torrent.EditionData.EditionTitle).trim()} ${delimiter.trim()}` : ""} ${GazelleUtils.extractTags(torrent.Property, tagKeywords, delimiter)}`,
+            subTitle: `${editionTitle ? `${extractContent(editionTitle).trim()} ${delimiter.trim()}` : ""} ${GazelleUtils.extractTags(torrent.Property, tagKeywords, delimiter)}`,
             // E17 同型：用 URL 解析而非字符串拼接 —— 用户自定义站点地址可以没有尾斜杠，
             // `${this.url}${torrentPage}` 会拼出 `https://animebytes.tvt torrents.php...` 这类坏主机。
             url: new URL(`${torrentPage}?id=${group.ID}&torrentid=${torrent.ID}`, this.url).toString(),

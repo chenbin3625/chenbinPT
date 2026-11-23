@@ -3,7 +3,14 @@ import { toMerged } from "es-toolkit";
 
 import PrivateSite from "./AbstractPrivateSite";
 import { isElementNode } from "./AbstractBittorrentSite";
-import { parseSizeString, parseTimeToLiveToDate, mapWithConcurrency, logMessage, siteErrorLogData } from "../utils";
+import {
+  parseSizeString,
+  parseTimeToLiveToDate,
+  parseTimeWithZone,
+  mapWithConcurrency,
+  logMessage,
+  siteErrorLogData,
+} from "../utils";
 import {
   ETorrentStatus,
   EResultParseStatus,
@@ -222,10 +229,11 @@ function genStatBoxSelector(section: string | string[], itemSel: string | string
  * 如果站点支持 JSON API 且数据完整，则应该使用 GazelleJSONAPI
  */
 /** 本引擎一定会提供的键；列出来之后消费方读它们不必再写非空断言 */
-type TMetadataKeys = "version" | "search" | "list" | "userInfo";
+type TMetadataKeys = "version" | "timezoneOffset" | "search" | "list" | "userInfo";
 
 export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
   version: 0,
+  timezoneOffset: "+0000",
   search: {
     keywordPath: "params.searchstr",
     requestConfig: {
@@ -889,6 +897,18 @@ export default class Gazelle extends GazelleBase {
       console.debug(`[PTD] site '${this.name}' parseWholeTorrentFromRow Error:`, e, torrentEl);
     }
     return null;
+  }
+
+  protected override fixParsedTorrent(
+    torrent: ITorrent,
+    row: Element | Document | object,
+    searchConfig: ISearchInput,
+  ): ITorrent {
+    const rawTime: unknown = torrent.time;
+    if (typeof rawTime === "string" && rawTime.trim() !== "") {
+      torrent.time = parseTimeWithZone(rawTime, this.metadata.timezoneOffset ?? "+0000");
+    }
+    return super.fixParsedTorrent(torrent, row, searchConfig);
   }
 
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {

@@ -432,7 +432,7 @@ describe("E5-12：speedapp 中间页解析失败显式抛错", () => {
       link: `${BASE_URL}/download/abc`,
     });
 
-    expect(link).toBe("/torrents/123/download");
+    expect(link).toBe(`${BASE_URL}/torrents/123/download`);
   });
 });
 

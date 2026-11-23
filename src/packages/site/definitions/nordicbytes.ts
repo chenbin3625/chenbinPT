@@ -211,24 +211,21 @@ export const siteMetadata: ISiteMetadata = {
           },
           seeding: {
             selector: "ul.__navbar-stats a:has(i.fa-arrow-up) span",
-            filters: [
-              (query: string) => {
-                // DEFS2-12：该 span 与 uploaded 共用同一个元素，文本里未必带 "(n)" 计数；
-                // 取不到时返回 undefined（而不是 0），避免「没取到」被静默展示成 0 个做种
-                const match = query.match(/\((\d+)\)/);
-                return match ? parseInt(match[1]) : undefined;
-              },
-            ],
+            elementProcess: (el: HTMLElement) => {
+              // DEFS2-12：该 span 与 uploaded 共用同一个元素，文本里未必带 "(n)" 计数；
+              // 在 elementProcess 中提取以便未匹配时返回 undefined 使 hasFieldMatch 为 false，
+              // 避免 AbstractPrivateSite 将 filter 回落的空串 "" 写入 flushUserInfo.seeding
+              const match = (el.textContent ?? "").match(/\((\d+)\)/);
+              return match ? parseInt(match[1], 10) : undefined;
+            },
           },
           leeching: {
             selector: "ul.__navbar-stats a:has(i.fa-arrow-down) span",
-            filters: [
-              (query: string) => {
-                // DEFS2-12：同 seeding，取不到计数时返回 undefined 而非静默的 0
-                const match = query.match(/\((\d+)\)/);
-                return match ? parseInt(match[1]) : undefined;
-              },
-            ],
+            elementProcess: (el: HTMLElement) => {
+              // DEFS2-12：同 seeding，未匹配时返回 undefined 使 hasFieldMatch 为 false，避免写入 ""
+              const match = (el.textContent ?? "").match(/\((\d+)\)/);
+              return match ? parseInt(match[1], 10) : undefined;
+            },
           },
         },
       },

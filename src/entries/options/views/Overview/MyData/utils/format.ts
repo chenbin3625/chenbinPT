@@ -18,22 +18,46 @@ export function fixUserInfo<T extends IUserInfo = IUserInfo>(userInfo: Partial<T
   return userInfo as Required<T>;
 }
 
-export function realFormatRatio(ratio: number): string | "∞" | "" {
-  if (ratio > 10000 || ratio === -1 || ratio === Infinity || ratio === null) {
-    return "∞";
-  }
-
-  if (isNaN(ratio) || ratio === -Infinity) {
+export function realFormatRatio(ratio: number | string | null | undefined): string | "∞" | "" {
+  if (ratio === null || ratio === undefined) {
     return "-";
   }
 
-  return ratio.toFixed(2);
+  let numericRatio: number;
+  if (typeof ratio === "number") {
+    numericRatio = ratio;
+  } else if (typeof ratio === "string") {
+    const trimmed = ratio.trim();
+    if (!trimmed) {
+      return "-";
+    }
+    if (/^(?:∞|inf(?:inity)?\.?)$/i.test(trimmed)) {
+      return "∞";
+    }
+    numericRatio = Number(trimmed);
+  } else {
+    return "-";
+  }
+
+  if (Number.isNaN(numericRatio) || numericRatio === -Infinity) {
+    return "-";
+  }
+
+  if (numericRatio > 10000 || numericRatio === -1 || numericRatio === Infinity) {
+    return "∞";
+  }
+
+  if (!Number.isFinite(numericRatio)) {
+    return "-";
+  }
+
+  return numericRatio.toFixed(2);
 }
 
 export function formatRatio(
   userInfo: Partial<IUserInfo>,
   ratioKey: "ratio" | "trueRatio" = "ratio",
 ): string | "∞" | "" {
-  let ratio = Number((userInfo[ratioKey] as string | number | undefined) ?? -1);
+  const ratio = userInfo?.[ratioKey] as string | number | null | undefined;
   return realFormatRatio(ratio);
 }

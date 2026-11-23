@@ -127,7 +127,7 @@ export async function setCookie(cookie: CookieSetDetails, force: boolean = false
 
   if (allowSet) {
     try {
-      return (await chrome.cookies.set(new_cookie)) !== null;
+      return (await chrome.cookies.set(new_cookie)) != null;
     } catch (error) {
       logBackgroundError(`Failed to set cookie ${cookie.name} for url ${new_cookie.url}`, error);
       return false;

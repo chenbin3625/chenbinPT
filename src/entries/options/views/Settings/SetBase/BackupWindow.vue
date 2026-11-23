@@ -17,9 +17,32 @@ const showEncryptionKey = ref<boolean>(false);
 // 只有点 SetBase 的「保存」才会经 Index.vue 的草稿合并写回 store 并落盘；
 // 这样其它页面任何一次 `$save()`（如表格排序）都不会把用户没确认的新密钥静默写进 storage。
 const encryptionKey = shallowRef<string>(config.value.backup.encryptionKey);
-const { history, undo: undoEncryptionKey } = useThrottledRefHistory(encryptionKey, { throttle: 50 });
+const {
+  history,
+  undo: undoEncryptionKey,
+  batch: batchEncryptionKeyHistory,
+  clear: clearEncryptionKeyHistory,
+} = useThrottledRefHistory(encryptionKey, { throttle: 50 });
+
+let lastConfigDraft = config.value;
+
+watch([config, () => config.value.backup.encryptionKey] as const, ([nextDraft, nextKey]) => {
+  const draftReplaced = nextDraft !== lastConfigDraft;
+  lastConfigDraft = nextDraft;
+  if (!draftReplaced && nextKey === encryptionKey.value) {
+    return;
+  }
+
+  batchEncryptionKeyHistory(() => {
+    encryptionKey.value = nextKey;
+  });
+  clearEncryptionKeyHistory();
+});
+
 watch(encryptionKey, (newValue) => {
-  config.value.backup.encryptionKey = newValue;
+  if (config.value.backup.encryptionKey !== newValue) {
+    config.value.backup.encryptionKey = newValue;
+  }
 });
 
 function randomEncryptionKey() {

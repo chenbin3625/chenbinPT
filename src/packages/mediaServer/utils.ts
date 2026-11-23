@@ -7,17 +7,23 @@ export { blobToDataUrl } from "~/helper.ts";
 
 /** 分辨率宽高 → 规范化标签（480p / 720p / 1080p / 1440p / 4K / 8K） */
 export function getResolutionLabel(width?: number, height?: number): string | undefined {
-  // 以短边为准：宽银幕影片的 1920×800 仍应算 1080p
-  const shortSide = Math.min(width ?? 0, height ?? 0) || Math.max(width ?? 0, height ?? 0);
-  if (!shortSide) return undefined;
-  if (shortSide >= 4320) return "8K";
-  if (shortSide >= 2160) return "4K";
-  if (shortSide >= 1440) return "1440p";
-  if (shortSide >= 1080) return "1080p";
-  if (shortSide >= 720) return "720p";
+  const w = typeof width === "number" && Number.isFinite(width) && width > 0 ? width : 0;
+  const h = typeof height === "number" && Number.isFinite(height) && height > 0 ? height : 0;
+  if (!w && !h) return undefined;
+
+  // 当宽高都存在时，同时结合长边/短边兼容宽银幕裁切（如 1920×800 → 1080p、3840×1600 → 4K）与竖屏视频；
+  // 仅有一维时按对应维度阈值匹配，避免把单独传入的 width（如 1920）按高度阈值误判为 1440p。
+  const longSide = w && h ? Math.max(w, h) : w;
+  const shortSide = w && h ? Math.min(w, h) : h;
+
+  if (longSide >= 7680 || shortSide >= 4320) return "8K";
+  if (longSide >= 3840 || shortSide >= 2160) return "4K";
+  if (longSide >= 2560 || shortSide >= 1440) return "1440p";
+  if (longSide >= 1920 || shortSide >= 1080) return "1080p";
+  if (longSide >= 1280 || shortSide >= 720) return "720p";
   if (shortSide >= 576) return "576p";
   if (shortSide >= 480) return "480p";
-  return `${shortSide}p`;
+  return `${shortSide || longSide}p`;
 }
 
 /**

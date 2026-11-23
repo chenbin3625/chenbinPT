@@ -611,6 +611,7 @@ export default class Deluge extends AbstractBittorrentClient {
         progress: torrent.progress,
         ratio: torrent.ratio,
         savePath: torrent.save_path,
+        label: torrent.label || undefined,
         state,
         totalSize: torrent.total_size,
         uploadSpeed: torrent.upload_payload_rate,

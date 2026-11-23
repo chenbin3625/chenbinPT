@@ -227,7 +227,7 @@ export const siteMetadata: ISiteMetadata = {
         { name: "9KG", value: 49 },
         { name: "其他音乐(Others)", value: 29 },
       ],
-      cross: { mode: "append" },
+      cross: false,
     },
     CategoryIncldead,
     CategorySpstate,

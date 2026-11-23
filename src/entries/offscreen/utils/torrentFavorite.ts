@@ -139,11 +139,29 @@ export async function getTorrentFavoriteStatus(
 ): Promise<ITorrentFavoriteStatus> {
   const favorites = await getStoredFavorites();
   const keys = new Set(torrents.map((torrent) => getTorrentFavoriteKey(torrent)));
+  const validFavorites = Object.values(favorites).filter(isTorrentFavoriteItem);
   return {
     favorites: [...keys]
-      .filter((key) => Object.hasOwn(favorites, key))
-      .map((key) => ({ key, favCategories: favorites[key].favCategories, comment: favorites[key].comment })),
-    favCategories: [...new Set(Object.values(favorites).flatMap((favorite) => favorite.favCategories ?? []))],
+      .filter((key) => Object.hasOwn(favorites, key) && isTorrentFavoriteItem(favorites[key]))
+      .map((key) => {
+        const favorite = favorites[key];
+        return {
+          key,
+          favCategories: Array.isArray(favorite.favCategories)
+            ? favorite.favCategories.filter((category): category is string => typeof category === "string")
+            : undefined,
+          comment: typeof favorite.comment === "string" ? favorite.comment : undefined,
+        };
+      }),
+    favCategories: [
+      ...new Set(
+        validFavorites.flatMap((favorite) =>
+          Array.isArray(favorite.favCategories)
+            ? favorite.favCategories.filter((category): category is string => typeof category === "string")
+            : [],
+        ),
+      ),
+    ],
   };
 }
 
@@ -176,7 +194,8 @@ export async function createTorrentFavorites(data: {
     for (const torrent of data.torrents) {
       const key = getTorrentFavoriteKey(torrent);
       if (UNSAFE_KEYS.has(key)) continue;
-      favorites[key] = buildTorrentFavorite(torrent, favorites[key], options, now);
+      const existing = isTorrentFavoriteItem(favorites[key]) ? favorites[key] : undefined;
+      favorites[key] = buildTorrentFavorite(torrent, existing, options, now);
       count++;
     }
 

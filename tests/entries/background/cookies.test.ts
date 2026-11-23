@@ -71,7 +71,7 @@ describe("setCookie 覆盖判定（BACKGROUNDSHARED-3）", () => {
     mocks.cookiesRemove.mockReset();
     mocks.logBackgroundError.mockReset();
     mocks.getExtStoragePathCached.mockReset();
-    mocks.cookiesSet.mockResolvedValue(undefined);
+    mocks.cookiesSet.mockResolvedValue({ name: "cf_clearance", value: "new-value" });
   });
 
   it("同名未过期但值不同 → 覆盖（CF 重试必须用上新解出的 cf_clearance）", async () => {

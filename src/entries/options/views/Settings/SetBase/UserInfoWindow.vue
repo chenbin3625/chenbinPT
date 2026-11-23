@@ -5,7 +5,7 @@ import { range } from "es-toolkit";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { EJobType } from "@/background/utils/alarms.ts";
+import { EJobType } from "@/shared/types/jobs.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { formatDate } from "@/options/utils.ts";
 
@@ -118,7 +118,8 @@ onMounted(async () => {
         <a-flex align="center" justify="flex-end" style="margin-top: 4px">
           <span>
             {{ t("userInfo.autoRefresh.lastFlushTime") }}
-            {{ formatDate(metadataStore.lastUserInfoAutoFlushAt) }} &nbsp;
+            {{ metadataStore.lastUserInfoAutoFlushAt > 0 ? formatDate(metadataStore.lastUserInfoAutoFlushAt) : "-" }}
+            &nbsp;
             {{ t("userInfo.autoRefresh.nextFlushTime") }}
             {{ nextFlushUserInfoAt != 0 ? formatDate(nextFlushUserInfoAt) : "-" }}
           </span>

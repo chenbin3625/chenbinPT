@@ -10,7 +10,8 @@
  * - 成功 + warningMessage：文案必须带 `SentToDownloaderDialog.sendSummaryWarning` 段落，颜色 warning；
  * - 阴性对照：普通成功（无 warningMessage）仍是 success、无告警段落（判别力：warningCount 恒为 0
  *   时第一条用例变红，第二条不受影响）；
- * - 失败：仍是 warning 色并带失败段落，告警段落不会冒出来。
+ * - 部分失败：走 warning 色并带 `sendSummaryFailed` 段落，失败项自带的 `warningMessage` 不计入告警段落；
+ * - 全部失败（F0125）：走 error 色并展示失败详情，不再退回 warning / noTasks。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,12 +31,13 @@ vi.mock("@/options/stores/metadata.ts", () => ({ useMetadataStore: () => metadat
 
 const WARNING = "uTorrent add-url 未返回 infoHash，添加后暂停 / 标签 / 上传限速设置未生效";
 
-/** 触发一次单任务推送，返回汇总 snakebar 的 [文案, 选项] */
-async function sendOne(result: Record<string, any>) {
-  sendMessageMock.mockResolvedValue(result);
+/** 触发一次批量推送（按序返回每个任务的 mock 结果），返回汇总 snackbar 的 [文案, 选项] */
+async function sendBatch(results: Record<string, any>[]) {
+  let index = 0;
+  sendMessageMock.mockImplementation(async () => results[index++]);
   const { sendTorrentToDownloader } = await import("@/options/components/SentToDownloaderDialog/utils.ts");
   await sendTorrentToDownloader(
-    [{ title: "t1" } as any],
+    results.map((_, i) => ({ title: `t${i + 1}` }) as any),
     "downloader-1" as any,
     { savePath: "", label: "" } as any,
     vi.fn(),
@@ -43,6 +45,11 @@ async function sendOne(result: Record<string, any>) {
 
   expect(runtimeStore.showSnackbar).toHaveBeenCalledTimes(1);
   return runtimeStore.showSnackbar.mock.calls[0] as [string, { color: string }];
+}
+
+/** 触发一次单任务推送，返回汇总 snackbar 的 [文案, 选项] */
+async function sendOne(result: Record<string, any>) {
+  return sendBatch([result]);
 }
 
 /** 当前 locale（默认 zh_CN）下 `sendSummaryWarning` 的实际文案，避免测试里硬编码译文 */
@@ -85,12 +92,40 @@ describe("DOWNLOADER-8：搜索页推送汇总必须暴露「成功但设置未�
     expect(content).not.toContain(expectedWarning);
   });
 
-  it("失败仍走 warning 色与失败段落，且不会凭空出现告警段落", async () => {
+  it("部分失败走 warning 色与失败段落，且失败项上的 warningMessage 不计入告警段落", async () => {
     const expectedWarning = await warningText(1);
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const expectedFailed = i18nInstance.global.t("SentToDownloaderDialog.sendSummaryFailed", { count: 1 });
 
-    const [content, options] = await sendOne({ downloadId: 0, downloadStatus: "failed" });
+    // 包含 1 条成功 + 1 条带 warningMessage 的失败，确保进入汇总格式化分支并验证 failed 不计入 warningCount
+    const [content, options] = await sendBatch([
+      { downloadId: 1, downloadStatus: "completed" },
+      { downloadId: 0, downloadStatus: "failed", warningMessage: WARNING },
+    ]);
 
     expect(options.color).toBe("warning");
+    expect(content).toContain(expectedFailed);
     expect(content).not.toContain(expectedWarning);
+  });
+
+  it("全部失败时走 error 色并展示失败详情，不再退回 warning / noTasks", async () => {
+    const expectedWarning = await warningText(1);
+    const { i18nInstance } = await import("@/options/plugins/i18n.ts");
+    const expectedError = i18nInstance.global.t("SentToDownloaderDialog.sendFailed", {
+      title: "t1",
+      error: "network error",
+    });
+
+    const [content, options] = await sendOne({
+      downloadId: 0,
+      downloadStatus: "failed",
+      errorMessage: "network error",
+      warningMessage: WARNING,
+    });
+
+    expect(options.color).toBe("error");
+    expect(content).toBe(expectedError);
+    expect(content).not.toContain(expectedWarning);
+    expect(content).not.toContain(i18nInstance.global.t("SentToDownloaderDialog.noTasks"));
   });
 });

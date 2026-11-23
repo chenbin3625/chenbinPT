@@ -9,7 +9,7 @@ import {
   VerticalAlignBottomOutlined,
 } from "@ant-design/icons-vue";
 import { saveAs } from "@/options/utils/saveAs.ts";
-import { computed, nextTick, onMounted, onUpdated, ref, shallowRef, useTemplateRef } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, shallowRef, useTemplateRef } from "vue";
 // konva 按需加载（见 vue-konva README「Minimal Bundle (Tree-Shaking)」，上游 #1594）：
 // konva/lib/Core 只含 Stage / Layer / Group 等核心节点，模板里用到的形状必须逐个引入，
 // 否则 vue-konva 会在创建节点时抛 `xxx is not available. Did you forget to import it?`。
@@ -168,8 +168,87 @@ const displaySize = computed(() => {
 //    使每次重绘都重跑一遍 blur 滤镜。
 const faviconCanvasCache = new Map<string, OffscreenCanvas>();
 const faviconFilterCache = new Map<string, string[]>();
+const faviconVersion = ref(0);
+const pendingFaviconImages = new WeakSet<HTMLImageElement>();
+const faviconCleanupCallbacks = new Set<() => void>();
+let isUnmounted = false;
+
+function isFaviconImageReady(img: HTMLImageElement): boolean {
+  if ("complete" in img || "naturalWidth" in img) {
+    return Boolean(img.complete) && (img.naturalWidth ?? 0) > 0;
+  }
+  // 测试替身等非 DOM 图像对象不含 complete / naturalWidth 字段，视为已就绪
+  return true;
+}
+
+function invalidateSiteFaviconCache(siteId: string) {
+  const prefix = `${siteId}|`;
+  for (const key of faviconCanvasCache.keys()) {
+    if (key.startsWith(prefix)) {
+      faviconCanvasCache.delete(key);
+    }
+  }
+}
+
+function watchFaviconReady(siteId: string, img: HTMLImageElement) {
+  if (pendingFaviconImages.has(img)) return;
+  pendingFaviconImages.add(img);
+
+  const cleanup = () => {
+    img.removeEventListener?.("load", onLoad);
+    img.removeEventListener?.("error", onError);
+    faviconCleanupCallbacks.delete(cleanup);
+    pendingFaviconImages.delete(img);
+  };
+
+  const notifyReady = () => {
+    if (isUnmounted) return;
+    invalidateSiteFaviconCache(siteId);
+    faviconVersion.value += 1;
+  };
+
+  const onLoad = () => {
+    cleanup();
+    notifyReady();
+  };
+
+  const onError = () => {
+    // siteMetadata.ts 的 onerror 会把 img.src 回退为 NO_IMAGE，因此若尚未就绪则保留 load 监听以捕获回退图标
+    if (isFaviconImageReady(img)) {
+      cleanup();
+      notifyReady();
+    }
+  };
+
+  img.addEventListener?.("load", onLoad);
+  img.addEventListener?.("error", onError);
+  faviconCleanupCallbacks.add(cleanup);
+
+  if (typeof img.decode === "function") {
+    void img
+      .decode()
+      .then(() => {
+        if (isFaviconImageReady(img)) {
+          cleanup();
+          notifyReady();
+        }
+      })
+      .catch(() => {
+        // 解码失败交给 load / error 事件（含 NO_IMAGE 回退）收尾
+      });
+  }
+}
+
+onBeforeUnmount(() => {
+  isUnmounted = true;
+  for (const cleanup of Array.from(faviconCleanupCallbacks)) {
+    cleanup();
+  }
+});
 
 const favicon = (config: TKonvaConfig) => {
+  // 依赖 faviconVersion：异步图标加载/解码完成后重新执行，生成并缓存真正的合成画布
+  void faviconVersion.value;
   const imageBaseSize = config.size ?? 24;
 
   const siteConfig = allAddedSiteMetadata[config.site];
@@ -193,6 +272,10 @@ const favicon = (config: TKonvaConfig) => {
   }
 
   let imageElement: HTMLImageElement | OffscreenCanvas = siteConfig.faviconElement;
+  const isReady = isFaviconImageReady(siteConfig.faviconElement);
+  if (!isReady) {
+    watchFaviconReady(config.site, siteConfig.faviconElement);
+  }
 
   // 如果设置中传入了 canvas 这个自定义参数，我们为这个 favicon 生成一个带有背景的 canvas，然后在 canvas 上居中绘制 favicon
   if (config.canvas) {
@@ -202,7 +285,7 @@ const favicon = (config: TKonvaConfig) => {
     const fillStyle = config.canvas.fillStyle ?? "#fff";
     const canvasKey = `${config.site}|${imageBaseSize}|${canvasWidth}x${canvasHeight}|${fillStyle}`;
 
-    let canvas = faviconCanvasCache.get(canvasKey);
+    let canvas = isReady ? faviconCanvasCache.get(canvasKey) : undefined;
     if (!canvas) {
       canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
       const ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
@@ -211,14 +294,16 @@ const favicon = (config: TKonvaConfig) => {
       ctx.fillStyle = fillStyle;
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-      // 计算缩放比例和位置，并将 favicon 居中填充
-      const x = (canvasWidth - imageBaseSize) / 2;
-      const y = (canvasHeight - imageBaseSize) / 2;
-      ctx.drawImage(siteConfig.faviconElement, x, y, imageBaseSize, imageBaseSize);
+      if (isReady) {
+        // 计算缩放比例和位置，并将 favicon 居中填充
+        const x = (canvasWidth - imageBaseSize) / 2;
+        const y = (canvasHeight - imageBaseSize) / 2;
+        ctx.drawImage(siteConfig.faviconElement, x, y, imageBaseSize, imageBaseSize);
 
-      // 背景色可随时调整，限容避免拖动取色器时缓存无限增长
-      if (faviconCanvasCache.size > 500) faviconCanvasCache.clear();
-      faviconCanvasCache.set(canvasKey, canvas);
+        // 背景色可随时调整，限容避免拖动取色器时缓存无限增长
+        if (faviconCanvasCache.size > 500) faviconCanvasCache.clear();
+        faviconCanvasCache.set(canvasKey, canvas);
+      }
     }
 
     // 防止辅助函数 image() 又一次设置 scaleX 和 scaleY
@@ -366,9 +451,9 @@ onMounted(async () => {
   isLoading.value = true;
 
   try {
-    // metadata store 从 chrome.storage 的恢复是异步的，而 loadFullData 会按「已添加站点」过滤：
-    // 水合完成前读取会得到空数据，时间轴会错误地显示空状态。这里先等水合完成。
-    await metadataStore.$onReady();
+    // metadata / config store 从 chrome.storage 的恢复是异步的：
+    // 水合完成前读取 sites 或 userDataTimelineControl/userName 会拿到空数据或默认配置。这里先等两者水合完成。
+    await Promise.all([metadataStore.$onReady?.(), configStore.$onReady?.()]);
 
     // 加载所有站点的元数据
     await loadAllAddedSiteMetadata(Object.keys(metadataStore.sites));
@@ -394,6 +479,12 @@ onMounted(async () => {
 
     // 开始生成 timeline 的数据
     resetTimelineDataWithControl();
+
+    // Konva 在 Canvas 上绘制自定义图标字体时不会触发浏览器自动下载未使用的 @font-face，
+    // 在结束骨架屏前主动加载 MDI 字体，避免首帧与导出图片里的图标变成缺字方框。
+    if (typeof document !== "undefined" && typeof document.fonts?.load === "function") {
+      await document.fonts.load('24px "Material Design Icons For PTD"').catch(() => undefined);
+    }
   } finally {
     // 无论成功失败都要收起骨架屏，失败时由空状态占位兜底
     isLoading.value = false;
