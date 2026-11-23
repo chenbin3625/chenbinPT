@@ -420,6 +420,8 @@ body {
   padding: 12px;
   overflow: auto;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ptd-border-strong, rgba(5, 5, 5, 0.2)) transparent;
 }
 
 #ptd-main > .ant-card,
@@ -628,9 +630,16 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 4px 24px;
-  width: 100%;
+  width: calc(100% + 16px);
   min-height: 34px;
-  padding: 4px 0;
+  margin-inline: -8px;
+  padding: 4px 8px;
+  border-radius: var(--ptd-radius, 6px);
+  transition: background-color 0.15s ease;
+}
+
+.ptd-settings-row:not(.ptd-settings-row--title):hover {
+  background: var(--ptd-surface-soft, rgba(0, 0, 0, 0.02));
 }
 
 /* 板块标题行：模板里用 <strong> 表示加粗，这里只保留语义钩子 */
@@ -857,7 +866,7 @@ body {
 
 /* 表头不折行：用元素选择器直接命中 th，避免写 antd 内部类 */
 .table-header-no-wrap th {
-  min-width: 56px;
+  min-width: 64px;
   white-space: nowrap;
 }
 
@@ -899,12 +908,18 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-btn__item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.status-btn__item + .status-btn__item {
+  padding-inline-start: 6px;
+  border-inline-start: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.1));
 }
 
 /* 图标尺寸：默认不写尺寸，跟随所在文本（@ant-design/icons 的 svg 是 1em）。
@@ -986,7 +1001,7 @@ body {
 
 /* 全局「清除筛选」是文字动作而非筛选项：高度与 chip 对齐，也不参与 chip 数量统计 */
 .search-filter-clear-all {
-  height: 32px;
+  height: 28px;
   padding-inline: 4px;
 }
 
@@ -995,8 +1010,8 @@ body {
   align-items: center;
   gap: 5px;
   max-width: min(240px, 100%);
-  height: 32px;
-  padding: 0 11px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.12));
   border-radius: 999px;
   background: var(--ptd-surface, #fff);
@@ -1006,7 +1021,8 @@ body {
   transition:
     border-color 0.15s ease,
     background-color 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .search-filter-chip:hover {
@@ -1023,6 +1039,7 @@ body {
   border-color: var(--ptd-primary, #1677ff);
   background: var(--ptd-primary-soft, rgba(22, 119, 255, 0.1));
   color: var(--ptd-primary, #1677ff);
+  font-weight: 500;
 }
 
 .search-filter-chip__label {
@@ -1106,10 +1123,40 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: var(--ptd-surface, #fff);
-  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.06));
-  border-radius: 8px;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  background: color-mix(in srgb, var(--ptd-surface, #fff) 94%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--ptd-primary-border, rgba(22, 119, 255, 0.35));
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.ptd-selection-bar__check {
+  color: var(--ptd-primary, #1677ff);
+}
+
+.ptd-slide-up-enter-active,
+.ptd-slide-up-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.ptd-slide-up-enter-from,
+.ptd-slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ptd-slide-up-enter-active,
+  .ptd-slide-up-leave-active {
+    transition: none;
+  }
+
+  .ptd-slide-up-enter-from,
+  .ptd-slide-up-leave-to {
+    transform: none;
+  }
 }
 
 .ptd-selection-bar__info {

@@ -8,7 +8,7 @@ import { mountOptionsView, prepareOptionsPinia } from "../../helpers/optionsView
 vi.mock("@/messages.ts", () => ({ sendMessage: vi.fn().mockResolvedValue(undefined), onMessage: vi.fn() }));
 
 describe("MyData 页面数据摘要", () => {
-  it("仅汇总成功站点，并显示异常站点数量", async () => {
+  it("仅汇总成功站点，并显示异常站点数量，且表头禁用折行", async () => {
     const pinia = prepareOptionsPinia();
     const { default: MyData } = await import("@/options/views/Overview/MyData/Index.vue");
     const { perSiteLastUserData } = await import("@/options/views/Overview/MyData/utils/lastUserData.ts");
@@ -48,6 +48,8 @@ describe("MyData 页面数据摘要", () => {
     const errorSites = summary.querySelector<HTMLButtonElement>(".my-data-summary__item--warning")!;
     expect(errorSites).not.toBeNull();
     expect(errorSites.textContent).toContain("1");
+
+    expect(view.$(".ant-table-wrapper.table-header-no-wrap"), "MyData 表格应禁用表头竖排折行").not.toBeNull();
 
     view.unmount();
   });

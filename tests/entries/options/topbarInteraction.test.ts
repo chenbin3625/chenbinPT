@@ -2,8 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { mountOptionsView, loadScopedStyles, prepareOptionsPinia } from "../../helpers/optionsView.ts";
 
+const mockConfigStore = {
+  theme: "auto" as "auto" | "light" | "dark",
+  $save: vi.fn(async () => undefined),
+  searchEntity: { allowSingleSiteSearch: false, showHotRecommendations: false },
+};
+
 vi.mock("@/options/stores/config.ts", () => ({
-  useConfigStore: () => ({ searchEntity: { allowSingleSiteSearch: false, showHotRecommendations: false } }),
+  useConfigStore: () => mockConfigStore,
 }));
 vi.mock("@/options/stores/metadata.ts", () => ({
   useMetadataStore: () => ({
@@ -24,6 +30,8 @@ import Topbar from "@/options/views/Layout/Topbar.vue";
 let view: ReturnType<typeof mountOptionsView>;
 
 async function mountTopbar(initialPath = "/") {
+  mockConfigStore.theme = "auto";
+  mockConfigStore.$save.mockClear();
   const pinia = prepareOptionsPinia();
   const router = createRouter({
     history: createMemoryHistory(),
@@ -125,5 +133,53 @@ describe("顶栏搜索交互", () => {
     pressEnter(input);
     await view.settle();
     expect(push).toHaveBeenCalledTimes(2);
+  });
+
+  it("按 / 或 Ctrl+K 聚焦搜索框，输入框内按 Escape 失焦，普通输入框内按 / 不抢焦点", async () => {
+    const { input } = await mountTopbar();
+    const otherInput = document.createElement("input");
+    document.body.appendChild(otherInput);
+
+    try {
+      // 在其他输入框中按 / 不应抢占焦点
+      otherInput.focus();
+      otherInput.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(otherInput);
+
+      // Ctrl+K 随时聚焦到顶栏搜索框
+      otherInput.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(input);
+
+      // 搜索框内按 Escape 失焦
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.activeElement).not.toBe(input);
+
+      // 非编辑元素上按 / 聚焦到顶栏搜索框
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(input);
+    } finally {
+      otherInput.remove();
+    }
+  });
+
+  it("顶栏快捷主题按钮可切换显示模式并持久化保存", async () => {
+    await mountTopbar();
+    const themeBtn = view.$<HTMLButtonElement>(".ptd-topbar-theme-btn")!;
+    expect(themeBtn).not.toBeNull();
+
+    themeBtn.click();
+    await view.settle(80);
+
+    const darkItem = Array.from(document.querySelectorAll<HTMLElement>(".ant-dropdown-menu-item")).find((item) =>
+      item.textContent?.includes("暗黑模式"),
+    );
+    expect(darkItem).toBeDefined();
+    darkItem!.click();
+    await view.settle();
+
+    expect(mockConfigStore.theme).toBe("dark");
+    expect(mockConfigStore.$save).toHaveBeenCalledTimes(1);
   });
 });

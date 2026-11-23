@@ -193,11 +193,11 @@ const fullTableHeader = computed(
       ...(showPromoColumn.value
         ? [{ title: t("SearchEntity.index.table.downloadVolumeFactor"), key: "downloadVolumeFactor", align: "center" }]
         : []),
-      { title: t("SearchEntity.index.table.size"), key: "size", align: "end" },
-      { title: t("SearchEntity.index.table.seeders"), key: "seeders", align: "end" },
-      { title: t("SearchEntity.index.table.leechers"), key: "leechers", align: "end" },
-      { title: t("SearchEntity.index.table.completed"), key: "completed", align: "end" },
-      { title: t("SearchEntity.index.table.comments"), key: "comments", align: "end" },
+      { title: t("SearchEntity.index.table.size"), key: "size", align: "end", width: 96 },
+      { title: t("SearchEntity.index.table.seeders"), key: "seeders", align: "end", width: 74 },
+      { title: t("SearchEntity.index.table.leechers"), key: "leechers", align: "end", width: 74 },
+      { title: t("SearchEntity.index.table.completed"), key: "completed", align: "end", width: 76 },
+      { title: t("SearchEntity.index.table.comments"), key: "comments", align: "end", width: 74 },
       { title: t("SearchEntity.index.table.time"), key: "time", align: "center" },
       {
         title: t("common.action"),

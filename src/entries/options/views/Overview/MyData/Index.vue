@@ -112,14 +112,14 @@ const fullTableHeader = reactive([
   // NOTE: 这里将 key 设为 uploaded, trueUploaded 而不是虚拟的 userData，可以让数据表格使用 uploaded 进行排序
   { title: t("MyData.table.userData"), key: "uploaded", align: "end" },
   { title: t("MyData.table.trueUserData"), key: "trueUploaded", align: "end" }, // 默认不显示
-  { title: t("levelRequirement.ratio"), key: "ratio", align: "end" },
-  { title: t("levelRequirement.trueRatio"), key: "trueRatio", align: "end" }, // 默认不显示
-  { title: t("levelRequirement.uploads"), key: "uploads", align: "end" },
-  { title: t("levelRequirement.seeding"), key: "seeding", align: "end" },
-  { title: t("levelRequirement.seedingSize"), key: "seedingSize", align: "end" },
+  { title: t("levelRequirement.ratio"), key: "ratio", align: "end", width: 80 },
+  { title: t("levelRequirement.trueRatio"), key: "trueRatio", align: "end", width: 96 }, // 默认不显示
+  { title: t("levelRequirement.uploads"), key: "uploads", align: "end", width: 80 },
+  { title: t("levelRequirement.seeding"), key: "seeding", align: "end", width: 80 },
+  { title: t("levelRequirement.seedingSize"), key: "seedingSize", align: "end", width: 96 },
   { title: t("levelRequirement.bonus"), key: "bonus", align: "end" },
   { title: t("levelRequirement.bonusPerHour"), key: "bonusPerHour", align: "end" },
-  { title: t("MyData.table.invites"), key: "invites", align: "end" }, // 默认不显示
+  { title: t("MyData.table.invites"), key: "invites", align: "end", width: 80 }, // 默认不显示
   { title: t("MyData.table.joinTime"), key: "joinTime", align: "center" },
   { title: t("MyData.table.lastAccessAt"), key: "lastAccessAt", align: "center" }, // 默认不显示
   { title: t("MyData.table.updateAt"), key: "updateAt", align: "center" },
@@ -493,39 +493,54 @@ function goToSiteSettings() {
       :aria-label="t('MyData.summary.label')"
     >
       <div class="my-data-summary__item">
-        <span class="my-data-summary__label">
-          <UpOutlined class="my-data-icon-success" />
-          {{ t("MyData.summary.uploaded") }}
+        <span class="my-data-summary__icon my-data-summary__icon--success" aria-hidden="true">
+          <UpOutlined />
         </span>
-        <strong>{{ formatSize(myDataSummary.uploaded) }}</strong>
+        <div class="my-data-summary__body">
+          <span class="my-data-summary__label">{{ t("MyData.summary.uploaded") }}</span>
+          <strong>{{ formatSize(myDataSummary.uploaded) }}</strong>
+        </div>
       </div>
       <div class="my-data-summary__item">
-        <span class="my-data-summary__label">
-          <DownOutlined class="my-data-icon-danger" />
-          {{ t("MyData.summary.downloaded") }}
+        <span class="my-data-summary__icon my-data-summary__icon--danger" aria-hidden="true">
+          <DownOutlined />
         </span>
-        <strong>{{ formatSize(myDataSummary.downloaded) }}</strong>
+        <div class="my-data-summary__body">
+          <span class="my-data-summary__label">{{ t("MyData.summary.downloaded") }}</span>
+          <strong>{{ formatSize(myDataSummary.downloaded) }}</strong>
+        </div>
       </div>
       <div class="my-data-summary__item">
-        <span class="my-data-summary__label">
+        <span class="my-data-summary__icon my-data-summary__icon--primary" aria-hidden="true">
           <FundOutlined />
-          {{ t("MyData.summary.seedingSize") }}
         </span>
-        <strong>{{ formatSize(myDataSummary.seedingSize) }}</strong>
+        <div class="my-data-summary__body">
+          <span class="my-data-summary__label">{{ t("MyData.summary.seedingSize") }}</span>
+          <strong>{{ formatSize(myDataSummary.seedingSize) }}</strong>
+        </div>
       </div>
       <button
         type="button"
         class="my-data-summary__item my-data-summary__item--action"
-        :class="{ 'my-data-summary__item--warning': myDataSummary.errorSites > 0 }"
+        :class="{
+          'my-data-summary__item--warning': myDataSummary.errorSites > 0,
+          'my-data-summary__item--active': quickFilter === 'failed',
+        }"
         :disabled="myDataSummary.errorSites === 0"
         :title="t('MyData.index.filter.failed')"
         @click="toggleQuickFilter('failed')"
       >
-        <span class="my-data-summary__label">
+        <span
+          class="my-data-summary__icon"
+          :class="myDataSummary.errorSites > 0 ? 'my-data-summary__icon--warning' : 'my-data-summary__icon--muted'"
+          aria-hidden="true"
+        >
           <WarningOutlined />
-          {{ t("MyData.summary.errorSites") }}
         </span>
-        <strong>{{ myDataSummary.errorSites }}</strong>
+        <div class="my-data-summary__body">
+          <span class="my-data-summary__label">{{ t("MyData.summary.errorSites") }}</span>
+          <strong>{{ myDataSummary.errorSites }}</strong>
+        </div>
       </button>
     </section>
 
@@ -628,7 +643,7 @@ function goToSiteSettings() {
         fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
-      class="table-stripe"
+      class="table-stripe table-header-no-wrap"
       @change="onTableChange"
     >
       <template #title>
@@ -1019,39 +1034,88 @@ function goToSiteSettings() {
 .my-data-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .my-data-summary__item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  min-height: 48px;
-  padding: 8px 12px;
+  min-height: 58px;
+  padding: 10px 14px;
   border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.08));
   border-radius: var(--ptd-radius-lg, 8px);
   background: var(--ptd-surface-soft, rgba(0, 0, 0, 0.02));
   color: var(--ptd-text, rgba(0, 0, 0, 0.88));
   text-align: left;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.my-data-summary__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.my-data-summary__icon--success {
+  background: color-mix(in srgb, var(--ptd-success, #52c41a) 12%, transparent);
+  color: var(--ptd-success, #52c41a);
+}
+
+.my-data-summary__icon--danger {
+  background: color-mix(in srgb, var(--ptd-danger, #ff4d4f) 11%, transparent);
+  color: var(--ptd-danger, #ff4d4f);
+}
+
+.my-data-summary__icon--primary {
+  background: var(--ptd-primary-soft, rgba(22, 119, 255, 0.1));
+  color: var(--ptd-primary, #1677ff);
+}
+
+.my-data-summary__icon--warning {
+  background: color-mix(in srgb, var(--ptd-warning, #faad14) 15%, transparent);
+  color: var(--ptd-warning, #faad14);
+}
+
+.my-data-summary__icon--muted {
+  background: var(--ptd-hover, rgba(0, 0, 0, 0.04));
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+}
+
+.my-data-summary__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .my-data-summary__item strong {
-  flex: none;
-  font-size: 16px;
+  font-size: 17px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  line-height: 24px;
+  line-height: 22px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .my-data-summary__label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
   color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
   font-size: var(--ptd-font-size-sm, 12px);
+  line-height: 16px;
   white-space: nowrap;
 }
 
@@ -1066,11 +1130,26 @@ function goToSiteSettings() {
 
 .my-data-summary__item--action:not(:disabled):hover {
   border-color: var(--ptd-warning, #faad14);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ptd-warning, #faad14) 14%, transparent);
+  transform: translateY(-1px);
+}
+
+.my-data-summary__item--active {
+  border-color: var(--ptd-warning, #faad14);
+  background: color-mix(in srgb, var(--ptd-warning, #faad14) 8%, transparent);
 }
 
 .my-data-summary__item--warning .my-data-summary__label,
 .my-data-summary__item--warning strong {
   color: var(--ptd-warning, #faad14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .my-data-summary__item,
+  .my-data-summary__item--action:not(:disabled):hover {
+    transition: none;
+    transform: none;
+  }
 }
 
 @media (max-width: 960px) {
@@ -1172,6 +1251,7 @@ function goToSiteSettings() {
 /* 上传/下载、做种等单元格的两行数字容器 */
 .my-data-totals {
   padding: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 数字行统一右对齐、不换行；--middle 用于带图标的行 */
@@ -1188,6 +1268,7 @@ function goToSiteSettings() {
 
 .my-data-nowrap {
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 仅禁止换行的 a-row（做种积分行），对齐由 antd 的 align / justify 属性负责 */

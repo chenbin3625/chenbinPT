@@ -1222,6 +1222,7 @@ function onToolbarSecondaryAction(key: string) {
 
 .my-client-nowrap {
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .my-client-muted {
@@ -1263,19 +1264,27 @@ function onToolbarSecondaryAction(key: string) {
 }
 
 .my-client-progress {
-  min-width: 108px;
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-width: 112px;
   margin: 0;
 }
 
 .my-client-progress :deep(.ant-progress-outer) {
+  flex: 1 1 auto;
+  width: auto;
   margin-inline-end: 0;
   padding-inline-end: 0;
 }
 
 .my-client-progress :deep(.ant-progress-text) {
-  min-width: 34px;
+  flex: 0 0 auto;
+  min-width: 38px;
   margin-inline-start: 6px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 @media (max-width: 1279px) {

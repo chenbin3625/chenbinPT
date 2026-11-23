@@ -214,7 +214,7 @@ watch([showDialog, () => siteId], ([open, currentSiteId], [wasOpen, prevSiteId])
         fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
-      class="table-stripe"
+      class="table-stripe table-header-no-wrap"
       @change="onTableChange"
     >
       <!-- -->

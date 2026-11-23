@@ -55,7 +55,7 @@ const fullTableHeader = [
   { title: t("SetDownloader.common.address"), key: "address", align: "start" },
   { title: t("SetMediaServer.Index.status"), key: "status", align: "center", sortable: false },
   { title: t("SetDownloader.index.table.enabled"), key: "enabled", align: "center" },
-  { title: t("common.action"), key: "action", sortable: false },
+  { title: t("common.action"), key: "action", align: "center", sortable: false },
 ] as DataTableHeader[];
 const tableSelected = ref<TMediaServerKey[]>([]);
 
@@ -247,7 +247,7 @@ function pruneTableSelected() {
         </template>
 
         <template v-else-if="column.key === 'action'">
-          <a-space class="table-action">
+          <a-button-group class="table-action">
             <a-tooltip :title="t('SetMediaServer.Overview.title')">
               <a-button size="small" @click="overviewMediaServer(record.id)">
                 <template #icon>
@@ -263,13 +263,13 @@ function pruneTableSelected() {
               </a-button>
             </a-tooltip>
             <a-tooltip :title="t('common.remove')">
-              <a-button size="small" @click="deleteMediaServer([record.id])">
+              <a-button danger size="small" @click="deleteMediaServer([record.id])">
                 <template #icon>
                   <DeleteOutlined />
                 </template>
               </a-button>
             </a-tooltip>
-          </a-space>
+          </a-button-group>
         </template>
       </template>
 

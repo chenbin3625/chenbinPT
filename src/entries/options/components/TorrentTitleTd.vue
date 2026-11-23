@@ -477,6 +477,7 @@ const scrollDuration = computed(() => `${Math.min(5, Math.max(2, Math.round(titl
       <a-flex
         v-if="configStore.searchEntifyControl.showTorrentTag || configStore.searchEntifyControl.showTorrentSubtitle"
         align="center"
+        class="torrent-title__meta-row"
         wrap="nowrap"
       >
         <!-- 种子标签信息 -->
@@ -542,7 +543,14 @@ const scrollDuration = computed(() => `${Math.min(5, Math.max(2, Math.round(titl
 }
 
 .torrent-title__link {
-  font-size: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.torrent-title__meta-row {
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .torrent-title__social {

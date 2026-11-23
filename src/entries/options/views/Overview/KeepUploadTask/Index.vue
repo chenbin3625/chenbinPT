@@ -427,7 +427,7 @@ async function copyLinksToClipboard(task: IKeepUploadTask) {
       :expanded-row-keys="expanded"
       :expand-fixed="expandFixed"
       :scroll="{ x: 'max-content' }"
-      class="table-stripe"
+      class="table-stripe table-header-no-wrap"
       @change="onTableChange"
       @expanded-rows-change="onExpandedChange"
     >

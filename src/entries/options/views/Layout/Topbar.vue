@@ -1,8 +1,8 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import { DownOutlined, SearchOutlined } from "@ant-design/icons-vue";
+import { BulbFilled, BulbOutlined, DesktopOutlined, DownOutlined, SearchOutlined } from "@ant-design/icons-vue";
 
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
@@ -24,6 +24,67 @@ const metadataStore = useMetadataStore();
 
 const searchKey = ref<string>("");
 const searchPlanKey = ref<string>("default");
+const searchInputRef = ref<{ focus?: () => void; blur?: () => void; input?: HTMLInputElement | null } | null>(null);
+const isSearchFocused = ref(false);
+
+const currentTheme = computed<"auto" | "light" | "dark">(() => {
+  const mode = configStore.theme;
+  return mode === "light" || mode === "dark" ? mode : "auto";
+});
+
+const themeTitle = computed(
+  () => `${t("SetBase.ui.displayMode.index")}: ${t(`SetBase.ui.displayMode.${currentTheme.value}`)}`,
+);
+
+function selectTheme({ key }: { key: string | number }) {
+  const next = String(key);
+  if (next === "auto" || next === "light" || next === "dark") {
+    configStore.theme = next;
+    void configStore.$save?.();
+  }
+}
+
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function focusSearchInput() {
+  const instance = searchInputRef.value;
+  const input = instance?.input ?? document.querySelector<HTMLInputElement>("#ptd-topbar .ptd-search-key input");
+  if (input) {
+    input.focus();
+    input.select();
+  } else {
+    instance?.focus?.();
+  }
+}
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return;
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && key === "k") {
+    event.preventDefault();
+    focusSearchInput();
+    return;
+  }
+  if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !isEditableElement(event.target)) {
+    event.preventDefault();
+    focusSearchInput();
+  }
+}
+
+function onSearchKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    (event.target as HTMLInputElement | null)?.blur?.();
+    searchInputRef.value?.blur?.();
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
 /**
  * 防重复提交只覆盖「导航尚未完成」这一小段时间。
  *
@@ -136,6 +197,45 @@ function selectSearchPlan({ key }: { key: string | number }) {
       <span v-show="display.smAndUp.value">{{ t("manifest.extName") }}</span>
     </div>
 
+    <!-- 快捷主题切换（置于标题右侧，不影响搜索栏贴右与热门推荐气泡锚点） -->
+    <a-dropdown :trigger="['click']" placement="bottomLeft">
+      <a-button
+        aria-haspopup="menu"
+        :aria-label="themeTitle"
+        :title="themeTitle"
+        class="ptd-topbar-theme-btn"
+        type="text"
+      >
+        <template #icon>
+          <BulbFilled v-if="currentTheme === 'dark'" />
+          <BulbOutlined v-else-if="currentTheme === 'light'" />
+          <DesktopOutlined v-else />
+        </template>
+      </a-button>
+      <template #overlay>
+        <a-menu :selected-keys="[currentTheme]" @click="selectTheme">
+          <a-menu-item key="auto">
+            <span class="ptd-topbar-theme-item">
+              <DesktopOutlined />
+              {{ t("SetBase.ui.displayMode.auto") }}
+            </span>
+          </a-menu-item>
+          <a-menu-item key="light">
+            <span class="ptd-topbar-theme-item">
+              <BulbOutlined />
+              {{ t("SetBase.ui.displayMode.light") }}
+            </span>
+          </a-menu-item>
+          <a-menu-item key="dark">
+            <span class="ptd-topbar-theme-item">
+              <BulbFilled />
+              {{ t("SetBase.ui.displayMode.dark") }}
+            </span>
+          </a-menu-item>
+        </a-menu>
+      </template>
+    </a-dropdown>
+
     <!-- 搜索输入框 -->
     <a-space-compact class="ptd-search-input">
       <!-- 搜索方案选择框 -->
@@ -190,15 +290,25 @@ function selectSearchPlan({ key }: { key: string | number }) {
       </a-dropdown>
 
       <a-input
+        ref="searchInputRef"
         v-model:value="searchKey"
         :aria-label="t('common.search')"
         :placeholder="t('layout.header.searchTip')"
         allow-clear
         class="ptd-search-key"
         enterkeyhint="search"
+        @blur="isSearchFocused = false"
+        @focus="isSearchFocused = true"
+        @keydown="onSearchKeydown"
         @press-enter="onSearchEnter"
       >
         <template #suffix>
+          <kbd
+            v-if="display.smAndUp.value && !searchKey && !isSearchFocused"
+            class="ptd-search-shortcut"
+            aria-hidden="true"
+            >/</kbd
+          >
           <RecommendationMenu
             v-if="configStore.searchEntity.showHotRecommendations"
             :disabled="isSubmittingSearch"
@@ -242,5 +352,38 @@ function selectSearchPlan({ key }: { key: string | number }) {
   min-width: 24px;
   height: 24px;
   padding-inline: 0;
+}
+
+.ptd-topbar-theme-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding-inline: 0;
+  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+}
+
+.ptd-topbar-theme-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ptd-search-shortcut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--ptd-border-strong, rgba(5, 5, 5, 0.15));
+  border-radius: 4px;
+  background: var(--ptd-surface-soft, rgba(0, 0, 0, 0.03));
+  color: var(--ptd-text-tertiary, rgba(0, 0, 0, 0.45));
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
 }
 </style>

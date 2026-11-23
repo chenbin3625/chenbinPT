@@ -96,36 +96,38 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- 多选操作条：仅在选中种子后出现，不使用 alert 样式，固定在页面（视口）底部 -->
-  <div v-if="selectedTorrents.length > 0" :style="insets" class="ptd-selection-bar">
-    <span class="ptd-selection-bar__info">
-      <CheckCircleFilled />
-      {{ t("SearchEntity.index.selectedTorrents", [selectedTorrents.length]) }}
-    </span>
-
-    <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
-
-    <span class="ptd-selection-bar__info ptd-selection-bar__size ptd-secondary-text">
-      <HddOutlined />
-      {{ t("SearchEntity.index.totalSize", [formatSize(totalSize)]) }}
-    </span>
-
-    <template v-if="showBillableSize && billableSize !== totalSize">
-      <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
-      <span class="ptd-selection-bar__info ptd-secondary-text" :title="t('SearchEntity.index.billableSizeHint')">
-        {{ t("SearchEntity.index.billableSize", [formatSize(billableSize)]) }}
+  <Transition name="ptd-slide-up">
+    <div v-if="selectedTorrents.length > 0" :style="insets" class="ptd-selection-bar">
+      <span class="ptd-selection-bar__info">
+        <CheckCircleFilled class="ptd-selection-bar__check" />
+        {{ t("SearchEntity.index.selectedTorrents", [selectedTorrents.length]) }}
       </span>
-    </template>
 
-    <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
+      <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
 
-    <!-- 窄屏（<840px）操作条宽度有限，批量按钮退回图标 + tooltip，避免换行成一整块 -->
-    <ActionTd :show-label="!display.smAndDown.value" :torrent-items="selectedTorrents" variant="bar" />
+      <span class="ptd-selection-bar__info ptd-selection-bar__size ptd-secondary-text">
+        <HddOutlined />
+        {{ t("SearchEntity.index.totalSize", [formatSize(totalSize)]) }}
+      </span>
 
-    <div class="ptd-selection-bar__spacer"></div>
+      <template v-if="showBillableSize && billableSize !== totalSize">
+        <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
+        <span class="ptd-selection-bar__info ptd-secondary-text" :title="t('SearchEntity.index.billableSizeHint')">
+          {{ t("SearchEntity.index.billableSize", [formatSize(billableSize)]) }}
+        </span>
+      </template>
 
-    <a-button :title="t('SearchEntity.index.clearSelection')" @click="emit('clear')" type="text" danger
-      ><template #icon><CloseOutlined /></template>
-      {{ t("SearchEntity.index.clearSelection") }}
-    </a-button>
-  </div>
+      <a-divider class="ptd-selection-bar__divider" type="vertical"></a-divider>
+
+      <!-- 窄屏（<840px）操作条宽度有限，批量按钮退回图标 + tooltip，避免换行成一整块 -->
+      <ActionTd :show-label="!display.smAndDown.value" :torrent-items="selectedTorrents" variant="bar" />
+
+      <div class="ptd-selection-bar__spacer"></div>
+
+      <a-button :title="t('SearchEntity.index.clearSelection')" @click="emit('clear')" type="text" danger
+        ><template #icon><CloseOutlined /></template>
+        {{ t("SearchEntity.index.clearSelection") }}
+      </a-button>
+    </div>
+  </Transition>
 </template>

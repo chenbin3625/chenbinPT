@@ -285,4 +285,22 @@ describe("F2-N1：SetBase 草稿 + 显式保存语义", () => {
       // 已 unmount
     }
   });
+
+  it("按 Ctrl+S 快捷键可保存常规设置草稿", async () => {
+    const { view, config, save } = await mountSetBaseBackupTab();
+    try {
+      const input = view.$<HTMLInputElement>('.ptd-set-base-form input[type="password"]')!;
+      typeEncryptionKey(input, "shortcut-key");
+      await view.settle(60);
+      expect(config.backup.encryptionKey).toBe("old-key");
+
+      const event = new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(config.backup.encryptionKey).toBe("shortcut-key"));
+      expect(save).toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
 });

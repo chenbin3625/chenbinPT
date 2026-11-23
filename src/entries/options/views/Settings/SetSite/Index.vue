@@ -79,7 +79,7 @@ const tableHeader = computed(() => {
       key: "groups",
       align: "left",
       sortable: false,
-      minWidth: "8rem",
+      minWidth: "6rem",
     },
     { title: t("SetSite.common.url"), key: "url", align: "start", sortable: false },
     { title: t("SetSite.common.isOffline"), key: "userConfig.isOffline", align: "center" },
@@ -98,7 +98,10 @@ const tableHeader = computed(() => {
     });
   }
 
-  return [...baseHeaders, { title: t("common.action"), key: "action", sortable: false }] as DataTableHeader[];
+  return [
+    ...baseHeaders,
+    { title: t("common.action"), key: "action", align: "center", sortable: false },
+  ] as DataTableHeader[];
 });
 /** 本表原先没有 `:scroll`：只在「固定操作列」打开时补 `scroll.x`，否则 antd 的 fixed 不生效 */
 const { rowSelectionFixed, scroll } = useTableActionColumnLayout();
@@ -446,7 +449,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'userConfig.sortIndex'">
-          <div style="display: flex">
+          <div style="display: flex; justify-content: center">
             <SiteFavicon :site-id="record.id" :size="20" />
           </div>
         </template>
@@ -460,15 +463,15 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                 <div v-for="text in record.metadata.description" :key="text">{{ text }}</div>
               </div>
             </template>
-            <span class="ptd-cell-ellipsis" style="max-width: 12rem">{{ siteDisplayName(record) }}</span>
+            <span class="ptd-cell-ellipsis" style="max-width: 11rem">{{ siteDisplayName(record) }}</span>
           </a-tooltip>
-          <span v-else class="ptd-cell-ellipsis" style="max-width: 12rem" :title="siteDisplayName(record)">{{
+          <span v-else class="ptd-cell-ellipsis" style="max-width: 11rem" :title="siteDisplayName(record)">{{
             siteDisplayName(record)
           }}</span>
         </template>
 
         <template v-else-if="column.key === 'groups'">
-          <span class="ptd-cell-ellipsis" style="max-width: 12rem" :title="(record.userConfig.groups ?? []).join(', ')">
+          <span class="ptd-cell-ellipsis" style="max-width: 10rem" :title="(record.userConfig.groups ?? []).join(', ')">
             {{ (record.userConfig.groups ?? []).join(", ") }}
           </span>
         </template>
@@ -476,7 +479,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
         <template v-else-if="column.key === 'url'">
           <span
             class="ptd-cell-ellipsis"
-            style="max-width: 16rem"
+            style="max-width: 14rem"
             :title="record.userConfig?.url ?? record.metadata?.urls?.[0]"
           >
             <a-typography-link
@@ -527,7 +530,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
         </template>
 
         <template v-else-if="column.key === 'action'">
-          <a-space class="table-action">
+          <a-button-group class="table-action">
             <!-- 站点信息编辑 -->
             <a-tooltip :title="t('common.edit')">
               <a-button
@@ -589,7 +592,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
                 </template>
               </a-button>
             </a-tooltip>
-          </a-space>
+          </a-button-group>
         </template>
       </template>
 

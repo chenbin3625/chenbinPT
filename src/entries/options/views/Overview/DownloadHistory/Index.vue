@@ -272,7 +272,7 @@ onUnmounted(() => {
         fixed: rowSelectionFixed,
       }"
       :scroll="{ x: 'max-content' }"
-      class="table-stripe"
+      class="table-stripe table-header-no-wrap"
       @change="onTableChange"
     >
       <template #bodyCell="{ column, record }">

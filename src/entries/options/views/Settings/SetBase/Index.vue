@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CheckCircleOutlined } from "@ant-design/icons-vue";
 import { cloneDeep, isEqual } from "es-toolkit";
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
@@ -118,6 +118,17 @@ async function save() {
     isSaving.value = false;
   }
 }
+
+function onSaveShortcut(event: KeyboardEvent) {
+  if (!showSaveButton.value) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    void save();
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onSaveShortcut));
+onBeforeUnmount(() => window.removeEventListener("keydown", onSaveShortcut));
 </script>
 
 <template>
@@ -137,7 +148,13 @@ async function save() {
           <span class="set-base-unsaved__dot" />
           {{ t("SetBase.unsavedChanges") }}
         </span>
-        <a-button class="set-base-save" type="primary" :loading="isSaving" @click="save">
+        <a-button
+          class="set-base-save"
+          type="primary"
+          :loading="isSaving"
+          :title="`${t('common.save')} (Ctrl+S)`"
+          @click="save"
+        >
           <template #icon>
             <CheckCircleOutlined />
           </template>
@@ -171,8 +188,13 @@ async function save() {
   align-items: center;
   gap: 6px;
   margin-inline-end: 8px;
-  color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--ptd-warning, #faad14) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ptd-warning, #faad14) 10%, transparent);
+  color: var(--ptd-warning, #faad14);
   font-size: var(--ptd-font-size-sm, 12px);
+  font-weight: 500;
   white-space: nowrap;
 }
 
