@@ -90,7 +90,7 @@
     "parse-torrent": "^11.0.24",
     "pinia": "^4.1.0",
     "search-query-parser": "^1.6.0",
-    "url-join": "^5.1.1",
+    "url-join": "^6.0.0",
     "valid-filename": "^5.0.0",
     "vue": "^3.5.44",
     "vue-echarts": "^8.3.2",
