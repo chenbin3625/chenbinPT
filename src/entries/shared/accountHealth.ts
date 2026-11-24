@@ -24,6 +24,86 @@ export interface ISiteInactivityInfo {
   status: "ok" | "warning" | "danger";
 }
 
+export interface IAccountHealthFailureRecord {
+  status: EResultParseStatus;
+  statusMsg?: string;
+  at: number;
+}
+
+export interface IAccountHealthSummary {
+  unreadMessageCount: number;
+  abnormalSiteCount: number;
+  inactiveWarningCount: number;
+}
+
+const ABNORMAL_ACCOUNT_STATUSES: ReadonlySet<EResultParseStatus> = new Set([
+  EResultParseStatus.needLogin,
+  EResultParseStatus.parseError,
+  EResultParseStatus.CFBlocked,
+  EResultParseStatus.unknownError,
+  EResultParseStatus.noUserInput,
+]);
+
+/**
+ * 汇总已添加站点的未读站内信、异常账号数及不活跃保号预警数（供工具栏弹窗等消费）。
+ * 异常状态优先读取独立的 `lastUserInfoFailures`（失败时不覆盖上一次成功快照），
+ * 只要失败时间不早于上一次成功快照的 `updateAt` 即视为当前异常。
+ */
+export function summarizeAccountHealth(params: {
+  siteIds: ReadonlyArray<TSiteID>;
+  lastUserInfo?: Record<string, Partial<IUserInfo> | undefined>;
+  lastUserInfoFailures?: Record<string, IAccountHealthFailureRecord | undefined>;
+  siteInactivityDays?: Record<string, number | undefined>;
+  defaultInactivityDays: number;
+  warnBeforeDays: number;
+  now?: number;
+}): IAccountHealthSummary {
+  const {
+    siteIds,
+    lastUserInfo = {},
+    lastUserInfoFailures = {},
+    siteInactivityDays = {},
+    defaultInactivityDays,
+    warnBeforeDays,
+    now = Date.now(),
+  } = params;
+
+  let unreadMessageCount = 0;
+  let abnormalSiteCount = 0;
+  let inactiveWarningCount = 0;
+
+  for (const siteId of siteIds) {
+    const info = lastUserInfo[siteId];
+    const failure = lastUserInfoFailures[siteId];
+    const hasActiveFailure =
+      Boolean(failure) &&
+      (!info || typeof info.updateAt !== "number" || !Number.isFinite(info.updateAt) || failure!.at >= info.updateAt);
+    const effectiveStatus = hasActiveFailure ? failure!.status : info?.status;
+
+    if (typeof effectiveStatus === "number" && ABNORMAL_ACCOUNT_STATUSES.has(effectiveStatus)) {
+      abnormalSiteCount += 1;
+    }
+
+    if (!info) continue;
+
+    if (typeof info.messageCount === "number" && info.messageCount > 0) {
+      unreadMessageCount += info.messageCount;
+    }
+
+    const inact = computeSiteInactivityInfo(
+      info,
+      siteInactivityDays[siteId] ?? defaultInactivityDays,
+      warnBeforeDays,
+      now,
+    );
+    if (inact && (inact.status === "warning" || inact.status === "danger")) {
+      inactiveWarningCount += 1;
+    }
+  }
+
+  return { unreadMessageCount, abnormalSiteCount, inactiveWarningCount };
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export function normalizeTimestampMs(ts: unknown): number | null {

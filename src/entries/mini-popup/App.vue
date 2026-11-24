@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { EResultParseStatus } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
-import { computeSiteInactivityInfo } from "@/shared/accountHealth.ts";
+import { summarizeAccountHealth } from "@/shared/accountHealth.ts";
 import { formatSize } from "@/options/utils.ts";
 import type { IConfigPiniaStorageSchema } from "@/shared/types/storages/config.ts";
 import type { IMetadataPiniaStorageSchema, IDownloaderMetadata } from "@/shared/types/storages/metadata.ts";
@@ -55,6 +54,7 @@ async function loadData() {
     // 账号健康摘要
     const sites = metadata?.sites ?? {};
     const lastUserInfo = metadata?.lastUserInfo ?? {};
+    const lastUserInfoFailures = metadata?.lastUserInfoFailures ?? {};
     const siteInactivityDays = metadata?.siteInactivityDays ?? {};
     const defaultInactivityDays = config?.alerts?.defaultSiteMaxInactiveDays ?? 30;
     const warnBeforeDays = config?.alerts?.inactivityWarningDays ?? 7;
@@ -62,36 +62,18 @@ async function loadData() {
     const addedSiteIds = Object.keys(sites);
     siteCount.value = addedSiteIds.length;
 
-    let unread = 0;
-    let abnormal = 0;
-    let inactiveWarn = 0;
+    const healthSummary = summarizeAccountHealth({
+      siteIds: addedSiteIds,
+      lastUserInfo,
+      lastUserInfoFailures,
+      siteInactivityDays,
+      defaultInactivityDays,
+      warnBeforeDays,
+    });
 
-    for (const siteId of addedSiteIds) {
-      const info = lastUserInfo[siteId];
-      if (!info) continue;
-      if (typeof info.messageCount === "number" && info.messageCount > 0) {
-        unread += info.messageCount;
-      }
-      if (
-        info.status === EResultParseStatus.needLogin ||
-        info.status === EResultParseStatus.parseError ||
-        info.status === EResultParseStatus.CFBlocked
-      ) {
-        abnormal += 1;
-      }
-      const inact = computeSiteInactivityInfo(
-        info,
-        siteInactivityDays[siteId] ?? defaultInactivityDays,
-        warnBeforeDays,
-      );
-      if (inact && (inact.status === "warning" || inact.status === "danger")) {
-        inactiveWarn += 1;
-      }
-    }
-
-    unreadMessageCount.value = unread;
-    abnormalSiteCount.value = abnormal;
-    inactiveWarningCount.value = inactiveWarn;
+    unreadMessageCount.value = healthSummary.unreadMessageCount;
+    abnormalSiteCount.value = healthSummary.abnormalSiteCount;
+    inactiveWarningCount.value = healthSummary.inactiveWarningCount;
 
     // 启用下载器实时状态
     const enabledDownloaders = Object.values(metadata?.downloaders ?? {}).filter((d): d is IDownloaderMetadata =>

@@ -250,12 +250,60 @@ export interface IRouteSearchDecision {
  * → 实际方案 id），URL 里保留的仍是用户请求的方案 key，直接比较会在每次刷新时误判为「方案变了」。
  * 不搜索时也不改写 store，因此界面展示的方案与结果始终一致。
  */
+function resolveEffectivePlanKey(plan: string | undefined, defaultSolutionId: string = "default"): string {
+  const key = plan || "default";
+  if (key === "default") {
+    return defaultSolutionId && defaultSolutionId !== "default" ? defaultSolutionId : "all";
+  }
+  return key;
+}
+
+export interface ICrossSeedRouteBase {
+  downloaderId: string;
+  torrentId: string;
+  name: string;
+  size: number;
+  infoHash?: string;
+  savePath?: string;
+}
+
+/**
+ * 从路由 query 解析反向辅种基准：
+ * - 携带完整 crossSeed 参数时返回新的基准对象，并标明是否与当前基准相同；
+ * - 未携带（普通搜索 / 快照视图）时返回 null，调用方应清空反向辅种模式和同体积过滤。
+ */
+export function resolveCrossSeedBaseFromQuery(
+  query: Record<string, unknown>,
+  current: ICrossSeedRouteBase | null,
+): { nextBase: ICrossSeedRouteBase | null; resetOptions: boolean } {
+  const csClient = normalizeRouteQueryValue(query.crossSeedClient);
+  const csId = normalizeRouteQueryValue(query.crossSeedId);
+  const csName = normalizeRouteQueryValue(query.crossSeedName);
+  if (!csClient || !csId || !csName) {
+    return { nextBase: null, resetOptions: true };
+  }
+
+  const isSameBase = current?.downloaderId === csClient && current?.torrentId === csId;
+  return {
+    nextBase: {
+      downloaderId: csClient,
+      torrentId: csId,
+      name: csName,
+      size: Number(normalizeRouteQueryValue(query.crossSeedSize) ?? 0) || 0,
+      infoHash: normalizeRouteQueryValue(query.crossSeedHash) ?? "",
+      savePath: normalizeRouteQueryValue(query.crossSeedPath) ?? "",
+    },
+    resetOptions: !isSameBase,
+  };
+}
+
 export function resolveRouteSearchDecision(params: {
   query: Record<string, unknown>;
   previousQuery?: Record<string, unknown>;
   state: IRouteSearchState;
+  defaultSolutionId?: string;
 }): IRouteSearchDecision {
-  const { query, previousQuery, state } = params;
+  const { query, previousQuery, state, defaultSolutionId = "default" } = params;
   const search = normalizeRouteQueryValue(query.search);
   const plan = normalizeRouteQueryValue(query.plan);
   const flush = isFlushQuery(query.flush);
@@ -274,17 +322,24 @@ export function resolveRouteSearchDecision(params: {
   if (flush) return buildSearch();
 
   if (!isInitial) {
+    const prevPlan = normalizeRouteQueryValue(previousQuery?.plan);
     const searchChanged = search !== undefined && search !== normalizeRouteQueryValue(previousQuery?.search);
-    const planChanged = plan !== undefined && plan !== normalizeRouteQueryValue(previousQuery?.plan);
+    const planChanged =
+      (plan ?? "default") !== (prevPlan ?? "default") && (plan !== undefined || prevPlan !== undefined);
     if (searchChanged || planChanged) return buildSearch();
     return { resetData };
   }
 
-  // 首次挂载：只有「地址里指定了搜索条件」且「恢复结果对不上」时才搜索
+  // 首次挂载：只有「地址里指定了搜索条件」且「恢复结果（关键词或方案）对不上」时才搜索
   if (search !== undefined) {
     // 已完成的空搜索结果同样算「恢复成功」：否则刷新后会重新跑一遍所有站点搜索
     const completed = state.resultCount > 0 || (state.endAt ?? 0) > 0;
-    const restoredMatches = state.startAt > 0 && completed && search === state.searchKey;
+    const requestedPlan = plan ?? "default";
+    const planMatches =
+      requestedPlan === state.searchPlanKey ||
+      resolveEffectivePlanKey(requestedPlan, defaultSolutionId) ===
+        resolveEffectivePlanKey(state.searchPlanKey, defaultSolutionId);
+    const restoredMatches = state.startAt > 0 && completed && search === state.searchKey && planMatches;
     return restoredMatches ? { resetData } : buildSearch();
   }
 

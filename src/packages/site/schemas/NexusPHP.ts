@@ -1073,6 +1073,7 @@ export default class NexusPHP extends PrivateSite {
    * 与之相对的是「拿不到可用响应」（空 body / 软错误页 / 结构未知）：后者不能被当成 0（D1-3）。
    */
   private static readonly noRecordPattern = /No record\.?|没有记录|沒有記錄|暂无数据|暫無數據/i;
+  private static readonly embeddedSizePattern = /[\d.,]+\s*(?:[ZEPTGMK](?:B|iB)|B(?:ytes?)?)s?(?![a-z])/i;
 
   protected async parseUserInfoForSeedingStatus(flushUserInfo: Partial<IUserInfo>): Promise<Partial<IUserInfo>> {
     const userId = flushUserInfo.id as number;
@@ -1090,7 +1091,6 @@ export default class NexusPHP extends PrivateSite {
 
     if (userSeedingRequestString.includes("<table")) {
       const userSeedingDocument = createDocument(userSeedingRequestString);
-      seedStatus = { seeding: 0, seedingSize: 0 };
 
       /**
        * #1060 HUDBT 等站点可能存在 seeding table 中也有 "xx | xx" 的文本，但并非我们需要的做种和做种大小信息
@@ -1100,15 +1100,19 @@ export default class NexusPHP extends PrivateSite {
       const divSeeding = selectElements("div:has( ~ table) > div:contains(' | ')", userSeedingDocument);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
-        seedStatus.seeding = definedFilters.parseNumber(seedingText[0]);
-        seedStatus.seedingSize = definedFilters.parseSize(seedingText[1]);
+        const countText = seedingText[0]?.trim() ?? "";
+        const sizeText = seedingText[1]?.trim() ?? "";
+        if (seedingText.length >= 2 && /\d/.test(countText) && NexusPHP.embeddedSizePattern.test(sizeText)) {
+          seedStatus = {
+            seeding: definedFilters.parseNumber(countText),
+            seedingSize: definedFilters.parseSize(sizeText),
+          };
+        }
       } else {
         const trAnothers = selectElements("table:last tr:not(:eq(0))", userSeedingDocument);
         if (trAnothers.length > 0) {
-          seedStatus.seeding = trAnothers.length;
-
-          // 根据自动判断应该用 td.rowfollow:eq(?)
-          let sizeIndex = 2;
+          // 必须命中包含合法体积文本的列才视为做种明细表，避免把两行维护公告表当成「1 个做种、0 体积」
+          let sizeIndex = -1;
           const tdAnothers = selectElements("> td", trAnothers[0]);
           for (let i = 0; i < tdAnothers.length; i++) {
             const cellText = ((tdAnothers[i] as HTMLElement).innerText || tdAnothers[i].textContent || "").trim();
@@ -1118,19 +1122,28 @@ export default class NexusPHP extends PrivateSite {
             }
           }
 
-          trAnothers.forEach((trAnother) => {
-            // E-4：`td:eq(N)` 对少列的行（colspan 表头/表尾、结构异常行）会返回空数组，
-            // 直接取 [0] 再 .innerText 会抛 TypeError 并让整次用户信息刷新失败，
-            // 因此与 Gazelle 的同款循环一样必须先确认取到了元素。
-            const sizeElement = selectElements(`td:eq(${sizeIndex})`, trAnother)[0] as HTMLElement | undefined;
-            if (!sizeElement) return;
+          if (sizeIndex >= 0) {
+            let seedingSize = 0;
+            trAnothers.forEach((trAnother) => {
+              // E-4：`td:eq(N)` 对少列的行（colspan 表头/表尾、结构异常行）会返回空数组，
+              // 直接取 [0] 再 .innerText 会抛 TypeError 并让整次用户信息刷新失败，
+              // 因此与 Gazelle 的同款循环一样必须先确认取到了元素。
+              const sizeElement = selectElements(`td:eq(${sizeIndex})`, trAnother)[0] as HTMLElement | undefined;
+              if (!sizeElement) return;
 
-            seedStatus!.seedingSize += parseSizeString((sizeElement.innerText || sizeElement.textContent || "").trim());
-          });
+              seedingSize += parseSizeString((sizeElement.innerText || sizeElement.textContent || "").trim());
+            });
+            seedStatus = {
+              seeding: trAnothers.length,
+              seedingSize,
+            };
+          }
         }
       }
-    } else if (NexusPHP.noRecordPattern.test(userSeedingRequestString)) {
-      // 明确的「没有记录」：真实的 0 做种是有效数据
+    }
+
+    if (!seedStatus && NexusPHP.noRecordPattern.test(userSeedingRequestString)) {
+      // 明确的「没有记录」：真实的 0 做种是有效数据（即使包裹在提示表格中）
       seedStatus = { seeding: 0, seedingSize: 0 };
     }
 
@@ -1165,11 +1178,18 @@ export default class NexusPHP extends PrivateSite {
       const divSeeding = selectElements("div:has( ~ table) > div:contains(' | ')", userUploadsDocument);
       if (divSeeding.length > 0 && divSeeding[0].textContent) {
         const seedingText = divSeeding[0].textContent.split("|");
-        uploads = definedFilters.parseNumber(seedingText[0]);
+        if (seedingText.length >= 2 && /\d/.test(seedingText[0])) {
+          uploads = definedFilters.parseNumber(seedingText[0]);
+        }
       } else {
-        uploads = selectElements("table:last tr:not(:eq(0))", userUploadsDocument).length;
+        const trAnothers = selectElements("table:last tr:not(:eq(0))", userUploadsDocument);
+        if (trAnothers.length > 0) {
+          uploads = trAnothers.length;
+        }
       }
-    } else if (NexusPHP.noRecordPattern.test(userUploadsRequestString)) {
+    }
+
+    if (typeof uploads !== "number" && NexusPHP.noRecordPattern.test(userUploadsRequestString)) {
       uploads = 0;
     }
 

@@ -780,14 +780,14 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     let page = 1;
 
     while (scanned < maxItems) {
-      const size = Math.min(pageSize, maxItems - scanned);
       const parentId = this.config.auth.parentId?.trim();
       const body: Record<string, unknown> = {
         tags: { type: ["Movie", "TV", "Video"] },
         sort_type: "DESC",
         sort_column: "create_time",
         page,
-        page_size: size,
+        // 保持 page_size 恒定，避免末页缩小 page_size 导致按 (page - 1) * page_size 计算偏移时回卷重复计数
+        page_size: pageSize,
         exclude_grouped_video: 1,
       };
       if (parentId) {
@@ -798,17 +798,22 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
       const items = data?.list ?? [];
       if (items.length === 0) break;
 
-      for (const rawItem of items) {
+      const remaining = maxItems - scanned;
+      const pageItems = items.length > remaining ? items.slice(0, remaining) : items;
+      for (const rawItem of pageItems) {
         accumulator.add(this.mapMediaItem(rawItem));
       }
-      scanned += items.length;
-      if (data?.total && scanned >= data.total) break;
-      if (items.length < size) break;
+      scanned += pageItems.length;
+
+      const hasKnownTotal = typeof data?.total === "number" && Number.isFinite(data.total) && data.total > 0;
+      if (scanned >= maxItems) {
+        truncated = hasKnownTotal ? data.total! > maxItems : items.length > remaining || items.length >= pageSize;
+        break;
+      }
+      if (hasKnownTotal && scanned >= data.total!) break;
+      if (items.length < pageSize) break;
 
       page += 1;
-      if (scanned >= maxItems) {
-        truncated = true;
-      }
     }
 
     return accumulator.build(this.config.id!, truncated);

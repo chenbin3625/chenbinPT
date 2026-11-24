@@ -246,6 +246,7 @@ async function sendTorrentsToDownloader(task: IKeepUploadTask, items: IKeepUploa
 
       const result = await sendMessage("downloadTorrent", {
         torrent: {
+          id: item.id,
           site: item.site,
           title: item.title,
           subTitle: item.subTitle,

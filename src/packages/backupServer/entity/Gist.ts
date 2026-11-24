@@ -186,12 +186,20 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
     patchFile = { ...patchFile, ...writeFile };
 
     try {
-      const currentGistStatus = await this.request<{ files: Record<string, { content: string }> }>("");
-      const currentGistFileKeys = Object.keys(currentGistStatus.data?.files ?? {});
+      const currentGistStatus = await this.request<{
+        files: Record<string, { content?: string; truncated?: boolean; raw_url?: string }>;
+      }>("");
+      const currentGistFiles = currentGistStatus.data?.files ?? {};
 
-      // 如果用户初次编辑的时候添加了任意的文件，我们需要进行删除，不然会遗留了不需要的文件
-      for (const currentGistFileKey of currentGistFileKeys) {
-        if (typeof patchFile[currentGistFileKey] === "undefined" && !currentGistFileKey.includes(".keep.")) {
+      // 只清理上一份备份清单 `_manifest.json` 登记过的过期备份文件，
+      // 避免误删目标 Gist 中已有的其他无关文件（如用户自己的脚本/笔记）及 `.keep.` 保护文件。
+      const previousBackupFileNames = await this.readPreviousManifestFileNames(currentGistFiles["_manifest.json"]);
+      for (const currentGistFileKey of Object.keys(currentGistFiles)) {
+        if (
+          previousBackupFileNames.has(currentGistFileKey) &&
+          !Object.hasOwn(patchFile, currentGistFileKey) &&
+          !currentGistFileKey.includes(".keep.")
+        ) {
           patchFile[currentGistFileKey] = null;
         }
       }
@@ -209,6 +217,45 @@ export default class Gist extends AbstractBackupServer<GistConfig> {
       this.logBackupFailure("addFile", e);
       return false;
     }
+  }
+
+  private async readPreviousManifestFileNames(
+    manifestEntry: { content?: string; truncated?: boolean; raw_url?: string } | undefined,
+  ): Promise<Set<string>> {
+    const fileNames = new Set<string>();
+    if (!manifestEntry) return fileNames;
+
+    try {
+      let rawContent = manifestEntry.content;
+      if (manifestEntry.truncated && typeof manifestEntry.raw_url === "string" && manifestEntry.raw_url.length > 0) {
+        const rawReq = await axios.get<string>(manifestEntry.raw_url, {
+          responseType: "text",
+          timeout: getBackupRequestTimeout(this.userConfig),
+        });
+        rawContent = typeof rawReq.data === "string" ? rawReq.data : JSON.stringify(rawReq.data);
+      }
+      if (typeof rawContent !== "string" || !rawContent.trim()) {
+        return fileNames;
+      }
+
+      const prevManifest = JSON.parse(rawContent, stripProtoKeys) as Partial<IGistBackupFileManifest>;
+      if (!prevManifest?.files || typeof prevManifest.files !== "object") {
+        return fileNames;
+      }
+
+      for (const entry of Object.values(prevManifest.files as Record<string, unknown>)) {
+        if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+          const name = (entry as { name: string }).name.trim();
+          if (name && name !== "_manifest.json") {
+            fileNames.add(name);
+          }
+        }
+      }
+    } catch (e) {
+      logMessage("[Gist] 解析上一份备份清单失败，跳过清理旧备份文件", { error: String(e) }, "warn");
+    }
+
+    return fileNames;
   }
 
   async getFile(path: string): Promise<IBackupData> {

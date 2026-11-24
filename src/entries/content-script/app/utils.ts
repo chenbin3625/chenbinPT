@@ -1,6 +1,7 @@
 import { computed, shallowRef, ref, toValue } from "vue";
 import type { TSupportSocialSite } from "@ptd/social";
 import { getSite as createSiteInstance, type ISiteMetadata, type ITorrent } from "@ptd/site";
+import { syncCustomSites } from "@ptd/site/customSiteRegistry.ts";
 import { getHostFromUrl, restoreSecureLink } from "@ptd/site/utils/html.ts";
 import { selectElements } from "@ptd/site/utils/selector.ts";
 import type BittorrentSite from "@ptd/site/schemas/AbstractBittorrentSite.ts";
@@ -204,6 +205,9 @@ export async function updatePageType(ptdData: IPtdData = {}) {
   const needsNewInstance = !instance || instance.metadata?.id !== ptdData.siteId;
   if (needsNewInstance) {
     const metadataStore = useMetadataStore();
+    if (metadataStore.customSites && Object.keys(metadataStore.customSites).length > 0) {
+      syncCustomSites(metadataStore.customSites);
+    }
     pageType.value = "unknown"; // 站点实例重建期间先不要按旧类型渲染动作
     siteInstance.value = undefined;
 
@@ -217,6 +221,9 @@ export async function updatePageType(ptdData: IPtdData = {}) {
   } else {
     // 复用时检查配置是否在 options 侧被改过（getSiteUserConfig 读的是内存 pinia state，开销可忽略）
     const metadataStore = useMetadataStore();
+    if (metadataStore.customSites && Object.keys(metadataStore.customSites).length > 0) {
+      syncCustomSites(metadataStore.customSites);
+    }
     const siteConfig = await metadataStore.getSiteUserConfig(ptdData.siteId);
     if (requestId !== pageTypeRequestId) return;
     if (snapshotSiteUserConfig(siteConfig) !== siteInstanceConfigSnapshot) {
@@ -585,6 +592,9 @@ export async function getTrustedLinkHosts(siteId?: string): Promise<Set<string>>
     // host 校验依赖它），并在成功后回填 siteInstance，后续页面类型判定直接复用。
     try {
       const metadataStore = useMetadataStore();
+      if (metadataStore.customSites && Object.keys(metadataStore.customSites).length > 0) {
+        syncCustomSites(metadataStore.customSites);
+      }
       // 直接读内存里的站点配置：getSiteUserConfig 在 sites 为空时会走后台消息（一次性成本高、
       // 且在消息通道不可用的宿主里会挂起），这里只需要「已水合的用户配置」用于 host 校验。
       const siteConfig = (metadataStore.sites?.[siteId] ?? {}) as Record<string, unknown>;

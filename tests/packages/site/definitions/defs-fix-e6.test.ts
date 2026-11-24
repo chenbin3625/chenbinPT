@@ -295,11 +295,12 @@ describe("E6 springsunday：做种 AJAX 断言与重复请求", () => {
   it("L-1：断言不命中回落到 super 时，同一个 AJAX 只请求一次", async () => {
     const requestSpy = vi
       .spyOn(NexusPHP.prototype as any, "requestUserSeedingPage")
-      .mockResolvedValue("<table><tr><td>Total</td></tr></table>");
+      .mockResolvedValue("<table><tr><th>Name</th><th>Size</th></tr><tr><td>Movie</td><td>1.5 GB</td></tr></table>");
     try {
       const site: any = new SpringSunday(springsunday as any, {});
-      await site.parseUserInfoForSeedingStatus({ id: 9 });
+      const info = await site.parseUserInfoForSeedingStatus({ id: 9 });
       expect(requestSpy).toHaveBeenCalledTimes(1);
+      expect(info.seeding).toBe(1);
     } finally {
       requestSpy.mockRestore();
     }

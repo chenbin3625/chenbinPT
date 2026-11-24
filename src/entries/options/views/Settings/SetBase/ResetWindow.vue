@@ -74,12 +74,16 @@ const resetItems = computed<IResetItem[]>(() => [
       if (clearSiteTarget.value === "all") {
         // 清空所有站点数据
         metadataStore.lastUserInfo = {};
+        metadataStore.lastUserInfoFailures = {};
         await sendMessage("setExtStorage", { key: "userInfo", value: {} });
       } else {
         // 清空指定站点数据
         const siteId = clearSiteTarget.value;
         if (metadataStore.lastUserInfo[siteId]) {
           delete metadataStore.lastUserInfo[siteId];
+        }
+        if (metadataStore.lastUserInfoFailures?.[siteId]) {
+          delete metadataStore.lastUserInfoFailures[siteId];
         }
         const userInfo = ((await sendMessage("getExtStorage", "userInfo")) ?? {}) as TUserInfoStorageSchema;
         if (Object.hasOwn(userInfo, siteId)) {

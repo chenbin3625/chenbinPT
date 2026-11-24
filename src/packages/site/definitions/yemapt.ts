@@ -383,18 +383,20 @@ export default class YemaPT extends PrivateSite {
   }
 
   public override async getTorrentDownloadLink(torrent: ITorrent): Promise<string> {
+    const torrentId =
+      torrent.id ?? torrent.url?.match(/\/#\/torrent\/detail\/(\d+)/)?.[1] ?? torrent.link?.match(/[?&]id=(\d+)/)?.[1];
     const { data } = await this.request<IYemaApiResp<string | { key?: string; token?: string }>>({
       url: "/openApi/torrent/generateDownloadKey.json",
       method: "POST",
       responseType: "json",
-      params: { id: torrent.id },
+      params: { id: torrentId },
     });
 
     const rawKey = data?.data;
     const downloadKey = typeof rawKey === "string" ? rawKey : (rawKey?.key ?? rawKey?.token);
 
     if (!downloadKey) {
-      throw new Error(`Failed to generate YemaPT download key for torrent ${torrent.id}`);
+      throw new Error(`Failed to generate YemaPT download key for torrent ${torrentId}`);
     }
 
     return new URL(`/api/torrent/download1?token=${encodeURIComponent(downloadKey)}`, this.url).toString();

@@ -326,8 +326,12 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string, e
     const baseTorrentInfo = baseTorrent.value!;
     const torrentInfo = torrent;
 
-    // 首先检查 infoHash 是否相同
-    if (torrentInfo.infoHash && baseTorrentInfo.infoHash && torrentInfo.infoHash === baseTorrentInfo.infoHash) {
+    // 首先检查 infoHash 是否相同（不区分十六进制大小写）
+    if (
+      torrentInfo.infoHash &&
+      baseTorrentInfo.infoHash &&
+      torrentInfo.infoHash.toLowerCase() === baseTorrentInfo.infoHash.toLowerCase()
+    ) {
       // infoHash 完全相同，说明是同一个种子
       result.verified = true;
     } else {
@@ -507,6 +511,7 @@ async function createKeepUploadTask() {
       size: verifiedList[0].data.size || 0,
       downloadOptions,
       items: verifiedList.map((item) => ({
+        id: item.data.id,
         site: item.data.site,
         title: item.data.title || "",
         subTitle: item.data.subTitle,

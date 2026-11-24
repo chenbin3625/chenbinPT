@@ -150,11 +150,19 @@ export async function initTableData() {
       tasks.push(
         buildPerSiteData(siteId as TSiteID, siteUserInfoData)
           .then((row) => {
-            // 重建表格（例如另一个站点刷新成功、metadata 同步后）时保留本会话内的失败标记：
-            // 失败不会写入 lastUserInfo，只有 updateAt 前进到失败之后（即又成功了一次）才应清掉。
-            const previousFailure = perSiteLastUserData.value[siteId]?.lastFlushFailure;
-            if (previousFailure && (siteUserInfoData.updateAt ?? 0) < previousFailure.at) {
-              row.lastFlushFailure = previousFailure;
+            // 重建表格（例如另一个站点刷新成功、metadata 同步后或页面重新打开）时保留最近一次失败标记：
+            // 优先对比内存与持久化的 lastUserInfoFailures，只有 updateAt 前进到失败之后（又成功了一次）才清除。
+            const inMemoryFailure = perSiteLastUserData.value[siteId]?.lastFlushFailure;
+            const persistedFailure = metadataStore.lastUserInfoFailures?.[siteId];
+            const latestFailure =
+              inMemoryFailure && persistedFailure
+                ? inMemoryFailure.at >= persistedFailure.at
+                  ? inMemoryFailure
+                  : persistedFailure
+                : (inMemoryFailure ?? persistedFailure);
+            const lastSuccessAt = siteUserInfoData.updateAt ?? 0;
+            if (latestFailure && (lastSuccessAt === 0 || latestFailure.at >= lastSuccessAt)) {
+              row.lastFlushFailure = latestFailure;
             }
             nextRows[siteId] = row;
           })

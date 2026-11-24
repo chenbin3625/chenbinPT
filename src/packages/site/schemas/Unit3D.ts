@@ -1,11 +1,14 @@
+import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import urlJoin from "url-join";
 import { omit, toMerged } from "es-toolkit";
 import { get } from "es-toolkit/compat";
 
+import { isDocumentNode, isElementNode } from "./AbstractBittorrentSite";
 import PrivateSite from "./AbstractPrivateSite";
 import {
   ETorrentStatus,
   EResultParseStatus,
+  NoUserInputError,
   type IElementQuery,
   type IUserInfo,
   type ITorrent,
@@ -458,7 +461,6 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
   },
 
   userInfo: {
-    pickLast: ["name"],
     selectors: {
       // '/'
       name: {
@@ -604,12 +606,93 @@ export const SchemaMetadata: TSchemaMetadata<TMetadataKeys> = {
 };
 
 export default class Unit3D extends PrivateSite {
+  public override async request<T>(
+    axiosConfig: AxiosRequestConfig,
+    checkLogin: boolean = true,
+  ): Promise<AxiosResponse<T>> {
+    const config: AxiosRequestConfig = { ...axiosConfig };
+    const targetUrl = this.resolveRequestTarget(config);
+    const isApiRequest = (() => {
+      if (!targetUrl) return false;
+      try {
+        return /(?:^|\/)api\//i.test(new URL(targetUrl).pathname);
+      } catch {
+        return false;
+      }
+    })();
+
+    if (isApiRequest) {
+      const existingHeaders = (config.headers ?? {}) as Record<string, unknown>;
+      const hasAuthHeader = Object.keys(existingHeaders).some((key) => {
+        const lower = key.toLowerCase();
+        return lower === "authorization" || lower === "x-api-token";
+      });
+
+      if (!hasAuthHeader) {
+        const apiKey = this.userConfig.inputSetting?.apikey?.trim();
+        const requiresApiKey = Boolean(
+          this.metadata.userInputSettingMeta?.some((meta) => meta.name === "apikey" && meta.required),
+        );
+
+        if (apiKey || requiresApiKey) {
+          if (!targetUrl || !this.isTrustedSiteUrl(targetUrl)) {
+            throw new Error(`Rejected request URL outside site host allowlist for ${this.metadata.id}`);
+          }
+          if (!apiKey) {
+            throw new NoUserInputError("API Key");
+          }
+          config.headers = {
+            ...existingHeaders,
+            Authorization: `Bearer ${apiKey}`,
+            Accept: "application/json",
+          };
+        }
+      }
+    }
+
+    return super.request<T>(config, checkLogin);
+  }
+
   // 可能会出现匹配到多个优惠 tag 的情况（比如站免），二次处理以只保留最高优惠类型 tag
   protected override parseTorrentRowForTags(
     torrent: Partial<ITorrent>,
     row: Element | Document | object,
     searchConfig: ISearchInput,
   ): Partial<ITorrent> {
+    // 自定义 Unit3D 站点走 /api/torrents/filter JSON API 时，行内促销信息是结构化字段，DOM 选择器取不到；
+    // 仅在直接实例化 Unit3D 基类时处理，避免干扰 Huno/DreadVault 等自定义 JSON 解析的子类。
+    if (this.constructor === Unit3D && !(isElementNode(row) || isDocumentNode(row)) && row && typeof row === "object") {
+      const raw = row as IUnit3DRawTorrent;
+      const tags: ITorrentTag[] = [...(torrent.tags ?? [])];
+      const featured = Boolean(pick(raw, "featured", false));
+      const freeleech = String(pick(raw, "freeleech", ""));
+      const doubleUpload = pick(raw, "double_upload");
+      const internal = Boolean(pick(raw, "internal", false));
+
+      if (featured) {
+        torrent.downloadVolumeFactor = 0;
+        torrent.uploadVolumeFactor = 2;
+        if (!tags.some((t) => t.name === "精选")) {
+          tags.push({ name: "精选", color: "deep-purple" });
+        }
+      } else {
+        const downloadVolumeFactor = freeleechFactorMap[freeleech];
+        if (downloadVolumeFactor !== undefined) {
+          torrent.downloadVolumeFactor = downloadVolumeFactor;
+        }
+        if (typeof doubleUpload === "boolean") {
+          torrent.uploadVolumeFactor = doubleUpload ? 2 : 1;
+        }
+      }
+
+      if (internal && !tags.some((t) => t.name === "官方")) {
+        tags.push({ name: "官方", color: "blue-darken-2" });
+      }
+
+      torrent.tags = tags;
+      return torrent;
+    }
+
     const torrents = super.parseTorrentRowForTags(torrent, row, searchConfig);
 
     // 同一行可能同时命中多个优惠图标，只保留最强的一个。
@@ -663,14 +746,15 @@ export default class Unit3D extends PrivateSite {
 
     // 否则直接使用 Unit3D 的方式获取用户信息
     try {
+      // 每次刷新都先从当前会话首页解析当前登录用户名，避免切换账号后继续复用旧快照里的用户名。
+      // 仅当首页无法解析出用户名（例如部分测试 stub）时，才回退到历史快照中的用户名。
+      const siteUserName = (await this.getUserNameFromSite()).trim();
       // E18：`lastUserInfo.name` 可能是历史遗留的 number（旧版 getFieldData 把纯数字用户名强转成数字，
       // 且已经持久化），必须显式转成字符串，否则 urlJoin 会抛 "Url must be a string"。
-      let userName: string;
-      if (lastUserInfo !== null && lastUserInfo.name) {
-        userName = String(lastUserInfo.name);
-      } else {
-        // 如果没有 id 信息，则访问一次 index.php
-        userName = await this.getUserNameFromSite();
+      const fallbackUserName = lastUserInfo !== null && lastUserInfo.name ? String(lastUserInfo.name).trim() : "";
+      const userName = siteUserName || fallbackUserName;
+      if (!userName) {
+        throw new Error("无法获取当前登录用户名，页面可能已改版或未登录");
       }
       flushUserInfo.name = userName;
 

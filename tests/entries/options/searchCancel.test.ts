@@ -292,6 +292,82 @@ describe("D2-03：路由变化决定是否真正发起搜索", () => {
     expect(resolveRouteSearchDecision({ query: { search: "other" }, state: state() }).search).toBe("other");
   });
 
+  it("首次挂载同关键词切换搜索方案时必须重新搜索，不得复用另一方案结果", async () => {
+    const { resolveRouteSearchDecision } = await loadSearchModule();
+
+    // 已有方案 A 的结果，再打开同关键词 + 方案 B 的链接
+    const switched = resolveRouteSearchDecision({
+      query: { search: "kw", plan: "plan-B" },
+      state: state({ searchKey: "kw", searchPlanKey: "plan-A" }),
+      defaultSolutionId: "plan-A",
+    });
+    expect(switched).toEqual({ search: "kw", plan: "plan-B", resetData: true });
+
+    // doSearch 把 "default" 改写成实际默认方案 id 后刷新页面仍复用，不重复搜索
+    const defaultReusedAll = resolveRouteSearchDecision({
+      query: { search: "kw", plan: "default" },
+      state: state({ searchKey: "kw", searchPlanKey: "all" }),
+      defaultSolutionId: "default",
+    });
+    expect(defaultReusedAll.search).toBeUndefined();
+
+    const defaultReusedCustom = resolveRouteSearchDecision({
+      query: { search: "kw", plan: "default" },
+      state: state({ searchKey: "kw", searchPlanKey: "plan-A" }),
+      defaultSolutionId: "plan-A",
+    });
+    expect(defaultReusedCustom.search).toBeUndefined();
+
+    // 已有 plan-A 结果，打开无 plan 参数（默认方案=all）的链接时应重搜
+    const backToDefault = resolveRouteSearchDecision({
+      query: { search: "kw" },
+      state: state({ searchKey: "kw", searchPlanKey: "plan-A" }),
+      defaultSolutionId: "default",
+    });
+    expect(backToDefault).toEqual({ search: "kw", plan: "default", resetData: true });
+  });
+
+  it("普通搜索路由不沿用上一次反向辅种基准，切换到不同基准种子时重置同体积过滤", async () => {
+    const { resolveCrossSeedBaseFromQuery } = await loadSearchModule();
+
+    const first = resolveCrossSeedBaseFromQuery(
+      {
+        search: "Movie A",
+        crossSeedClient: "qb-1",
+        crossSeedId: "hash-a",
+        crossSeedName: "Movie A.mkv",
+        crossSeedSize: "10000",
+        crossSeedHash: "aaaa",
+      },
+      null,
+    );
+    expect(first.nextBase).toMatchObject({
+      downloaderId: "qb-1",
+      torrentId: "hash-a",
+      name: "Movie A.mkv",
+      size: 10000,
+    });
+    expect(first.resetOptions).toBe(true);
+
+    // 同一基准（如去掉 flush 参数）保持用户勾选的同体积过滤
+    const same = resolveCrossSeedBaseFromQuery(
+      {
+        search: "Movie A",
+        crossSeedClient: "qb-1",
+        crossSeedId: "hash-a",
+        crossSeedName: "Movie A.mkv",
+        crossSeedSize: "10000",
+      },
+      first.nextBase,
+    );
+    expect(same.nextBase?.torrentId).toBe("hash-a");
+    expect(same.resetOptions).toBe(false);
+
+    // 随后通过顶栏搜索普通关键词 B（无 crossSeed* 参数）必须清空基准与选项
+    const normalSearch = resolveCrossSeedBaseFromQuery({ search: "Movie B", plan: "all" }, first.nextBase);
+    expect(normalSearch).toEqual({ nextBase: null, resetOptions: true });
+  });
+
   it("重复 query 参数（数组）取第一个值，不把数组写进 store", async () => {
     const { resolveRouteSearchDecision } = await loadSearchModule();
 

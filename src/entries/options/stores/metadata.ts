@@ -489,6 +489,13 @@ export const useMetadataStore = defineStore("metadata", {
           state.keywordWatches = {};
         }
         if (
+          !state.lastUserInfoFailures ||
+          typeof state.lastUserInfoFailures !== "object" ||
+          Array.isArray(state.lastUserInfoFailures)
+        ) {
+          state.lastUserInfoFailures = {};
+        }
+        if (
           !state.siteInactivityDays ||
           typeof state.siteInactivityDays !== "object" ||
           Array.isArray(state.siteInactivityDays)
@@ -514,6 +521,7 @@ export const useMetadataStore = defineStore("metadata", {
 
     lastSearchFilter: "",
     lastUserInfo: {},
+    lastUserInfoFailures: {},
     lastDownloader: {},
     lastKeepUpload: {},
     lastUserInfoAutoFlushAt: 0,
@@ -950,6 +958,9 @@ export const useMetadataStore = defineStore("metadata", {
         }
       }
       delete this.lastUserInfo[siteId];
+      if (this.lastUserInfoFailures) {
+        delete this.lastUserInfoFailures[siteId];
+      }
 
       if (cascadeSolutions) {
         // F1（原 D1-Medium-06）：被清空的方案若正是默认方案，回退到 "default" ——

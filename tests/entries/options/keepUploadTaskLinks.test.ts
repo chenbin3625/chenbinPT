@@ -390,4 +390,102 @@ describe("D / L2：KeepUploadTask 发送汇总文案与真实结果对齐", () =
       view.unmount();
     }
   });
+
+  it("保存辅种任务保留站点种子 id，再次发送时将 id 透传给 downloadTorrent（供 YemaPT 等生成下载令牌）", async () => {
+    const savedTasks: any[] = [];
+    const pinia = prepareOptionsPinia();
+    const { useMetadataStore } = await import("@/options/stores/metadata.ts");
+    const meta = useMetadataStore(pinia);
+    meta.downloaders = {
+      d1: { id: "d1", type: "qbittorrent", name: "QB", address: "http://qb.local", enabled: true },
+    } as any;
+
+    sendMessageMock.mockReset().mockImplementation(async (type: string, data: any) => {
+      if (type === "getTorrentInfoForVerification") {
+        return {
+          infoHash: "abcdef1234567890abcdef1234567890abcdef12",
+          name: "Movie.2026.mkv",
+          length: 2048,
+          files: [{ path: "Movie.2026.mkv", length: 2048 }],
+        };
+      }
+      if (type === "createKeepUploadTask") {
+        savedTasks.push(data);
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const { default: KeepUploadDialog } = await import("@/options/views/Overview/SearchEntity/KeepUploadDialog.vue");
+    const dialogView = mountOptionsView(KeepUploadDialog, {
+      pinia,
+      props: {
+        modelValue: true,
+        clientBaseTorrent: {
+          downloaderId: "d1",
+          torrentId: "client-hash-1",
+          name: "Movie.2026.mkv",
+          size: 2048,
+          infoHash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+          savePath: "/downloads",
+        },
+        torrentItems: [
+          {
+            site: "yemapt",
+            id: "8848",
+            title: "Movie.2026",
+            url: "https://www.yemapt.org/#/torrent/detail/8848",
+            link: "https://www.yemapt.org/api/torrent/download?id=8848",
+            size: 2048,
+          },
+        ],
+      },
+    });
+
+    try {
+      await dialogView.settle(100);
+      // 点击确定创建辅种任务
+      const primaryButtons = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(".ant-modal-footer .ant-btn-primary"),
+      );
+      const createBtn = primaryButtons.at(-1);
+      expect(createBtn, "应存在创建辅种任务按钮").toBeDefined();
+      createBtn!.click();
+      await dialogView.settle(80);
+
+      expect(savedTasks).toHaveLength(1);
+      expect(savedTasks[0].items[0].id).toBe("8848");
+    } finally {
+      dialogView.unmount();
+    }
+
+    // 再次从已保存任务发送时，torrent.id 必须原样传给 downloadTorrent
+    const downloadPayloads: any[] = [];
+    const {
+      view,
+      t,
+      clickConfirm,
+      meta: taskMeta,
+    } = await mountKeepUpload((type, data) => {
+      if (type === "downloadTorrent") {
+        downloadPayloads.push(data);
+        return { downloadStatus: "completed" };
+      }
+      return undefined;
+    }, savedTasks[0]);
+    taskMeta.sites = { ...taskMeta.sites, yemapt: { merge: { name: "YemaPT" } } } as any;
+    taskMeta.siteNameMap = { ...taskMeta.siteNameMap, yemapt: "YemaPT" };
+
+    try {
+      view.$<HTMLButtonElement>(`.ant-table button[title="${t("KeepUploadTask.sendAllTorrents")}"]`)!.click();
+      await view.settle(60);
+      await clickConfirm();
+
+      expect(downloadPayloads).toHaveLength(1);
+      expect(downloadPayloads[0].torrent.id).toBe("8848");
+      expect(downloadPayloads[0].torrent.site).toBe("yemapt");
+    } finally {
+      view.unmount();
+    }
+  });
 });

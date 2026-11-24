@@ -87,6 +87,7 @@ import {
   normalizeRouteQueryValue,
   pauseSearchQueue as pauseSearchQueueState,
   reconcileRestoredSearchState,
+  resolveCrossSeedBaseFromQuery,
   resolveRouteSearchDecision,
   retrySearch,
   searchPlanStatus,
@@ -121,6 +122,7 @@ const showReverseKeepUploadDialog = ref(false);
 function clearCrossSeedMode() {
   crossSeedBase.value = null;
   crossSeedSameSizeOnly.value = false;
+  showReverseKeepUploadDialog.value = false;
 }
 
 function openReverseKeepUpload() {
@@ -644,6 +646,7 @@ watch(
     const loadToken = ++snapshotLoadToken;
 
     if (snapshotId) {
+      clearCrossSeedMode();
       const flush = isFlushQuery(newParams.flush);
 
       // V-15：切到快照视图前先让在途/排队的实时搜索任务失效并清空队列，
@@ -709,6 +712,7 @@ watch(
     const decision = resolveRouteSearchDecision({
       query: newParams as Record<string, unknown>,
       previousQuery: oldParams as Record<string, unknown> | undefined,
+      defaultSolutionId: metadataStore.defaultSolutionId,
       state: {
         snapshot: runtimeStore.search.snapshot,
         searchKey: runtimeStore.search.searchKey,
@@ -722,19 +726,19 @@ watch(
     // 快照数据不能当作实时结果展示（F3 的逆操作：URL 已无 snapshot 时 store 里仍是快照数据）
     if (decision.resetData) runtimeStore.resetSearchData();
 
-    // 识别从 MyClient 携带的反向辅种上下文
-    const csClient = normalizeRouteQueryValue(newParams.crossSeedClient);
-    const csId = normalizeRouteQueryValue(newParams.crossSeedId);
-    const csName = normalizeRouteQueryValue(newParams.crossSeedName);
-    if (csClient && csId && csName) {
-      crossSeedBase.value = {
-        downloaderId: csClient,
-        torrentId: csId,
-        name: csName,
-        size: Number(normalizeRouteQueryValue(newParams.crossSeedSize) ?? 0) || 0,
-        infoHash: normalizeRouteQueryValue(newParams.crossSeedHash) ?? "",
-        savePath: normalizeRouteQueryValue(newParams.crossSeedPath) ?? "",
-      };
+    // 识别从 MyClient 携带的反向辅种上下文；普通搜索路由未携带时必须退出反向辅种模式，避免沿用旧基准
+    const { nextBase, resetOptions } = resolveCrossSeedBaseFromQuery(
+      newParams as Record<string, unknown>,
+      crossSeedBase.value,
+    );
+    if (nextBase) {
+      if (resetOptions) {
+        crossSeedSameSizeOnly.value = false;
+        showReverseKeepUploadDialog.value = false;
+      }
+      crossSeedBase.value = nextBase;
+    } else {
+      clearCrossSeedMode();
     }
 
     if (decision.search !== undefined) {

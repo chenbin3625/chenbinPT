@@ -7,6 +7,7 @@ import { StyleProvider } from "ant-design-vue/es/_util/cssinjs";
 
 import { computed, createApp, defineComponent, h } from "vue";
 import { message } from "ant-design-vue";
+import { syncCustomSites } from "@ptd/site/customSiteRegistry.ts";
 
 import App from "./App.vue";
 import { PTD_DATA_KEY, PTD_DATA_READY_KEY } from "./injectionKeys.ts";
@@ -168,6 +169,9 @@ export function mountApp(document: Document, data: any = {}) {
   }
   if (sanitizedMetadata) {
     metadataStore.$patch(sanitizedMetadata);
+    if ("customSites" in sanitizedMetadata) {
+      syncCustomSites(metadataStore.customSites);
+    }
   }
 
   /**
@@ -184,6 +188,9 @@ export function mountApp(document: Document, data: any = {}) {
     }
     if (sanitizedMetadata) {
       metadataStore.$patch(sanitizedMetadata);
+      if ("customSites" in sanitizedMetadata) {
+        syncCustomSites(metadataStore.customSites);
+      }
     }
   });
   app.provide(PTD_DATA_KEY, data); // 提供数据给 Vue 应用

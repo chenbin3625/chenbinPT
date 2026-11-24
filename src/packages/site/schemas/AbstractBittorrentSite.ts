@@ -105,6 +105,25 @@ const allowedLinkProtocols = ["http:", "https:", "magnet:"];
 const explicitSchemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
 /**
+ * 按 Axios `combineURLs` 语义拼接基址与相对请求路径。
+ *
+ * 当站点部署在子目录（如 `https://example.com/tracker/`）且请求路径以 `/` 开头（如 `/torrents.php`）时，
+ * Axios 实际请求的是 `https://example.com/tracker/torrents.php`，而标准 `new URL("/torrents.php", base)`
+ * 会丢弃 `/tracker/` 前缀，导致解析器生成错误的相对下载链接。
+ * 对 `?query`、`#hash` 以及以反斜杠/畸形斜杠组合开头的路径仍交由标准 `new URL` 处理以保留既有安全校验。
+ */
+function joinAxiosRequestUrl(baseUrl: string, relativeUrl: string): string {
+  if (relativeUrl.startsWith("?") || relativeUrl.startsWith("#") || /^[\\/]*\\/.test(relativeUrl)) {
+    return new URL(relativeUrl, baseUrl).toString();
+  }
+
+  const parsedBase = new URL(baseUrl);
+  const basePath = parsedBase.pathname.replace(/\/+$/, "");
+  const cleanRelative = relativeUrl.replace(/^\/+/, "");
+  return new URL(`${basePath}/${cleanRelative}`, parsedBase.origin).toString();
+}
+
+/**
  * 判断链接的协议是否在白名单内。
  * 没有显式 scheme 的相对路径（`./x`、`x`、`/x`）直接放行——它们最终会落到站点的 http(s) 基址上。
  *
@@ -323,7 +342,7 @@ export default class BittorrentSite {
       if (!rawBase) return this.url;
       if (explicitSchemePattern.test(rawBase)) return rawBase;
       try {
-        return new URL(rawBase, this.url).toString();
+        return joinAxiosRequestUrl(this.url, rawBase);
       } catch {
         return undefined;
       }
@@ -334,7 +353,7 @@ export default class BittorrentSite {
         if (explicitSchemePattern.test(rawUrl)) return new URL(rawUrl).toString();
         if (rawUrl.startsWith("//")) return new URL(rawUrl, absoluteBase ?? this.url).toString();
         if (!absoluteBase) return undefined;
-        return new URL(rawUrl, absoluteBase).toString();
+        return joinAxiosRequestUrl(absoluteBase, rawUrl);
       }
       return absoluteBase;
     } catch {
@@ -780,8 +799,25 @@ export default class BittorrentSite {
         // 协议相对链接的语义就是「沿用基址的协议」，交给 new URL 按基址解析才能得到合法绝对地址。
         url = new URL(uri, requestUrl).toString();
       } else if (uri.slice(0, 4) !== "http") {
-        // 基于请求地址，处理 ./xxx, xxxx, /xxxx 等相对路径
-        url = new URL(uri, requestUrl).toString();
+        // 基于请求地址，处理 ./xxx, xxxx, /xxxx 等相对路径；
+        // 对部署在子目录的站点（例如 https://example.com/tracker/），schema 合成的 `/details.php?id=1`
+        // 若未带 `/tracker/` 前缀，则按站点基址补全前缀，避免丢失子目录。
+        if (uri.startsWith("/") && !/^[\\/]*\\/.test(uri)) {
+          const siteBasePath = (() => {
+            try {
+              return new URL(this.url).pathname.replace(/\/+$/, "");
+            } catch {
+              return "";
+            }
+          })();
+          if (siteBasePath && uri !== siteBasePath && !uri.startsWith(`${siteBasePath}/`)) {
+            url = joinAxiosRequestUrl(this.url, uri);
+          } else {
+            url = new URL(uri, requestUrl).toString();
+          }
+        } else {
+          url = new URL(uri, requestUrl).toString();
+        }
       }
 
       // S-2：协议白名单。上面的解析会保留 uri 里的任意绝对 scheme

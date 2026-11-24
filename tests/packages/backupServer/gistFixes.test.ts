@@ -196,3 +196,108 @@ describe("复检 P2：Gist raw_url / 候选密钥顺序 / 缺失文件提示", (
     expect(getBackupWarnings(result).some((warning) => /config\.json/.test(warning))).toBe(true);
   });
 });
+
+describe("Gist addFile：仅清理上一份备份清单登记的文件，不误删 Gist 中其他文件", () => {
+  beforeEach(() => {
+    axiosGetMock.mockReset();
+    logMessageMock.mockClear();
+  });
+
+  it("保留 Gist 中已有的 myscript.js 与 .keep. 文件，仅删除上一份 manifest 登记且本次未包含的旧备份文件", async () => {
+    const client = makeClient();
+    const prevManifest = {
+      version: "Gist (v1)",
+      time: 100,
+      encryption: false,
+      files: {
+        config: { name: "config.json", hash: md5Hex("{}") },
+        keepMarker: { name: "metadata.keep.json", hash: md5Hex("{}") },
+      },
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: {
+          files: {
+            "myscript.js": { content: "console.log('keep me');", truncated: false },
+            "_manifest.json": { content: JSON.stringify(prevManifest), truncated: false },
+            "config.json": { content: "{}", truncated: false },
+            "metadata.keep.json": { content: "{}", truncated: false },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ data: {} });
+    (client as any).request = request;
+
+    const ok = await client.addFile("backup-userinfo-only", { userInfo: { demo: {} } } as any);
+
+    expect(ok).toBe(true);
+    expect(request).toHaveBeenCalledTimes(2);
+    const patchPayload = request.mock.calls[1][1].data.files as Record<string, unknown>;
+    expect(patchPayload).toHaveProperty("_manifest.json");
+    expect(patchPayload).toHaveProperty("userInfo.json");
+    expect(patchPayload["config.json"]).toBeNull();
+    expect(Object.hasOwn(patchPayload, "myscript.js")).toBe(false);
+    expect(Object.hasOwn(patchPayload, "metadata.keep.json")).toBe(false);
+  });
+
+  it("目标 Gist 尚无 _manifest.json 时，不删除任何已有文件", async () => {
+    const client = makeClient();
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: {
+          files: {
+            "myscript.js": { content: "console.log('standalone');", truncated: false },
+            "notes.md": { content: "# Notes", truncated: false },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ data: {} });
+    (client as any).request = request;
+
+    const ok = await client.addFile("first-backup", { userInfo: { demo: {} } } as any);
+
+    expect(ok).toBe(true);
+    const patchPayload = request.mock.calls[1][1].data.files as Record<string, unknown>;
+    expect(Object.hasOwn(patchPayload, "myscript.js")).toBe(false);
+    expect(Object.hasOwn(patchPayload, "notes.md")).toBe(false);
+  });
+
+  it("上一份 _manifest.json 被截断时通过裸 axios 拉取 raw_url 并仅清理清单内旧文件", async () => {
+    const client = makeClient();
+    const rawManifestUrl = "https://gist.githubusercontent.com/u/abc/raw/def/_manifest.json";
+    const prevManifest = {
+      version: "Gist (v1)",
+      time: 100,
+      encryption: false,
+      files: {
+        metadata: { name: "metadata.json", hash: md5Hex("{}") },
+      },
+    };
+    axiosGetMock.mockResolvedValueOnce({ data: JSON.stringify(prevManifest) });
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: {
+          files: {
+            "myscript.js": { content: "console.log('keep');", truncated: false },
+            "_manifest.json": { content: "", truncated: true, raw_url: rawManifestUrl },
+            "metadata.json": { content: "{}", truncated: false },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ data: {} });
+    (client as any).request = request;
+
+    const ok = await client.addFile("backup-truncated", { userInfo: { demo: {} } } as any);
+
+    expect(ok).toBe(true);
+    expect(axiosGetMock).toHaveBeenCalledTimes(1);
+    expect(axiosGetMock.mock.calls[0][0]).toBe(rawManifestUrl);
+    expect(axiosGetMock.mock.calls[0][1]).not.toHaveProperty("headers");
+    const patchPayload = request.mock.calls[1][1].data.files as Record<string, unknown>;
+    expect(patchPayload["metadata.json"]).toBeNull();
+    expect(Object.hasOwn(patchPayload, "myscript.js")).toBe(false);
+  });
+});

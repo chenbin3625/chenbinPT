@@ -1,4 +1,5 @@
 import type {
+  EResultParseStatus,
   ISearchCategories,
   ISearchEntryRequestConfig,
   ISiteUserConfig,
@@ -43,6 +44,12 @@ export interface ISearchSnapshotMetadata {
 }
 
 export interface IStoredUserInfo extends IUserInfo {}
+
+export interface IUserInfoFailureRecord {
+  status: EResultParseStatus;
+  statusMsg?: string;
+  at: number;
+}
 
 export type TDownloaderKey = string;
 
@@ -207,6 +214,11 @@ export interface IMetadataPiniaStorageSchema {
    * 此处仅存储站点最近一次的记录，如果需要获取历史记录，需要使用 storage 方法获取
    */
   lastUserInfo: Record<TSiteKey, IStoredUserInfo>;
+
+  /**
+   * 站点最近一次刷新失败的轻量记录（与 lastUserInfo 解耦，避免覆盖上一次成功快照的同时保留异常状态供弹窗和总览展示）
+   */
+  lastUserInfoFailures?: Record<TSiteKey, IUserInfoFailureRecord>;
 
   lastDownloader?: {
     id?: TDownloaderKey;

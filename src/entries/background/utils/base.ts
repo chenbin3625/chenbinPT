@@ -507,6 +507,43 @@ function sanitizeDownloaderForContentScript(downloader: Record<string, any>): Re
   });
 }
 
+function sanitizeCustomSiteForContentScript(site: Record<string, any>, fallbackId: string): Record<string, any> {
+  return omitUndefinedFields({
+    id: site.id ?? fallbackId,
+    name: site.name,
+    schema: site.schema,
+    type: site.type,
+    urls: Array.isArray(site.urls) ? site.urls : [],
+    description: site.description,
+    tags: Array.isArray(site.tags) ? site.tags : undefined,
+    apiPath: site.apiPath,
+    requiresApiKey: site.requiresApiKey,
+    timezoneOffset: site.timezoneOffset,
+    createdAt: site.createdAt,
+  });
+}
+
+function sanitizePushRoutingRuleForContentScript(rule: Record<string, any>): Record<string, any> {
+  return omitUndefinedFields({
+    id: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    priority: rule.priority,
+    sites: Array.isArray(rule.sites) ? rule.sites : undefined,
+    categories: Array.isArray(rule.categories) ? rule.categories : undefined,
+    minSizeGiB: rule.minSizeGiB,
+    maxSizeGiB: rule.maxSizeGiB,
+    freeOnly: rule.freeOnly,
+    tags: Array.isArray(rule.tags) ? rule.tags : undefined,
+    titleRegex: rule.titleRegex,
+    targetDownloaderId: rule.targetDownloaderId,
+    savePath: rule.savePath,
+    label: rule.label,
+    uploadSpeedLimit: rule.uploadSpeedLimit,
+    addAtPaused: rule.addAtPaused,
+  });
+}
+
 onMessage("getContentScriptBootstrapData", async () => {
   const [config, metadata] = await Promise.all([getExtStorageCached("config"), getExtStorageCached("metadata")]);
   const downloaders = Object.fromEntries(
@@ -514,12 +551,23 @@ onMessage("getContentScriptBootstrapData", async () => {
       .filter(([, downloader]) => downloader?.enabled)
       .map(([id, downloader]) => [id, sanitizeDownloaderForContentScript({ ...downloader, id: downloader.id ?? id })]),
   );
+  const customSites = Object.fromEntries(
+    Object.entries((metadata?.customSites ?? {}) as Record<string, Record<string, any>>)
+      .filter(([, site]) => site && typeof site === "object")
+      .map(([id, site]) => [id, sanitizeCustomSiteForContentScript(site, id)]),
+  );
+  const pushRoutingRules = Array.isArray(metadata?.pushRoutingRules)
+    ? metadata.pushRoutingRules
+        .filter((rule) => Boolean(rule && typeof rule === "object"))
+        .map((rule) => sanitizePushRoutingRuleForContentScript(rule))
+    : [];
 
   const bootstrapDownload = omitUndefinedFields({
     allowDownloaderFilterForSite: config?.download?.allowDownloaderFilterForSite,
     allowDirectSendToClient: config?.download?.allowDirectSendToClient,
     saveLastDownloader: false,
     useQuickSendToClient: config?.download?.useQuickSendToClient,
+    enableRoutingRulesOnDefaultSend: config?.download?.enableRoutingRulesOnDefaultSend,
   });
 
   const bootstrapConfig = omitUndefinedFields({
@@ -538,6 +586,8 @@ onMessage("getContentScriptBootstrapData", async () => {
       downloaders,
       defaultSolutionId: metadata?.defaultSolutionId ?? "default",
       solutions: metadata?.solutions ?? {},
+      customSites,
+      pushRoutingRules,
     }),
   };
 });

@@ -161,4 +161,41 @@ describe("搜索解析的相对链接补全", () => {
     expect(result.status).toBe(EResultParseStatus.success);
     expect(result.data[0].link).toBe(`${SITE_URL}download.php?id=1&passkey=abc`);
   });
+
+  it("子目录部署的站点（如 /tracker/）解析相对下载与详情链接时保留子目录前缀", async () => {
+    const subDirUrl = "https://sub.example/tracker/";
+    const metadata = toMerged(
+      {
+        id: "subdir-site",
+        name: "SubDir Site",
+        type: "private",
+        schema: "NexusPHP",
+        version: 1,
+        urls: [subDirUrl],
+        timezoneOffset: "+0800",
+      } as any,
+      NexusPHPSchema as any,
+    );
+    metadata.search = toMerged(metadata.search, { requestConfig: { url: "/torrents.php", responseType: "document" } });
+    const site = new NexusPHP(metadata, {});
+
+    expect(site.resolveRequestTarget({ url: "/torrents.php" })).toBe("https://sub.example/tracker/torrents.php");
+    expect(site.resolveRequestTarget({ baseURL: subDirUrl, url: "/torrents.php" })).toBe(
+      "https://sub.example/tracker/torrents.php",
+    );
+
+    vi.spyOn(site as any, "request").mockImplementation(async (config: any) => ({
+      data: makeDoc(),
+      config: { ...config, baseURL: subDirUrl },
+      headers: {},
+      status: 200,
+      statusText: "OK",
+    }));
+
+    const result = await site.getSearchResult("x");
+    expect(result.status).toBe(EResultParseStatus.success);
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].link).toBe("https://sub.example/tracker/download.php?id=1&passkey=abc");
+    expect(result.data[0].url).toBe("https://sub.example/tracker/details.php?id=1");
+  });
 });

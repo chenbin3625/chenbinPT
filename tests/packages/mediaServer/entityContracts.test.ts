@@ -217,3 +217,60 @@ describe("fnOS 海报抓取：并发与体积上限", () => {
     expect(maxActive).toBe(4);
   });
 });
+
+describe("fnOS getLibraryOverview：末页保持恒定 page_size 避免分页偏移回卷与重复计数", () => {
+  it("pageSize=5、maxItems=7 时每页均请求 page_size=5，本地截断至 7 条且不重复统计", async () => {
+    const client = new FnOSCtor(fnosConfig());
+    const allItems = Array.from({ length: 10 }, (_, idx) => ({
+      guid: `item-${idx + 1}`,
+      title: `Movie ${idx + 1}`,
+      type: "Movie",
+      media_stream: { resolutions: [idx < 5 ? "1080p" : "4K"] },
+    }));
+
+    const requests: Array<{ page: number; page_size: number }> = [];
+    (client as any).request = vi.fn().mockImplementation(async (_url: string, config: any) => {
+      const { page, page_size } = config.data;
+      requests.push({ page, page_size });
+      const start = (page - 1) * page_size;
+      return {
+        list: allItems.slice(start, start + page_size),
+        total: allItems.length,
+      };
+    });
+
+    const overview = await client.getLibraryOverview({ pageSize: 5, maxItems: 7 });
+
+    expect(requests).toEqual([
+      { page: 1, page_size: 5 },
+      { page: 2, page_size: 5 },
+    ]);
+    expect(overview?.totalItems).toBe(7);
+    expect(overview?.truncated).toBe(true);
+    // 前 5 条是 1080p，第 6、7 条是 4K（若末页缩小 page_size 回卷取到第 3、4 条，1080p 会变成 7 且 4K 为 0）
+    expect(overview?.byResolution.find((entry) => entry.key === "1080p")?.count).toBe(5);
+    expect(overview?.byResolution.find((entry) => entry.key === "4K")?.count).toBe(2);
+  });
+
+  it("服务端总数恰好等于 maxItems 时不误标 truncated", async () => {
+    const client = new FnOSCtor(fnosConfig());
+    const allItems = Array.from({ length: 7 }, (_, idx) => ({
+      guid: `item-${idx + 1}`,
+      title: `Movie ${idx + 1}`,
+      type: "Movie",
+    }));
+
+    (client as any).request = vi.fn().mockImplementation(async (_url: string, config: any) => {
+      const { page, page_size } = config.data;
+      const start = (page - 1) * page_size;
+      return {
+        list: allItems.slice(start, start + page_size),
+        total: allItems.length,
+      };
+    });
+
+    const overview = await client.getLibraryOverview({ pageSize: 5, maxItems: 7 });
+    expect(overview?.totalItems).toBe(7);
+    expect(overview?.truncated).toBe(false);
+  });
+});

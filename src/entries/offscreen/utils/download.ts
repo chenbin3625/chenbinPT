@@ -232,7 +232,7 @@ function sanitizeContentScriptAddTorrentOptions(
   options: CAddTorrentOptions,
   downloaderConfig: IDownloaderMetadata,
   defaultFolder?: string,
-  context: IContentScriptSavePathContext = {},
+  context: IContentScriptSavePathContext & { extraAllowedSavePaths?: string[] } = {},
 ): CAddTorrentOptions {
   const configuredAdvance = downloaderConfig.advanceAddTorrentOptions ?? {};
   const requestedAdvance = options.advanceAddTorrentOptions ?? {};
@@ -240,6 +240,7 @@ function sanitizeContentScriptAddTorrentOptions(
     ...(downloaderConfig.suggestFolders ?? []),
     configuredAdvance.savePath,
     defaultFolder,
+    ...(context.extraAllowedSavePaths ?? []),
   ].filter((path): path is string => typeof path === "string" && path.length > 0);
   const savePath = typeof options.savePath === "string" ? options.savePath : "";
   if (savePath) {
@@ -419,7 +420,7 @@ export async function getTorrentInfoForVerification(torrent: ITorrent) {
 
   // 返回可序列化的种子信息
   return {
-    infoHash: (parsedTorrent as unknown as { infoHash: string }).infoHash ?? "",
+    infoHash: parsedTorrent.info?.infoHash ?? (parsedTorrent as unknown as { infoHash?: string }).infoHash ?? "",
     name: parsedTorrent.info.name ?? "unknown",
     length: parsedTorrent.info.length ?? 0,
     files: (parsedTorrent.info.files || []).map((f) => ({
@@ -1272,7 +1273,7 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
     }
 
     if (downloadOption.addTorrentOptions && downloadOption.downloaderId !== "local") {
-      const [downloaderConfig, defaultDownloader, storedSiteName] = await Promise.all([
+      const [downloaderConfig, defaultDownloader, storedSiteName, pushRoutingRules] = await Promise.all([
         getDownloaderConfig(downloadOption.downloaderId ?? ""),
         sendMessage("getExtStoragePath", {
           key: "metadata",
@@ -1286,10 +1287,26 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
               defaultValue: "",
             }) as Promise<string>)
           : Promise.resolve(""),
+        sendMessage("getExtStoragePath", {
+          key: "metadata",
+          path: "pushRoutingRules",
+          defaultValue: [],
+        }) as Promise<Array<{ enabled?: boolean; targetDownloaderId?: string; savePath?: string }>>,
       ]);
       const siteNames = [storedSiteName, siteInstance?.metadata?.name].filter(
         (name): name is string => typeof name === "string" && name.length > 0,
       );
+      const routingSavePaths = Array.isArray(pushRoutingRules)
+        ? pushRoutingRules
+            .filter(
+              (rule) =>
+                rule?.enabled &&
+                rule.targetDownloaderId === (downloadOption.downloaderId ?? "") &&
+                typeof rule.savePath === "string" &&
+                rule.savePath.length > 0,
+            )
+            .map((rule) => rule.savePath as string)
+        : [];
       downloadOption.addTorrentOptions = sanitizeContentScriptAddTorrentOptions(
         downloadOption.addTorrentOptions,
         downloaderConfig,
@@ -1297,6 +1314,7 @@ onMessage("downloadTorrent", async ({ data, sender }) => {
         {
           torrent: downloadOption.torrent,
           siteNames,
+          extraAllowedSavePaths: routingSavePaths,
         },
       );
     }

@@ -12,6 +12,7 @@ export type TKeepUploadTaskKey = string;
  * 辅种任务中的种子项
  */
 export interface IKeepUploadTaskItem {
+  id?: string | number; // 站点种子id（如 YemaPT 申请下载令牌时依赖该字段）
   site: TSiteID; // 站点id
   title: string; // 标题
   subTitle?: string; // 副标题
