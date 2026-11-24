@@ -33,7 +33,7 @@ const fnosConfig = () => ({
   type: "fnos",
   name: "fnOS",
   address: "https://fnos.example",
-  auth: { username: "user", password: "password", parentId: "", apikey: "", userId: "", sessionId: "" },
+  auth: { username: "user", password: "password", accessCode: "", parentId: "" },
   timeout: 5000,
 });
 
@@ -52,6 +52,7 @@ beforeEach(() => {
   (FnOS as any).sessionCache.clear();
   (FnOS as any).posterUrlCache.clear();
   (FnOS as any).posterUrlCacheBytes = 0;
+  (FnOS as any).accessCodeGrants.clear();
 });
 
 afterEach(() => {
@@ -91,36 +92,50 @@ describe("C2-M-1 / C2-M-2：Plex 契约", () => {
 });
 
 describe("C2-M-3：fnOS 影片链接主键", () => {
-  it("movie 链接使用 item.Id，而不是 ImageTags.Primary", () => {
+  it("movie 链接使用 guid，而不是封面路径", () => {
     const client = new FnOSCtor(fnosConfig());
 
-    const url = (client as any).getItemUrl({
-      Id: "movie-guid",
-      Type: "Movie",
-      Name: "test",
-      ImageTags: { Primary: "image-tag-hash" },
+    const url = (client as any).getItemWebUrl({
+      guid: "movie-guid",
+      type: "Movie",
+      title: "test",
+      poster: "/posters/image-tag-hash.webp",
     });
 
     expect(url).toContain("/v/movie/movie-guid");
     expect(url).not.toContain("image-tag-hash");
   });
 
-  it("Series 链接继续使用 item.Id", () => {
+  it("TV / Season / Episode 链接继续使用 guid", () => {
     const client = new FnOSCtor(fnosConfig());
-    expect((client as any).getItemUrl({ Id: "series-guid", Type: "Series", Name: "s" })).toContain("/v/tv/series-guid");
+    expect((client as any).getItemWebUrl({ guid: "series-guid", type: "TV", title: "s" })).toContain(
+      "/v/tv/series-guid",
+    );
+    expect((client as any).getItemWebUrl({ guid: "season-guid", type: "Season", title: "s1" })).toContain(
+      "/v/tv/season/season-guid",
+    );
+    expect((client as any).getItemWebUrl({ guid: "ep-guid", type: "Episode", title: "e1" })).toContain(
+      "/v/tv/episode/ep-guid",
+    );
   });
 });
 
 describe("C2-M-4：fnOS 登录单飞", () => {
-  it("并发登录（含 force）只发一次 AuthenticateByName", async () => {
+  it("并发登录（含 force）只发一次 loginByPassword 与一次 user/info", async () => {
     const client = new FnOSCtor(fnosConfig());
-    let callCount = 0;
-    vi.spyOn(axios, "request").mockImplementation(async () => {
-      callCount += 1;
+    let loginCalls = 0;
+    let userInfoCalls = 0;
+    vi.spyOn(axios, "request").mockImplementation(async (cfg: any) => {
       await new Promise((resolve) => setTimeout(resolve, 5));
-      return {
-        data: { AccessToken: "access-token", User: { Id: "user-id" }, SessionInfo: { Id: "session-id" } },
-      } as any;
+      if (String(cfg.url).includes("/v/api/v2/user/loginByPassword")) {
+        loginCalls += 1;
+        return { data: { code: 0, data: { token: "native-token" } } } as any;
+      }
+      if (String(cfg.url).includes("/v/api/v1/user/info")) {
+        userInfoCalls += 1;
+        return { data: { code: 0, data: { guid: "user-guid" } } } as any;
+      }
+      throw new Error(`unexpected request: ${cfg.url}`);
     });
 
     const results = await Promise.all([
@@ -129,8 +144,9 @@ describe("C2-M-4：fnOS 登录单飞", () => {
       (client as any).login(),
     ]);
 
-    expect(callCount).toBe(1);
-    expect(results[0]).toEqual({ apikey: "access-token", userId: "user-id", sessionId: "session-id" });
+    expect(loginCalls).toBe(1);
+    expect(userInfoCalls).toBe(1);
+    expect(results[0]).toEqual({ token: "native-token" });
     expect((FnOS as any).sessionCache.size).toBe(1);
   });
 });
@@ -165,35 +181,34 @@ describe("C2-M-5：fnOS 静态缓存回收", () => {
 describe("fnOS 海报抓取：并发与体积上限", () => {
   it("单张海报响应超过 5MB 时降级为空串", async () => {
     const client = new FnOSCtor(fnosConfig());
-    (client as any).login = vi.fn().mockResolvedValue({ apikey: "t", userId: "u" });
-    (client as any).request = vi.fn().mockResolvedValue({ data: { size: 5 * 1024 * 1024 + 1 } });
+    (client as any).login = vi.fn().mockResolvedValue({ token: "native-token" });
+    vi.spyOn(axios, "request").mockResolvedValue({ data: { size: 5 * 1024 * 1024 + 1 }, headers: {} } as any);
 
-    await expect((client as any).getPoster({ Id: "movie-1", ImageTags: { Primary: "tag-1" } })).resolves.toBe("");
+    await expect((client as any).getPoster({ guid: "movie-1", poster: "/posters/tag-1.webp" })).resolves.toBe("");
   });
 
   it("搜索结果的海报请求并发不超过 4", async () => {
     const client = new FnOSCtor(fnosConfig());
-    (client as any).getViewIds = vi.fn().mockResolvedValue(["view-1"]);
-    (client as any).login = vi.fn().mockResolvedValue({ apikey: "t", userId: "u" });
+    (client as any).login = vi.fn().mockResolvedValue({ token: "native-token" });
 
     const items = Array.from({ length: 12 }, (_, i) => ({
-      Id: `item-${i}`,
-      Name: "n",
-      Type: "Movie",
-      ImageTags: { Primary: `tag-${i}` },
+      guid: `item-${i}`,
+      title: "n",
+      type: "Movie",
+      poster: `/posters/tag-${i}.webp`,
     }));
 
     let active = 0;
     let maxActive = 0;
-    (client as any).request = vi.fn(async (_url: string, config: any) => {
+    vi.spyOn(axios, "request").mockImplementation(async (config: any) => {
       if (config?.responseType === "blob") {
         active += 1;
         maxActive = Math.max(maxActive, active);
         await new Promise((resolve) => setTimeout(resolve, 5));
         active -= 1;
-        return { data: new Blob(["image"], { type: "image/png" }) };
+        return { data: new Blob(["image"], { type: "image/png" }), headers: { "content-type": "image/png" } } as any;
       }
-      return { data: { Items: items } };
+      return { data: { code: 0, data: { list: items, total: items.length } } } as any;
     });
 
     const result = await client.getSearchResult("");

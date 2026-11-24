@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AimOutlined,
+  ApiOutlined,
   CloseCircleFilled,
   DeleteOutlined,
   EditOutlined,
@@ -10,6 +11,7 @@ import {
   PlusOutlined,
   ScanOutlined,
   SearchOutlined,
+  ThunderboltOutlined,
   ToolOutlined,
 } from "@ant-design/icons-vue";
 import { get } from "es-toolkit/compat";
@@ -38,6 +40,9 @@ import EditSearchEntryList from "./EditSearchEntryList.vue";
 import OneClickImportDialog from "./OneClickImportDialog.vue";
 import RebuildMapDialog from "./RebuildMapDialog.vue";
 import SortIndexMoveButton from "./SortIndexMoveButton.vue";
+import CustomSiteDialog from "./CustomSiteDialog.vue";
+import BatchEditDialog from "./BatchEditDialog.vue";
+import DomainSpeedTestDialog from "./DomainSpeedTestDialog.vue";
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
@@ -63,6 +68,21 @@ const showEditDialog = ref<boolean>(false);
 const showDeleteDialog = ref<boolean>(false);
 const showOneClickImportDialog = ref<boolean>(false);
 const showRebuildMapDialog = ref<boolean>(false);
+const showCustomSiteDialog = ref<boolean>(false);
+const customSiteEditId = ref<string | null>(null);
+const showBatchEditDialog = ref<boolean>(false);
+const showDomainSpeedTestDialog = ref<boolean>(false);
+const speedTestSiteIds = ref<TSiteID[]>([]);
+
+function openCreateCustomSite() {
+  customSiteEditId.value = null;
+  showCustomSiteDialog.value = true;
+}
+
+function openDomainSpeedTest(siteIds?: TSiteID[]) {
+  speedTestSiteIds.value = siteIds ? [...siteIds] : [...tableSelected.value];
+  showDomainSpeedTestDialog.value = true;
+}
 
 /** 站点展示名：用户自定义名称优先于站点定义名称（名称列被截断时 tooltip 也用它） */
 function siteDisplayName(record: ISiteTableItem) {
@@ -229,6 +249,11 @@ function onGroupFilterCheck(groupName: string) {
 
 const toEditId = ref<TSiteID | null>("");
 function editSite(siteId: TSiteID) {
+  if (metadataStore.customSites?.[siteId]) {
+    customSiteEditId.value = siteId;
+    showCustomSiteDialog.value = true;
+    return;
+  }
   toEditId.value = siteId;
   showEditDialog.value = true;
 }
@@ -240,6 +265,9 @@ function deleteSite(siteId: TSiteID[]) {
 }
 
 async function confirmDeleteSite(siteId: TSiteID) {
+  if (metadataStore.customSites?.[siteId]) {
+    return await metadataStore.removeCustomSite(siteId);
+  }
   return await metadataStore.removeSite(siteId);
 }
 
@@ -346,6 +374,16 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
       <a-flex class="page-toolbar" align="center" :gap="8">
         <NavButton :text="t('common.btn.add')" color="success" :icon="PlusOutlined" @click="showAddDialog = true" />
 
+        <NavButton :text="t('SetSite.custom.btn')" color="primary" :icon="ApiOutlined" @click="openCreateCustomSite" />
+
+        <NavButton
+          :disabled="tableSelected.length === 0"
+          :text="t('SetSite.batchEdit.btn')"
+          color="info"
+          :icon="EditOutlined"
+          @click="showBatchEditDialog = true"
+        />
+
         <NavButton
           :disabled="tableSelected.length === 0"
           :text="t('common.remove')"
@@ -361,6 +399,13 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
           :icon="AimOutlined"
           :text="t('SetSite.index.oneClickImport')"
           @click="() => (showOneClickImportDialog = true)"
+        />
+
+        <NavButton
+          color="warning"
+          :icon="ThunderboltOutlined"
+          :text="t('SetSite.speedTest.btn')"
+          @click="() => openDomainSpeedTest()"
         />
 
         <a-divider style="margin-inline: 8px" type="vertical" />
@@ -534,12 +579,23 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
             <!-- 站点信息编辑 -->
             <a-tooltip :title="t('common.edit')">
               <a-button
-                :disabled="record.metadata.isDead || !siteMetadataIndex[record.id]"
+                :disabled="
+                  record.metadata.isDead || (!siteMetadataIndex[record.id] && !metadataStore.customSites?.[record.id])
+                "
                 size="small"
                 @click="() => editSite(record.id)"
               >
                 <template #icon>
                   <EditOutlined />
+                </template>
+              </a-button>
+            </a-tooltip>
+
+            <!-- 多域名连通性测速 -->
+            <a-tooltip v-if="(record.metadata.urls?.length ?? 0) > 1" :title="t('SetSite.speedTest.btn')">
+              <a-button :disabled="record.metadata.isDead" size="small" @click="() => openDomainSpeedTest([record.id])">
+                <template #icon>
+                  <ThunderboltOutlined />
                 </template>
               </a-button>
             </a-tooltip>
@@ -613,4 +669,7 @@ function isKeywordExcluded(filterKey: string, value: unknown): boolean {
   <EditDialog v-model="showEditDialog" :site-id="toEditId!" />
   <OneClickImportDialog v-model="showOneClickImportDialog" />
   <RebuildMapDialog v-model="showRebuildMapDialog" />
+  <CustomSiteDialog v-model="showCustomSiteDialog" :edit-site-id="customSiteEditId" />
+  <BatchEditDialog v-model="showBatchEditDialog" :site-ids="tableSelected" />
+  <DomainSpeedTestDialog v-model="showDomainSpeedTestDialog" :site-ids="speedTestSiteIds" />
 </template>

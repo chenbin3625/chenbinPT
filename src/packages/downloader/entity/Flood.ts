@@ -84,6 +84,12 @@ export const clientMetaData: TorrentClientMetaData = {
     TrackerManage: {
       allowed: true,
     },
+    Reannounce: {
+      allowed: true,
+    },
+    SetLocation: {
+      allowed: true,
+    },
   },
 };
 
@@ -539,6 +545,67 @@ export default class Flood extends AbstractBittorrentClient {
     } catch (e) {
       return false;
     }
+  }
+
+  // 强制重新汇报 Tracker: POST /api/torrents/announce
+  override async reannounceTorrent(id: any): Promise<boolean> {
+    try {
+      const hash = this.getTorrentHash(id);
+      await this.request("/api/torrents/announce", { method: "post", data: { hashes: [hash] } });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 迁移存储目录: POST /api/torrents/move
+  override async setTorrentLocation(id: any, location: string, moveData: boolean = true): Promise<boolean> {
+    const trimmed = location.trim();
+    if (!trimmed) return false;
+    try {
+      const hash = this.getTorrentHash(id);
+      await this.request("/api/torrents/move", {
+        method: "post",
+        data: {
+          hashes: [hash],
+          destination: trimmed,
+          moveFiles: moveData,
+          isBasePath: false,
+          isCheckHash: false,
+        },
+      });
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 原子替换 Tracker URL: PATCH /api/torrents/trackers
+  override async replaceTorrentTracker(
+    torrent: string | CTorrent,
+    search: string,
+    replacement: string,
+  ): Promise<{ replaced: number; total: number }> {
+    const trimmedSearch = search.trim();
+    if (!trimmedSearch) return { replaced: 0, total: 0 };
+    const hash = this.getTorrentHash(torrent);
+    const trackers = await this.getTorrentTrackersDetail(hash);
+    let replaced = 0;
+    const urls = trackers.map((tracker) => {
+      if (tracker.url && tracker.url.includes(trimmedSearch)) {
+        const updated = tracker.url.split(trimmedSearch).join(replacement);
+        if (updated !== tracker.url) {
+          replaced += 1;
+          return updated;
+        }
+      }
+      return tracker.url;
+    });
+    if (replaced > 0) {
+      await this.request("/api/torrents/trackers", { method: "patch", data: { hashes: [hash], trackers: urls } });
+    }
+    return { replaced, total: trackers.length };
   }
 }
 

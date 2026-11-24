@@ -96,6 +96,82 @@ export interface IBackupServerMetadata extends IBackupConfig {
   backupInterval?: number; // 自动备份间隔（小时），不设置或为 0 表示不自动备份
 }
 
+export interface ISearchHistoryItem {
+  id: string;
+  keyword: string;
+  planId?: string;
+  pinned?: boolean;
+  updatedAt: number;
+  count: number;
+}
+
+export interface ISearchFilterPreset {
+  id: string;
+  name: string;
+  filter: string;
+  createdAt: number;
+}
+
+export interface IPushRoutingRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  sites?: TSiteKey[];
+  categories?: string[];
+  minSizeGiB?: number;
+  maxSizeGiB?: number;
+  freeOnly?: boolean;
+  tags?: string[];
+  titleRegex?: string;
+  targetDownloaderId: TDownloaderKey;
+  savePath?: string;
+  label?: string;
+  uploadSpeedLimit?: number;
+  addAtPaused?: boolean;
+}
+
+export type TCustomSiteSchema = "Torznab" | "NexusPHP" | "Unit3D";
+
+export interface ICustomSiteDefinition {
+  id: TSiteKey;
+  name: string;
+  schema: TCustomSiteSchema;
+  type: "private" | "public";
+  urls: string[];
+  description?: string;
+  tags?: string[];
+  apiPath?: string;
+  requiresApiKey?: boolean;
+  timezoneOffset?: string;
+  createdAt: number;
+}
+
+export interface IKeywordWatchRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  keyword: string;
+  solutionId: TSolutionKey | "default" | "all";
+  intervalMinutes: number;
+  freeOnly?: boolean;
+  minSizeGiB?: number;
+  maxSizeGiB?: number;
+  minSeeders?: number;
+  titleIncludeRegex?: string;
+  titleExcludeRegex?: string;
+  autoFavorite?: boolean;
+  favCategory?: string;
+  notifyBrowser?: boolean;
+  notifyWebhook?: boolean;
+  lastRunAt?: number;
+  lastMatchAt?: number;
+  lastMatchCount?: number;
+  totalMatchCount?: number;
+  lastError?: string;
+  seenTorrentKeys?: string[];
+}
+
 export interface IMetadataPiniaStorageSchema {
   // 站点配置(用户配置)
   sites: Record<TSiteKey, ISiteUserConfig>;
@@ -152,4 +228,22 @@ export interface IMetadataPiniaStorageSchema {
 
   // 站点 ID 到站点名称的映射表
   siteNameMap: Record<TSiteKey, string>;
+
+  // 顶栏搜索历史（最近/置顶）
+  searchHistory: ISearchHistoryItem[];
+
+  // 搜索结果页常用筛选预设
+  searchFilterPresets: ISearchFilterPreset[];
+
+  // 智能推送路由规则
+  pushRoutingRules: IPushRoutingRule[];
+
+  // 用户自定义站点定义（Torznab / Prowlarr / Jackett / NexusPHP / Unit3D）
+  customSites: Record<TSiteKey, ICustomSiteDefinition>;
+
+  // 轻量关键词定时监控规则
+  keywordWatches: Record<string, IKeywordWatchRule>;
+
+  // 站点自定义最长不活跃保号天数（覆盖全局默认值）
+  siteInactivityDays: Record<TSiteKey, number>;
 }

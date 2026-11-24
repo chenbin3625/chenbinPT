@@ -11,7 +11,17 @@ import {
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import type { CTorrent } from "@ptd/downloader";
 import type { ITorrent } from "@ptd/site";
+
+export interface IClientBaseTorrentRef {
+  downloaderId: string;
+  torrentId: string;
+  name: string;
+  size: number;
+  infoHash?: string;
+  savePath?: string;
+}
 
 import { sendMessage } from "@/messages.ts";
 import type { ITorrentInfoForVerification } from "@/messages.ts";
@@ -30,8 +40,9 @@ import { mapWithConcurrency } from "./utils/concurrency.ts";
 const VERIFY_CONCURRENCY = 4;
 
 const showDialog = defineModel<boolean>();
-const { torrentItems } = defineProps<{
+const { torrentItems, clientBaseTorrent } = defineProps<{
   torrentItems: ITorrent[];
+  clientBaseTorrent?: IClientBaseTorrentRef | null;
 }>();
 
 const { t } = useI18n();
@@ -106,9 +117,14 @@ const torrentLabel = ref("");
 const suggestedSavePaths = computed(() => metadataStore.downloaders[selectedDownloaderId.value]?.suggestFolders ?? []);
 const suggestedLabels = computed(() => metadataStore.downloaders[selectedDownloaderId.value]?.suggestTags ?? []);
 
-// 是否可以创建任务
+const hasClientBase = computed(() => Boolean(clientBaseTorrent?.downloaderId && clientBaseTorrent?.torrentId));
+const clientBaseLoading = ref(false);
+const clientBaseError = ref(false);
+
+// 是否可以创建任务（反向辅种模式以客户端种子为基准，只需命中 >= 1 条候选即可创建）
 const canCreateTask = computed(() => {
-  return verifiedCount.value > 1 && selectedDownloaderId.value;
+  const minVerified = hasClientBase.value ? 1 : 2;
+  return verifiedCount.value >= minVerified && Boolean(selectedDownloaderId.value);
 });
 
 // 状态文本
@@ -146,18 +162,48 @@ function startVerification() {
   verifiedItemsOrder.value = [];
   baseTorrent.value = null;
   verifiedCount.value = 0;
+  clientBaseLoading.value = false;
+  clientBaseError.value = false;
 
   const remembered = configStore.download.saveLastDownloader ? metadataStore.lastKeepUpload : undefined;
   const rememberedDownloaderExists = remembered?.downloaderId && metadataStore.downloaders[remembered.downloaderId];
-  selectedDownloaderId.value = rememberedDownloaderExists
-    ? remembered.downloaderId!
-    : metadataStore.defaultDownloader?.id || "";
-  savePath.value = rememberedDownloaderExists
-    ? remembered?.savePath || ""
-    : metadataStore.defaultDownloader?.folder || "";
+  selectedDownloaderId.value = hasClientBase.value
+    ? clientBaseTorrent!.downloaderId
+    : rememberedDownloaderExists
+      ? remembered.downloaderId!
+      : metadataStore.defaultDownloader?.id || "";
+  savePath.value = hasClientBase.value
+    ? clientBaseTorrent!.savePath || ""
+    : rememberedDownloaderExists
+      ? remembered?.savePath || ""
+      : metadataStore.defaultDownloader?.folder || "";
   torrentLabel.value = rememberedDownloaderExists
     ? remembered?.label || ""
     : metadataStore.defaultDownloader?.tags || "";
+
+  if (hasClientBase.value && clientBaseTorrent) {
+    clientBaseLoading.value = true;
+    const baseRef = clientBaseTorrent;
+    void sendMessage("getClientTorrentFiles", {
+      downloaderId: baseRef.downloaderId,
+      torrent: { id: baseRef.torrentId, infoHash: baseRef.infoHash || "" } as CTorrent,
+    })
+      .then((files) => {
+        if (epoch !== verificationEpoch) return;
+        baseTorrent.value = {
+          infoHash: baseRef.infoHash || "",
+          name: baseRef.name,
+          length: baseRef.size,
+          files: (files ?? []).map((f) => ({ path: f.path || f.name, length: f.size })),
+        };
+        clientBaseLoading.value = false;
+      })
+      .catch(() => {
+        if (epoch !== verificationEpoch) return;
+        clientBaseError.value = true;
+        clientBaseLoading.value = false;
+      });
+  }
 
   const pending: { item: ITorrent; id: string; itemVersion: number }[] = [];
   torrentItems.forEach((item) => {
@@ -224,7 +270,7 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string, e
   const item = verifiedItems.value.get(id);
   if (!item) return;
 
-  const isFirstItem = verifiedItemsOrder.value[0] === id;
+  const isFirstItem = !hasClientBase.value && verifiedItemsOrder.value[0] === id;
 
   if (isFirstItem) {
     // 第一个种子作为基准种子。重新校验（reDownload）也必须更新它：
@@ -242,9 +288,11 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string, e
       item.status = "failed";
     }
   } else {
-    // 等待基准种子下载完成
-    const baseItem = verifiedItems.value.get(verifiedItemsOrder.value[0]);
-    if (baseItem?.loading) {
+    // 等待基准种子加载完成
+    const baseLoading = hasClientBase.value
+      ? clientBaseLoading.value
+      : verifiedItems.value.get(verifiedItemsOrder.value[0])?.loading;
+    if (baseLoading) {
       const timer = setTimeout(() => {
         pendingTimers.delete(timer);
         verification(torrent, id, epoch, itemVersion);
@@ -261,11 +309,15 @@ function verification(torrent: ITorrentInfoForVerification | null, id: string, e
       torrent: torrent ?? null,
     };
 
-    if (!baseItem?.verified) {
+    const baseVerified = hasClientBase.value
+      ? Boolean(baseTorrent.value && !clientBaseError.value)
+      : Boolean(verifiedItems.value.get(verifiedItemsOrder.value[0])?.verified);
+
+    if (!baseVerified) {
       result.status = "failed";
     }
 
-    if (!torrent || !baseItem?.verified) {
+    if (!torrent || !baseVerified) {
       Object.assign(item, result);
       recalcVerifiedCount();
       return;
@@ -371,7 +423,7 @@ function removeVerifiedItem(id: string) {
   const item = verifiedItems.value.get(id);
   if (!item) return;
 
-  const wasBase = verifiedItemsOrder.value[0] === id;
+  const wasBase = !hasClientBase.value && verifiedItemsOrder.value[0] === id;
   itemRequestVersions.delete(id);
   verifiedItems.value.delete(id);
   verifiedItemsOrder.value = verifiedItemsOrder.value.filter((itemId) => itemId !== id);
@@ -494,12 +546,39 @@ async function createKeepUploadTask() {
     :title="t('SearchEntity.KeepUploadDialog.title')"
     :width="1024"
   >
+    <a-alert
+      v-if="hasClientBase && clientBaseTorrent && clientBaseError"
+      type="error"
+      show-icon
+      class="keep-upload-dialog__client-base"
+      :message="
+        t('SearchEntity.KeepUploadDialog.clientBaseBanner', {
+          name: clientBaseTorrent.name,
+          size: formatSize(clientBaseTorrent.size),
+          files: baseTorrent?.files?.length ?? 0,
+        })
+      "
+    />
+    <a-alert
+      v-else-if="hasClientBase && clientBaseTorrent"
+      type="info"
+      show-icon
+      class="keep-upload-dialog__client-base"
+      :message="
+        t('SearchEntity.KeepUploadDialog.clientBaseBanner', {
+          name: clientBaseTorrent.name,
+          size: formatSize(clientBaseTorrent.size),
+          files: baseTorrent?.files?.length ?? 0,
+        })
+      "
+    />
+
     <a-list size="small" style="max-height: 80vh">
       <template v-for="(id, index) in verifiedItemsOrder" :key="id">
-        <a-typography-text v-if="index === 0" strong>
+        <a-typography-text v-if="!hasClientBase && index === 0" strong>
           {{ t("SearchEntity.KeepUploadDialog.baseTorrent") }}
         </a-typography-text>
-        <a-typography-text v-if="index === 1" strong>
+        <a-typography-text v-if="(hasClientBase && index === 0) || (!hasClientBase && index === 1)" strong>
           {{ t("SearchEntity.KeepUploadDialog.otherTorrent") }}
         </a-typography-text>
         <a-list-item v-if="verifiedItems.get(id)">
@@ -528,10 +607,12 @@ async function createKeepUploadTask() {
           <div style="display: flex; gap: 4px">
             <a-button
               v-if="
-                verifiedItems.get(verifiedItemsOrder[0])?.verified &&
+                (hasClientBase
+                  ? Boolean(baseTorrent && !clientBaseError)
+                  : verifiedItems.get(verifiedItemsOrder[0])?.verified) &&
                 !verifiedItems.get(id)!.loading &&
                 !verifiedItems.get(id)!.verified &&
-                index > 0
+                (hasClientBase || index > 0)
               "
               :title="t('SearchEntity.KeepUploadDialog.addToKeepUpload')"
               @click.stop="addToVerified(id)"
@@ -542,10 +623,12 @@ async function createKeepUploadTask() {
 
             <a-button
               v-if="
-                verifiedItems.get(verifiedItemsOrder[0])?.verified &&
+                (hasClientBase
+                  ? Boolean(baseTorrent && !clientBaseError)
+                  : verifiedItems.get(verifiedItemsOrder[0])?.verified) &&
                 !verifiedItems.get(id)!.loading &&
                 !verifiedItems.get(id)!.torrent &&
-                index > 0
+                (hasClientBase || index > 0)
               "
               :title="t('SearchEntity.KeepUploadDialog.redownload')"
               @click.stop="reDownload(id)"
@@ -598,7 +681,7 @@ async function createKeepUploadTask() {
           >
             <QuestionOutlined />
           </a-button>
-          <template v-if="verifiedCount > 1">
+          <template v-if="verifiedCount >= (hasClientBase ? 1 : 2)">
             <a-select
               v-model:value="selectedDownloaderId"
               :options="metadataStore.getSortedEnabledDownloaders"
@@ -633,3 +716,9 @@ async function createKeepUploadTask() {
     </template>
   </a-modal>
 </template>
+
+<style scoped>
+.keep-upload-dialog__client-base {
+  margin-bottom: 12px;
+}
+</style>

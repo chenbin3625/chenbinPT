@@ -9,6 +9,7 @@ import { supportTheme } from "@/shared/types.ts";
 import { definedLangMetaData } from "@/options/plugins/i18n.ts";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { sendMessage } from "@/messages.ts";
 
 import { useSetBaseConfigDraft } from "./configDraft.ts";
 
@@ -54,8 +55,13 @@ async function beforeSave() {
   }
 }
 
+async function afterSave() {
+  void sendMessage("syncToolbarPopup", undefined).catch(() => undefined);
+}
+
 defineExpose({
   beforeSave,
+  afterSave,
 });
 </script>
 
@@ -83,6 +89,17 @@ defineExpose({
             <QuestionCircleOutlined :style="{ color: infoIconColor }" />
           </a-tooltip>
           <a-switch v-model:checked="config.autoToggleNavBarOnDisplayChange" />
+        </a-flex>
+      </div>
+
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.ui.enableToolbarPopup") }}</a-typography-text>
+        <a-flex align="center" :gap="8">
+          <a-tooltip placement="bottom" :overlay-style="{ maxWidth: '400px' }">
+            <template #title>{{ t("SetBase.ui.enableToolbarPopupNote") }}</template>
+            <QuestionCircleOutlined :style="{ color: infoIconColor }" />
+          </a-tooltip>
+          <a-switch v-model:checked="config.enableToolbarPopup" />
         </a-flex>
       </div>
     </section>
@@ -210,6 +227,19 @@ defineExpose({
               :options="socialSiteSearchOptions"
               style="width: min(100%, 420px)"
             />
+          </div>
+
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.showSocialMediaServerBadge") }}</a-typography-text>
+            <a-switch
+              v-model:checked="config.contentScript.showSocialMediaServerBadge"
+              :disabled="!config.contentScript.enabledAtSocialSite"
+            />
+          </div>
+
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.ui.showSiteTorrentStatusBadge") }}</a-typography-text>
+            <a-switch v-model:checked="config.contentScript.showSiteTorrentStatusBadge" />
           </div>
         </div>
       </template>

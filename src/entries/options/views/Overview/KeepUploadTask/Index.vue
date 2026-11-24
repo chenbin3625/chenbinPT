@@ -8,7 +8,7 @@ import {
   NumberOutlined,
   SearchOutlined,
 } from "@ant-design/icons-vue";
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import type { CAddTorrentOptions } from "@ptd/downloader";
@@ -46,7 +46,8 @@ const metadataStore = useMetadataStore();
 const configStore = useConfigStore();
 const router = useRouter();
 
-const tasks = ref<IKeepUploadTask[]>([]);
+// 任务列表只整体替换（加载 / 过滤 / 清空），无元素级就地修改，用 shallowRef 省去深层代理
+const tasks = shallowRef<IKeepUploadTask[]>([]);
 // 数据表格设置了 row-key="id"，因此 selectedTasks 中保存的是任务ID（TKeepUploadTaskKey）而非任务对象
 const selectedTasks = ref<TKeepUploadTaskKey[]>([]);
 const expanded = ref<string[]>([]);

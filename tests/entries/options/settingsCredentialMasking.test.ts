@@ -108,10 +108,11 @@ describe("B-31(a)(c)：凭据输入框真实渲染为掩码，可切换明文（
     useMetadataStore(pinia).sites.s = { inputSetting: { passkey: "SECRET", uid: "1" } } as any;
 
     const { default: Editor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const { STORED_SITE_USER_CONFIG_KEY } = await import("@/options/views/Settings/SetSite/injectionKeys.ts");
     const config = ref<any>({});
     const Root = defineComponent({
       setup() {
-        provide("storedSiteUserConfig", config);
+        provide(STORED_SITE_USER_CONFIG_KEY, config);
         return () => h(Editor, { modelValue: "s" });
       },
     });

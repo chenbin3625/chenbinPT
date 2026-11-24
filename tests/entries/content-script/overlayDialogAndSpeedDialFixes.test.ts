@@ -33,6 +33,7 @@ vi.stubGlobal("chrome", {
 const { default: AdvanceListModuleDialog } =
   await import("@/content-script/app/components/AdvanceListModuleDialog.vue");
 const { default: SiteListPage } = await import("@/content-script/app/pages/SiteListPage.vue");
+const { PTD_DATA_KEY, REMOTE_DOWNLOAD_DIALOG_DATA_KEY } = await import("@/content-script/app/injectionKeys.ts");
 const { default: SpeedDialBtn } = await import("@/content-script/app/components/SpeedDialBtn.vue");
 const { siteInstance } = await import("@/content-script/app/utils.ts");
 const { i18nInstance } = await import("@/options/plugins/i18n.ts");
@@ -81,7 +82,7 @@ describe("CONTENTSCRIPT-2 · 高级列表推送下载", () => {
     const dialogData = reactive({ show: false, torrents: [] as unknown[], isDefaultSend: false });
     const Root = defineComponent({
       setup() {
-        provide("remoteDownloadDialogData", dialogData);
+        provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, dialogData as any);
         return () =>
           h(
             StyleProvider,
@@ -149,8 +150,8 @@ describe("CONTENTSCRIPT-3 · SiteListPage 解析失败反馈", () => {
     document.body.append(host);
     const Root = defineComponent({
       setup() {
-        provide("ptd_data", { siteId: "pt" });
-        provide("remoteDownloadDialogData", reactive({ show: false, torrents: [], isDefaultSend: false }));
+        provide(PTD_DATA_KEY, { siteId: "pt" });
+        provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, reactive({ show: false, torrents: [], isDefaultSend: false }));
         return () => h(SiteListPage);
       },
     });

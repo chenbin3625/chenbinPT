@@ -1,15 +1,5 @@
 <script setup lang="ts">
-import {
-  inject,
-  provide,
-  useTemplateRef,
-  ref,
-  shallowReactive,
-  computed,
-  withModifiers,
-  onUnmounted,
-  onMounted,
-} from "vue";
+import { provide, useTemplateRef, ref, shallowReactive, computed, withModifiers, onUnmounted, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useDraggable } from "@vueuse/core";
 import { HomeOutlined } from "@ant-design/icons-vue";
@@ -20,6 +10,7 @@ import { sendMessage } from "@/messages.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
+import { REMOTE_DOWNLOAD_DIALOG_DATA_KEY, usePtdData, usePtdDataReady } from "./injectionKeys.ts";
 import { registerModalApi, registerMessageApi } from "./modal.ts";
 import type { IRemoteDownloadDialogData } from "./types.ts";
 import {
@@ -32,10 +23,10 @@ import {
   resolveDroppedTorrents,
   snapshotDataTransfer,
   updatePageType,
-  type IPtdData,
 } from "./utils.ts";
 
 import SpeedDialBtn from "./components/SpeedDialBtn.vue";
+import SocialMediaBadge from "./components/SocialMediaBadge.vue";
 import SentToDownloaderDialog from "@/options/components/SentToDownloaderDialog/Index.vue";
 
 const configStore = useConfigStore();
@@ -56,7 +47,7 @@ const [shadowMessage, messageContextHolder] = staticMessage.useMessage();
 onMounted(() => registerMessageApi(shadowMessage));
 
 const ptdIcon = chrome.runtime.getURL("icons/logo/64.png");
-const ptdData = inject<IPtdData>("ptd_data", {});
+const ptdData = usePtdData();
 
 const el = useTemplateRef<HTMLElement>("el");
 
@@ -98,7 +89,7 @@ window.addEventListener("resize", handleWindowResize);
 let stopUrlWatcher: (() => void) | undefined;
 let unmounted = false;
 
-const dataReady = inject<Promise<void> | undefined>("ptd_data_ready", undefined);
+const dataReady = usePtdDataReady();
 
 void (async () => {
   // H-7：必须等 bootstrap 把 data.config patch 进来之后再读配置。只等 configStore.$onReady()
@@ -148,7 +139,7 @@ const remoteDownloadDialogData = shallowReactive<IRemoteDownloadDialogData>({
   torrents: [] as ITorrent[],
   isDefaultSend: false,
 });
-provide("remoteDownloadDialogData", remoteDownloadDialogData);
+provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, remoteDownloadDialogData);
 
 const isDragging = ref<boolean>(false);
 
@@ -289,6 +280,8 @@ function handleSpeedDialClick(event: MouseEvent) {
       />
     </a-float-button-group>
   </div>
+
+  <SocialMediaBadge v-if="ptdData.socialSite" />
 
   <SentToDownloaderDialog
     v-model="remoteDownloadDialogData.show"

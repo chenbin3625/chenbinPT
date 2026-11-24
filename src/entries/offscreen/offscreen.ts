@@ -10,3 +10,4 @@ import "./utils/socialInformation.ts";
 import "./utils/socialRecommendations.ts";
 import "./utils/keepUploadTask.ts";
 import "./utils/torrentFavorite.ts";
+import "./utils/keywordWatch.ts";

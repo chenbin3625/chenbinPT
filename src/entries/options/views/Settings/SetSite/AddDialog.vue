@@ -2,12 +2,13 @@
 import { QuestionCircleOutlined } from "@ant-design/icons-vue";
 import { computed, nextTick, provide, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
+import { type TSiteID } from "@ptd/site";
 import type { TSiteMetadataIndexEntryWithId } from "@ptd/site/metadataIndex";
 
 import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
+import { STORED_SITE_USER_CONFIG_KEY, type TStoredSiteUserConfig } from "./injectionKeys.ts";
 import { getCanAddedSiteIndexEntries } from "./utils.ts";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
@@ -23,11 +24,11 @@ const runtimeStore = useRuntimeStore();
 
 const currentStep = ref<0 | 1>(0);
 const selectedSiteId = ref<TSiteID | null>(null);
-const storedSiteUserConfig = ref<ISiteUserConfig>({});
+const storedSiteUserConfig = ref<TStoredSiteUserConfig>({});
 const isFormValid = ref<boolean>(false);
 const isSaving = ref(false);
 
-provide("storedSiteUserConfig", storedSiteUserConfig);
+provide(STORED_SITE_USER_CONFIG_KEY, storedSiteUserConfig);
 
 function resetDialog() {
   currentStep.value = 0;

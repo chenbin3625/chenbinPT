@@ -90,7 +90,7 @@ describe("SetBase/SearchEntityWindow", () => {
       expect(view.text()).toContain(t("SetBase.searchEntity.siteSearchConfig"));
       expect(view.text()).toContain(t("SetBase.searchEntity.mediaServerSearchConfig"));
 
-      expect(view.$$(".ant-switch"), "应渲染搜索/筛选/标签/媒体库各分区的开关").toHaveLength(9);
+      expect(view.$$(".ant-switch"), "应渲染搜索/筛选/标签/媒体库各分区的开关").toHaveLength(11);
       expect(view.$$(".ant-input-number"), "应渲染 4 个数字输入").toHaveLength(4);
       expect(view.$$(".ant-select"), "应渲染文字标签与标题展示方式两个下拉").toHaveLength(2);
       expect(view.$$("textarea")).toHaveLength(1);
@@ -112,6 +112,8 @@ describe("SetBase/SearchEntityWindow", () => {
         [t("SetBase.searchEntity.saveLastSearchFilter"), true],
         [t("SetBase.searchEntity.forceImdbIdMatchFilter"), true],
         [t("SetBase.searchEntity.autoDetectOfficialGroupFromTitle"), false],
+        [t("SetBase.searchEntity.enableMediaServerCrossCheck"), true],
+        [t("SetBase.searchEntity.enableDownloaderCrossCheck"), true],
         [t("SetBase.searchEntity.tagClickToFilter"), true],
         [t("SetBase.searchEntity.autoLoadInitialMediaWall"), true],
         [t("SetBase.searchEntity.autoLoadMoreMediaOnScroll"), true],

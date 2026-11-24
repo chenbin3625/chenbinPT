@@ -168,7 +168,10 @@
       "resumeError": "开始失败",
       "resumeSelectedSuccess": "已开始 {count} 个种子",
       "resumeSuccess": "开始成功",
-      "viewRaw": "查看原始数据"
+      "viewRaw": "查看原始数据",
+      "reannounce": "强制汇报",
+      "reannounceSuccess": "已向 {count} 个种子发送强制汇报",
+      "searchCrossSeed": "搜辅种"
     },
     "autoRefresh": {
       "btnTitle": "自动刷新",
@@ -190,7 +193,8 @@
       "openBtn": "全部下载器状态",
       "openClient": "打开下载器",
       "title": "下载器状态",
-      "torrentCount": "{count} 个种子"
+      "torrentCount": "{count} 个种子",
+      "freeSpace": "剩余空间 {size}"
     },
     "columnSelector": "自定义列",
     "deleteSelected": "删除",
@@ -307,6 +311,38 @@
       "totalDownloaded": "总下载量",
       "totalUploaded": "总上传量",
       "upSpeed": "上传速度"
+    },
+    "quickFilter": {
+      "all": "全部",
+      "checking": "校验中",
+      "trackerError": "红种/Tracker异常",
+      "sitePlaceholder": "按站点筛选",
+      "labelPlaceholder": "按标签筛选",
+      "scanTrackerErrors": "扫描红种",
+      "scanClean": "未发现异常 Tracker",
+      "scanFound": "发现 {count} 个异常 Tracker 种子",
+      "reset": "重置筛选"
+    },
+    "moveLocation": {
+      "btn": "移动路径",
+      "title": "批量修改保存路径（{count} 个种子）",
+      "targetPath": "目标保存路径",
+      "placeholder": "例如 /downloads/movies",
+      "moveData": "同时移动已有数据文件"
+    },
+    "replaceTracker": {
+      "btn": "替换 Tracker",
+      "title": "批量替换 Tracker / Passkey（{count} 个种子）",
+      "hint": "仅替换包含查找子串的 Tracker URL，可用于批量更新域名或更换 Passkey。",
+      "searchLabel": "查找子串（旧域名或旧 Passkey）",
+      "searchPlaceholder": "例如 old.tracker.org 或旧 passkey",
+      "replaceLabel": "替换为",
+      "replacePlaceholder": "例如 new.tracker.org 或新 passkey",
+      "result": "处理完成：更新 {torrents} 个种子（共 {trackers} 条 Tracker），失败 {failed} 个"
+    },
+    "site": {
+      "public": "公开 / PT 外",
+      "unmatched": "未识别站点"
     }
   },
   "MyCollection": {
@@ -395,7 +431,8 @@
         "stale": "今日未更新",
         "todayNotUpdated": "今日未更新",
         "unread": "有未读",
-        "unreadMessage": "未读信息"
+        "unreadMessage": "未读信息",
+        "inactive": "保号预警"
       },
       "flushAll": "刷新全部",
       "flushCancel": "取消刷新",
@@ -438,7 +475,9 @@
       "siteStatus": "站点状态",
       "updateAtFormatAsAlive": "更新时间显示为相对时间",
       "viewStatistic": "数据图表",
-      "viewTimeline": "时间轴"
+      "viewTimeline": "时间轴",
+      "showDailyDelta": "显示相对上次快照的每日增量",
+      "showInactivityWarning": "显示保号不活跃倒计时预警"
     },
     "refresh": {
       "batchPartial": "刷新完成：成功 {success} 个，失败 {failed} 个（{sites}）",
@@ -464,6 +503,19 @@
       "trueUserData": "真实数据量",
       "updateAt": "更新时间",
       "userData": "数据量"
+    },
+    "inactivity": {
+      "customMaxDays": "该站保号周期（天，留空使用全局默认）",
+      "detail": "已 {inactive} 天未访问 / 周期 {max} 天",
+      "expired": "已超保号期",
+      "remainingShort": "剩{days}天"
+    },
+    "upgradePlanner": {
+      "btn": "升级规划",
+      "title": "下一等级升级规划",
+      "hint": "按当前数据汇总各站距离下一等级仍未满足的条件，帮助优先安排保种、上传与魔力目标。",
+      "empty": "暂无可规划的下一等级目标（请先刷新站点数据）",
+      "estBonusDays": "按当前时魔预计还需 {days} 天"
     }
   },
   "SearchEntity": {
@@ -519,7 +571,8 @@
         "success": "验证通过",
         "waiting": "等待验证..."
       },
-      "title": "辅种检测"
+      "title": "辅种检测",
+      "clientBaseBanner": "基准种子来自下载器：{name}（{size}，共 {files} 个文件）"
     },
     "SaveSnapshotDialog": {
       "snapshotName": "快照名称"
@@ -649,14 +702,33 @@
         "middle": "中间省略",
         "scroll": "滚动"
       },
-      "uploadAtFormatAsAlive": "上传时间显示为相对时间"
+      "uploadAtFormatAsAlive": "上传时间显示为相对时间",
+      "presets": {
+        "title": "筛选预设",
+        "quick": "内置快捷筛选",
+        "saved": "自定义预设",
+        "namePlaceholder": "保存当前筛选为预设名...",
+        "freeOnly": "仅免费",
+        "uhd4k": "4K / UHD",
+        "highSeeders": "高做种（≥10）"
+      }
     },
     "siteFilter": {
       "all": "全部站点"
     },
     "noSearchPlanToRetry": "没有需要重试的搜索计划",
     "noSiteToSearch": "请至少添加一个站点进行搜索",
-    "searchSolutionNotFound": "搜索方案 [{0}] 不存在"
+    "searchSolutionNotFound": "搜索方案 [{0}] 不存在",
+    "crossCheck": {
+      "inMediaLibrary": "媒体库已有",
+      "inMediaLibraryQuality": "库内已有 · {quality}",
+      "mediaBannerTitle": "媒体库已存在相似条目"
+    },
+    "crossSeed": {
+      "bannerTitle": "正在为客户端种子寻找辅种：{name}（{size}）",
+      "sameSizeOnly": "仅看同体积",
+      "verifySelected": "校验已选辅种（{count}）"
+    }
   },
   "SearchResultSnapshot": {
     "EditNameDialog": {
@@ -700,7 +772,11 @@
     "sendSummaryFailed": "，有 {count} 个任务发送失败",
     "sendSummaryWarning": "，{count} 个任务的下载器设置未生效",
     "noTasks": "似乎并没有任务发送到下载器",
-    "title": "为 {0} 个种子选择下载器"
+    "title": "为 {0} 个种子选择下载器",
+    "freeSpaceShort": "余 {size}",
+    "lowFreeSpaceWarning": "目标下载器剩余空间（{free}）偏低或不足以容纳本次任务（{need}）",
+    "routingRuleMatched": "命中智能路由规则「{rule}」→ {downloader}",
+    "sendByRoutingRule": "按命中规则推送"
   },
   "SetBackup": {
     "AddDialog": {
@@ -858,7 +934,8 @@
       "quickSendToClientNote": "启用快速推送后，插件会在推送下载任务时，做以下默认操作：<br />1. 展平 下载器和下载目录 选项供直接点击推送。<br />2. 鼠标移到选项时，则会暂开标签列表，点击时会额外添加标签信息。<br />3. 均采用本地中转模式推送种子，且 `是否自动开始下载` 等基本设置项和下载器专有配置项值由下载器设置和站点设置决定。",
       "saveDownloadHistory": "是否保存下载历史（如非必要请勿关闭此功能）",
       "saveLastDownloader": "保存上一次使用的下载服务器设置",
-      "useQuickSendToClient": "默认使用快速推送"
+      "useQuickSendToClient": "默认使用快速推送",
+      "enableRoutingRulesOnDefaultSend": "点击「推送到默认下载器」时也优先应用智能推送路由规则"
     },
     "reset": {
       "clearDownloadHistory": "清空下载历史",
@@ -923,7 +1000,9 @@
         "middle": "中间省略",
         "scroll": "滚动"
       },
-      "treatTTQueryAsImdbSearch": "是否将 tt\\d\\{7,8\\} 的搜索词直接视为 IMDb 搜索"
+      "treatTTQueryAsImdbSearch": "是否将 tt\\d\\{7,8\\} 的搜索词直接视为 IMDb 搜索",
+      "enableMediaServerCrossCheck": "聚合搜索时联动媒体库（Emby/Jellyfin/Plex）查重提示",
+      "enableDownloaderCrossCheck": "聚合搜索时联动已启用下载器标注做种/下载中状态"
     },
     "tab": {
       "backup": "备份恢复",
@@ -933,7 +1012,66 @@
       "search-entity": "@:common.search",
       "social-information": "媒体评分",
       "ui": "界面UI",
-      "user-info": "用户信息"
+      "user-info": "用户信息",
+      "diagnostics": "日志与诊断",
+      "update": "版本更新"
+    },
+    "update": {
+      "sectionStatus": "当前版本与更新状态",
+      "sectionSettings": "自动检测设置",
+      "currentVersion": "当前版本",
+      "browserTarget": "当前环境",
+      "lastCheckedAt": "上次检测",
+      "neverChecked": "尚未检测",
+      "statusIdle": "尚未检测",
+      "statusUpToDate": "已是最新版本",
+      "statusAvailable": "发现新版本 {version}",
+      "statusIgnored": "已忽略 {version}",
+      "statusError": "检测失败",
+      "checkNow": "立即检查更新",
+      "openReleases": "前往 GitHub Releases",
+      "latestVersion": "最新版本",
+      "publishedAt": "发布时间",
+      "packageSize": "安装包大小",
+      "checksumLabel": "SHA-256 校验值",
+      "copyChecksum": "复制校验值",
+      "checksumCopied": "SHA-256 校验值已复制",
+      "releaseNotes": "更新说明",
+      "noReleaseNotes": "该版本未附带更新说明，可前往 GitHub Releases 页面查看提交记录。",
+      "downloadNow": "一键下载安装包（{name}）",
+      "downloadFallback": "前往 Release 页下载",
+      "downloadStarted": "已开始下载 {filename}",
+      "downloadFailed": "触发下载失败：{error}",
+      "otherAssets": "其他可用安装包",
+      "ignoreVersion": "忽略此版本",
+      "unignoreVersion": "取消忽略",
+      "versionIgnored": "已忽略版本 {version}，下个新版本发布时会再次提醒",
+      "versionUnignored": "已恢复版本更新提醒",
+      "guideTitle": "升级步骤引导",
+      "guideChromeStep1": "1. 点击上方「一键下载安装包」将最新压缩包保存到本机。",
+      "guideChromeStep2": "2. 将压缩包解压并覆盖到原扩展目录（本地站点配置、账号数据与下载历史均会保留）。",
+      "guideChromeStep3": "3. 打开浏览器的扩展管理页，找到 chenbinPT 并点击「重新加载」即可生效。",
+      "guideFirefoxStep1": "1. 点击上方「一键下载安装包」将 Firefox 压缩包下载到本地并解压。",
+      "guideFirefoxStep2": "2. 打开 about:debugging#/runtime/this-firefox，点击「临时载入附加组件」并选择解压目录中的 manifest.json。",
+      "guideFirefoxStep3": "3. 建议升级前先在「备份恢复」中导出一份备份，避免临时会话重置导致配置丢失。",
+      "openExtensionsPage": "打开扩展管理页",
+      "openExtensionsPageFallback": "浏览器限制扩展直接打开 {url}，已将地址复制到剪贴板，请在新标签页地址栏粘贴访问。",
+      "openExtensionsPageManual": "请手动在新标签页地址栏访问 {url}",
+      "enableAutoCheck": "自动检查扩展新版本",
+      "checkInterval": "自动检查周期",
+      "intervalHours": "每 {hours} 小时",
+      "intervalDays": "每 {days} 天",
+      "notifyBrowser": "发现新版本时发送桌面通知",
+      "privacyNotice": "更新检测仅以只读方式请求 GitHub Releases 获取版本号、更新说明与官方安装包地址，不会上传任何本地配置、站点凭据或使用记录；可随时在此关闭。",
+      "checkFailedDetail": "检查更新失败：{error}",
+      "checkSuccessUpToDate": "当前已是最新版本（{version}）",
+      "checkSuccessAvailable": "发现新版本 {version}",
+      "modalTitle": "发现新版本 {version}",
+      "topbarBadgeTitle": "发现新版本 {version}，点击查看下载与升级引导",
+      "openSettings": "更新设置",
+      "copyFailed": "复制失败，请手动复制",
+      "dataSourceManifest": "来源：Release 静态清单",
+      "dataSourceGitHubApi": "来源：GitHub Releases API"
     },
     "ui": {
       "allowDragLink": "允许拖拽链接到侧边栏按钮",
@@ -978,13 +1116,66 @@
       "tableActionColumnPositionEnd": "行尾（默认）",
       "tableActionColumnPositionStart": "行首",
       "tableMultiSortNote": "多列排序使用方法：点击任意表头字段开始排序，字段上会显示数字“1”。再点击其他字段，依次显示“2”“3”，表示排序优先级。再次点击相同字段可切换升序、降序或取消排序。排序顺序由这些数字决定，数字越小优先级越高。",
-      "useLargeIcon": "使用大图标按键"
+      "useLargeIcon": "使用大图标按键",
+      "enableToolbarPopup": "点击扩展图标时打开快捷迷你面板（Mini Popup）",
+      "enableToolbarPopupNote": "关闭时点击工具栏图标直接打开完整扩展页面；开启后先显示实时速率、账号健康与快捷搜索。",
+      "showSocialMediaServerBadge": "在豆瓣 / IMDb / TMDB / Bangumi 详情页显示媒体库查重浮标",
+      "showSiteTorrentStatusBadge": "在 PT 站点详情页与高级列表弹窗中标注收藏/下载/做种状态"
     },
     "userInfo": {
       "afterTime": "每日最早刷新时间",
       "afterTimeSuffix": "后，",
       "userDataRefresh": "用户数据刷新",
-      "userInfoDisplay": "用户信息展示"
+      "userInfoDisplay": "用户信息展示",
+      "alerts": {
+        "title": "账号健康监控与主动告警",
+        "notifyUnreadMessage": "新增未读站内信提醒",
+        "notifyHnRWarning": "新增 H&R 预警提醒",
+        "notifyNeedLogin": "站点 Cookie 失效 / 需重新登录提醒",
+        "notifyLowRatio": "分享率低于警戒线提醒",
+        "notifyLevelUp": "账号等级变动提醒",
+        "notifyInactivity": "保号不活跃倒计时提醒",
+        "defaultSiteMaxInactiveDays": "全局默认保号周期（天）",
+        "inactivityWarningDays": "提前预警天数（天）",
+        "webhookTitle": "外部 Webhook 通知（可选）",
+        "webhookType": "Webhook 类型",
+        "webhookTypes": {
+          "none": "不启用（仅浏览器通知）",
+          "generic": "通用 JSON Webhook",
+          "telegram": "Telegram Bot",
+          "bark": "Bark 推送"
+        },
+        "webhookUrl": "Webhook URL / API 地址",
+        "telegramChatId": "Telegram Chat ID",
+        "telegramChatIdPlaceholder": "例如 -1001234567890 或用户 ID",
+        "webhookSecret": "密钥 / Token（可选）",
+        "webhookSecretPlaceholder": "用于 Authorization Bearer 或 Telegram Bot Token",
+        "sendTestWebhook": "发送测试通知",
+        "webhookTestBody": "这是一条来自 chenbinPT 的测试通知，配置已生效。",
+        "webhookTestSuccess": "测试通知发送成功",
+        "webhookTestFailed": "测试通知发送失败：{error}",
+        "webhookUrlPlaceholder": {
+          "generic": "https://example.com/webhook",
+          "telegram": "https://api.telegram.org/bot<TOKEN>/sendMessage",
+          "bark": "https://api.day.app/<YOUR_KEY>/"
+        }
+      }
+    },
+    "diagnostics": {
+      "privacyHint": "诊断包会自动脱敏 Cookie、Passkey、API Key 与下载器密码，便于反馈问题。",
+      "searchPlaceholder": "搜索日志内容或来源...",
+      "levels": {
+        "all": "全部级别"
+      },
+      "copyBundle": "复制脱敏诊断包",
+      "exportBundle": "导出诊断 JSON",
+      "clearLogs": "清空日志",
+      "loadFailed": "读取运行日志失败",
+      "copied": "脱敏诊断包已复制到剪贴板",
+      "copyFailed": "复制到剪贴板失败",
+      "cleared": "运行日志已清空",
+      "clearFailed": "清空日志失败",
+      "countSummary": "显示 {shown} / 共 {total} 条日志"
     }
   },
   "SetDownloader": {
@@ -1090,6 +1281,34 @@
       "excludedSitesHint": "如果站点被排除，则在站点页面不会显示该下载器（在助手聚合搜索页面不生效）",
       "noSites": "暂无已添加的站点",
       "title": "设置下载器 [{0}] 的站点过滤（排除方式）"
+    },
+    "routing": {
+      "btn": "智能路由规则",
+      "title": "智能推送路由规则",
+      "description": "按优先级从高到低匹配种子属性，自动预填目标下载器、保存路径、标签与限速。",
+      "addRule": "新增规则",
+      "editTitle": "编辑路由规则",
+      "empty": "暂未配置路由规则，点击右上角新增。",
+      "ruleName": "规则名称",
+      "priority": "优先级",
+      "targetDownloader": "目标下载器",
+      "conditions": "匹配条件",
+      "targetAction": "推送目标",
+      "sites": "限定站点",
+      "anySite": "任意站点",
+      "categories": "分类关键词",
+      "tags": "标签关键词",
+      "commaSeparated": "多个关键词以逗号分隔",
+      "minSizeGiB": "最小体积 (GiB)",
+      "maxSizeGiB": "最大体积 (GiB)",
+      "freeOnly": "仅匹配免费种子",
+      "titleRegex": "标题 / 副标题正则",
+      "uploadSpeedLimit": "上传限速 (KiB/s)",
+      "matchAll": "匹配全部种子",
+      "testerTitle": "在线规则测试",
+      "testTitlePlaceholder": "输入示例种子标题测试命中哪条规则...",
+      "testMatched": "命中规则「{rule}」→ {downloader}",
+      "testNoMatch": "未命中任何启用规则"
     }
   },
   "SetMediaServer": {
@@ -1297,7 +1516,8 @@
       "tagTip": "标签输入完成后按回车添加。（只有前4个会在列表页显示）",
       "timezone": "时区",
       "uploadSpeedLimit": "上传速度",
-      "uploadSpeedLimitHint": "设置向下载器推送种子时的上传速度限制 (MiB/s)，0或不填时不限速"
+      "uploadSpeedLimitHint": "设置向下载器推送种子时的上传速度限制 (MiB/s)，0或不填时不限速",
+      "loadFailed": "加载站点 {site} 配置失败"
     },
     "index": {
       "flushFaviconFinish": "所选站点的图标已成功刷新！",
@@ -1330,6 +1550,49 @@
       },
       "title": "一键导入站点",
       "trying": "正在尝试导入站点 [{name}] ..."
+    },
+    "custom": {
+      "btn": "自定义站点 / Torznab",
+      "addTitle": "添加自定义站点 / Prowlarr / Jackett",
+      "editTitle": "编辑自定义站点",
+      "presets": "快速预设模板",
+      "namePlaceholder": "例如 Prowlarr - MTeam 或自建 NexusPHP",
+      "schema": "站点架构模板",
+      "typePrivate": "私有站（PT）",
+      "typePublic": "公开站 / 聚合源",
+      "urls": "站点地址（每行一个，支持多域名）",
+      "urlsHint": "仅支持 http:// 或 https:// 地址，第一行将作为默认地址。",
+      "apiPath": "Torznab API 路径",
+      "apiPathHint": "例如 Prowlarr 为 /1/api，Jackett 为 /api/v2.0/indexers/all/results/torznab",
+      "requiresApiKey": "需要 API Key 鉴权",
+      "apiKeyPlaceholder": "可选：直接填入后自动写入站点配置",
+      "description": "备注说明",
+      "saved": "自定义站点已保存并生效"
+    },
+    "batchEdit": {
+      "btn": "批量编辑",
+      "title": "批量编辑已选站点（{count} 个）",
+      "addGroups": "追加分组",
+      "addGroupsPlaceholder": "选择或输入要追加的分组名",
+      "removeGroups": "移除分组",
+      "removeGroupsPlaceholder": "选择要从已选站点移除的分组",
+      "keep": "保持不变",
+      "enable": "全部开启",
+      "disable": "全部关闭",
+      "success": "已批量更新 {count} 个站点配置"
+    },
+    "speedTest": {
+      "btn": "多域名测速",
+      "title": "站点多域名延迟测速",
+      "hint": "仅对配置了多个可用域名的站点并发探测响应耗时，可一键切换至最快域名。",
+      "empty": "当前已添加的站点均只有一个域名，无需测速切换。",
+      "current": "当前",
+      "unreachable": "不可达",
+      "useThis": "使用此域名",
+      "retest": "重新测速",
+      "switchAllFastest": "一键切换全部最快（{count}）",
+      "switched": "已切换至 {url}",
+      "switchedAll": "已将 {count} 个站点切换至最快域名"
     }
   },
   "UserDataStatistic": {
@@ -1417,7 +1680,6 @@
     "delimiter": "、",
     "refreshPageHint": "尝试刷新页面后重试",
     "unexpectedError": "发生意外错误",
-
     "AdvanceFilterGenerateDialog": {
       "date": "日期",
       "dateUnit": {
@@ -1514,7 +1776,10 @@
     "version": "版本",
     "visit": "访问",
     "unknown": "未知",
-    "noInformation": "暂无信息"
+    "noInformation": "暂无信息",
+    "collapse": "收起",
+    "expand": "展开",
+    "refresh": "刷新"
   },
   "connectCheck": {
     "default": "检查连接性",
@@ -1570,7 +1835,18 @@
       "quickSearch": "快捷搜索"
     },
     "untrustedTorrentLink": "解析出的下载链接不属于该站点，已拒绝",
-    "unsupportedDropLinks": "拖拽内容里的链接不受支持或不属于当前站点，已忽略"
+    "unsupportedDropLinks": "拖拽内容里的链接不受支持或不属于当前站点，已忽略",
+    "mediaBadge": {
+      "inLibrary": "媒体库已有 · {server} ({count})",
+      "played": "已看",
+      "unplayed": "未看"
+    },
+    "torrentStatus": {
+      "seeding": "做种中",
+      "downloading": "下载中",
+      "downloaded": "已下载",
+      "favorited": "已收藏"
+    }
   },
   "downloaderLabel": {
     "localDownload": "本地下载"
@@ -1603,7 +1879,14 @@
       },
       "searchTip": "输入种子关键字、IMDb编号进行搜索",
       "wiki": "帮助",
-      "wrongPixelRatioNotice": "检测到您的页面展示可能受到缩放影响，建议您将当前页面缩放调整为100%，以保障您的浏览体验～"
+      "wrongPixelRatioNotice": "检测到您的页面展示可能受到缩放影响，建议您将当前页面缩放调整为100%，以保障您的浏览体验～",
+      "searchHistory": {
+        "title": "搜索历史",
+        "empty": "暂无搜索记录",
+        "clear": "清空",
+        "pin": "置顶",
+        "unpin": "取消置顶"
+      }
     },
     "init": "请耐心等待页面加载....."
   },
@@ -1649,6 +1932,8 @@
     "notificationSendLinkToDownloaderFailure": "将链接发送到下载器 [$1] 失败",
     "notificationAutoBackupFailure": "自动备份失败：[$1] $2",
     "notificationSendLinkToDownloaderSuccess": "已成功将链接发送到下载器 [$1]",
+    "notificationUpdateAvailableBody": "当前版本 $1，最新版本 $2，点击查看下载与升级引导。",
+    "notificationUpdateAvailableTitle": "chenbinPT 发现新版本 $1",
     "omniboxSearch": "在 [ $1 ] 中搜索 $2",
     "searchPlanAll": "全部站点",
     "searchPlanDefault": "默认",
@@ -1685,7 +1970,8 @@
       "MyData": "我的数据",
       "SearchEntity": "搜索结果",
       "SearchResultSnapshot": "搜索快照",
-      "default": "概览"
+      "default": "概览",
+      "KeywordWatch": "词条监控"
     },
     "Settings": {
       "SetBackup": "备份恢复",
@@ -1694,7 +1980,9 @@
       "SetMediaServer": "媒体服务",
       "SetSearchSolution": "搜索方案",
       "SetSite": "站点设置",
-      "default": "参数设置"
+      "default": "参数设置",
+      "SetBaseDiagnostics": "日志诊断",
+      "SetBaseUpdate": "版本更新"
     }
   },
   "socialConfig": {
@@ -1746,5 +2034,50 @@
     "queueConcurrency": "请求队列长度",
     "showDeadSite": "在概览中展示已被标记为死亡 （isDead） 的站点",
     "showPassedSite": "在概览中展示已被标记为离线 （isOffline） 或不允许查询用户信息的站点"
+  },
+  "miniPopup": {
+    "openFullPanel": "打开面板",
+    "searchPlaceholder": "输入关键词快速聚合搜索...",
+    "searchBtn": "搜索",
+    "accountHealth": "账号健康",
+    "sitesCount": "{count} 站",
+    "unreadPm": "未读私信",
+    "abnormalSites": "异常站点",
+    "inactivityWarn": "保号预警",
+    "downloaders": "下载器实时状态",
+    "loading": "加载中...",
+    "noDownloader": "暂未启用下载器"
+  },
+  "KeywordWatch": {
+    "hint": "定时按指定搜索方案检索新种，支持免费/体积/做种数/正则过滤、自动去重、自动收藏与桌面/Webhook 通知（最小间隔 30 分钟）。",
+    "addRule": "新增监控规则",
+    "editorTitle": "编辑关键词监控规则",
+    "empty": "暂无关键词监控规则，点击「新增监控规则」开始追踪心仪资源。",
+    "namePlaceholder": "例如 4K 免费纪录片监控",
+    "keywordPlaceholder": "输入搜索关键词，例如 Dune 2160p",
+    "intervalLabel": "轮询间隔（分钟，≥30）",
+    "everyMinutes": "每 {minutes} 分钟",
+    "minSeeders": "最小做种数",
+    "titleIncludeRegex": "标题必须匹配正则（可选）",
+    "titleExcludeRegex": "标题排除正则（可选）",
+    "autoFavorite": "命中新种时自动收藏",
+    "favCategory": "自动收藏分组",
+    "defaultFavCategory": "关键词监控",
+    "notifyBrowser": "浏览器桌面通知",
+    "notifyWebhook": "推送至 Webhook",
+    "runNow": "立即检测",
+    "saved": "监控规则已保存",
+    "errorTag": "异常",
+    "runMatched": "检测完成：发现 {count} 条新匹配（共命中 {total} 条）",
+    "runNoNew": "检测完成：共命中 {total} 条，暂无新增",
+    "runError": "检测失败：{error}",
+    "table": {
+      "name": "规则名称",
+      "keyword": "关键词",
+      "solution": "搜索方案",
+      "interval": "检测周期",
+      "lastRun": "上次运行",
+      "matches": "累计命中"
+    }
   }
 }

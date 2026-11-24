@@ -15,6 +15,9 @@ import {
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
+import { sendMessage } from "@/messages.ts";
+import { formatSize } from "@/options/utils.ts";
+import { matchPushRoutingRule } from "@/shared/pushRouting.ts";
 import type { IDownloaderMetadata, TDownloaderKey } from "@/shared/types.ts";
 
 import { createDynamicReplacePrompter, sendTorrentToDownloader } from "./utils.ts";
@@ -62,6 +65,36 @@ const addTorrentOptions = ref<Required<Omit<CAddTorrentOptions, "localDownloadOp
 const suggestFolders = computed(() => selectedDownloader.value?.suggestFolders ?? []);
 const suggestTags = computed(() => selectedDownloader.value?.suggestTags ?? []);
 
+const freeSpaceMap = ref<Record<string, number | "N/A">>({});
+const totalSelectedSize = computed(() =>
+  torrentItems.reduce(
+    (sum, item) => sum + (typeof item.size === "number" && Number.isFinite(item.size) ? item.size : 0),
+    0,
+  ),
+);
+const selectedDownloaderFreeSpace = computed(() =>
+  selectedDownloaderId.value ? freeSpaceMap.value[selectedDownloaderId.value] : undefined,
+);
+const isLowFreeSpace = computed(() => {
+  const free = selectedDownloaderFreeSpace.value;
+  if (typeof free !== "number" || !Number.isFinite(free)) return false;
+  return free < Math.max(totalSelectedSize.value, 10 * 1024 ** 3);
+});
+
+async function refreshDownloaderFreeSpaces(ids: string[]) {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  await Promise.allSettled(
+    uniqueIds.map(async (id) => {
+      try {
+        const space = await sendMessage("getDownloaderFreeSpace", id);
+        freeSpaceMap.value = { ...freeSpaceMap.value, [id]: space };
+      } catch {
+        // 忽略单个下载器空间查询失败
+      }
+    }),
+  );
+}
+
 const currentSiteIds = computed(() => [...new Set(torrentItems.map((t) => t.site).filter(Boolean))]);
 const enabledDownloadersBySite = computed(() => {
   const ids = currentSiteIds.value;
@@ -73,6 +106,43 @@ const enabledDownloadersBySite = computed(() => {
 const sortedEnabledDownloadersBySite = computed(() =>
   [...enabledDownloadersBySite.value].sort((a, b) => (b.sortIndex ?? 0) - (a.sortIndex ?? 0)),
 );
+
+const matchedRoutingRule = computed(() => {
+  if (torrentItems.length === 0) return null;
+  const enabledSet = new Set(sortedEnabledDownloadersBySite.value.map((d) => d.id));
+  return matchPushRoutingRule(torrentItems[0], metadataStore.pushRoutingRules ?? [], enabledSet);
+});
+
+function applyRoutingRule(rule: NonNullable<typeof matchedRoutingRule.value>) {
+  const downloader = metadataStore.downloaders[rule.targetDownloaderId];
+  if (!downloader) return false;
+  selectedDownloaderId.value = downloader.id;
+  restoreAddTorrentOptions(downloader);
+  if (typeof rule.savePath === "string" && rule.savePath) {
+    addTorrentOptions.value.savePath = rule.savePath;
+  }
+  if (typeof rule.label === "string" && rule.label) {
+    addTorrentOptions.value.label = rule.label;
+  }
+  if (
+    typeof rule.uploadSpeedLimit === "number" &&
+    Number.isFinite(rule.uploadSpeedLimit) &&
+    rule.uploadSpeedLimit > 0
+  ) {
+    addTorrentOptions.value.uploadSpeedLimit = rule.uploadSpeedLimit;
+  }
+  if (typeof rule.addAtPaused === "boolean") {
+    addTorrentOptions.value.addAtPaused = rule.addAtPaused;
+  }
+  return true;
+}
+
+function quickSendByRoutingRule() {
+  if (!matchedRoutingRule.value || isSending.value) return;
+  if (applyRoutingRule(matchedRoutingRule.value)) {
+    void sendToDownloader();
+  }
+}
 
 const downloaderTitle = (downloader: IDownloaderMetadata) => `${downloader.name} [${downloader.address}]`;
 const getDownloaderIcon = (x: string) => chrome.runtime.getURL(getDownloaderIconRaw(x));
@@ -158,7 +228,7 @@ async function sendToDownloader() {
   // 保存此次选择记录（默认推送不保存）；深拷贝解代理，避免关闭弹窗触发 dialogLeave 时原地清空
   if (!isDefaultSend && configStore.download.saveLastDownloader) {
     // noinspection ES6MissingAwait
-    metadataStore.setLastDownloader({
+    void metadataStore.setLastDownloader({
       id: selectedDownloader.value.id,
       options: cloneDeep(toRaw(addTorrentOptions.value)),
     });
@@ -210,9 +280,15 @@ function quickSendToDownloader(downloader: IDownloaderMetadata, path: string = "
 function dialogEnter() {
   // 如果是默认下载发送，则直接设置为快速发送到客户端模式
   if (isDefaultSend) {
+    quickSendToClient.value = true;
+    if (configStore.download.enableRoutingRulesOnDefaultSend && matchedRoutingRule.value) {
+      applyRoutingRule(matchedRoutingRule.value);
+      void sendToDownloader();
+      return;
+    }
+
     const downloader = metadataStore.downloaders[metadataStore.defaultDownloader.id!];
     restoreAddTorrentOptions(downloader);
-    quickSendToClient.value = true;
 
     // 加载默认下载器设置中的 folder, tags 信息
     selectedDownloaderId.value = downloader?.id;
@@ -220,14 +296,19 @@ function dialogEnter() {
     addTorrentOptions.value.label = metadataStore.defaultDownloader.tags ?? "";
 
     // 直接调用发送函数
-    sendToDownloader();
+    void sendToDownloader();
   } else {
     selectedDownloaderId.value = undefined;
     restoreAddTorrentOptions(); // 先重置所有选项，然后如果需要则从uiStore中获取历史情况
     quickSendToClient.value = configStore.download.useQuickSendToClient;
+    void refreshDownloaderFreeSpaces(sortedEnabledDownloadersBySite.value.map((d) => d.id));
 
-    // 如果不是快速发送到客户端模式，则尝试设置默认下载器
+    // 如果不是快速发送到客户端模式，优先应用命中的智能路由规则，其次回退上次使用的下载器
     if (!quickSendToClient.value) {
+      if (matchedRoutingRule.value && applyRoutingRule(matchedRoutingRule.value)) {
+        return;
+      }
+
       const lastDownloaderId = metadataStore.lastDownloader?.id;
       const eligibleLastDownloader = lastDownloaderId
         ? sortedEnabledDownloadersBySite.value.find((d) => d.id === lastDownloaderId)
@@ -264,7 +345,7 @@ function dialogLeave() {
 watch(
   showDialog,
   (open) => {
-    if (open) nextTick(dialogEnter);
+    if (open) void nextTick(dialogEnter);
   },
   { immediate: true },
 );
@@ -293,6 +374,28 @@ watch(
     />
 
     <a-form v-else layout="vertical">
+      <!-- 智能推送路由命中提示 -->
+      <a-alert
+        v-if="matchedRoutingRule"
+        type="info"
+        show-icon
+        class="sent-to-downloader__alert"
+        :message="
+          t('SentToDownloaderDialog.routingRuleMatched', {
+            rule: matchedRoutingRule.name,
+            downloader:
+              metadataStore.downloaders[matchedRoutingRule.targetDownloaderId]?.name ||
+              matchedRoutingRule.targetDownloaderId,
+          })
+        "
+      >
+        <template v-if="quickSendToClient" #action>
+          <a-button size="small" type="primary" @click="quickSendByRoutingRule">
+            {{ t("SentToDownloaderDialog.sendByRoutingRule") }}
+          </a-button>
+        </template>
+      </a-alert>
+
       <!-- 快速下载选项 -->
       <template v-if="quickSendToClient">
         <a-list v-if="quickSendRows.length > 0" :data-source="quickSendRows" size="small">
@@ -312,6 +415,20 @@ watch(
                     <a-avatar :src="getDownloaderIcon(row.downloader.type)" shape="square" />
                   </template>
                 </a-list-item-meta>
+                <a-tag
+                  v-if="typeof freeSpaceMap[row.downloader.id] === 'number'"
+                  :color="
+                    (freeSpaceMap[row.downloader.id] as number) < Math.max(totalSelectedSize, 10 * 1024 ** 3)
+                      ? 'error'
+                      : 'default'
+                  "
+                >
+                  {{
+                    t("SentToDownloaderDialog.freeSpaceShort", {
+                      size: formatSize(freeSpaceMap[row.downloader.id] as number),
+                    })
+                  }}
+                </a-tag>
               </a-list-item>
               <template #overlay>
                 <a-menu
@@ -349,12 +466,37 @@ watch(
           @change="handleDownloaderChange"
         >
           <template #option="option">
-            <a-flex v-if="optionDownloader(option)" align="center" :gap="8">
-              <a-avatar :size="20" :src="getDownloaderIcon(optionDownloader(option)!.type)" shape="square" />
-              <span>{{ downloaderTitle(optionDownloader(option)!) }}</span>
+            <a-flex v-if="optionDownloader(option)" align="center" justify="space-between" :gap="8">
+              <a-flex align="center" :gap="8">
+                <a-avatar :size="20" :src="getDownloaderIcon(optionDownloader(option)!.type)" shape="square" />
+                <span>{{ downloaderTitle(optionDownloader(option)!) }}</span>
+              </a-flex>
+              <a-tag
+                v-if="typeof freeSpaceMap[optionDownloader(option)!.id] === 'number'"
+                :color="
+                  (freeSpaceMap[optionDownloader(option)!.id] as number) < Math.max(totalSelectedSize, 10 * 1024 ** 3)
+                    ? 'error'
+                    : 'default'
+                "
+              >
+                {{ formatSize(freeSpaceMap[optionDownloader(option)!.id] as number) }}
+              </a-tag>
             </a-flex>
           </template>
         </a-select>
+
+        <a-alert
+          v-if="isLowFreeSpace && typeof selectedDownloaderFreeSpace === 'number'"
+          type="warning"
+          show-icon
+          class="sent-to-downloader__space-warn"
+          :message="
+            t('SentToDownloaderDialog.lowFreeSpaceWarning', {
+              free: formatSize(selectedDownloaderFreeSpace),
+              need: formatSize(totalSelectedSize),
+            })
+          "
+        />
 
         <a-row :gutter="16">
           <a-col :span="12">
@@ -459,5 +601,14 @@ watch(
 /* 快速发送行整行可点，用类承载指针样式（静态行内样式收敛） */
 .sent-to-downloader__quick-row {
   cursor: pointer;
+}
+
+.sent-to-downloader__alert {
+  margin-bottom: 12px;
+}
+
+.sent-to-downloader__space-warn {
+  margin-top: 8px;
+  margin-bottom: 4px;
 }
 </style>

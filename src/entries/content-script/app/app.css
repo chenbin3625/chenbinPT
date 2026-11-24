@@ -190,3 +190,89 @@
 .ptd-fade-enter:hover {
   opacity: 1;
 }
+
+/* 社交页媒体库查重 / 种子详情页状态浮标（仅渲染在 Shadow DOM 内，不污染宿主样式） */
+.ptd-cs-badge-float {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 9999998;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+}
+
+.ptd-cs-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--ptd-bg, #ffffff);
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+  border: 1px solid var(--ptd-border, rgba(0, 0, 0, 0.12));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ptd-cs-badge-pill--static {
+  cursor: default;
+}
+
+.ptd-cs-badge-detail {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--ptd-bg, #ffffff);
+  color: var(--ptd-text, rgba(0, 0, 0, 0.88));
+  border: 1px solid var(--ptd-border, rgba(0, 0, 0, 0.12));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ptd-cs-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ptd-cs-badge-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ptd-cs-badge-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 2px;
+  line-height: 1;
+}
+
+.ptd-cs-badge-close:hover {
+  opacity: 1;
+}
+
+.ptd-cs-status-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}

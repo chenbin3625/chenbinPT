@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, shallowRef } from "vue";
+import { computed, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   CheckSquareOutlined,
@@ -16,7 +16,7 @@ import { sendMessage } from "@/messages.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
-import type { IRemoteDownloadDialogData } from "../types.ts";
+import { usePtdData, useRemoteDownloadDialogData } from "../injectionKeys.ts";
 import {
   copyTextToClipboard,
   doKeywordSearch,
@@ -24,7 +24,6 @@ import {
   sanitizeParsedTorrents,
   siteInstance,
   wrapperConfirmFn,
-  type IPtdData,
 } from "../utils.ts";
 
 import AdvanceListModuleDialog from "../components/AdvanceListModuleDialog.vue";
@@ -35,7 +34,7 @@ const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
 const { t } = useI18n();
 
-const ptdData = inject<IPtdData>("ptd_data", {});
+const ptdData = usePtdData();
 const enabledDownloadersBySite = computed(() => {
   return metadataStore.getEnabledDownloadersBySite(ptdData.siteId ?? "");
 });
@@ -166,7 +165,7 @@ async function handleLinkCopyMulti() {
   }
 }
 
-const remoteDownloadDialogData = inject<IRemoteDownloadDialogData>("remoteDownloadDialogData")!;
+const remoteDownloadDialogData = useRemoteDownloadDialogData();
 
 // CONTENTSCRIPT-3：parseListPage() 会 await 引擎解析 / host 校验，失败时必须给出 UI 反馈；
 // 原来这两条 .then 链没有 catch/finally，解析抛错时按钮静默无反应并留下 unhandled rejection

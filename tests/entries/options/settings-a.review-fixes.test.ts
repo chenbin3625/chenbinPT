@@ -285,11 +285,12 @@ describe("OPTIONSSETTINGS-8：站点编辑器必填提示走 i18n", () => {
     );
 
     const { default: Editor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const { STORED_SITE_USER_CONFIG_KEY } = await import("@/options/views/Settings/SetSite/injectionKeys.ts");
     const siteId = ref("site-a");
     const draft = ref<any>({ url: "", sortIndex: 100, inputSetting: { passkey: "" } });
     const Root = defineComponent({
       setup() {
-        provide("storedSiteUserConfig", draft);
+        provide(STORED_SITE_USER_CONFIG_KEY, draft);
         return () => h(Editor as any, { modelValue: siteId.value });
       },
     });
@@ -322,12 +323,13 @@ describe("F2-Low-07：排序号 0 不被当成未填写", () => {
     });
 
     const { default: Editor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const { STORED_SITE_USER_CONFIG_KEY } = await import("@/options/views/Settings/SetSite/injectionKeys.ts");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
     const draft = ref<any>({ url: "https://a.example/", sortIndex: 0, inputSetting: { passkey: "key" } });
     let formValid: boolean | undefined;
     const Root = defineComponent({
       setup() {
-        provide("storedSiteUserConfig", draft);
+        provide(STORED_SITE_USER_CONFIG_KEY, draft);
         return () =>
           h(Editor as any, {
             modelValue: "site-a",

@@ -15,6 +15,7 @@ const sendMessageMock = vi.hoisted(() => vi.fn());
 vi.mock("@/messages.ts", () => ({ sendMessage: sendMessageMock, onMessage: vi.fn() }));
 
 const { default: SiteListPage } = await import("@/content-script/app/pages/SiteListPage.vue");
+const { PTD_DATA_KEY, REMOTE_DOWNLOAD_DIALOG_DATA_KEY } = await import("@/content-script/app/injectionKeys.ts");
 const { siteInstance } = await import("@/content-script/app/utils.ts");
 const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 const { antdInstance } = await import("@/options/plugins/antd.ts");
@@ -60,8 +61,8 @@ async function mountListPage() {
   document.body.append(host);
   const Root = defineComponent({
     setup() {
-      provide("ptd_data", { siteId: "pt" });
-      provide("remoteDownloadDialogData", reactive({ show: false, torrents: [], isDefaultSend: false }));
+      provide(PTD_DATA_KEY, { siteId: "pt" });
+      provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, reactive({ show: false, torrents: [], isDefaultSend: false }));
       return () => h(SiteListPage);
     },
   });

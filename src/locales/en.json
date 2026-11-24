@@ -168,7 +168,10 @@
       "resumeError": "Failed to resume",
       "resumeSelectedSuccess": "Resumed {count} torrent(s)",
       "resumeSuccess": "Resumed successfully",
-      "viewRaw": "View Raw"
+      "viewRaw": "View Raw",
+      "reannounce": "Reannounce",
+      "reannounceSuccess": "Sent reannounce for {count} torrent(s)",
+      "searchCrossSeed": "Cross-Seed"
     },
     "autoRefresh": {
       "btnTitle": "Auto-Refresh",
@@ -190,7 +193,8 @@
       "openBtn": "All Downloaders Status",
       "openClient": "Open Downloader",
       "title": "Downloader Status",
-      "torrentCount": "{count} torrent(s)"
+      "torrentCount": "{count} torrent(s)",
+      "freeSpace": "Free {size}"
     },
     "columnSelector": "Columns",
     "deleteSelected": "Delete",
@@ -307,6 +311,38 @@
       "totalDownloaded": "Total Download",
       "totalUploaded": "Total Upload",
       "upSpeed": "Upload Speed"
+    },
+    "quickFilter": {
+      "all": "All",
+      "checking": "Checking",
+      "trackerError": "Tracker Error",
+      "sitePlaceholder": "Filter by site",
+      "labelPlaceholder": "Filter by label",
+      "scanTrackerErrors": "Scan Red Torrents",
+      "scanClean": "No tracker errors detected",
+      "scanFound": "Found {count} torrent(s) with tracker errors",
+      "reset": "Reset Filters"
+    },
+    "moveLocation": {
+      "btn": "Set Location",
+      "title": "Move Save Location ({count} torrent(s))",
+      "targetPath": "Target Save Path",
+      "placeholder": "e.g. /downloads/movies",
+      "moveData": "Also move existing data files"
+    },
+    "replaceTracker": {
+      "btn": "Replace Tracker",
+      "title": "Batch Replace Tracker / Passkey ({count} torrent(s))",
+      "hint": "Replaces matching substrings in tracker URLs for the selected torrents (useful for domain migration or passkey rotation).",
+      "searchLabel": "Find substring (old domain or passkey)",
+      "searchPlaceholder": "e.g. old.tracker.org or old passkey",
+      "replaceLabel": "Replace with",
+      "replacePlaceholder": "e.g. new.tracker.org or new passkey",
+      "result": "Done: updated {torrents} torrent(s) ({trackers} tracker(s)), {failed} failed"
+    },
+    "site": {
+      "public": "Public / Non-PT",
+      "unmatched": "Unmatched Site"
     }
   },
   "MyCollection": {
@@ -395,7 +431,8 @@
         "stale": "Not updated today",
         "todayNotUpdated": "Not updated today",
         "unread": "Unread",
-        "unreadMessage": "Unread messages"
+        "unreadMessage": "Unread messages",
+        "inactive": "Inactivity Risk"
       },
       "flushAll": "Refresh all",
       "flushCancel": "Refresh canceled",
@@ -438,7 +475,9 @@
       "siteStatus": "Site Status",
       "updateAtFormatAsAlive": "Display update At as Relative Time",
       "viewStatistic": "Data Chart",
-      "viewTimeline": "Timeline"
+      "viewTimeline": "Timeline",
+      "showDailyDelta": "Show daily delta since previous snapshot",
+      "showInactivityWarning": "Show account inactivity countdown warning"
     },
     "refresh": {
       "batchPartial": "Refresh completed: {success} succeeded, {failed} failed ({sites})",
@@ -464,6 +503,19 @@
       "trueUserData": "True Data",
       "updateAt": "Updated At",
       "userData": "Data"
+    },
+    "inactivity": {
+      "customMaxDays": "Site inactivity limit (days, empty = global default)",
+      "detail": "Inactive {inactive}d / Limit {max}d",
+      "expired": "Overdue",
+      "remainingShort": "{days}d left"
+    },
+    "upgradePlanner": {
+      "btn": "Upgrade Planner",
+      "title": "Next-Level Upgrade Planner",
+      "hint": "Summarizes unmet requirements for the next user class across your sites to help prioritize seeding, upload, and bonus goals.",
+      "empty": "No next-level upgrade targets available yet (refresh site data first).",
+      "estBonusDays": "Est. ~{days}d at current bonus/hr"
     }
   },
   "SearchEntity": {
@@ -519,7 +571,8 @@
         "success": "Verification passed",
         "waiting": "Waiting for verification..."
       },
-      "title": "Reseed Verification"
+      "title": "Reseed Verification",
+      "clientBaseBanner": "Base torrent from downloader: {name} ({size}, {files} files)"
     },
     "SaveSnapshotDialog": {
       "snapshotName": "Snapshot Name"
@@ -649,14 +702,33 @@
         "middle": "Ellipsis in middle",
         "scroll": "Scrolling"
       },
-      "uploadAtFormatAsAlive": "Display Upload Time as Relative Time"
+      "uploadAtFormatAsAlive": "Display Upload Time as Relative Time",
+      "presets": {
+        "title": "Filter Presets",
+        "quick": "Built-in Presets",
+        "saved": "Saved Presets",
+        "namePlaceholder": "Save current filter as...",
+        "freeOnly": "Free Only",
+        "uhd4k": "4K / UHD",
+        "highSeeders": "High Seeders (≥10)"
+      }
     },
     "siteFilter": {
       "all": "All Site"
     },
     "noSearchPlanToRetry": "There are no search plans to retry",
     "noSiteToSearch": "Please add at least one site before searching",
-    "searchSolutionNotFound": "Search plan [{0}] does not exist"
+    "searchSolutionNotFound": "Search plan [{0}] does not exist",
+    "crossCheck": {
+      "inMediaLibrary": "In Media Library",
+      "inMediaLibraryQuality": "In Library · {quality}",
+      "mediaBannerTitle": "Matching Items Found in Media Server"
+    },
+    "crossSeed": {
+      "bannerTitle": "Finding cross-seed matches for client torrent: {name} ({size})",
+      "sameSizeOnly": "Same Size Only",
+      "verifySelected": "Verify Cross-Seed ({count})"
+    }
   },
   "SearchResultSnapshot": {
     "EditNameDialog": {
@@ -700,7 +772,11 @@
     "sendSummaryFailed": ", {count} failed",
     "sendSummaryWarning": ", {count} task(s) where the downloader settings did not take effect",
     "noTasks": "No tasks were sent to the downloader",
-    "title": "Select downloader for {0} torrents"
+    "title": "Select downloader for {0} torrents",
+    "freeSpaceShort": "Free {size}",
+    "lowFreeSpaceWarning": "Target downloader free space ({free}) is low or insufficient for this batch ({need})",
+    "routingRuleMatched": "Matched routing rule \"{rule}\" → {downloader}",
+    "sendByRoutingRule": "Send via Matched Rule"
   },
   "SetBackup": {
     "AddDialog": {
@@ -858,7 +934,8 @@
       "quickSendToClientNote": "When quick push is enabled, the plugin will perform the following default actions when pushing download tasks:<br />1. Flatten the downloader and download directory options for direct click-to-push.<br />2. When hovering over an option, the label list will temporarily open; clicking will additionally add label information.<br />3. All use local relay mode to push torrents, and basic settings like 'auto-start download' and downloader-specific configs are determined by downloader and site settings.",
       "saveDownloadHistory": "Save download history (Please do not disable this function unless necessary)",
       "saveLastDownloader": "Save the last used download server settings",
-      "useQuickSendToClient": "Use quick push by default"
+      "useQuickSendToClient": "Use quick push by default",
+      "enableRoutingRulesOnDefaultSend": "Also apply smart push routing rules when using Push to Default Downloader"
     },
     "reset": {
       "clearDownloadHistory": "Clear Download History",
@@ -923,7 +1000,9 @@
         "middle": "Ellipsis in middle",
         "scroll": "Scrolling"
       },
-      "treatTTQueryAsImdbSearch": "Treat tt\\d\\{7,8\\} search terms directly as IMDb search"
+      "treatTTQueryAsImdbSearch": "Treat tt\\d\\{7,8\\} search terms directly as IMDb search",
+      "enableMediaServerCrossCheck": "Cross-check search results against Media Servers (Emby/Jellyfin/Plex)",
+      "enableDownloaderCrossCheck": "Cross-check search results against enabled Downloaders (seeding/downloading badges)"
     },
     "tab": {
       "backup": "Backup & Restore",
@@ -933,7 +1012,66 @@
       "search-entity": "@:common.search",
       "social-information": "Social Rating",
       "ui": "Option UI",
-      "user-info": "UserInfo"
+      "user-info": "UserInfo",
+      "diagnostics": "Diagnostics",
+      "update": "Updates"
+    },
+    "update": {
+      "sectionStatus": "Version & Update Status",
+      "sectionSettings": "Auto-check Settings",
+      "currentVersion": "Current Version",
+      "browserTarget": "Target Browser",
+      "lastCheckedAt": "Last Checked",
+      "neverChecked": "Never checked",
+      "statusIdle": "Not checked yet",
+      "statusUpToDate": "Up to date",
+      "statusAvailable": "Update available: {version}",
+      "statusIgnored": "Ignored {version}",
+      "statusError": "Check failed",
+      "checkNow": "Check for Updates",
+      "openReleases": "Open GitHub Releases",
+      "latestVersion": "Latest Version",
+      "publishedAt": "Published",
+      "packageSize": "Package Size",
+      "checksumLabel": "SHA-256 Checksum",
+      "copyChecksum": "Copy checksum",
+      "checksumCopied": "SHA-256 checksum copied",
+      "releaseNotes": "Release Notes",
+      "noReleaseNotes": "No release notes were provided. Visit GitHub Releases to view commit details.",
+      "downloadNow": "Download Package ({name})",
+      "downloadFallback": "Download on Releases Page",
+      "downloadStarted": "Download started: {filename}",
+      "downloadFailed": "Failed to start download: {error}",
+      "otherAssets": "Other Available Packages",
+      "ignoreVersion": "Ignore This Version",
+      "unignoreVersion": "Unignore",
+      "versionIgnored": "Ignored {version}. You will be notified on the next release.",
+      "versionUnignored": "Update reminders restored",
+      "guideTitle": "Upgrade Guide",
+      "guideChromeStep1": "1. Click \"Download Package\" above to save the latest zip archive locally.",
+      "guideChromeStep2": "2. Extract and overwrite your existing unpacked extension folder (all settings, site data, and history are preserved).",
+      "guideChromeStep3": "3. Open your browser's extensions page, locate chenbinPT, and click Reload.",
+      "guideFirefoxStep1": "1. Click \"Download Package\" above to save and extract the Firefox archive.",
+      "guideFirefoxStep2": "2. Open about:debugging#/runtime/this-firefox, click \"Load Temporary Add-on\", and select manifest.json from the extracted folder.",
+      "guideFirefoxStep3": "3. Consider exporting a backup in \"Backup & Restore\" first to avoid losing settings across temporary sessions.",
+      "openExtensionsPage": "Open Extensions Page",
+      "openExtensionsPageFallback": "Browser blocked opening {url} directly. The URL has been copied to your clipboard—paste it into a new tab.",
+      "openExtensionsPageManual": "Please open {url} manually in a new tab",
+      "enableAutoCheck": "Automatically check for extension updates",
+      "checkInterval": "Check interval",
+      "intervalHours": "Every {hours} hours",
+      "intervalDays": "Every {days} days",
+      "notifyBrowser": "Show desktop notification when an update is available",
+      "privacyNotice": "Update checks only read public release metadata from GitHub Releases and never upload local settings, site credentials, or usage data. You can turn this off anytime.",
+      "checkFailedDetail": "Update check failed: {error}",
+      "checkSuccessUpToDate": "Already on the latest version ({version})",
+      "checkSuccessAvailable": "New version {version} is available",
+      "modalTitle": "Update Available: {version}",
+      "topbarBadgeTitle": "Update {version} available — click for download & upgrade guide",
+      "openSettings": "Update Settings",
+      "copyFailed": "Failed to copy, please copy manually",
+      "dataSourceManifest": "Source: Release manifest",
+      "dataSourceGitHubApi": "Source: GitHub Releases API"
     },
     "ui": {
       "allowDragLink": "Allow dragging links to the sidebar button",
@@ -978,13 +1116,66 @@
       "tableActionColumnPositionEnd": "Row end (default)",
       "tableActionColumnPositionStart": "Row start",
       "tableMultiSortNote": "Multi-column sorting: Click any table header field to start sorting, which will display the number \"1\" on the field. Click other fields sequentially to display \"2\", \"3\", indicating sorting priority. Click the same field again to toggle between ascending, descending, or cancel sorting. The sorting order is determined by these numbers, with smaller numbers having higher priority.",
-      "useLargeIcon": "Use large icon buttons"
+      "useLargeIcon": "Use large icon buttons",
+      "enableToolbarPopup": "Open Mini Popup when clicking the extension toolbar icon",
+      "enableToolbarPopupNote": "When disabled, clicking the toolbar icon opens the full dashboard directly; when enabled, shows live speeds, health summary, and quick search first.",
+      "showSocialMediaServerBadge": "Show media library badge on Douban / IMDb / TMDB / Bangumi detail pages",
+      "showSiteTorrentStatusBadge": "Show favorited / downloaded / seeding badges on PT detail pages and Advanced List modal"
     },
     "userInfo": {
       "afterTime": "Earliest daily refresh time",
       "afterTimeSuffix": ", ",
       "userDataRefresh": "User Data Refresh",
-      "userInfoDisplay": "User Info Display"
+      "userInfoDisplay": "User Info Display",
+      "alerts": {
+        "title": "Account Health Monitoring & Proactive Alerts",
+        "notifyUnreadMessage": "Notify on new unread private messages",
+        "notifyHnRWarning": "Notify on new H&R warnings",
+        "notifyNeedLogin": "Notify when site session/cookie expires",
+        "notifyLowRatio": "Notify when share ratio drops below threshold",
+        "notifyLevelUp": "Notify on user class / level changes",
+        "notifyInactivity": "Notify on account inactivity countdown",
+        "defaultSiteMaxInactiveDays": "Default max inactivity period (days)",
+        "inactivityWarningDays": "Warn before threshold (days)",
+        "webhookTitle": "External Webhook Notification (Optional)",
+        "webhookType": "Webhook Type",
+        "webhookTypes": {
+          "none": "Disabled (Browser notifications only)",
+          "generic": "Generic JSON Webhook",
+          "telegram": "Telegram Bot",
+          "bark": "Bark Push"
+        },
+        "webhookUrl": "Webhook URL / API Endpoint",
+        "telegramChatId": "Telegram Chat ID",
+        "telegramChatIdPlaceholder": "e.g. -1001234567890 or user ID",
+        "webhookSecret": "Secret / Token (Optional)",
+        "webhookSecretPlaceholder": "Used as Bearer token or Telegram Bot Token",
+        "sendTestWebhook": "Send Test Alert",
+        "webhookTestBody": "This is a test alert from chenbinPT. Your webhook configuration works!",
+        "webhookTestSuccess": "Test alert delivered successfully",
+        "webhookTestFailed": "Test alert failed: {error}",
+        "webhookUrlPlaceholder": {
+          "generic": "https://example.com/webhook",
+          "telegram": "https://api.telegram.org/bot<TOKEN>/sendMessage",
+          "bark": "https://api.day.app/<YOUR_KEY>/"
+        }
+      }
+    },
+    "diagnostics": {
+      "privacyHint": "Diagnostic bundles automatically redact cookies, passkeys, API keys, and downloader passwords.",
+      "searchPlaceholder": "Search logs by message or source...",
+      "levels": {
+        "all": "All Levels"
+      },
+      "copyBundle": "Copy Redacted Bundle",
+      "exportBundle": "Export Diagnostics JSON",
+      "clearLogs": "Clear Logs",
+      "loadFailed": "Failed to load runtime logs",
+      "copied": "Redacted diagnostic bundle copied to clipboard",
+      "copyFailed": "Failed to copy to clipboard",
+      "cleared": "Runtime logs cleared",
+      "clearFailed": "Failed to clear logs",
+      "countSummary": "Showing {shown} / {total} logs"
     }
   },
   "SetDownloader": {
@@ -1090,6 +1281,34 @@
       "excludedSitesHint": "If a site is excluded, this downloader will not be shown on the site page (does not apply to the aggregated search page)",
       "noSites": "No sites added yet",
       "title": "Set site filter for downloader [{0}] (exclusion)"
+    },
+    "routing": {
+      "btn": "Routing Rules",
+      "title": "Smart Push Routing Rules",
+      "description": "Matches torrents by descending priority to automatically prefill target downloader, save path, label, and upload limit.",
+      "addRule": "Add Rule",
+      "editTitle": "Edit Routing Rule",
+      "empty": "No routing rules yet. Click Add Rule to create one.",
+      "ruleName": "Rule Name",
+      "priority": "Priority",
+      "targetDownloader": "Target Downloader",
+      "conditions": "Conditions",
+      "targetAction": "Target Action",
+      "sites": "Sites",
+      "anySite": "Any site",
+      "categories": "Categories",
+      "tags": "Tags",
+      "commaSeparated": "Separate multiple values with commas",
+      "minSizeGiB": "Min Size (GiB)",
+      "maxSizeGiB": "Max Size (GiB)",
+      "freeOnly": "Freeleech only",
+      "titleRegex": "Title / Subtitle Regex",
+      "uploadSpeedLimit": "Upload Limit (KiB/s)",
+      "matchAll": "Match all torrents",
+      "testerTitle": "Live Rule Tester",
+      "testTitlePlaceholder": "Enter a sample torrent title to test rule matching...",
+      "testMatched": "Matched rule \"{rule}\" → {downloader}",
+      "testNoMatch": "No enabled rule matched"
     }
   },
   "SetMediaServer": {
@@ -1297,7 +1516,8 @@
       "tagTip": "Press Enter to add a tag after typing. (Only the first 4 will be displayed on the list page)",
       "timezone": "Timezone",
       "uploadSpeedLimit": "Upload Speed",
-      "uploadSpeedLimitHint": "Set upload speed limit (MiB/s) when pushing torrents to downloader, 0 or empty means unlimited"
+      "uploadSpeedLimitHint": "Set upload speed limit (MiB/s) when pushing torrents to downloader, 0 or empty means unlimited",
+      "loadFailed": "Failed to load site configuration for {site}"
     },
     "index": {
       "flushFaviconFinish": "The selected site favicon has been refreshed successfully!",
@@ -1333,6 +1553,49 @@
       },
       "title": "One-Click Import Sites",
       "trying": "Trying to import site [{name}] ..."
+    },
+    "custom": {
+      "btn": "Custom Site / Torznab",
+      "addTitle": "Add Custom Site / Prowlarr / Jackett",
+      "editTitle": "Edit Custom Site",
+      "presets": "Quick Presets",
+      "namePlaceholder": "e.g. Prowlarr - MTeam or Private NexusPHP",
+      "schema": "Schema Template",
+      "typePrivate": "Private Tracker (PT)",
+      "typePublic": "Public / Aggregator",
+      "urls": "Site URLs (one per line, multi-domain supported)",
+      "urlsHint": "Only http:// or https:// URLs are allowed. The first URL is used as default.",
+      "apiPath": "Torznab API Path",
+      "apiPathHint": "e.g. /1/api for Prowlarr, or /api/v2.0/indexers/all/results/torznab for Jackett",
+      "requiresApiKey": "Requires API Key authentication",
+      "apiKeyPlaceholder": "Optional: enter now to populate site config automatically",
+      "description": "Description",
+      "saved": "Custom site saved and activated"
+    },
+    "batchEdit": {
+      "btn": "Batch Edit",
+      "title": "Batch Edit Selected Sites ({count})",
+      "addGroups": "Add Groups",
+      "addGroupsPlaceholder": "Select or enter groups to add",
+      "removeGroups": "Remove Groups",
+      "removeGroupsPlaceholder": "Select groups to remove",
+      "keep": "Keep Unchanged",
+      "enable": "Enable All",
+      "disable": "Disable All",
+      "success": "Updated {count} site(s)"
+    },
+    "speedTest": {
+      "btn": "Domain Speed Test",
+      "title": "Multi-Domain Latency Speed Test",
+      "hint": "Tests response latency across sites configured with multiple domains and lets you switch to the fastest mirror in one click.",
+      "empty": "None of your added sites have multiple domains configured.",
+      "current": "Current",
+      "unreachable": "Unreachable",
+      "useThis": "Use Domain",
+      "retest": "Retest",
+      "switchAllFastest": "Switch All to Fastest ({count})",
+      "switched": "Switched to {url}",
+      "switchedAll": "Switched {count} site(s) to their fastest domain"
     }
   },
   "UserDataStatistic": {
@@ -1420,7 +1683,6 @@
     "delimiter": ", ",
     "refreshPageHint": "Try refreshing the page and retry",
     "unexpectedError": "An unexpected error occurred",
-
     "AdvanceFilterGenerateDialog": {
       "date": "Date",
       "dateUnit": {
@@ -1517,7 +1779,10 @@
     "version": "Version",
     "visit": "Visit",
     "unknown": "Unknown",
-    "noInformation": "No Information"
+    "noInformation": "No Information",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "refresh": "Refresh"
   },
   "connectCheck": {
     "default": "Check Connect",
@@ -1573,7 +1838,18 @@
       "quickSearch": "Search"
     },
     "untrustedTorrentLink": "The parsed download link does not belong to this site and was rejected",
-    "unsupportedDropLinks": "The dropped links are unsupported or do not belong to this site and were ignored"
+    "unsupportedDropLinks": "The dropped links are unsupported or do not belong to this site and were ignored",
+    "mediaBadge": {
+      "inLibrary": "In Library · {server} ({count})",
+      "played": "Watched",
+      "unplayed": "Unwatched"
+    },
+    "torrentStatus": {
+      "seeding": "Seeding",
+      "downloading": "Downloading",
+      "downloaded": "Downloaded",
+      "favorited": "Favorited"
+    }
   },
   "downloaderLabel": {
     "localDownload": "Local Download"
@@ -1606,7 +1882,14 @@
       },
       "searchTip": "Input keyword, IMDb numbers to search",
       "wiki": "Wiki",
-      "wrongPixelRatioNotice": "Your page display may be affected by zooming. It is recommended to zoom at 100% to ensure your browsing experience~"
+      "wrongPixelRatioNotice": "Your page display may be affected by zooming. It is recommended to zoom at 100% to ensure your browsing experience~",
+      "searchHistory": {
+        "title": "Search History",
+        "empty": "No recent searches",
+        "clear": "Clear",
+        "pin": "Pin",
+        "unpin": "Unpin"
+      }
     },
     "init": "Please wait patiently for the page to load....."
   },
@@ -1652,6 +1935,8 @@
     "notificationSendLinkToDownloaderFailure": "Failed to send the link to the downloader [$1]",
     "notificationAutoBackupFailure": "Auto backup failed for [$1]: $2",
     "notificationSendLinkToDownloaderSuccess": "Successfully sent the link to the downloader [$1]",
+    "notificationUpdateAvailableBody": "Current $1, latest $2. Click to view download and upgrade guide.",
+    "notificationUpdateAvailableTitle": "chenbinPT update available: $1",
     "omniboxSearch": "Search $2 in [ $1 ]",
     "searchPlanAll": "All Sites",
     "searchPlanDefault": "Default",
@@ -1688,7 +1973,8 @@
       "MyData": "My Data",
       "SearchEntity": "Search",
       "SearchResultSnapshot": "Snapshot",
-      "default": "Overview"
+      "default": "Overview",
+      "KeywordWatch": "Keyword Watch"
     },
     "Settings": {
       "SetBackup": "Backup",
@@ -1697,7 +1983,9 @@
       "SetMediaServer": "Media",
       "SetSearchSolution": "Plans",
       "SetSite": "Sites",
-      "default": "Settings"
+      "default": "Settings",
+      "SetBaseDiagnostics": "Logs & Diagnostics",
+      "SetBaseUpdate": "Updates"
     }
   },
   "socialConfig": {
@@ -1749,5 +2037,50 @@
     "queueConcurrency": "Request Queue Concurrency",
     "showDeadSite": "Show sites marked as dead (isDead) in the overview",
     "showPassedSite": "Show sites marked as offline (isOffline) or not allowing user info query in the overview"
+  },
+  "miniPopup": {
+    "openFullPanel": "Open Panel",
+    "searchPlaceholder": "Quick search across PT sites...",
+    "searchBtn": "Search",
+    "accountHealth": "Account Health",
+    "sitesCount": "{count} sites",
+    "unreadPm": "Unread PM",
+    "abnormalSites": "Abnormal",
+    "inactivityWarn": "Inactivity",
+    "downloaders": "Downloaders Live",
+    "loading": "Loading...",
+    "noDownloader": "No enabled downloaders"
+  },
+  "KeywordWatch": {
+    "hint": "Periodically runs saved search solutions for new releases with freeleech/size/seeders/regex filters, deduplication, optional auto-favorite, and desktop/webhook alerts (min interval 30 min).",
+    "addRule": "Add Watch Rule",
+    "editorTitle": "Edit Keyword Watch Rule",
+    "empty": "No keyword watch rules yet. Click Add Watch Rule to start tracking releases.",
+    "namePlaceholder": "e.g. 4K Free Documentaries",
+    "keywordPlaceholder": "Search keyword, e.g. Dune 2160p",
+    "intervalLabel": "Interval (minutes, ≥30)",
+    "everyMinutes": "Every {minutes}m",
+    "minSeeders": "Min Seeders",
+    "titleIncludeRegex": "Title Include Regex (optional)",
+    "titleExcludeRegex": "Title Exclude Regex (optional)",
+    "autoFavorite": "Auto-favorite new matches",
+    "favCategory": "Favorite Group",
+    "defaultFavCategory": "Keyword Watch",
+    "notifyBrowser": "Browser desktop notification",
+    "notifyWebhook": "Send to Webhook",
+    "runNow": "Run Now",
+    "saved": "Watch rule saved",
+    "errorTag": "Error",
+    "runMatched": "Done: {count} new match(es) ({total} total matched)",
+    "runNoNew": "Done: {total} matched, no new items",
+    "runError": "Run failed: {error}",
+    "table": {
+      "name": "Rule",
+      "keyword": "Keyword",
+      "solution": "Solution",
+      "interval": "Interval",
+      "lastRun": "Last Run",
+      "matches": "Matches"
+    }
   }
 }

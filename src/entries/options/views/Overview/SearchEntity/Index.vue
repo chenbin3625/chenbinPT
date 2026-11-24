@@ -61,6 +61,17 @@ import SearchFilterBar from "./SearchFilterBar.vue";
 import SelectionBar from "./SelectionBar.vue";
 import SearchStatusDialog from "./SearchStatusDialog.vue";
 import SaveSnapshotDialog from "./SaveSnapshotDialog.vue";
+import MediaCrossCheckBanner from "./MediaCrossCheckBanner.vue";
+import KeepUploadDialog, { type IClientBaseTorrentRef } from "./KeepUploadDialog.vue";
+import {
+  clearMediaServerCrossCheck,
+  downloaderCrossCheckVersion,
+  matchTorrentWithDownloaders,
+  matchTorrentWithMediaHits,
+  mediaCrossCheckHits,
+  runDownloaderCrossCheck,
+  runMediaServerCrossCheck,
+} from "./utils/crossCheck.ts";
 
 // 主要助手方法
 import { getActiveTagFilterNames, tableCustomFilter, toggleTagFilter, updateTableFilterNow } from "./utils/filter";
@@ -101,6 +112,34 @@ const display = useDisplay();
 const showSearchStatusDialog = ref<boolean>(false);
 const showSaveSnapshotDialog = ref<boolean>(false);
 const showDisplayPreferences = ref<boolean>(false);
+
+// Feature #7 反向辅种上下文（从 MyClient 跳转带来）
+const crossSeedBase = ref<IClientBaseTorrentRef | null>(null);
+const crossSeedSameSizeOnly = ref(false);
+const showReverseKeepUploadDialog = ref(false);
+
+function clearCrossSeedMode() {
+  crossSeedBase.value = null;
+  crossSeedSameSizeOnly.value = false;
+}
+
+function openReverseKeepUpload() {
+  if (!crossSeedBase.value || tableSelectedRaw.value.length === 0) return;
+  showReverseKeepUploadDialog.value = true;
+}
+
+// Feature #5 媒体库 & 下载器实时查重
+function getRowMediaMatch(record: ISearchResultTorrent) {
+  if (!configStore.searchEntity?.enableMediaServerCrossCheck) return null;
+  return matchTorrentWithMediaHits(record, mediaCrossCheckHits.value);
+}
+
+function getRowDownloaderMatch(record: ISearchResultTorrent) {
+  // 订阅版本 ref，加载完客户端种子列表后自动刷新行徽章
+  void downloaderCrossCheckVersion.value;
+  if (!configStore.searchEntity?.enableDownloaderCrossCheck) return null;
+  return matchTorrentWithDownloaders(record);
+}
 
 /**
  * 标题单元格的宽度上限（`undefined` = 不限宽，让标题列吃满剩余宽度）。
@@ -288,7 +327,16 @@ void Promise.resolve(configStore.$onReady?.()).then(() => {
 function normalizeSnapshotPromotions(items: ISearchResultTorrent[] = []) {
   items.forEach((item) => normalizeTorrentPromotion(item));
 }
-const filteredTableData = computed(() => filterTableItems(runtimeStore.search.searchResult));
+const filteredTableData = computed(() => {
+  const base = filterTableItems(runtimeStore.search.searchResult);
+  if (crossSeedBase.value && crossSeedSameSizeOnly.value && crossSeedBase.value.size > 0) {
+    const targetSize = crossSeedBase.value.size;
+    // 允许 ±1% 或 ±5MB 容差（兼容部分站点的近似体积展示）
+    const tolerance = Math.max(5 * 1024 * 1024, targetSize * 0.01);
+    return base.filter((item) => typeof item.size === "number" && Math.abs(item.size - targetSize) <= tolerance);
+  }
+  return base;
+});
 const hasSearchFilteredNoResults = computed(
   () =>
     runtimeStore.search.searchResult.length > 0 &&
@@ -382,6 +430,25 @@ let snapshotLoadToken = 0;
 
 /** 是否处于搜索快照视图：快照数据不允许与实时搜索结果混用 */
 const inSnapshotView = computed(() => Boolean(runtimeStore.search.snapshot));
+
+watch(
+  [() => runtimeStore.search.searchKey, () => runtimeStore.search.startAt, () => inSnapshotView.value],
+  ([searchKey, startAt, isSnapshot]) => {
+    if (isSnapshot || startAt === 0 || !searchKey?.trim()) {
+      clearMediaServerCrossCheck();
+      return;
+    }
+    if (configStore.searchEntity?.enableMediaServerCrossCheck) {
+      void runMediaServerCrossCheck(searchKey, metadataStore.getEnabledMediaServers ?? []);
+    } else {
+      clearMediaServerCrossCheck();
+    }
+    if (configStore.searchEntity?.enableDownloaderCrossCheck) {
+      void runDownloaderCrossCheck(metadataStore.getEnabledDownloaders ?? []);
+    }
+  },
+  { immediate: true },
+);
 
 /**
  * 已添加站点：把「还没搜索」和「还没有可搜索的站点」区分成两种空状态。
@@ -655,6 +722,21 @@ watch(
     // 快照数据不能当作实时结果展示（F3 的逆操作：URL 已无 snapshot 时 store 里仍是快照数据）
     if (decision.resetData) runtimeStore.resetSearchData();
 
+    // 识别从 MyClient 携带的反向辅种上下文
+    const csClient = normalizeRouteQueryValue(newParams.crossSeedClient);
+    const csId = normalizeRouteQueryValue(newParams.crossSeedId);
+    const csName = normalizeRouteQueryValue(newParams.crossSeedName);
+    if (csClient && csId && csName) {
+      crossSeedBase.value = {
+        downloaderId: csClient,
+        torrentId: csId,
+        name: csName,
+        size: Number(normalizeRouteQueryValue(newParams.crossSeedSize) ?? 0) || 0,
+        infoHash: normalizeRouteQueryValue(newParams.crossSeedHash) ?? "",
+        savePath: normalizeRouteQueryValue(newParams.crossSeedPath) ?? "",
+      };
+    }
+
     if (decision.search !== undefined) {
       // 清理已选择项 （ #622 ）
       tableSelectedRaw.value = [];
@@ -663,7 +745,7 @@ watch(
       void runSearch(decision.search, decision.plan ?? "default");
     }
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 );
 
 /** 已失效的快照不能继续留在地址里，否则每次刷新都会重复一次「加载失败」 */
@@ -1073,6 +1155,41 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
       </template>
     </a-alert>
 
+    <!-- Feature #7 反向辅种上下文横幅 -->
+    <a-alert
+      v-if="crossSeedBase"
+      type="info"
+      show-icon
+      closable
+      class="search-cross-seed-alert"
+      :message="
+        t('SearchEntity.crossSeed.bannerTitle', {
+          name: crossSeedBase.name,
+          size: formatSize(crossSeedBase.size),
+        })
+      "
+      @close="clearCrossSeedMode"
+    >
+      <template #action>
+        <a-space :size="6" wrap>
+          <a-checkbox v-model:checked="crossSeedSameSizeOnly">
+            {{ t("SearchEntity.crossSeed.sameSizeOnly") }}
+          </a-checkbox>
+          <a-button
+            size="small"
+            type="primary"
+            :disabled="tableSelectedRaw.length === 0"
+            @click="openReverseKeepUpload"
+          >
+            {{ t("SearchEntity.crossSeed.verifySelected", { count: tableSelectedRaw.length }) }}
+          </a-button>
+        </a-space>
+      </template>
+    </a-alert>
+
+    <!-- Feature #5 媒体库联动查重横幅 -->
+    <MediaCrossCheckBanner v-if="configStore.searchEntity.enableMediaServerCrossCheck && !inSnapshotView" />
+
     <div class="search-entity-table-wrap">
       <SearchFilterBar ref="searchFilterBarRef" />
 
@@ -1127,6 +1244,39 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
               :tag-filterable="configStore.searchEntifyControl.tagClickToFilter"
               @filter-tag="toggleTagFilter"
             />
+            <div
+              v-if="getRowMediaMatch(record) || getRowDownloaderMatch(record)"
+              class="search-entity-crosscheck-badges"
+            >
+              <a-tag
+                v-if="getRowMediaMatch(record)"
+                color="purple"
+                class="search-entity-crosscheck-tag"
+                :title="`${getRowMediaMatch(record)!.serverName}: ${getRowMediaMatch(record)!.item.name}`"
+              >
+                {{
+                  getRowMediaMatch(record)!.videoQuality
+                    ? t("SearchEntity.crossCheck.inMediaLibraryQuality", {
+                        quality: getRowMediaMatch(record)!.videoQuality,
+                      })
+                    : t("SearchEntity.crossCheck.inMediaLibrary")
+                }}
+              </a-tag>
+              <a-tag
+                v-if="getRowDownloaderMatch(record)"
+                :color="
+                  getRowDownloaderMatch(record)!.state === 'seeding'
+                    ? 'green'
+                    : getRowDownloaderMatch(record)!.state === 'downloading'
+                      ? 'blue'
+                      : 'orange'
+                "
+                class="search-entity-crosscheck-tag"
+                :title="getRowDownloaderMatch(record)!.clientName"
+              >
+                {{ t(`SearchEntity.crossCheck.clientState.${getRowDownloaderMatch(record)!.state}`) }}
+              </a-tag>
+            </div>
           </template>
 
           <!-- 优惠（下载量系数），默认隐藏；勾选该列后可按优惠排序 -->
@@ -1260,6 +1410,12 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
 
   <SearchStatusDialog v-model="showSearchStatusDialog" />
   <SaveSnapshotDialog v-model="showSaveSnapshotDialog" />
+  <KeepUploadDialog
+    v-if="showReverseKeepUploadDialog && crossSeedBase"
+    v-model="showReverseKeepUploadDialog"
+    :torrent-items="tableSelectedRaw"
+    :client-base-torrent="crossSeedBase"
+  />
 
   <!-- 多选操作条：仅在选中种子后出现在页面底部 -->
   <SelectionBar :selected-torrents="tableSelectedRaw" @clear="clearTableSelection" />
@@ -1400,5 +1556,22 @@ function singleItemArray(item: ISearchResultTorrent): ISearchResultTorrent[] {
   justify-content: space-between;
   gap: 16px;
   min-width: 180px;
+}
+
+.search-cross-seed-alert {
+  margin-bottom: 8px;
+}
+
+.search-entity-crosscheck-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.search-entity-crosscheck-tag {
+  margin-inline-end: 0;
+  font-size: 11px;
+  line-height: 18px;
 }
 </style>

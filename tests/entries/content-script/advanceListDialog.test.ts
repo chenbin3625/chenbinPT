@@ -7,6 +7,7 @@ import { ConfigProvider } from "ant-design-vue";
 import { StyleProvider } from "ant-design-vue/es/_util/cssinjs";
 
 import AdvanceListModuleDialog from "@/content-script/app/components/AdvanceListModuleDialog.vue";
+import { REMOTE_DOWNLOAD_DIALOG_DATA_KEY } from "@/content-script/app/injectionKeys.ts";
 import { antdInstance } from "@/options/plugins/antd.ts";
 import { i18nInstance } from "@/options/plugins/i18n.ts";
 
@@ -45,7 +46,7 @@ describe("高级列表弹窗", () => {
     const shown = ref(false);
     const Root = defineComponent({
       setup() {
-        provide("remoteDownloadDialogData", { show: false, torrents: [], isDefaultSend: false });
+        provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, { show: false, torrents: [], isDefaultSend: false });
         return () =>
           h(
             StyleProvider,
@@ -108,7 +109,7 @@ describe("高级列表弹窗 · 行 key 唯一性（B2-5）", () => {
     const shown = ref(false);
     const Root = defineComponent({
       setup() {
-        provide("remoteDownloadDialogData", { show: false, torrents: [], isDefaultSend: false });
+        provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, { show: false, torrents: [], isDefaultSend: false });
         return () =>
           h(
             StyleProvider,

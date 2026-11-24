@@ -5,9 +5,6 @@
     }
   },
   "src/entries/background/utils/alarms.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
     "no-console": {
       "count": 1
     }
@@ -60,11 +57,6 @@
   },
   "src/entries/offscreen/utils/logger.ts": {
     "no-console": {
-      "count": 3
-    }
-  },
-  "src/entries/options/components/SentToDownloaderDialog/Index.vue": {
-    "@typescript-eslint/no-floating-promises": {
       "count": 3
     }
   },

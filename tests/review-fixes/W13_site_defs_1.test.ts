@@ -291,14 +291,43 @@ describe("W13_site_defs_1 High findings", () => {
     expect(apiTorrents[0].category).toBe("电影");
     expect(apiTorrents[0].ext_imdb).toBe("tt1234567");
     expect(apiTorrents[0].ext_tmdb).toBe(9876);
-    expect(apiTorrents[0].downloadVolumeFactor).toBe(0);
-    expect(apiTorrents[0].uploadVolumeFactor).toBe(2);
-    expect(apiTorrents[0].tags?.map((t) => t.name)).toEqual(expect.arrayContaining(["精选", "官方", "2xFree"]));
+    // featured 仅首页精选徽章，不覆盖计费系数（计费只看 freeleech 与 double_upload）
+    expect(apiTorrents[0].downloadVolumeFactor).toBe(1);
+    expect(apiTorrents[0].uploadVolumeFactor).toBe(1);
+    expect(apiTorrents[0].tags?.map((t) => t.name)).toEqual(expect.arrayContaining(["精选", "官方"]));
+    expect(apiTorrents[0].tags?.map((t) => t.name)).not.toContain("2xFree");
 
     expect(apiTorrents[1].category).toBe("剧集");
     expect(apiTorrents[1].downloadVolumeFactor).toBe(0.5);
     expect(apiTorrents[1].uploadVolumeFactor).toBe(2);
     expect(apiTorrents[1].tags?.map((t) => t.name)).toEqual(expect.arrayContaining(["2x50%"]));
+
+    // /api/v1/user 获取核心用户信息，资料页失败时优雅降级不报错
+    mocks.request.mockImplementation(async (cfg: any) => {
+      if (cfg.url === "/api/v1/user") {
+        return okResponse(cfg, {
+          username: "desi_user",
+          group: "PowerUser",
+          uploaded: "2.5 TiB",
+          downloaded: "500 GiB",
+          ratio: "5.12",
+          buffer: "2 TiB",
+          seeding: 42,
+          leeching: 1,
+          seedbonus: "1234.5",
+          hit_and_runs: 0,
+        });
+      }
+      throw new Error("profile page 500");
+    });
+    const userInfo = await siteWithToken.getUserInfoResult();
+    expect(userInfo.status).toBe(EResultParseStatus.success);
+    expect(userInfo.name).toBe("desi_user");
+    expect(userInfo.levelName).toBe("PowerUser");
+    expect(userInfo.levelId).toBe(2);
+    expect(userInfo.bonus).toBe(1234.5);
+    expect(userInfo.seeding).toBe(42);
+    expect(userInfo.leeching).toBe(1);
 
     // HTML /torrents list page still uses Unit3D HTML selectors
     const htmlList = `

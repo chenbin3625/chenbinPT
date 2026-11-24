@@ -2,6 +2,7 @@
 import {
   BarChartOutlined,
   CalendarOutlined,
+  ClockCircleOutlined,
   DollarOutlined,
   DownOutlined,
   ExclamationCircleOutlined,
@@ -12,6 +13,7 @@ import {
   StopOutlined,
   SyncOutlined,
   ThunderboltOutlined,
+  TrophyOutlined,
   UnorderedListOutlined,
   UpOutlined,
   WarningOutlined,
@@ -22,9 +24,12 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { isUndefined } from "es-toolkit/compat";
 import type { DataTableHeader } from "@/options/types/dataTable.ts";
-import { EResultParseStatus, type TSiteID } from "@ptd/site";
+import { EResultParseStatus, type IUserInfo, type TSiteID } from "@ptd/site";
 // 轻量索引单独 import：批量打开时同步取站点 URL，避免逐个 await 丢失用户手势
 import { siteMetadataIndex } from "@ptd/site/metadataIndex";
+
+import { sendMessage } from "@/messages.ts";
+import { computeSiteInactivityInfo, type ISiteInactivityInfo } from "@/shared/accountHealth.ts";
 
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
@@ -49,6 +54,7 @@ import UserLevelRequirementsTd from "./UserLevelRequirementsTd.vue";
 import HistoryDataViewDialog from "./HistoryDataViewDialog.vue";
 import BonusFormatSpan from "./BonusFormatSpan.vue";
 import ExportUserInfoDialog from "./ExportUserInfoDialog.vue";
+import UpgradePlannerDialog from "./UpgradePlannerDialog.vue";
 
 import { formatRatio } from "./utils/format.ts";
 import ColumnSelector from "../components/ColumnSelector.vue";
@@ -165,8 +171,56 @@ const { tableWaitFilterRef, tableFilterRef, tableFilterFn, buildFilterDictFn } =
  * - 搜索框只承载用户主动输入的关键词与高级语法，快捷条件在表头以 chip 呈现，状态一眼可见；
  * - 点 chip 只切换本地条件，不会清掉用户已经输入的文字。
  */
-type TQuickFilter = "failed" | "stale" | "unread";
+type TQuickFilter = "failed" | "stale" | "unread" | "inactive";
 const quickFilter = ref<TQuickFilter | null>(null);
+const showUpgradePlannerDialog = ref(false);
+
+// Feature #6: 前一日快照（计算日增量 Δ）与保号不活跃倒计时
+const previousUserInfoMap = ref<Record<TSiteID, IUserInfo>>({});
+
+async function loadPreviousUserInfoMap() {
+  try {
+    previousUserInfoMap.value = (await sendMessage("getAllSitesPreviousUserInfo", undefined)) ?? {};
+  } catch {
+    // 忽略历史读取失败
+  }
+}
+
+function getSiteMaxInactiveDays(siteId: TSiteID): number {
+  const custom = metadataStore.siteInactivityDays?.[siteId];
+  if (typeof custom === "number" && Number.isFinite(custom) && custom > 0) {
+    return custom;
+  }
+  return configStore.alerts?.defaultSiteMaxInactiveDays ?? 40;
+}
+
+function getSiteInactivity(record: IUserInfoItem): ISiteInactivityInfo | null {
+  if (!configStore.myDataTableControl.showInactivityWarning) return null;
+  const maxDays = getSiteMaxInactiveDays(record.site);
+  const warningDays = configStore.alerts?.inactivityWarningDays ?? 7;
+  return computeSiteInactivityInfo(record, maxDays, warningDays, now.value);
+}
+
+function getUploadedDelta(record: IUserInfoItem): number | null {
+  if (!configStore.myDataTableControl.showDailyDelta) return null;
+  const prev = previousUserInfoMap.value[record.site];
+  if (!prev || typeof record.uploaded !== "number" || typeof prev.uploaded !== "number") return null;
+  const delta = record.uploaded - prev.uploaded;
+  return Number.isFinite(delta) && Math.abs(delta) >= 1024 * 1024 ? delta : null;
+}
+
+function getBonusDelta(record: IUserInfoItem): number | null {
+  if (!configStore.myDataTableControl.showDailyDelta) return null;
+  const prev = previousUserInfoMap.value[record.site];
+  if (!prev || typeof record.bonus !== "number" || typeof prev.bonus !== "number") return null;
+  const delta = record.bonus - prev.bonus;
+  return Number.isFinite(delta) && Math.abs(delta) >= 0.1 ? delta : null;
+}
+
+function onSiteInactivityDaysChange(siteId: TSiteID, value: unknown) {
+  const num = Number(value);
+  metadataStore.setSiteInactivityDays(siteId, Number.isFinite(num) && num > 0 ? num : undefined);
+}
 
 function toggleQuickFilter(filter: TQuickFilter) {
   quickFilter.value = quickFilter.value === filter ? null : filter;
@@ -227,6 +281,10 @@ const myDataSummary = computed(() => {
   let uploaded = 0;
   let downloaded = 0;
   let seedingSize = 0;
+  let uploadedDelta = 0;
+  let downloadedDelta = 0;
+  let seedingSizeDelta = 0;
+  let hasDelta = false;
   let errorSites = 0;
 
   for (const record of tableData.value) {
@@ -235,15 +293,36 @@ const myDataSummary = computed(() => {
       if (Number.isFinite(record.uploaded)) uploaded += Number(record.uploaded);
       if (Number.isFinite(record.downloaded)) downloaded += Number(record.downloaded);
       if (Number.isFinite(record.seedingSize)) seedingSize += Number(record.seedingSize);
+
+      const prev = previousUserInfoMap.value[record.site];
+      if (prev) {
+        hasDelta = true;
+        if (Number.isFinite(record.uploaded) && Number.isFinite(prev.uploaded)) {
+          uploadedDelta += Number(record.uploaded) - Number(prev.uploaded);
+        }
+        if (Number.isFinite(record.downloaded) && Number.isFinite(prev.downloaded)) {
+          downloadedDelta += Number(record.downloaded) - Number(prev.downloaded);
+        }
+        if (Number.isFinite(record.seedingSize) && Number.isFinite(prev.seedingSize)) {
+          seedingSizeDelta += Number(record.seedingSize) - Number(prev.seedingSize);
+        }
+      }
     }
     if (isFlushFailed(record)) errorSites++;
   }
 
-  return { uploaded, downloaded, seedingSize, errorSites };
+  return { uploaded, downloaded, seedingSize, uploadedDelta, downloadedDelta, seedingSizeDelta, hasDelta, errorSites };
 });
 
 const staleCount = computed(() => tableData.value.filter((record) => !isUpdatedToday(record)).length);
 const unreadCount = computed(() => tableData.value.filter((record) => (record.messageCount ?? 0) > 0).length);
+const inactiveCount = computed(
+  () =>
+    tableData.value.filter((record) => {
+      const info = getSiteInactivity(record);
+      return info !== null && info.status !== "ok";
+    }).length,
+);
 
 const tableColumns = computed(() =>
   // 操作列位置 / 固定（#1598）：先按可见列过滤（props.disabled 的列常显）→ toAntdColumns，
@@ -267,6 +346,10 @@ const filteredTableData = computed(() =>
     if (quickFilter.value === "failed" && !isFlushFailed(item)) return false;
     if (quickFilter.value === "stale" && isUpdatedToday(item)) return false;
     if (quickFilter.value === "unread" && (item.messageCount ?? 0) <= 0) return false;
+    if (quickFilter.value === "inactive") {
+      const info = getSiteInactivity(item);
+      if (!info || info.status === "ok") return false;
+    }
 
     // 3) 站点分组（多选为「任一命中」，排除优先）
     const groups = item.siteUserConfig?.groups ?? [];
@@ -325,6 +408,7 @@ watch(
 onMounted(() => {
   reconcileFlushPlan();
   void initTableData();
+  void loadPreviousUserInfoMap();
 });
 
 // 监听用户信息变化（ offscreen 直接定时刷新的情况 ）
@@ -370,7 +454,10 @@ function multiOpen() {
   // NOTE: 这里必须同步取 URL，若在循环内 `await`，则第一个 `window.open` 之后用户手势即失效，
   //       后续标签页会被浏览器拦截（表格数据均已挂载 `siteUserConfig`，无需再走异步查询）
   for (const siteId of openSiteIds) {
-    const siteUrl = metadataStore.sites[siteId]?.url || siteMetadataIndex[siteId]?.urls?.[0];
+    const siteUrl =
+      metadataStore.sites[siteId]?.url ||
+      siteMetadataIndex[siteId]?.urls?.[0] ||
+      metadataStore.customSites?.[siteId]?.urls?.[0];
     if (siteUrl) {
       window.open(siteUrl, "_blank", "noopener noreferrer");
     }
@@ -441,6 +528,7 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
   },
   { key: "timeline", label: t("MyData.index.viewTimeline"), icon: FundOutlined },
   { key: "statistic", label: t("MyData.index.viewStatistic"), icon: BarChartOutlined },
+  { key: "upgradePlanner", label: t("MyData.upgradePlanner.btn"), icon: TrophyOutlined },
   { key: "export", label: t("MyData.index.exportData"), icon: ExportOutlined },
 ]);
 
@@ -454,6 +542,9 @@ function onToolbarAction(key: string) {
       break;
     case "statistic":
       viewStatistic();
+      break;
+    case "upgradePlanner":
+      showUpgradePlannerDialog.value = true;
       break;
     case "export":
       showExportDialog.value = true;
@@ -498,7 +589,19 @@ function goToSiteSettings() {
         </span>
         <div class="my-data-summary__body">
           <span class="my-data-summary__label">{{ t("MyData.summary.uploaded") }}</span>
-          <strong>{{ formatSize(myDataSummary.uploaded) }}</strong>
+          <div class="my-data-summary__value-row">
+            <strong>{{ formatSize(myDataSummary.uploaded) }}</strong>
+            <span
+              v-if="
+                configStore.myDataTableControl.showDailyDelta &&
+                myDataSummary.hasDelta &&
+                myDataSummary.uploadedDelta > 0
+              "
+              class="my-data-delta my-data-delta--up"
+            >
+              +{{ formatSize(myDataSummary.uploadedDelta) }}
+            </span>
+          </div>
         </div>
       </div>
       <div class="my-data-summary__item">
@@ -507,7 +610,19 @@ function goToSiteSettings() {
         </span>
         <div class="my-data-summary__body">
           <span class="my-data-summary__label">{{ t("MyData.summary.downloaded") }}</span>
-          <strong>{{ formatSize(myDataSummary.downloaded) }}</strong>
+          <div class="my-data-summary__value-row">
+            <strong>{{ formatSize(myDataSummary.downloaded) }}</strong>
+            <span
+              v-if="
+                configStore.myDataTableControl.showDailyDelta &&
+                myDataSummary.hasDelta &&
+                myDataSummary.downloadedDelta > 0
+              "
+              class="my-data-delta my-data-delta--down"
+            >
+              +{{ formatSize(myDataSummary.downloadedDelta) }}
+            </span>
+          </div>
         </div>
       </div>
       <div class="my-data-summary__item">
@@ -516,7 +631,21 @@ function goToSiteSettings() {
         </span>
         <div class="my-data-summary__body">
           <span class="my-data-summary__label">{{ t("MyData.summary.seedingSize") }}</span>
-          <strong>{{ formatSize(myDataSummary.seedingSize) }}</strong>
+          <div class="my-data-summary__value-row">
+            <strong>{{ formatSize(myDataSummary.seedingSize) }}</strong>
+            <span
+              v-if="
+                configStore.myDataTableControl.showDailyDelta &&
+                myDataSummary.hasDelta &&
+                myDataSummary.seedingSizeDelta !== 0
+              "
+              class="my-data-delta"
+              :class="myDataSummary.seedingSizeDelta > 0 ? 'my-data-delta--up' : 'my-data-delta--down'"
+            >
+              {{ myDataSummary.seedingSizeDelta > 0 ? "+" : "-"
+              }}{{ formatSize(Math.abs(myDataSummary.seedingSizeDelta)) }}
+            </span>
+          </div>
         </div>
       </div>
       <button
@@ -686,6 +815,18 @@ function goToSiteSettings() {
               <span v-if="unreadCount > 0" class="search-filter-count">{{ unreadCount }}</span>
             </button>
 
+            <button
+              v-if="configStore.myDataTableControl.showInactivityWarning"
+              type="button"
+              class="search-filter-chip"
+              :class="{ 'search-filter-chip--active': quickFilter === 'inactive' }"
+              :disabled="inactiveCount === 0 && quickFilter !== 'inactive'"
+              @click="toggleQuickFilter('inactive')"
+            >
+              <span class="search-filter-chip__label">{{ t("MyData.index.filter.inactive") }}</span>
+              <span v-if="inactiveCount > 0" class="search-filter-count">{{ inactiveCount }}</span>
+            </button>
+
             <a-popover v-if="Object.keys(groupOptions).length > 0" placement="bottomLeft" trigger="click">
               <button
                 type="button"
@@ -766,6 +907,45 @@ function goToSiteSettings() {
               class="ptd-cell-ellipsis my-data-name-cell"
               :site-id="record.site"
             />
+            <a-popover
+              v-if="getSiteInactivity(record) && getSiteInactivity(record)!.status !== 'ok'"
+              placement="right"
+              trigger="click"
+            >
+              <a-tag
+                :color="getSiteInactivity(record)!.status === 'danger' ? 'error' : 'warning'"
+                class="my-data-inactivity-tag"
+              >
+                <ClockCircleOutlined />
+                {{
+                  getSiteInactivity(record)!.remainingDays <= 0
+                    ? t("MyData.inactivity.expired")
+                    : t("MyData.inactivity.remainingShort", { days: getSiteInactivity(record)!.remainingDays })
+                }}
+              </a-tag>
+              <template #content>
+                <div class="my-data-inactivity-popover">
+                  <div>
+                    {{
+                      t("MyData.inactivity.detail", {
+                        inactive: getSiteInactivity(record)!.inactiveDays,
+                        max: getSiteInactivity(record)!.maxInactiveDays,
+                      })
+                    }}
+                  </div>
+                  <div class="my-data-inactivity-popover__edit">
+                    <span>{{ t("MyData.inactivity.customMaxDays") }}</span>
+                    <a-input-number
+                      :value="getSiteMaxInactiveDays(record.site)"
+                      :min="7"
+                      :max="365"
+                      size="small"
+                      @change="(val: any) => onSiteInactivityDaysChange(record.site, val)"
+                    />
+                  </div>
+                </div>
+              </template>
+            </a-popover>
           </div>
         </template>
 
@@ -796,6 +976,14 @@ function goToSiteSettings() {
                 {{ typeof record.uploaded !== "undefined" ? formatSize(record.uploaded) : "-" }}
               </span>
               <UpOutlined class="my-data-icon-success" />
+            </a-row>
+            <a-row v-if="getUploadedDelta(record) !== null" :gutter="0" class="my-data-num-row">
+              <span
+                class="my-data-cell-delta"
+                :class="getUploadedDelta(record)! > 0 ? 'my-data-delta--up' : 'my-data-delta--down'"
+              >
+                {{ getUploadedDelta(record)! > 0 ? "+" : "-" }}{{ formatSize(Math.abs(getUploadedDelta(record)!)) }}
+              </span>
             </a-row>
             <a-row :gutter="0" class="my-data-num-row">
               <span class="my-data-nowrap">
@@ -885,6 +1073,14 @@ function goToSiteSettings() {
             <a-row :gutter="0" class="my-data-num-row my-data-num-row--middle">
               <DollarOutlined :title="t('levelRequirement.bonus')" class="my-data-icon-success" />
               <BonusFormatSpan :num="record.bonus" />
+            </a-row>
+            <a-row v-if="getBonusDelta(record) !== null" :gutter="0" class="my-data-num-row my-data-num-row--middle">
+              <span
+                class="my-data-cell-delta"
+                :class="getBonusDelta(record)! > 0 ? 'my-data-delta--up' : 'my-data-delta--down'"
+              >
+                {{ getBonusDelta(record)! > 0 ? "+" : "" }}{{ getBonusDelta(record)!.toFixed(1) }}
+              </span>
             </a-row>
             <a-row
               v-if="
@@ -1013,6 +1209,7 @@ function goToSiteSettings() {
 
   <HistoryDataViewDialog v-model="showHistoryDataViewDialog" :site-id="historyDataViewDialogSiteId!" />
   <ExportUserInfoDialog v-model="showExportDialog" :selected-site-ids="tableSelected" />
+  <UpgradePlannerDialog v-model="showUpgradePlannerDialog" />
 </template>
 
 <style scoped>
@@ -1218,6 +1415,55 @@ function goToSiteSettings() {
 .my-data-table-toolbar .search-filter-chip:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.my-data-summary__value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.my-data-delta {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.my-data-delta--up {
+  color: var(--ptd-success);
+}
+
+.my-data-delta--down {
+  color: var(--ptd-danger);
+}
+
+.my-data-cell-delta {
+  font-size: 11px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.my-data-inactivity-tag {
+  margin-top: 2px;
+  margin-inline-end: 0;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.my-data-inactivity-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--ptd-font-size-sm);
+}
+
+.my-data-inactivity-popover__edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 刷新失败但保留了上次成功数据：状态标签 + 最后成功时间上下排列 */

@@ -132,8 +132,8 @@ async function getSiteType(siteId: TSiteID): Promise<"private" | "public"> {
     return cached;
   }
 
-  // 只要 type：查构建期轻量索引即可（索引里没有的一律当 public，与原来的兜底一致）
-  const siteType = siteMetadataIndex[siteId]?.type ?? "public";
+  // 只要 type：优先查构建期轻量索引，自定义站点再查 metadataStore.customSites
+  const siteType = siteMetadataIndex[siteId]?.type ?? useMetadataStore().customSites?.[siteId]?.type ?? "public";
   siteTypeCache.set(siteId, siteType);
   return siteType;
 }

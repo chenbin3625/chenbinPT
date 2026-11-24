@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { SelectOutlined, InfoCircleOutlined, EyeOutlined, EyeInvisibleOutlined } from "@ant-design/icons-vue";
-import { watch, ref, onMounted, inject, computed } from "vue";
+import { watch, ref, onMounted, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { set } from "es-toolkit/compat";
-import type { timezoneOffset, ISiteUserConfig, TSiteID, ISiteMetadata, TSiteUrl } from "@ptd/site";
+import type { timezoneOffset, TSiteID, ISiteMetadata, TSiteUrl } from "@ptd/site";
 
 import { resolveColor } from "@/shared/colors.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formValidateRules } from "@/options/utils.ts";
 import { toMerged } from "es-toolkit";
+
+import { useStoredSiteUserConfig } from "./injectionKeys.ts";
 
 const { t, te } = useI18n();
 const metadataStore = useMetadataStore();
@@ -22,7 +24,7 @@ const emit = defineEmits<{
 
 const siteMetaData = ref<ISiteMetadata>({} as unknown as ISiteMetadata);
 const loadError = ref<boolean>(false);
-const siteUserConfig = inject<ISiteUserConfig>("storedSiteUserConfig", {});
+const siteUserConfig = useStoredSiteUserConfig();
 const siteName = computed({
   get: () => siteUserConfig.value.merge?.name ?? siteMetaData.value.name,
   set: (value) => set(siteUserConfig.value, "merge.name", value),

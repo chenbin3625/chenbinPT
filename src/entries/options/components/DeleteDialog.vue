@@ -1,21 +1,20 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="T extends string | number">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 
-type TDeleteId = any;
-
 const showDialog = defineModel<boolean>();
+// 各调用方传入的 id 类型不同（站点 id / 下载器 key / 快照 key …），用泛型按调用点推断，避免 any 抹掉类型
 const {
   toDeleteIds,
   confirmDelete: confirmDeleteFn,
   failureHints,
 } = defineProps<{
-  toDeleteIds: TDeleteId[];
+  toDeleteIds: T[];
   // DOWNLOADER-3：下载器实体删除失败时按契约返回 false（Synology 未勾选「同时删除数据」、
   // Aria2 勾选删除数据），而不是抛异常；调用方必须能把这个结果带到这里来。
-  confirmDelete: (toDeleteId: TDeleteId) => Promise<boolean | void> | void;
+  confirmDelete: (toDeleteId: T) => Promise<boolean | void> | void;
   // DOWNLOADER-3：实体按契约只回 boolean，`throw` 里那句「为什么删不掉」因此丢失。下载器类型 /
   // 能力的判断只有调用方知道，所以由调用方按 id 提供一句可操作提示，这里只负责把它附进失败提示；
   // 不传时行为与从前完全一致（仍然只提示失败的 id）。
@@ -33,7 +32,7 @@ async function confirmDelete() {
   if (isDeleting.value) return;
   isDeleting.value = true;
 
-  let failedIds: TDeleteId[] = [];
+  let failedIds: T[] = [];
   let succeededCount = 0;
   try {
     // OPTIONSSHELL-1：Promise.allSettled 的 reason 不能被丢弃 —— 删除失败（例如 removeSite 重建
@@ -96,7 +95,7 @@ async function confirmDelete() {
     :width="300"
     @ok="confirmDelete"
   >
-    {{ t("common.dialog.deleteText", [toDeleteIds!.length]) }}
+    {{ t("common.dialog.deleteText", [toDeleteIds.length]) }}
     <slot name="append-text" />
   </a-modal>
 </template>

@@ -22,7 +22,9 @@ export type TorrentClientFeature =
   | "FilePriority" // 支持设置文件优先级/选择（依赖 FileList）
   | "PeerList" // 支持查看种子 peer 列表
   | "TrackerList" // 支持查看带状态的 tracker 列表
-  | "TrackerManage"; // 支持增删 tracker（依赖 TrackerList）
+  | "TrackerManage" // 支持增删 tracker（依赖 TrackerList）
+  | "Reannounce" // 支持强制汇报 Tracker
+  | "SetLocation"; // 支持迁移种子存储目录
 
 /**
  * 客户端配置信息
@@ -582,5 +584,43 @@ export abstract class AbstractBittorrentClient<T extends DownloaderBaseConfig = 
   // 删除单个 tracker，默认不支持
   public async removeTorrentTracker(_torrent: string | CTorrent, _url: string): Promise<boolean> {
     return false;
+  }
+
+  // 强制重新向 Tracker 汇报（Reannounce），默认不支持，由各客户端 override
+  public async reannounceTorrent(_id: any): Promise<boolean> {
+    return false;
+  }
+
+  // 迁移种子存储目录（Set Location / Move Storage），默认不支持，由各客户端 override
+  public async setTorrentLocation(_id: any, _location: string, _moveData: boolean = true): Promise<boolean> {
+    return false;
+  }
+
+  /**
+   * 批量替换种子内匹配的 Tracker URL（常用于站点换域名或重置 Passkey）。
+   * 默认回退为读取 tracker 列表 → 添加新 URL → 删除旧 URL；支持的客户端可 override 为原生原子接口。
+   */
+  public async replaceTorrentTracker(
+    torrent: string | CTorrent,
+    search: string,
+    replacement: string,
+  ): Promise<{ replaced: number; total: number }> {
+    const trimmedSearch = search.trim();
+    if (!trimmedSearch) {
+      return { replaced: 0, total: 0 };
+    }
+    const trackers = await this.getTorrentTrackersDetail(torrent);
+    let replaced = 0;
+    for (const tracker of trackers) {
+      if (!tracker.url || !tracker.url.includes(trimmedSearch)) continue;
+      const nextUrl = tracker.url.split(trimmedSearch).join(replacement);
+      if (nextUrl === tracker.url) continue;
+      const added = await this.addTorrentTracker(torrent, nextUrl);
+      if (added) {
+        await this.removeTorrentTracker(torrent, tracker.url);
+        replaced += 1;
+      }
+    }
+    return { replaced, total: trackers.length };
   }
 }

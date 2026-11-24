@@ -1,14 +1,23 @@
 import { format } from "date-fns";
 import { defineJobScheduler } from "@webext-core/job-scheduler";
 import { EResultParseStatus, type TSiteID } from "@ptd/site/types/base.ts";
+import type { IUserInfo } from "@ptd/site/types/userinfo.ts";
 
 import { onMessage, sendMessage } from "@/messages.ts";
-import { IDownloadTorrentOption, type ITorrentDownloadMetadata } from "@/shared/types.ts";
+import { evaluateAccountHealthDiff, type IAccountHealthAlert } from "@/shared/accountHealth.ts";
+import {
+  IDownloadTorrentOption,
+  type IAlertConfig,
+  type IKeywordWatchRule,
+  type ITorrentDownloadMetadata,
+} from "@/shared/types.ts";
 import { EJobType } from "@/shared/types/jobs.ts";
 
 import { getExtStoragePathCached, logBackgroundError, patchExtStoragePathLocal } from "./base.ts";
 import { showNotificationSafely } from "./contextMenus.ts";
+import { dispatchWebhookAlert, notifyAccountHealthAlerts } from "./notifications.ts";
 import { setupOffscreenDocument } from "./offscreen.ts";
+import { performExtensionUpdateCheck } from "./updateCheck.ts";
 
 export { EJobType };
 
@@ -470,6 +479,13 @@ function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResu
         string,
         { isOffline?: boolean; allowQueryUserInfo?: boolean }
       >;
+      const alertsConfig = (await getExtStoragePathCached("config", "alerts", null)) as IAlertConfig | null;
+      const siteNameMap = (await getExtStoragePathCached("metadata", "siteNameMap", {})) as Record<string, string>;
+      const siteInactivityDays = (await getExtStoragePathCached("metadata", "siteInactivityDays", {})) as Record<
+        string,
+        number
+      >;
+      const collectedAlerts: IAccountHealthAlert[] = [];
 
       for (const [siteId, siteConfig] of Object.entries(sites)) {
         if (!siteConfig.isOffline && siteConfig.allowQueryUserInfo !== false) {
@@ -485,6 +501,11 @@ function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResu
               undefined as unknown,
             );
             if (todayUserInfo == null) {
+              const previousUserInfo = (await getExtStoragePathCached(
+                "metadata",
+                ["lastUserInfo", siteId],
+                undefined as unknown,
+              )) as IUserInfo | undefined;
               // 等待 offscreen 结果必须带超时兜底（B-12）：任务被取消时 offscreen 会以 AbortError reject，
               // 其它情况（offscreen 被回收、消息通道断开）下超时也能保证 finally 里的 releaseLock 一定执行。
               const userInfoResult = await withTimeout(
@@ -494,6 +515,18 @@ function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResu
               );
               if (userInfoResult.status !== EResultParseStatus.success) {
                 failFlushSites.push(siteId);
+              }
+              if (alertsConfig?.enabled) {
+                collectedAlerts.push(
+                  ...evaluateAccountHealthDiff({
+                    siteId,
+                    siteName: siteNameMap?.[siteId] || siteId,
+                    previous: previousUserInfo,
+                    current: userInfoResult,
+                    alertsConfig,
+                    siteMaxInactiveDays: siteInactivityDays?.[siteId],
+                  }),
+                );
               }
               processedSiteCount += 1;
             }
@@ -536,6 +569,12 @@ function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResu
       // 将刷新时间存入 metadata
       await patchExtStoragePathLocal("metadata", "lastUserInfoAutoFlushAt", new Date().getTime()); // 刷新时间应该是实际完成时间
 
+      if (alertsConfig?.enabled && collectedAlerts.length > 0) {
+        await notifyAccountHealthAlerts(collectedAlerts, alertsConfig).catch((e) =>
+          logBackgroundError("Failed to notify account health alerts", e),
+        );
+      }
+
       // 如果本次有失败的刷新操作，则设置重试（id 带时间戳，避免多次重试互相覆盖）
       if (failFlushSites.length > 0 && retryIndex < retryMax) {
         sendMessage("logger", {
@@ -569,7 +608,7 @@ function autoFlushUserInfo(retryIndex: number = 0): () => Promise<IAutoFlushResu
 }
 
 // noinspection JSIgnoredPromiseFromCall
-jobs.scheduleJob({
+void jobs.scheduleJob({
   id: EJobType.FlushUserInfo,
   type: "interval",
   duration: 1000 * 60 * 10, // check every 10 minutes
@@ -736,12 +775,101 @@ function autoBackup() {
 }
 
 // noinspection JSIgnoredPromiseFromCall
-jobs.scheduleJob({
+void jobs.scheduleJob({
   id: EJobType.AutoBackup,
   type: "interval",
   duration: 1000 * 60 * 10, // check every 10 minutes
   immediate: true,
   execute: autoBackup(),
+});
+
+const KEYWORD_WATCH_LOCK_KEY = "keywordWatchLock";
+const MIN_KEYWORD_WATCH_INTERVAL_MIN = 30;
+
+/**
+ * 轻量关键词定时监控：每 10 分钟检查已启用且到期的规则，按最小间隔 >= 30 分钟执行搜索与通知。
+ */
+function autoKeywordWatch() {
+  return async () => {
+    const watches = (await getExtStoragePathCached("metadata", "keywordWatches", {})) as Record<
+      string,
+      IKeywordWatchRule
+    >;
+    const now = Date.now();
+    const dueRules = Object.values(watches ?? {}).filter((rule) => {
+      if (!rule?.enabled || !rule.keyword?.trim()) return false;
+      const intervalMin = Math.max(MIN_KEYWORD_WATCH_INTERVAL_MIN, Number(rule.intervalMinutes) || 60);
+      return now - (rule.lastRunAt ?? 0) >= intervalMin * 60 * 1000;
+    });
+
+    if (dueRules.length === 0) {
+      return;
+    }
+
+    const lockOwner = await acquireLock(KEYWORD_WATCH_LOCK_KEY);
+    if (!lockOwner) {
+      return;
+    }
+
+    try {
+      await setupOffscreenDocument();
+      const alertsConfig = (await getExtStoragePathCached("config", "alerts", null)) as IAlertConfig | null;
+      const iconUrl = chrome.runtime.getURL?.("icons/logo/128.png") ?? "";
+
+      for (const rule of dueRules) {
+        if (!(await renewLock(KEYWORD_WATCH_LOCK_KEY, lockOwner))) {
+          break;
+        }
+        try {
+          const result = await sendMessage("runKeywordWatchRule", rule.id);
+          if (result.newMatches.length > 0) {
+            const title = `关键词监控命中：${rule.name} (${result.newMatches.length})`;
+            const preview = result.newMatches
+              .slice(0, 3)
+              .map((m) => `[${m.site}] ${m.title}`)
+              .join("\n");
+            const body = result.newMatches.length > 3 ? `${preview}\n… (+${result.newMatches.length - 3})` : preview;
+
+            if (rule.notifyBrowser !== false) {
+              showNotificationSafely({
+                type: "basic",
+                iconUrl,
+                title,
+                message: body,
+              });
+            }
+            if (rule.notifyWebhook && alertsConfig?.webhook && alertsConfig.webhook.type !== "none") {
+              await dispatchWebhookAlert(alertsConfig.webhook, title, body);
+            }
+          }
+        } catch (e) {
+          logBackgroundError(`Keyword watch rule [${rule.name}] failed`, e);
+        }
+      }
+    } finally {
+      await releaseLock(KEYWORD_WATCH_LOCK_KEY, lockOwner);
+    }
+  };
+}
+
+// noinspection JSIgnoredPromiseFromCall
+void jobs.scheduleJob({
+  id: EJobType.KeywordWatch,
+  type: "interval",
+  duration: 1000 * 60 * 10, // check every 10 minutes
+  immediate: false,
+  execute: autoKeywordWatch(),
+});
+
+// noinspection JSIgnoredPromiseFromCall
+void jobs.scheduleJob({
+  id: EJobType.UpdateCheck,
+  type: "interval",
+  duration: 1000 * 60 * 60, // 每 60 分钟检查一次是否到达用户设定的更新检测周期（未到期直接返回，零网络请求）
+  immediate: false,
+  execute: async () => {
+    await performExtensionUpdateCheck({ force: false, isScheduled: true });
+  },
 });
 
 function doReDownloadTorrent(downloadOption: IDownloadTorrentOption) {

@@ -95,6 +95,12 @@ export const clientMetaData: TorrentClientMetaData = {
     TrackerManage: {
       allowed: true,
     },
+    Reannounce: {
+      allowed: true,
+    },
+    SetLocation: {
+      allowed: true,
+    },
   },
   advanceAddTorrentOptions: [
     {
@@ -1184,5 +1190,66 @@ export default class QBittorrent extends AbstractBittorrentClient<TorrentClientC
     } catch (e) {
       return false;
     }
+  }
+
+  // 强制重新向 Tracker 汇报: POST /torrents/reannounce
+  override async reannounceTorrent(id: any): Promise<boolean> {
+    try {
+      await this.request("/torrents/reannounce", {
+        method: "post",
+        data: { hashes: normalizePieces(id) },
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 迁移存储目录: POST /torrents/setLocation
+  override async setTorrentLocation(id: any, location: string): Promise<boolean> {
+    const trimmed = location.trim();
+    if (!trimmed) return false;
+    try {
+      await this.request("/torrents/setLocation", {
+        method: "post",
+        data: { hashes: normalizePieces(id), location: trimmed },
+      });
+      this.invalidateSyncCache();
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 原子替换 Tracker URL: POST /torrents/editTracker
+  override async replaceTorrentTracker(
+    torrent: string | CTorrent,
+    search: string,
+    replacement: string,
+  ): Promise<{ replaced: number; total: number }> {
+    const trimmedSearch = search.trim();
+    if (!trimmedSearch) return { replaced: 0, total: 0 };
+    const hash = this.getTorrentHash(torrent);
+    const trackers = await this.getTorrentTrackersDetail(hash);
+    let replaced = 0;
+    for (const tracker of trackers) {
+      if (!tracker.url || !tracker.url.includes(trimmedSearch)) continue;
+      const newUrl = tracker.url.split(trimmedSearch).join(replacement);
+      if (newUrl === tracker.url) continue;
+      try {
+        await this.request("/torrents/editTracker", {
+          method: "post",
+          data: { hash, origUrl: tracker.url, newUrl },
+        });
+        replaced += 1;
+      } catch {
+        // 个别 tracker 替换失败时继续处理其余项
+      }
+    }
+    if (replaced > 0) {
+      this.invalidateSyncCache();
+    }
+    return { replaced, total: trackers.length };
   }
 }

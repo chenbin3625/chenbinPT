@@ -467,6 +467,7 @@ describe("S-2 · 页面解析出的链接（下载列里可以是异站 <a href>
     const { default: SiteDetailPage } = await vi.importActual<{ default: any }>(
       "@/content-script/app/pages/SiteDetailPage.vue",
     );
+    const { PTD_DATA_KEY, REMOTE_DOWNLOAD_DIALOG_DATA_KEY } = await import("@/content-script/app/injectionKeys.ts");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
     const { antdInstance } = await import("@/options/plugins/antd.ts");
     const { useConfigStore } = await import("@/options/stores/config.ts");
@@ -490,8 +491,8 @@ describe("S-2 · 页面解析出的链接（下载列里可以是异站 <a href>
     document.body.append(host);
     const Root = defineComponent({
       setup() {
-        provide("ptd_data", { siteId: SITE_ID });
-        provide("remoteDownloadDialogData", remoteDialog);
+        provide(PTD_DATA_KEY, { siteId: SITE_ID });
+        provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, remoteDialog);
         return () => h(SiteDetailPage);
       },
     });

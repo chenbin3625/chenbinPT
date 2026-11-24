@@ -22,11 +22,12 @@ describe("站点编辑器复用", () => {
   it("从自定义 URL 站点切换到官方 URL 站点时清空旧地址", async () => {
     const pinia = prepareOptionsPinia();
     const siteId = ref("site-a");
-    const draft = ref({ url: "", sortIndex: 100 });
+    const draft = ref<any>({ url: "", sortIndex: 100 });
     const { default: Editor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const { STORED_SITE_USER_CONFIG_KEY } = await import("@/options/views/Settings/SetSite/injectionKeys.ts");
     const Root = defineComponent({
       setup() {
-        provide("storedSiteUserConfig", draft);
+        provide(STORED_SITE_USER_CONFIG_KEY, draft);
         return () => h(Editor, { modelValue: siteId.value });
       },
     });

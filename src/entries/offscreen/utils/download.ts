@@ -4,6 +4,7 @@ import { toMerged } from "es-toolkit";
 import { isEmpty } from "es-toolkit/compat";
 
 import {
+  CTorrentState,
   getDownloader,
   getDownloaderMetaData,
   releaseDownloaderInstance,
@@ -37,6 +38,8 @@ import type {
   AugmentedRequired,
 } from "@/shared/types.ts";
 
+import { getTorrentFavoriteKey } from "@/shared/types.ts";
+import { getTorrentFavoriteStatus } from "./torrentFavorite.ts";
 import { logger } from "./logger.ts";
 import { assertSenderMatchesSite, isTrustedExtensionContext } from "./sender.ts";
 import { buildRedactedDownloadRequestConfig, sanitizeAddTorrentOptions } from "./downloadHistorySanitize.ts";
@@ -356,6 +359,23 @@ onMessage("getDownloaderStatus", async ({ data: downloaderId }) => {
   return downloaderStatus;
 });
 
+onMessage("getDownloaderFreeSpace", async ({ data: downloaderId }) => {
+  const downloaderInstance = await getDownloaderInstance(downloaderId);
+  if (!downloaderInstance) {
+    return "N/A";
+  }
+  try {
+    return await downloaderInstance.getClientFreeSpace();
+  } catch (e) {
+    logger({
+      msg: `getDownloaderFreeSpace failed for ${downloaderId}`,
+      level: "warn",
+      data: e instanceof Error ? e.message : String(e),
+    });
+    return "N/A";
+  }
+});
+
 export async function getTorrentDownloadLink(torrent: ITorrent) {
   const site = await getSiteInstance<"public">(torrent.site);
   if (
@@ -496,6 +516,175 @@ onMessage("removeClientTorrentTracker", async ({ data: { downloaderId, torrent, 
     result = await downloaderInstance.removeTorrentTracker(torrent, url);
   }
   return result;
+});
+
+// 强制重新汇报 Tracker
+onMessage("reannounceClientTorrent", async ({ data: { downloaderId, id } }) => {
+  const downloaderInstance = await getDownloaderInstance(downloaderId);
+  if (!downloaderInstance) return false;
+  return await downloaderInstance.reannounceTorrent(id);
+});
+
+// 迁移存储目录
+onMessage("setClientTorrentLocation", async ({ data: { downloaderId, id, location, moveData = true } }) => {
+  const downloaderInstance = await getDownloaderInstance(downloaderId);
+  if (!downloaderInstance) return false;
+  return await downloaderInstance.setTorrentLocation(id, location, moveData);
+});
+
+// 批量替换 Tracker URL / Passkey
+onMessage("replaceClientTorrentTracker", async ({ data: { downloaderId, torrent, search, replacement } }) => {
+  const downloaderInstance = await getDownloaderInstance(downloaderId);
+  if (!downloaderInstance) return { replaced: 0, total: 0 };
+  return await downloaderInstance.replaceTorrentTracker(torrent, search, replacement);
+});
+
+const CLIENT_STATUS_TORRENTS_CACHE_TTL = 60_000;
+let clientStatusTorrentsCache: {
+  at: number;
+  torrents: Array<{ normName: string; size: number; state: CTorrentState }>;
+} | null = null;
+
+function normalizeMatchTitle(raw: string | undefined): string {
+  return String(raw ?? "")
+    .toLowerCase()
+    .replace(/[\s._\-[\]()【】（）]+/g, "")
+    .trim();
+}
+
+async function getCachedActiveClientTorrentsSummary() {
+  const now = Date.now();
+  if (clientStatusTorrentsCache && now - clientStatusTorrentsCache.at < CLIENT_STATUS_TORRENTS_CACHE_TTL) {
+    return clientStatusTorrentsCache.torrents;
+  }
+
+  const downloaders =
+    ((await sendMessage("getExtStoragePath", {
+      key: "metadata",
+      path: ["downloaders"],
+      defaultValue: {},
+    })) as IMetadataPiniaStorageSchema["downloaders"]) ?? {};
+  const enabledIds = Object.values(downloaders)
+    .filter((d) => d?.enabled && d?.id)
+    .map((d) => d.id);
+
+  const collected: Array<{ normName: string; size: number; state: CTorrentState }> = [];
+  await Promise.allSettled(
+    enabledIds.map(async (downloaderId) => {
+      const instance = await getDownloaderInstance(downloaderId);
+      if (!instance) return;
+      const list = await instance.getAllTorrents();
+      for (const item of list) {
+        const normName = normalizeMatchTitle(item.name);
+        if (!normName) continue;
+        collected.push({ normName, size: item.totalSize ?? 0, state: item.state });
+      }
+    }),
+  );
+
+  clientStatusTorrentsCache = { at: now, torrents: collected };
+  return collected;
+}
+
+const MAX_SITE_STATUS_BATCH = 500;
+
+onMessage("getSiteTorrentStatuses", async ({ data, sender }) => {
+  const siteId = data?.siteId;
+  if (typeof siteId !== "string" || !siteId) {
+    return {};
+  }
+  const torrents = Array.isArray(data?.torrents) ? data.torrents.slice(0, MAX_SITE_STATUS_BATCH) : [];
+  if (torrents.length === 0) {
+    return {};
+  }
+
+  if (!isTrustedExtensionContext(sender)) {
+    const siteInstance = await getSiteInstance<"public">(siteId);
+    assertSenderMatchesSite(siteInstance, sender);
+  }
+
+  // 1. 收藏状态
+  const favQuery = torrents.map((t) => ({
+    site: siteId,
+    id: t.id ?? "",
+    url: t.url ?? "",
+    link: t.link ?? "",
+  }));
+  const favRes = await getTorrentFavoriteStatus(favQuery);
+  const favKeySet = new Set(favRes.favorites.map((f) => f.key));
+
+  // 2. 下载历史状态（仅检查本站记录）
+  const downloadHistory = await (await ptdIndexDb).getAll("download_history");
+  const downloadedIdSet = new Set<string>();
+  const downloadedTitleSet = new Set<string>();
+  for (const record of downloadHistory) {
+    if (record.torrent?.site !== siteId) continue;
+    if (record.torrent?.id !== undefined && record.torrent?.id !== null && String(record.torrent.id) !== "") {
+      downloadedIdSet.add(String(record.torrent.id));
+    }
+    const normTitle = normalizeMatchTitle(record.torrent?.title);
+    if (normTitle) {
+      downloadedTitleSet.add(normTitle);
+    }
+  }
+
+  // 3. 下载器当前活跃状态（60s TTL 缓存）
+  const activeClientTorrents = await getCachedActiveClientTorrentsSummary();
+  const clientByName = new Map<string, Array<{ size: number; state: CTorrentState }>>();
+  for (const item of activeClientTorrents) {
+    const bucket = clientByName.get(item.normName) ?? [];
+    bucket.push({ size: item.size, state: item.state });
+    clientByName.set(item.normName, bucket);
+  }
+
+  const statuses: Record<
+    string,
+    { favorited?: boolean; downloaded?: boolean; seeding?: boolean; downloading?: boolean }
+  > = {};
+
+  for (let i = 0; i < torrents.length; i++) {
+    const item = torrents[i];
+    const entryKey = String(item.key ?? i);
+    const favKey = getTorrentFavoriteKey(favQuery[i]);
+    const favorited = favKeySet.has(favKey);
+
+    const idStr = item.id !== undefined && item.id !== null ? String(item.id) : "";
+    const normTitle = normalizeMatchTitle(item.title);
+    const downloaded =
+      (idStr !== "" && downloadedIdSet.has(idStr)) || (normTitle !== "" && downloadedTitleSet.has(normTitle));
+
+    let seeding = false;
+    let downloading = false;
+    if (normTitle) {
+      const matched = clientByName.get(normTitle);
+      if (matched && matched.length > 0) {
+        for (const m of matched) {
+          if (item.size && m.size > 0 && Math.abs(m.size - item.size) > Math.max(10 * 1024 * 1024, item.size * 0.05)) {
+            continue;
+          }
+          if (m.state === CTorrentState.seeding) seeding = true;
+          else if (
+            m.state === CTorrentState.downloading ||
+            m.state === CTorrentState.checking ||
+            m.state === CTorrentState.queued
+          ) {
+            downloading = true;
+          }
+        }
+      }
+    }
+
+    if (favorited || downloaded || seeding || downloading) {
+      statuses[entryKey] = {
+        ...(favorited ? { favorited: true } : {}),
+        ...(downloaded ? { downloaded: true } : {}),
+        ...(seeding ? { seeding: true } : {}),
+        ...(downloading ? { downloading: true } : {}),
+      };
+    }
+  }
+
+  return statuses;
 });
 
 onMessage("deleteClientTorrent", async ({ data: { downloaderId, id, removeData } }) => {

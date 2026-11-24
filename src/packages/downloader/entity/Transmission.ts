@@ -78,6 +78,12 @@ export const clientMetaData: TorrentClientMetaData = {
     TrackerManage: {
       allowed: true,
     },
+    Reannounce: {
+      allowed: true,
+    },
+    SetLocation: {
+      allowed: true,
+    },
   },
 };
 
@@ -224,6 +230,8 @@ type TransmissionRequestMethod =
   | "torrent-stop"
   | "torrent-remove"
   | "torrent-verify"
+  | "torrent-reannounce"
+  | "torrent-set-location"
   | "torrent-set"
   | "queue-move-top"
   | "queue-move-up"
@@ -1043,6 +1051,72 @@ export default class Transmission extends AbstractBittorrentClient<TorrentClient
     } catch (e) {
       return false;
     }
+  }
+
+  // 强制重新向 Tracker 汇报: torrent-reannounce
+  override async reannounceTorrent(id: any): Promise<boolean> {
+    try {
+      await this.request("torrent-reannounce", {
+        ids: normalizeTransmissionIds(id),
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 迁移存储目录: torrent-set-location
+  override async setTorrentLocation(id: any, location: string, moveData: boolean = true): Promise<boolean> {
+    const trimmed = location.trim();
+    if (!trimmed) return false;
+    try {
+      await this.request("torrent-set-location", {
+        ids: normalizeTransmissionIds(id),
+        location: trimmed,
+        move: moveData,
+      });
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 原子替换 Tracker URL: torrent-set trackerReplace ([id1, url1, id2, url2, ...])
+  override async replaceTorrentTracker(
+    torrent: string | CTorrent,
+    search: string,
+    replacement: string,
+  ): Promise<{ replaced: number; total: number }> {
+    const trimmedSearch = search.trim();
+    if (!trimmedSearch) return { replaced: 0, total: 0 };
+    const ids = normalizeTransmissionIds(this.getTorrentId(torrent));
+    const {
+      data: { arguments: args },
+    } = await this.request<
+      TransmissionBaseResponse<{
+        torrents: Array<{ trackerStats: Array<{ announce: string; id?: number }> }>;
+      }>
+    >("torrent-get", {
+      ids,
+      fields: ["trackerStats"],
+    });
+    const trackers = args.torrents?.[0]?.trackerStats ?? [];
+    const pairs: Array<number | string> = [];
+    for (const tracker of trackers) {
+      if (typeof tracker.id !== "number" || !tracker.announce || !tracker.announce.includes(trimmedSearch)) continue;
+      const newUrl = tracker.announce.split(trimmedSearch).join(replacement);
+      if (newUrl === tracker.announce) continue;
+      pairs.push(tracker.id, newUrl);
+    }
+    if (pairs.length === 0) {
+      return { replaced: 0, total: trackers.length };
+    }
+    await this.request("torrent-set", {
+      ids,
+      trackerReplace: pairs,
+    });
+    return { replaced: pairs.length / 2, total: trackers.length };
   }
 
   /**

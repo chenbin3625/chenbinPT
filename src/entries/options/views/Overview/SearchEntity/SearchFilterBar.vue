@@ -3,9 +3,10 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import dayjs from "dayjs";
 import { startOfDay, startOfMonth, startOfWeek, startOfYear, subDays } from "date-fns";
-import { DownOutlined } from "@ant-design/icons-vue";
+import { DeleteOutlined, DownOutlined, PlusOutlined, StarOutlined } from "@ant-design/icons-vue";
 import { ETorrentStatus, sortTorrentTags } from "@ptd/site";
 import { formatDate } from "@/options/utils.ts";
+import { useMetadataStore } from "@/options/stores/metadata.ts";
 import SiteName from "@/options/components/SiteName.vue";
 import { tableCustomFilter, updateTableFilterNow as updateTableFilterValueFn } from "./utils/filter.ts";
 
@@ -15,8 +16,30 @@ type FilterField = KeywordField | RangeField | "exclude";
 type DatePreset = "today" | "week" | "month" | "year" | "last7";
 
 const { t } = useI18n();
+const metadataStore = useMetadataStore();
 const { advanceFilterDictRef, advanceItemPropsRef, tableWaitFilterRef, buildFilterDictFn } = tableCustomFilter;
 const filterInput = ref<{ focus: () => void } | null>(null);
+const showPresetsPopover = ref(false);
+const newPresetName = ref("");
+
+const builtInFilterPresets = computed(() => [
+  { id: "__free__", name: t("SearchEntity.index.presets.freeOnly"), filter: "tags:Free" },
+  { id: "__high_seed__", name: t("SearchEntity.index.presets.highSeeders"), filter: "seeders:10~" },
+  { id: "__4k__", name: t("SearchEntity.index.presets.uhd4k"), filter: "2160p" },
+]);
+
+function applyFilterPreset(filter: string) {
+  setFilterText(filter);
+  showPresetsPopover.value = false;
+}
+
+function saveCurrentAsPreset() {
+  const name = newPresetName.value.trim();
+  const filter = tableWaitFilterRef.value.trim();
+  if (!name || !filter) return;
+  metadataStore.saveSearchFilterPreset({ name, filter });
+  newPresetName.value = "";
+}
 
 const fields: FilterField[] = [
   "site",
@@ -359,6 +382,71 @@ defineExpose({ clearAllFilters });
           </div>
         </template>
       </a-popover>
+      <!-- 常用筛选预设 -->
+      <a-popover v-model:open="showPresetsPopover" placement="bottomLeft" trigger="click">
+        <button type="button" class="search-filter-preset-btn" data-filter="presets">
+          <StarOutlined class="search-filter-chip__arrow" />
+          <span class="search-filter-chip__label">{{ t("SearchEntity.index.presets.title") }}</span>
+          <DownOutlined class="search-filter-chip__arrow" />
+        </button>
+        <template #content>
+          <div class="search-filter-presets">
+            <div class="search-filter-presets__section-title">{{ t("SearchEntity.index.presets.quick") }}</div>
+            <div class="search-filter-presets__chips">
+              <a-tag
+                v-for="preset in builtInFilterPresets"
+                :key="preset.id"
+                class="search-filter-presets__tag"
+                @click="applyFilterPreset(preset.filter)"
+              >
+                {{ preset.name }}
+              </a-tag>
+            </div>
+
+            <template v-if="(metadataStore.searchFilterPresets ?? []).length > 0">
+              <a-divider class="search-filter-presets__divider" />
+              <div class="search-filter-presets__section-title">{{ t("SearchEntity.index.presets.saved") }}</div>
+              <div class="search-filter-presets__list">
+                <div
+                  v-for="preset in metadataStore.searchFilterPresets"
+                  :key="preset.id"
+                  class="search-filter-presets__row"
+                  @click="applyFilterPreset(preset.filter)"
+                >
+                  <span class="search-filter-presets__name" :title="preset.filter">{{ preset.name }}</span>
+                  <a-button
+                    size="small"
+                    type="text"
+                    danger
+                    :title="t('common.remove')"
+                    @click.stop="metadataStore.removeSearchFilterPreset(preset.id)"
+                  >
+                    <template #icon><DeleteOutlined /></template>
+                  </a-button>
+                </div>
+              </div>
+            </template>
+
+            <a-divider class="search-filter-presets__divider" />
+            <div class="search-filter-presets__save">
+              <a-input
+                v-model:value="newPresetName"
+                size="small"
+                :placeholder="t('SearchEntity.index.presets.namePlaceholder')"
+                @press-enter="saveCurrentAsPreset"
+              />
+              <a-button
+                size="small"
+                type="primary"
+                :disabled="!newPresetName.trim() || !tableWaitFilterRef.trim()"
+                @click="saveCurrentAsPreset"
+              >
+                <template #icon><PlusOutlined /></template>
+              </a-button>
+            </div>
+          </div>
+        </template>
+      </a-popover>
       <!-- 筛选生效时的全局复位入口：不用逐个打开弹层「清除」 -->
       <a-button
         v-if="hasActiveFilters"
@@ -381,3 +469,90 @@ defineExpose({ clearAllFilters });
     />
   </div>
 </template>
+
+<style scoped>
+.search-filter-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px dashed var(--ptd-border);
+  border-radius: var(--ptd-radius, 6px);
+  background: transparent;
+  color: var(--ptd-text);
+  font-size: var(--ptd-font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.2s,
+    color 0.2s,
+    background-color 0.2s;
+}
+
+.search-filter-preset-btn:hover {
+  border-color: var(--ptd-primary);
+  color: var(--ptd-primary);
+}
+
+.search-filter-presets {
+  width: 260px;
+}
+
+.search-filter-presets__section-title {
+  margin-bottom: 6px;
+  font-size: var(--ptd-font-size-sm);
+  color: var(--ptd-text-secondary);
+}
+
+.search-filter-presets__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.search-filter-presets__tag {
+  cursor: pointer;
+  margin-inline-end: 0;
+}
+
+.search-filter-presets__divider {
+  margin: 8px 0;
+}
+
+.search-filter-presets__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.search-filter-presets__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: var(--ptd-radius, 6px);
+  cursor: pointer;
+}
+
+.search-filter-presets__row:hover {
+  background: var(--ptd-hover);
+}
+
+.search-filter-presets__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-filter-presets__save {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+</style>

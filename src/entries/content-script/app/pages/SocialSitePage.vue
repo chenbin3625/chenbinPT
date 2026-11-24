@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { inject, shallowRef, ref } from "vue";
+import { shallowRef, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { SearchOutlined } from "@ant-design/icons-vue";
 import { ISocialSitePageInformation, socialPageParserMatchesMap } from "@ptd/social";
 
 import { useConfigStore } from "@/options/stores/config.ts";
-import { doKeywordSearch, type IPtdData } from "../utils.ts";
+import { usePtdData } from "../injectionKeys.ts";
+import { doKeywordSearch } from "../utils.ts";
 
 import SpeedDialBtn from "@/content-script/app/components/SpeedDialBtn.vue";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
@@ -14,7 +15,7 @@ import SocialSiteParseResultsDialog from "@/content-script/app/components/Social
 const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const { t } = useI18n();
-const ptdData = inject<IPtdData>("ptd_data", {});
+const ptdData = usePtdData();
 const socialSiteParseResults = shallowRef<ISocialSitePageInformation[]>([]);
 const showSocialSiteParseResultsDialog = ref<boolean>(false);
 

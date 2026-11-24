@@ -5,9 +5,33 @@ import type { TLangCode } from "@/options/plugins/i18n.ts";
 import type { ITimelineUserInfoField } from "@/options/views/Overview/MyData/UserDataTimeline/utils.ts";
 
 import type { TLocalDownloadMethod } from "../common/download.ts";
+import type { IUpdateCheckConfig } from "../../updateCheck.ts";
 
 export const supportTheme = ["auto", "light", "dark"] as const;
 export type supportThemeType = (typeof supportTheme)[number];
+
+export type TAlertWebhookType = "none" | "generic" | "telegram" | "bark";
+export interface IAlertWebhookConfig {
+  type: TAlertWebhookType;
+  url: string;
+  secret?: string;
+  chatId?: string;
+}
+
+export interface IAlertConfig {
+  enabled: boolean;
+  notifyUnreadMessage: boolean;
+  notifyHnRWarning: boolean;
+  notifyNeedLogin: boolean;
+  notifyLowRatio: boolean;
+  lowRatioThreshold: number;
+  notifyLevelUp: boolean;
+  notifyInactivity: boolean;
+  inactivityWarningDays: number;
+  defaultSiteMaxInactiveDays: number;
+  webhook: IAlertWebhookConfig;
+}
+
 type UiTableBehaviorKey = "SetSite" | "SearchEntity" | "MyData" | "DownloadHistory" | "MyClient" | string;
 interface UiTableBehaviorItem<T = string> {
   itemsPerPage?: number;
@@ -23,6 +47,7 @@ export interface IConfigPiniaStorageSchema {
   autoToggleNavBarOnDisplayChange: boolean;
 
   ignoreWrongPixelRatio: boolean; // 是否忽略页面缩放（devicePixelRatio）异常提示
+  enableToolbarPopup: boolean; // 点击浏览器扩展图标时是否打开迷你概览弹窗（默认关闭，保持直接打开选项页）
 
   saveTableBehavior: boolean;
   enableTableMultiSort: boolean; // 是否启用表格多列排序
@@ -58,6 +83,8 @@ export interface IConfigPiniaStorageSchema {
     dragLinkOnSpeedDial: boolean; // 是否允许拖拽链接到 SpeedDial 上
 
     socialSiteSearchBy: "id" | "title" | "imdb" | "chosen"; // 社交站点搜索方式，id: 使用 id 进行搜索，title: 使用主标题进行搜索，IMDb: 使用 IMDb 编号进行搜索，chosen: 使用用户选择的方式进行搜索
+    showSocialMediaServerBadge: boolean; // 社交站点页面（豆瓣/IMDb/Bangumi等）自动检测并展示媒体库命中徽章
+    showSiteTorrentStatusBadge: boolean; // PT 站点页面展示「已收藏 / 已下载 / 做种中」轻量状态标签
   };
 
   // 对 MyData 页面数据表格展示的额外控制项
@@ -115,6 +142,10 @@ export interface IConfigPiniaStorageSchema {
 
     // 是否展示距离下一等级积分的时间（小时）
     showBonusNeededInterval: boolean;
+    // 是否在主表与汇总卡片中展示相较前一日的增量（Δ）
+    showDailyDelta: boolean;
+    // 是否在主表中展示站点保号/不活跃倒计时提示
+    showInactivityWarning: boolean;
   };
 
   userDataTimelineControl: {
@@ -220,6 +251,8 @@ export interface IConfigPiniaStorageSchema {
     allowDirectSendToClient: boolean;
     // 是否使用快速发送到客户端功能（展平 下载器和下载目录 ）
     useQuickSendToClient: boolean;
+    // 推送到默认下载器时是否自动应用智能推送路由规则
+    enableRoutingRulesOnDefaultSend: boolean;
   };
 
   searchEntity: {
@@ -240,6 +273,10 @@ export interface IConfigPiniaStorageSchema {
 
     // 是否在搜索框中展示热门推荐按钮
     showHotRecommendations: boolean;
+    // 搜索结果页自动联动已启用的媒体服务器查重（Emby/Jellyfin/Plex/fnOS）
+    enableMediaServerCrossCheck: boolean;
+    // 搜索结果页自动联动已启用的下载器查重（检测做种中/下载中）
+    enableDownloaderCrossCheck: boolean;
   };
 
   // 配置同样在 searchEntity 页面（偷懒下）
@@ -266,4 +303,8 @@ export interface IConfigPiniaStorageSchema {
     triggerThreshold: number; // 触发阈值（周），默认 2
     extensionDuration: number; // 延长时长（月），默认 3
   };
+
+  alerts: IAlertConfig;
+
+  updateCheck: IUpdateCheckConfig;
 }

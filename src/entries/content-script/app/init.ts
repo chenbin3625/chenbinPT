@@ -9,6 +9,7 @@ import { computed, createApp, defineComponent, h } from "vue";
 import { message } from "ant-design-vue";
 
 import App from "./App.vue";
+import { PTD_DATA_KEY, PTD_DATA_READY_KEY } from "./injectionKeys.ts";
 import { createRemountGuard } from "./remountGuard.ts";
 import { installDialogSentinelFocusGuard, stopRetargetedSelectPointerDown } from "./shadowPopupEvents.ts";
 import { syncThemeVarsToHost } from "./themeVars.ts";
@@ -185,8 +186,8 @@ export function mountApp(document: Document, data: any = {}) {
       metadataStore.$patch(sanitizedMetadata);
     }
   });
-  app.provide("ptd_data", data); // 提供数据给 Vue 应用
-  app.provide("ptd_data_ready", dataReady);
+  app.provide(PTD_DATA_KEY, data); // 提供数据给 Vue 应用
+  app.provide(PTD_DATA_READY_KEY, dataReady);
   app.mount(appMountElement);
 
   // 防止某些网站动态修改 body，从而移除我们的 contentRoot，因此使用 MutationObserver 监听 body 的变化

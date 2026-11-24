@@ -16,11 +16,12 @@ import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import { formatDate, formatSize } from "@/options/utils.ts";
 import { sendMessage } from "@/messages.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
-import type { IRemoteDownloadDialogData } from "../types.ts";
-import { copyTextToClipboard } from "../utils.ts";
+import { PTD_DATA_KEY, useRemoteDownloadDialogData } from "../injectionKeys.ts";
+import { copyTextToClipboard, type IPtdData } from "../utils.ts";
 
 import NavButton from "@/options/components/NavButton.vue";
 import TorrentTitleTd from "@/options/components/TorrentTitleTd.vue";
@@ -45,8 +46,47 @@ function handleFavoriteMulti() {
   emits("favorite", selectedTorrents.value);
 }
 
+const configStore = useConfigStore();
 const runtimeStore = useRuntimeStore();
 const metadataStore = useMetadataStore();
+const ptdData = inject<IPtdData | undefined>(PTD_DATA_KEY, undefined);
+
+interface ITorrentInlineStatus {
+  favorited?: boolean;
+  downloaded?: boolean;
+  seeding?: boolean;
+  downloading?: boolean;
+}
+const torrentStatuses = ref<Record<string, ITorrentInlineStatus>>({});
+let statusRequestSeq = 0;
+
+async function loadTorrentStatuses() {
+  const reqId = ++statusRequestSeq;
+  torrentStatuses.value = {};
+  if (configStore.contentScript?.showSiteTorrentStatusBadge === false) return;
+  const rows = tableRows.value;
+  const siteId = ptdData?.siteId || rows[0]?.site || "";
+  if (!siteId || rows.length === 0) return;
+
+  try {
+    const result = await sendMessage("getSiteTorrentStatuses", {
+      siteId,
+      torrents: rows.slice(0, 200).map((row) => ({
+        key: row.__rowKey,
+        id: row.id,
+        title: row.title,
+        url: row.url,
+        link: row.link,
+        size: row.size,
+      })),
+    });
+    if (reqId === statusRequestSeq && result && typeof result === "object") {
+      torrentStatuses.value = result;
+    }
+  } catch {
+    // 静默降级，不影响高级列表主操作
+  }
+}
 
 const tableHeaders = computed(
   () =>
@@ -244,7 +284,7 @@ async function handleLinkCopyMulti() {
   }
 }
 
-const remoteDownloadDialogData = inject<IRemoteDownloadDialogData>("remoteDownloadDialogData")!;
+const remoteDownloadDialogData = useRemoteDownloadDialogData();
 
 function handleRemoteDownloadMulti(isDefaultSend = false) {
   remoteDownloadDialogData.torrents = selectedTorrents.value;
@@ -271,6 +311,7 @@ function handleSelectNotSeeding() {
 
 function enterDialog() {
   selectedRowKeys.value = selectedKeysOf(tableRows.value);
+  void loadTorrentStatuses();
 }
 
 // 原生 a-modal 没有 afterOpenChange（只有 afterClose），打开时的初始化自行监听 open。
@@ -308,6 +349,29 @@ watch(showDialog, (open) => {
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'title'">
           <TorrentTitleTd :item="record" :show-social="false" />
+          <div
+            v-if="
+              torrentStatuses[record.__rowKey] &&
+              (torrentStatuses[record.__rowKey]!.seeding ||
+                torrentStatuses[record.__rowKey]!.downloading ||
+                torrentStatuses[record.__rowKey]!.downloaded ||
+                torrentStatuses[record.__rowKey]!.favorited)
+            "
+            class="ptd-cs-status-tags"
+          >
+            <a-tag v-if="torrentStatuses[record.__rowKey]!.seeding" color="success">
+              {{ t("contentScript.torrentStatus.seeding") }}
+            </a-tag>
+            <a-tag v-if="torrentStatuses[record.__rowKey]!.downloading" color="processing">
+              {{ t("contentScript.torrentStatus.downloading") }}
+            </a-tag>
+            <a-tag v-if="torrentStatuses[record.__rowKey]!.downloaded" color="blue">
+              {{ t("contentScript.torrentStatus.downloaded") }}
+            </a-tag>
+            <a-tag v-if="torrentStatuses[record.__rowKey]!.favorited" color="gold">
+              {{ t("contentScript.torrentStatus.favorited") }}
+            </a-tag>
+          </div>
         </template>
 
         <!-- 种子大小 -->

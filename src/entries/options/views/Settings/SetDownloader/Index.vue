@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { countBy } from "es-toolkit";
 import {
+  BranchesOutlined,
   CloudDownloadOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -38,6 +39,7 @@ import EditDialog from "./EditDialog.vue";
 import PathAndTagSuggestDialog from "./PathAndTagSuggestDialog.vue";
 import SiteFilterDialog from "./SiteFilterDialog.vue";
 import DefaultDownloaderEditDialog from "./DefaultDownloaderEditDialog.vue";
+import PushRoutingRulesDialog from "./PushRoutingRulesDialog.vue";
 
 import DeleteDialog from "@/options/components/DeleteDialog.vue";
 import NavButton from "@/options/components/NavButton.vue";
@@ -61,6 +63,7 @@ const showDefaultDownloaderEditDialog = ref<boolean>(false);
 const showSiteFilterDialog = ref<boolean>(false);
 const showPathAndTagSuggestDialog = ref<boolean>(false);
 const showDeleteDialog = ref<boolean>(false);
+const showPushRoutingRulesDialog = ref<boolean>(false);
 
 const downloaderTypeCount = computed(() => countBy(metadataStore.getDownloaders, (x) => x.type));
 
@@ -275,6 +278,14 @@ function pruneTableSelected() {
           @click="showDefaultDownloaderEditDialog = true"
         />
 
+        <NavButton
+          :disabled="metadataStore.getDownloaders.length == 0"
+          :icon="BranchesOutlined"
+          :text="t('SetDownloader.routing.btn')"
+          color="info"
+          @click="showPushRoutingRulesDialog = true"
+        />
+
         <span style="flex: 1 1 auto" />
 
         <!-- 每次输入都把当前筛选串同步进字典：只在清空时重建会让手输关键词停留在字符串里，
@@ -464,6 +475,7 @@ function pruneTableSelected() {
   <DefaultDownloaderEditDialog v-model="showDefaultDownloaderEditDialog" />
   <SiteFilterDialog v-model="showSiteFilterDialog" :client-id="toEditDownloaderId!" />
   <PathAndTagSuggestDialog v-model="showPathAndTagSuggestDialog" :client-id="toEditDownloaderId!" />
+  <PushRoutingRulesDialog v-model="showPushRoutingRulesDialog" />
   <DeleteDialog
     v-model="showDeleteDialog"
     :to-delete-ids="toDeleteIds"

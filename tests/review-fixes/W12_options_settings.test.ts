@@ -764,13 +764,14 @@ describe("W12_options_settings review fixes", () => {
     vi.spyOn(metadataStore as any, "getSiteUserConfig", "get").mockReturnValue(getConfigMock);
 
     const { default: SetSiteEditor } = await import("@/options/views/Settings/SetSite/Editor.vue");
+    const { STORED_SITE_USER_CONFIG_KEY } = await import("@/options/views/Settings/SetSite/injectionKeys.ts");
     const siteId = ref("removed-site");
     const userConfig = ref<any>({ sortIndex: 100, url: "", inputSetting: {} });
     const formValid = ref<boolean>(true);
 
     const Root = defineComponent({
       setup() {
-        provide("storedSiteUserConfig", userConfig);
+        provide(STORED_SITE_USER_CONFIG_KEY, userConfig);
         return () =>
           h(SetSiteEditor as any, {
             modelValue: siteId.value,

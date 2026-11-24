@@ -2,9 +2,12 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-rou
 import {
   ApiOutlined,
   AppstoreOutlined,
+  BellOutlined,
   BgColorsOutlined,
+  BugOutlined,
   CameraOutlined,
   CloudDownloadOutlined,
+  CloudSyncOutlined,
   DashboardOutlined,
   GlobalOutlined,
   HistoryOutlined,
@@ -62,6 +65,18 @@ export const setBaseChildren: RouteRecordRaw[] = [
     name: "SetBaseSocialInformation",
     meta: { icon: PictureOutlined },
     component: () => import("../views/Settings/SetBase/SocialInformationWindow.vue"),
+  },
+  {
+    path: "diagnostics",
+    name: "SetBaseDiagnostics",
+    meta: { icon: BugOutlined, usesGlobalSave: false },
+    component: () => import("../views/Settings/SetBase/DiagnosticsWindow.vue"),
+  },
+  {
+    path: "update",
+    name: "SetBaseUpdate",
+    meta: { icon: CloudSyncOutlined },
+    component: () => import("../views/Settings/SetBase/UpdateWindow.vue"),
   },
   {
     // 插件重置 / 清空数据（原 Devtools/Debugger.vue 的 7 项重置操作入口，见 functional-audit SH-01）
@@ -127,6 +142,12 @@ export const routes: RouteRecordRaw[] = [
         name: "KeepUploadTask",
         meta: { icon: MergeCellsOutlined },
         component: () => import("../views/Overview/KeepUploadTask/Index.vue"),
+      },
+      {
+        path: "/keyword-watch",
+        name: "KeywordWatch",
+        meta: { icon: BellOutlined },
+        component: () => import("../views/Overview/KeywordWatch/Index.vue"),
       },
     ],
   },

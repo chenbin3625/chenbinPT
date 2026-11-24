@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ISocialSitePageInformation } from "@ptd/social";
-import { type IPtdData } from "../utils.ts";
-import { computed, inject } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { EMPTY_PLACEHOLDER_IMAGE } from "@/options/plugins/antd.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
+import { usePtdData } from "../injectionKeys.ts";
 import ParseResultListItem from "./ParseResultListItem.vue";
 
 const { t } = useI18n();
@@ -17,7 +17,7 @@ const { parseResults, searchPlan = "default" } = defineProps<{
   searchPlan?: string;
 }>();
 
-const ptdData = inject<IPtdData>("ptd_data", {});
+const ptdData = usePtdData();
 
 const customSearchPlans = computed(() => {
   if (!metadataStore.$ready) {

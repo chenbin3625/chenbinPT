@@ -6,6 +6,7 @@ import { has, unset } from "es-toolkit/compat";
 import { usePreferredDark } from "@vueuse/core";
 
 import type { IConfigPiniaStorageSchema, supportThemeType } from "@/shared/types.ts";
+import { DEFAULT_UPDATE_CHECK_CONFIG, UPDATE_CHECK_INTERVAL_OPTIONS } from "@/shared/updateCheck.ts";
 import { sendMessage } from "@/messages.ts";
 
 // 注意：不要在这里 import "./metadata.ts" —— 会与 metadata.ts → config.ts 形成运行时循环依赖。
@@ -115,6 +116,16 @@ export const useConfigStore = defineStore("config", {
           needsSave = true;
         }
 
+        // 更新检测周期只允许预设档位（防止旧版本或手工改动写入非法值）
+        const updateIntervalHours = state.updateCheck?.intervalHours;
+        if (
+          updateIntervalHours !== undefined &&
+          !(UPDATE_CHECK_INTERVAL_OPTIONS as readonly number[]).includes(updateIntervalHours)
+        ) {
+          state.updateCheck.intervalHours = DEFAULT_UPDATE_CHECK_CONFIG.intervalHours;
+          needsSave = true;
+        }
+
         if (needsSave) {
           // `$save()` 自己已经记录失败并返回 rejected Promise；这里再兜一次，避免 afterRestore 产生 unhandled rejection
           void context.store.$save().catch(() => undefined);
@@ -133,6 +144,7 @@ export const useConfigStore = defineStore("config", {
     autoToggleNavBarOnDisplayChange: true,
 
     ignoreWrongPixelRatio: false,
+    enableToolbarPopup: false,
 
     saveTableBehavior: true,
     enableTableMultiSort: false,
@@ -163,6 +175,8 @@ export const useConfigStore = defineStore("config", {
       dragLinkOnSpeedDial: true,
 
       socialSiteSearchBy: "chosen",
+      showSocialMediaServerBadge: true,
+      showSiteTorrentStatusBadge: true,
     },
 
     tableBehavior: {
@@ -268,6 +282,8 @@ export const useConfigStore = defineStore("config", {
       showIntervalAsDate: false,
       simplifyBonusNumbers: false,
       showBonusNeededInterval: true,
+      showDailyDelta: true,
+      showInactivityWarning: true,
     },
 
     userDataTimelineControl: {
@@ -362,6 +378,7 @@ export const useConfigStore = defineStore("config", {
       localDownloadMethod: "browser",
       ignoreSiteDownloadIntervalWhenLocalDownload: true,
       useQuickSendToClient: true,
+      enableRoutingRulesOnDefaultSend: true,
     },
 
     searchEntity: {
@@ -375,6 +392,8 @@ export const useConfigStore = defineStore("config", {
       autoDetectOfficialGroupFromTitle: false,
 
       showHotRecommendations: true,
+      enableMediaServerCrossCheck: true,
+      enableDownloaderCrossCheck: true,
     },
 
     mediaServerEntity: {
@@ -407,6 +426,27 @@ export const useConfigStore = defineStore("config", {
       triggerThreshold: 2,
       extensionDuration: 3,
     },
+
+    alerts: {
+      enabled: true,
+      notifyUnreadMessage: true,
+      notifyHnRWarning: true,
+      notifyNeedLogin: true,
+      notifyLowRatio: false,
+      lowRatioThreshold: 1.0,
+      notifyLevelUp: true,
+      notifyInactivity: true,
+      inactivityWarningDays: 7,
+      defaultSiteMaxInactiveDays: 40,
+      webhook: {
+        type: "none",
+        url: "",
+        secret: "",
+        chatId: "",
+      },
+    },
+
+    updateCheck: { ...DEFAULT_UPDATE_CHECK_CONFIG },
   }),
   getters: {
     uiTheme(): Exclude<supportThemeType, "auto"> {

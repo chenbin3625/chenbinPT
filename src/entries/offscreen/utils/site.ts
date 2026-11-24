@@ -10,16 +10,55 @@ import {
   type TSiteID,
   checkSiteMetadataAllow,
 } from "@ptd/site";
+import { syncCustomSites } from "@ptd/site/customSiteRegistry.ts";
 
 import { onMessage, sendMessage } from "@/messages.ts";
-import type { IMetadataPiniaStorageSchema } from "@/shared/types.ts";
+import type { ICustomSiteDefinition, IMetadataPiniaStorageSchema } from "@/shared/types.ts";
 
 import { logger } from "./logger.ts";
 import { assertSenderMatchesSite, isTrustedExtensionContext } from "./sender.ts";
-import { getCachedSiteInstance, getSiteInstanceCacheKey, setCachedSiteInstance } from "./siteInstanceCache.ts";
+import {
+  clearSiteInstanceCache,
+  getCachedSiteInstance,
+  getSiteInstanceCacheKey,
+  setCachedSiteInstance,
+} from "./siteInstanceCache.ts";
 import { ptdIndexDb } from "../adapter/indexdb.ts";
 
+let lastCustomSitesSignature = "{}";
+
+/**
+ * 在访问站点前同步 storage 中的 customSites 定义到 @ptd/site 运行时注册表。
+ * 当自定义站点定义发生变化时自动失效对应的站点实例缓存。
+ */
+export async function ensureCustomSitesSynced(siteId?: TSiteID): Promise<void> {
+  try {
+    const customSites =
+      ((await sendMessage("getExtStoragePath", {
+        key: "metadata",
+        path: ["customSites"],
+        defaultValue: {},
+      })) as Record<TSiteID, ICustomSiteDefinition>) ?? {};
+
+    const signature = JSON.stringify(customSites);
+    if (signature !== lastCustomSitesSignature) {
+      lastCustomSitesSignature = signature;
+      syncCustomSites(customSites);
+      if (siteId) {
+        clearSiteInstanceCache(siteId);
+      } else {
+        for (const id of Object.keys(customSites)) {
+          clearSiteInstanceCache(id);
+        }
+      }
+    }
+  } catch {
+    // 单元测试或 storage 不可用时静默跳过自定义站点同步
+  }
+}
+
 export async function getSiteUserConfig(siteId: TSiteID, flush = false) {
+  await ensureCustomSitesSynced(siteId);
   // 只取当前站点的用户配置，避免整份 metadata 跨上下文往返（见 docs/performance-audit.md P0-2）
   const stored =
     ((await sendMessage("getExtStoragePath", {
@@ -77,6 +116,7 @@ onMessage("getSiteUserConfig", async ({ data: { siteId, flush }, sender }) => {
 });
 
 onMessage("getSiteList", async () => {
+  await ensureCustomSitesSynced();
   // 只取需要的两个子表，避免整份 metadata（含 lastUserInfo）跨上下文往返
   const sites =
     ((await sendMessage("getExtStoragePath", {
@@ -126,6 +166,7 @@ export async function getSiteInstance<TYPE extends "private" | "public">(
   siteId: TSiteID,
   options: { mergeUserConfig?: boolean } = {},
 ): Promise<TCreateSiteInstanceResult<TYPE>> {
+  await ensureCustomSitesSynced(siteId);
   const { mergeUserConfig = true } = options;
   let storedSiteUserConfig: ISiteUserConfig = {};
   if (mergeUserConfig) {
@@ -239,3 +280,63 @@ export async function clearSiteFaviconCache() {
 }
 
 onMessage("clearSiteFaviconCache", async () => await clearSiteFaviconCache());
+
+async function probeSingleUrlLatency(
+  rawUrl: string,
+  timeoutMs: number,
+): Promise<{ url: string; ok: boolean; status?: number; latencyMs: number; error?: string }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { url: rawUrl, ok: false, latencyMs: -1, error: "Unsupported protocol" };
+    }
+  } catch {
+    return { url: rawUrl, ok: false, latencyMs: -1, error: "Invalid URL" };
+  }
+
+  const start = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let resp = await fetch(parsed.href, {
+      method: "HEAD",
+      credentials: "omit",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (resp.status === 405 || resp.status === 501) {
+      resp = await fetch(parsed.href, {
+        method: "GET",
+        credentials: "omit",
+        redirect: "follow",
+        signal: controller.signal,
+      });
+    }
+    const latencyMs = Math.max(1, Math.round(performance.now() - start));
+    // 2xx / 3xx / 401 / 403 说明域名已连通且服务在响应（登录态或 CF 页仍代表网络可达）
+    const ok = resp.status >= 200 && resp.status < 500;
+    return { url: rawUrl, ok, status: resp.status, latencyMs };
+  } catch (e) {
+    const latencyMs = Math.max(1, Math.round(performance.now() - start));
+    return {
+      url: rawUrl,
+      ok: false,
+      latencyMs,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+onMessage("testSiteUrlsLatency", async ({ data }) => {
+  const urls = Array.isArray(data?.urls)
+    ? uniq(data.urls.filter((u): u is string => typeof u === "string" && !!u.trim()))
+    : [];
+  const timeoutMs =
+    typeof data?.timeoutMs === "number" && Number.isFinite(data.timeoutMs)
+      ? Math.min(Math.max(data.timeoutMs, 1000), 15_000)
+      : 6000;
+  return await Promise.all(urls.map((url) => probeSingleUrlLatency(url, timeoutMs)));
+});

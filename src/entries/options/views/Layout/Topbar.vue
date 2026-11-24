@@ -2,15 +2,31 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import { BulbFilled, BulbOutlined, DesktopOutlined, DownOutlined, SearchOutlined } from "@ant-design/icons-vue";
+import {
+  BulbFilled,
+  BulbOutlined,
+  CloseOutlined,
+  CloudDownloadOutlined,
+  DeleteOutlined,
+  DesktopOutlined,
+  DownOutlined,
+  HistoryOutlined,
+  PushpinFilled,
+  PushpinOutlined,
+  SearchOutlined,
+} from "@ant-design/icons-vue";
 
+import { sendMessage } from "@/messages.ts";
 import { useConfigStore } from "@/options/stores/config.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
+import { hasUnignoredUpdate, UPDATE_CHECK_STATE_STORAGE_KEY, type IUpdateCheckState } from "@/shared/updateCheck.ts";
 
 import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 
 import SiteFavicon from "@/options/components/SiteFavicon/Index.vue";
 import SiteName from "@/options/components/SiteName.vue";
+import UpdateGuideModal from "@/options/components/UpdateGuideModal.vue";
 import RecommendationMenu from "./RecommendationMenu.vue";
 import { useDisplay } from "@/options/composables/useDisplay.ts";
 
@@ -21,11 +37,85 @@ const { t } = useI18n();
 
 const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
+
+const updateState = ref<IUpdateCheckState | null>(null);
+const showUpdateModal = ref(false);
+
+const ignoredUpdateVersion = computed(() => configStore.updateCheck?.ignoredVersion ?? "");
+const showUpdatePill = computed(() => hasUnignoredUpdate(updateState.value, ignoredUpdateVersion.value));
+const updateVersionLabel = computed(() =>
+  updateState.value?.latest?.version ? `v${updateState.value.latest.version}` : "",
+);
+const updatePillTitle = computed(() => t("SetBase.update.topbarBadgeTitle", { version: updateVersionLabel.value }));
+
+async function loadUpdateState(allowBackgroundCheck = false) {
+  try {
+    const cached = await sendMessage("getUpdateCheckState", undefined);
+    if (cached && typeof cached === "object") {
+      updateState.value = cached;
+    }
+    if (allowBackgroundCheck && configStore.updateCheck?.enabled) {
+      const checked = await sendMessage("checkExtensionUpdate", { force: false });
+      if (checked && typeof checked === "object") {
+        updateState.value = checked;
+      }
+    }
+  } catch {
+    // 非扩展运行时或后台未就绪时静默忽略，不影响顶栏主功能
+  }
+}
+
+function onUpdateStorageChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
+  if (areaName === "local" && UPDATE_CHECK_STATE_STORAGE_KEY in changes) {
+    void loadUpdateState(false);
+  }
+}
+
+async function handleIgnoreUpdateVersion(version: string) {
+  if (configStore.updateCheck) {
+    configStore.updateCheck.ignoredVersion = version;
+  }
+  try {
+    await sendMessage("patchExtStoragePath", {
+      key: "config",
+      path: "updateCheck.ignoredVersion",
+      value: version,
+    });
+    runtimeStore.showSnackbar(
+      version ? t("SetBase.update.versionIgnored", { version: `v${version}` }) : t("SetBase.update.versionUnignored"),
+      { color: "success" },
+    );
+  } catch {
+    runtimeStore.showSnackbar(t("common.saveFailed"), { color: "error" });
+  }
+}
+
+function handleOpenUpdateSettings() {
+  void router.push({ name: "SetBaseUpdate" });
+}
 
 const searchKey = ref<string>("");
 const searchPlanKey = ref<string>("default");
 const searchInputRef = ref<{ focus?: () => void; blur?: () => void; input?: HTMLInputElement | null } | null>(null);
 const isSearchFocused = ref(false);
+const showSearchHistory = ref(false);
+
+const filteredSearchHistory = computed(() => {
+  const list = metadataStore.searchHistory ?? [];
+  const q = searchKey.value.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter((item) => item.keyword.toLowerCase().includes(q));
+});
+
+function applyHistoryItem(keyword: string, planId?: string) {
+  searchKey.value = keyword;
+  if (planId) {
+    searchPlanKey.value = planId;
+  }
+  showSearchHistory.value = false;
+  void startSearchEntity();
+}
 
 const currentTheme = computed<"auto" | "light" | "dark">(() => {
   const mode = configStore.theme;
@@ -83,8 +173,19 @@ function onSearchKeydown(event: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
-onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
+onMounted(() => {
+  window.addEventListener("keydown", onGlobalKeydown);
+  if (typeof globalThis.chrome?.storage?.onChanged?.addListener === "function") {
+    globalThis.chrome.storage.onChanged.addListener(onUpdateStorageChanged);
+  }
+  void loadUpdateState(true);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onGlobalKeydown);
+  if (typeof globalThis.chrome?.storage?.onChanged?.removeListener === "function") {
+    globalThis.chrome.storage.onChanged.removeListener(onUpdateStorageChanged);
+  }
+});
 /**
  * 防重复提交只覆盖「导航尚未完成」这一小段时间。
  *
@@ -129,6 +230,10 @@ watch(() => metadataStore.getAddedSites, refreshSingleSearchSiteIds, { immediate
 async function startSearchEntity() {
   if (isSubmittingSearch.value) return;
   isSubmittingSearch.value = true;
+  showSearchHistory.value = false;
+  if (searchKey.value.trim() && typeof metadataStore.addSearchHistory === "function") {
+    void metadataStore.addSearchHistory(searchKey.value, searchPlanKey.value);
+  }
   try {
     await router.push({
       name: "SearchEntity",
@@ -236,6 +341,21 @@ function selectSearchPlan({ key }: { key: string | number }) {
       </template>
     </a-dropdown>
 
+    <!-- 新版本提醒胶囊（位于标题与主题按钮右侧，不影响搜索栏贴右与热门推荐气泡锚点） -->
+    <a-tooltip v-if="showUpdatePill" :title="updatePillTitle">
+      <a-button
+        class="ptd-topbar-update-btn"
+        :aria-label="updatePillTitle"
+        size="small"
+        type="primary"
+        ghost
+        @click="showUpdateModal = true"
+      >
+        <template #icon><CloudDownloadOutlined /></template>
+        <span v-show="display.smAndUp.value">{{ updateVersionLabel }}</span>
+      </a-button>
+    </a-tooltip>
+
     <!-- 搜索输入框 -->
     <a-space-compact class="ptd-search-input">
       <!-- 搜索方案选择框 -->
@@ -309,6 +429,68 @@ function selectSearchPlan({ key }: { key: string | number }) {
             aria-hidden="true"
             >/</kbd
           >
+          <a-popover v-model:open="showSearchHistory" placement="bottomRight" trigger="click">
+            <a-button
+              :title="t('layout.header.searchHistory.title')"
+              :aria-label="t('layout.header.searchHistory.title')"
+              size="small"
+              type="text"
+            >
+              <template #icon><HistoryOutlined /></template>
+            </a-button>
+            <template #content>
+              <div class="ptd-search-history">
+                <div class="ptd-search-history__header">
+                  <strong>{{ t("layout.header.searchHistory.title") }}</strong>
+                  <a-button
+                    v-if="(metadataStore.searchHistory ?? []).some((item) => !item.pinned)"
+                    size="small"
+                    type="link"
+                    @click="metadataStore.clearSearchHistory(true)"
+                  >
+                    <template #icon><DeleteOutlined /></template>
+                    {{ t("layout.header.searchHistory.clear") }}
+                  </a-button>
+                </div>
+                <div v-if="filteredSearchHistory.length === 0" class="ptd-search-history__empty">
+                  {{ t("layout.header.searchHistory.empty") }}
+                </div>
+                <div v-else class="ptd-search-history__list">
+                  <div
+                    v-for="item in filteredSearchHistory"
+                    :key="item.id"
+                    class="ptd-search-history__item"
+                    @click="applyHistoryItem(item.keyword, item.planId)"
+                  >
+                    <span class="ptd-search-history__keyword" :title="item.keyword">{{ item.keyword }}</span>
+                    <span class="ptd-search-history__actions">
+                      <a-button
+                        size="small"
+                        type="text"
+                        :title="
+                          item.pinned ? t('layout.header.searchHistory.unpin') : t('layout.header.searchHistory.pin')
+                        "
+                        @click.stop="metadataStore.togglePinSearchHistory(item.id)"
+                      >
+                        <template #icon>
+                          <PushpinFilled v-if="item.pinned" class="ptd-search-history__pin-active" />
+                          <PushpinOutlined v-else />
+                        </template>
+                      </a-button>
+                      <a-button
+                        size="small"
+                        type="text"
+                        :title="t('common.remove')"
+                        @click.stop="metadataStore.removeSearchHistory(item.id)"
+                      >
+                        <template #icon><CloseOutlined /></template>
+                      </a-button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </a-popover>
           <RecommendationMenu
             v-if="configStore.searchEntity.showHotRecommendations"
             :disabled="isSubmittingSearch"
@@ -329,6 +511,15 @@ function selectSearchPlan({ key }: { key: string | number }) {
         <template #icon><SearchOutlined /></template>
       </a-button>
     </a-space-compact>
+
+    <UpdateGuideModal
+      v-model:open="showUpdateModal"
+      :ignored-version="ignoredUpdateVersion"
+      :state="updateState"
+      @ignore="handleIgnoreUpdateVersion"
+      @open-settings="handleOpenUpdateSettings"
+      @unignore="handleIgnoreUpdateVersion('')"
+    />
   </a-layout-header>
 </template>
 
@@ -363,6 +554,10 @@ function selectSearchPlan({ key }: { key: string | number }) {
   color: var(--ptd-text-secondary, rgba(0, 0, 0, 0.65));
 }
 
+.ptd-topbar-update-btn {
+  flex: 0 0 auto;
+}
+
 .ptd-topbar-theme-item {
   display: inline-flex;
   align-items: center;
@@ -385,5 +580,63 @@ function selectSearchPlan({ key }: { key: string | number }) {
   line-height: 1;
   pointer-events: none;
   user-select: none;
+}
+
+.ptd-search-history {
+  width: 280px;
+}
+
+.ptd-search-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.ptd-search-history__empty {
+  padding: 12px 0;
+  text-align: center;
+  color: var(--ptd-text-tertiary);
+  font-size: var(--ptd-font-size-sm);
+}
+
+.ptd-search-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ptd-search-history__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--ptd-radius, 6px);
+  cursor: pointer;
+}
+
+.ptd-search-history__item:hover {
+  background: var(--ptd-hover);
+}
+
+.ptd-search-history__keyword {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ptd-search-history__actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.ptd-search-history__pin-active {
+  color: var(--ptd-primary);
 }
 </style>

@@ -21,6 +21,7 @@ import { useConfigStore } from "@/options/stores/config.ts";
 export const SET_BASE_CONFIG_DRAFT_KEYS = [
   "lang",
   "theme",
+  "enableToolbarPopup",
   "autoToggleNavBarOnDisplayChange",
   "saveTableBehavior",
   "enableTableMultiSort",
@@ -32,12 +33,14 @@ export const SET_BASE_CONFIG_DRAFT_KEYS = [
   "contentScript",
   "searchEntifyControl",
   "userInfo",
+  "alerts",
   "download",
   "searchEntity",
   "mediaServerEntity",
   "backup",
   "socialSiteInformation",
   "autoExtendCookies",
+  "updateCheck",
 ] as const satisfies readonly (keyof IConfigPiniaStorageSchema)[];
 
 export type TSetBaseConfigDraftKey = (typeof SET_BASE_CONFIG_DRAFT_KEYS)[number];

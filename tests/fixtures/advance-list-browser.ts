@@ -10,6 +10,7 @@ import { stopRetargetedSelectPointerDown } from "@/content-script/app/shadowPopu
 import resetCss from "ant-design-vue/dist/reset.css?inline";
 import optionsCss from "@/options/style.css?inline";
 import AdvanceListModuleDialog from "@/content-script/app/components/AdvanceListModuleDialog.vue";
+import { REMOTE_DOWNLOAD_DIALOG_DATA_KEY } from "@/content-script/app/injectionKeys.ts";
 import { antdInstance } from "@/options/plugins/antd.ts";
 import { i18nInstance } from "@/options/plugins/i18n.ts";
 
@@ -39,7 +40,7 @@ const items = Array.from({ length: 100 }, (_, index) => ({
 
 const Root = defineComponent({
   setup() {
-    provide("remoteDownloadDialogData", { show: false, torrents: [], isDefaultSend: false });
+    provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, { show: false, torrents: [], isDefaultSend: false });
     return () =>
       h(
         StyleProvider,

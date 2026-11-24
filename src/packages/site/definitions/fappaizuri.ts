@@ -207,7 +207,6 @@ export const siteMetadata: ISiteMetadata = {
       ratio: { selector: ["td.prof-lbl:contains('Ratio:') + td"], filters: [{ name: "parseNumber" }] },
       levelName: { selector: ["td.prof-lbl:contains('User Class:') + td"] },
       joinTime: { selector: ["td.prof-lbl:contains('Joined:') + td"], filters: [{ name: "parseTime" }] },
-      bonus: { text: "0" }, // 站点无积分系统
     },
   },
 
@@ -261,7 +260,7 @@ export default class Fappaizuri extends PrivateSite {
         ...(this.getFieldsData(
           userDetailDocument,
           this.metadata.userInfo!.selectors!,
-          ["id", "name", "uploaded", "downloaded", "ratio", "levelName", "joinTime", "bonus"],
+          ["id", "name", "uploaded", "downloaded", "ratio", "levelName", "joinTime"],
           { dropEmptyMisses: true },
         ) as Partial<IUserInfo>),
       };

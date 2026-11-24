@@ -7,32 +7,28 @@ import {
   IMediaServerOverviewOptions,
   IMediaServerSearchOptions,
   IMediaServerSearchResult,
-} from "../types";
-import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
+} from "../types.ts";
+import axios, { AxiosError, AxiosResponse } from "axios";
 import { EResultParseStatus } from "@ptd/site";
 import { mapWithConcurrency } from "@ptd/site/utils/helper.ts";
-import { toMerged } from "es-toolkit";
-import urlJoin from "url-join";
-import {
-  blobToDataUrl,
-  createOverviewAccumulator,
-  getPlayedPercentage,
-  getResolutionLabel,
-  normalizeLanguage,
-  normalizeProviderIds,
-  parseResolutionFromTitle,
-} from "../utils.ts";
+import { blobToDataUrl, createOverviewAccumulator } from "../utils.ts";
+import { md5 } from "@noble/hashes/legacy.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
 export const mediaServerMetaData: IMediaServerMetadata = {
-  description: "飞牛影视 / FNOS 媒体服务器，使用 FNOS 的 Emby-compatible API 搜索媒体库",
+  description: "飞牛影视（fnOS trim.media）媒体服务器，直接使用影视应用的原生接口搜索媒体库",
   warning: [
-    "使用飞牛影视用户名和密码登录，扩展会调用 FNOS 登录接口自动获取访问 token。",
-    "parentId 可选；如果不填，扩展会自动读取媒体库视图并在视图下搜索。",
+    "地址填写飞牛 NAS 的访问地址即可（如 http://192.168.1.2:5666 或影视应用的 http://192.168.1.2:5666/v），无须追加 /emby。",
+    "使用「飞牛影视」应用内的账号登录（与 NAS 账号是两套用户体系），请先在影视应用中完成初始化并创建用户。",
+    "如果 NAS 开启了「访问码」，请一并填写；扩展会先通过网关校验访问码再登录。",
+    "parentId 可选；填写媒体库/目录的 GUID 后，未输入关键词时的浏览范围会限制在该库/目录内。",
   ],
   auth_field: [
     "username",
     "password",
-    { name: "parentId", required: false, message: "可选：指定要搜索的媒体库/视图 ID" },
+    { name: "accessCode", required: false, message: "可选：NAS 访问码（网关开启访问码保护时填写）" },
+    { name: "parentId", required: false, message: "可选：媒体库/目录 GUID，留空则搜索全部媒体库" },
   ],
 } as const;
 
@@ -41,10 +37,8 @@ interface IFnOSConfig extends IMediaServerBaseConfig {
   auth: {
     username: string;
     password: string;
+    accessCode?: string;
     parentId?: string;
-    apikey?: string;
-    userId?: string;
-    sessionId?: string;
   };
 }
 
@@ -55,180 +49,145 @@ export const mediaServerConfig: IFnOSConfig = {
   auth: {
     username: "",
     password: "",
+    accessCode: "",
     parentId: "",
-    apikey: "",
-    userId: "",
-    sessionId: "",
   },
   timeout: 5000,
 };
 
+/** 飞牛影视接口前缀：v1 为业务接口，v2 为登录接口 */
+const FNOS_API_PATH = "/v/api/v1";
+const FNOS_AUTH_PATH = "/v/api/v2";
+/** 客户端签名常量：影视 Web 端内置的签名前缀与客户端密钥 */
+const FNOS_SIGN_SALT = "NDzZTVxnRKP8Z0jXg1VAMonaG8akvh";
+const FNOS_CLIENT_KEY = "16CCEB3D-AB42-077D-36A1-F355324E4237";
+/** 访问码网关校验：0.9.x 走 header 契约，旧版回退 /c/{code} */
+const FNOS_ACCESS_CODE_VERIFY_PATH = "/access_code_verify";
+/** 会话失效（-2 Auth Failed / -15 Password Incorrect）后强制重新登录一次 */
+const FNOS_AUTH_ERROR_CODES = new Set([-2, -15]);
 /** 单张海报的体积上限（与 emby 一致）：超过直接放弃，避免把超大原图转成 data URL 常驻内存 */
 const MAX_POSTER_BYTES = 5 * 1024 * 1024;
 
-interface IFnOSSystemInfo {
-  ServerName: string;
-  Version: string;
-  ProductName: string;
-  Id: string;
-}
-
-interface IFnOSLoginResponse {
-  User: {
-    Id: string;
-    Name: string;
-  };
-  SessionInfo?: {
-    Id?: string;
-  };
-  AccessToken: string;
-  ServerId: string;
-}
-
-interface IFnOSViewItem {
-  Name: string;
-  Id: string;
-  Type: string;
-  CollectionType?: string;
-}
-
-interface IFnOSQueryResult<T = IFnOSQueryItem> {
-  Items: T[];
-  TotalRecordCount: number;
-  StartIndex: number;
-}
-
-interface IFnOSMediaStream {
-  Codec?: string;
-  Title?: string;
-  DisplayTitle?: string;
-  Type: "Video" | "Audio" | "Subtitle" | string;
-  IsDefault?: boolean;
-  Language?: string;
-  /** 语言的可读名称（如 "Chinese Simplified"），优先展示 */
-  DisplayLanguage?: string;
-  Width?: number;
-  Height?: number;
-  BitRate?: number;
-  AverageFrameRate?: number;
-  Profile?: string;
-  VideoRange?: string;
-  VideoRangeType?: string;
-  Channels?: number;
-  ChannelLayout?: string;
-  /** 是否外挂字幕 */
-  IsExternal?: boolean;
-}
-
-interface IFnOSMediaSource {
-  Id?: string;
-  Container?: string;
-  Size?: number;
-  /** 文件路径（调研 A3） */
-  Path?: string;
-  /** 该媒体源总码率（bps） */
-  Bitrate?: number;
-  MediaStreams?: IFnOSMediaStream[];
-}
-
-interface IFnOSQueryItem {
-  Id: string;
-  Name: string;
-  Type: "Movie" | "Series" | string;
-  MediaType?: string;
-  Overview?: string;
-  Container?: string;
-  Size?: number;
-  MediaSources?: IFnOSMediaSource[];
-  RunTimeTicks?: number;
-  CommunityRating?: number;
-  ImageTags?: {
-    Primary?: string;
-    Backdrop?: string;
-  };
-  GenreItems?: Array<{
-    Id: string;
-    Name: string;
-  }>;
-  UserData?: {
-    IsFavorite?: boolean;
-    Played?: boolean;
-    /** 调研 A6：播放次数 / 已观看 ticks / 最近观看 */
-    PlayCount?: number;
-    PlaybackPositionTicks?: number;
-    LastPlayedDate?: string;
-  };
-
-  // —— 调研 A3–A6 / B7–B12：fnOS 是 Emby 兼容 API，字段名与 Emby 同名 ——
-  Path?: string;
-  DateCreated?: string;
-  ExternalUrls?: Array<{ Name: string; Url: string }>;
-  ProviderIds?: Record<string, string>;
-  ProductionYear?: number;
-  PremiereDate?: string;
-  OfficialRating?: string;
-  CustomRating?: string;
-  CriticRating?: number;
-  Studios?: Array<{ Name: string; Id?: string }>;
-  MediaSourceCount?: number;
-  ChildCount?: number;
-  RecursiveItemCount?: number;
-  SeriesName?: string;
-  IndexNumber?: number;
-  ParentIndexNumber?: number;
-  IsHd?: boolean;
-  Width?: number;
-  Height?: number;
-  Tags?: string[];
-  Taglines?: string[];
-  /** 演职人员（只在详情接口要，列表不要） */
-  People?: Array<{ Name: string; Role?: string; Type?: string; Id?: string; PrimaryImageTag?: string }>;
-  TagItems?: Array<{ Name: string; Id?: string | number }>;
+interface IFnOSApiResponse<T = unknown> {
+  code: number;
+  msg?: string;
+  data: T | null;
 }
 
 interface IFnOSSession {
-  apikey: string;
-  userId: string;
-  sessionId?: string;
+  token: string;
 }
 
-const FNOS_SEARCH_FIELDS = [
-  "Path",
-  "Status",
-  "ExternalUrls",
-  "CommunityRating",
-  "MediaSources",
-  "DisplayPreferences",
-  "Genres",
-  "DateCreated",
-  "Overview",
-  "ExtraIds",
-  "ImageTags",
-  "PremiereDate",
-  "ProductionYear",
-  "ChildCount",
-  "CanDownload",
-  "Chapters",
-  "PrimaryImageAspectRatio",
-  "UserData",
-  "ProviderIds",
-  // People 是重字段，只在详情接口按需拉取（调研 B12），列表里换成下面这些轻量字段
-  "Tags",
-  "Taglines",
-  "OfficialRating",
-  "CustomRating",
-  "CriticRating",
-  "Studios",
-  "MediaSourceCount",
-  "RecursiveItemCount",
-  "SeriesName",
-  "IndexNumber",
-  "ParentIndexNumber",
-  "IsHd",
-  "Width",
-  "Height",
-  "Size",
-].join(",");
+interface IFnOSUserInfo {
+  guid: string;
+}
+
+interface IFnOSMediaStream {
+  /** 分辨率标签，如 ["720p"] */
+  resolutions?: string[] | null;
+  /** 音轨声道，如 ["Stereo"] */
+  audio_type?: string[] | null;
+  /** 色域，如 ["SDR"] */
+  color_range_type?: string[] | null;
+}
+
+interface IFnOSNativeItem {
+  guid: string;
+  ancestor_guid?: string;
+  ancestor_name?: string;
+  ancestor_category?: string;
+  type?: string;
+  tv_title?: string;
+  parent_title?: string;
+  title?: string;
+  original_title?: string;
+  overview?: string;
+  poster?: string;
+  posters?: string;
+  backdrops?: string;
+  poster_width?: number;
+  poster_height?: number;
+  imdb_id?: string;
+  douban_id?: number | string;
+  /** 飞牛媒体身份：tt/tm 前缀 + 数字，前缀后的数字为 TMDB 标识 */
+  trim_id?: string;
+  release_date?: string;
+  air_date?: string;
+  vote_average?: string | number;
+  season_number?: number;
+  episode_number?: number;
+  number_of_seasons?: number;
+  number_of_episodes?: number;
+  duration?: number;
+  /** 时长（分钟），部分接口用它代替 duration */
+  runtime?: number;
+  /** 已播放秒数 */
+  ts?: number;
+  /** 列表接口字段：是否已看完（0/1） */
+  watched?: number;
+  /** 详情接口字段：是否已看完（0/1） */
+  is_watched?: number;
+  /** 已播放秒数（详情接口兜底） */
+  watched_ts?: number;
+  is_favorite?: number;
+  status?: string;
+  media_stream?: IFnOSMediaStream;
+}
+
+interface IFnOSItemList {
+  total?: number;
+  list?: IFnOSNativeItem[];
+}
+
+/** 飞牛接口的业务错误（HTTP 200 但 code != 0） */
+class FnOSApiError extends Error {
+  constructor(
+    public readonly code: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "FnOSApiError";
+  }
+}
+
+function normalizeAddress(address?: string): string {
+  let raw = (address ?? "").trim();
+  if (!raw) return "";
+  raw = raw.replace(/#.*$/, "");
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `http://${raw}`;
+  }
+  try {
+    // 统一去掉用户可能带上的 /v、/v/xxx、/web/...、/emby/... 等路径与 hash，只保留服务根地址
+    return new URL(raw).origin;
+  } catch {
+    return raw.replace(/\/+$/, "").replace(/\/(?:web|v|emby|jellyfin)(?:\/.*)?$/i, "");
+  }
+}
+
+function getYear(date?: string): number | undefined {
+  const matched = date?.match(/^(\d{4})/);
+  return matched ? Number(matched[1]) : undefined;
+}
+
+/** 六位随机数：同时用于 authx 的 nonce 与 POST 请求体的防重放字段 */
+function randomNonce(): string {
+  return String(Math.floor(Math.random() * 900000) + 100000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 访问码需要按 UTF-8 编码后再做 Base64（影视 Electron 客户端的契约） */
+function toBase64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
 
 export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   private static sessionCache = new Map<string, IFnOSSession>();
@@ -240,92 +199,234 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
   /** 海报缓存占用的字符串字节上限（UTF-16 下大致为 2 字节/字符） */
   private static readonly POSTER_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
-  /** C2-M-4：登录单飞——并发 401 时只允许一个 AuthenticateByName 在途，其余请求复用同一个 Promise */
+  /** 已通过访问码校验的 origin + 访问码，避免每次请求都重新走网关 */
+  private static accessCodeGrants = new Set<string>();
+
+  /** C2-M-4：登录单飞——并发 401/首次登录时只允许一个登录流程在途，其余请求复用同一个 Promise */
   private loginInFlight?: { key: string; promise: Promise<IFnOSSession> };
+  /** 访问码校验单飞——避免并发请求同时打多次网关校验 */
+  private accessCodeInFlight?: { key: string; promise: Promise<void> };
 
-  /** 记录构造时 config.auth 中预置 apikey/userId 对应的凭据快照；凭据变化或 401 刷新后不再回退 */
-  private initialConfigAuthKey?: string;
-  private configAuthInvalidated = false;
-
-  /** /Users/{id}/Views 的结果缓存（按实例，避免每次搜索重复请求） */
-  private viewIdsPromise?: Promise<string[]>;
-
-  /**
-   * 修正为 FNOS 服务根路径。FNOS 的 JSON API 使用 /emby，/v 和 /jellyfin 都是 Web 前端路径。
-   */
-  get baseUrl() {
-    let serverAddress = this.config.address.trim();
-    serverAddress = serverAddress.replace(/#.*$/, "");
-    serverAddress = serverAddress.replace(/\/+$/, "");
-    serverAddress = serverAddress.replace(/\/(?:web|v)(?:\/.*)?$/i, "");
-    serverAddress = serverAddress.replace(/\/(?:emby|jellyfin)(?:\/.*)?$/i, "");
-
-    return serverAddress;
+  /** 服务根地址（协议 + 主机 + 端口） */
+  get origin(): string {
+    return normalizeAddress(this.config.address);
   }
 
-  get apiBaseUrl() {
-    return urlJoin(this.baseUrl, "/emby/");
+  /** 影视应用的 Web 根地址（飞牛的影视前端固定挂在 /v 下） */
+  get webBaseUrl(): string {
+    return this.origin ? `${this.origin}/v` : "";
   }
 
-  get webBaseUrl() {
-    return urlJoin(this.baseUrl, "/v");
-  }
-
-  private get cacheKey() {
-    return [this.baseUrl, this.config.auth.username].join("|");
-  }
-
-  /** 会话缓存键包含密码区分度，避免修改密码后仍命中旧 token（不用于 deviceId，避免密码进入请求头） */
-  private get sessionCacheKey(): string {
-    return JSON.stringify([this.baseUrl, this.config.auth.username ?? "", this.config.auth.password ?? ""]);
-  }
-
-  private get deviceId() {
-    return `chenbinPT-${this.config.id ?? this.cacheKey}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
-  }
-
-  private getAuthorizationHeader(userId?: string) {
-    const userIdPart = userId ? `UserId="${userId}", ` : "";
-    return `Emby ${userIdPart}Client="chenbinPT", Device="Chrome", DeviceId="${this.deviceId}", Version="${__EXT_VERSION__}"`;
+  /** 会话缓存键包含密码与访问码区分度，避免修改凭据后仍命中旧 token */
+  private get cacheKey(): string {
+    return JSON.stringify([
+      this.origin,
+      this.config.auth.username ?? "",
+      this.config.auth.password ?? "",
+      this.config.auth.accessCode ?? "",
+    ]);
   }
 
   private get session(): IFnOSSession | undefined {
-    const sessionKey = this.sessionCacheKey;
-    const cachedSession = FnOS.sessionCache.get(sessionKey);
-    if (cachedSession) {
-      return cachedSession;
-    }
-
-    if (!this.configAuthInvalidated && this.config.auth.apikey && this.config.auth.userId) {
-      this.initialConfigAuthKey ??= sessionKey;
-      if (this.initialConfigAuthKey === sessionKey) {
-        return {
-          apikey: this.config.auth.apikey,
-          userId: this.config.auth.userId,
-          sessionId: this.config.auth.sessionId,
-        };
-      }
-    }
-
-    return undefined;
+    return FnOS.sessionCache.get(this.cacheKey);
   }
 
-  private setSession(session: IFnOSSession, sessionKey: string = this.sessionCacheKey) {
-    // 不回写 this.config.auth：避免「测试连接」把运行时 token 写进响应式配置并随配置持久化，
-    // 导致后续改账号/地址时回落到旧用户的隐藏 apikey/userId。
-    FnOS.sessionCache.set(sessionKey, session);
+  /**
+   * 计算单次请求的 authx 签名。
+   *
+   * 飞牛影视 Web 端的算法：`md5(签名前缀_接口路径_nonce_时间戳_md5(签名数据)_客户端密钥)`，
+   * 其中 GET 的签名数据是**未 URL 编码**的查询串，POST 的签名数据是实际发送的 JSON 字符串。
+   */
+  private sign(path: string, data: string): string {
+    const nonce = randomNonce();
+    const timestamp = String(Date.now());
+    const dataHash = bytesToHex(md5(utf8ToBytes(data)));
+    const sign = bytesToHex(
+      md5(utf8ToBytes([FNOS_SIGN_SALT, path, nonce, timestamp, dataHash, FNOS_CLIENT_KEY].join("_"))),
+    );
+    return `nonce=${nonce}&timestamp=${timestamp}&sign=${sign}`;
+  }
+
+  private async send<T>(
+    options: {
+      path: string;
+      basePath?: string;
+      method?: "GET" | "POST" | "DELETE";
+      data?: unknown;
+      query?: Record<string, string | number | undefined>;
+      token?: string;
+      skipAuth?: boolean;
+    },
+    attempt = 0,
+  ): Promise<IFnOSApiResponse<T>> {
+    // 任何接口（包括不登录的 /sys/version）都可能被访问码网关拦截，先确保网关已放行
+    await this.verifyAccessCode();
+
+    const method = options.method ?? (options.data === undefined ? "GET" : "POST");
+    const path = `${options.basePath ?? FNOS_API_PATH}${options.path}`;
+
+    const queryEntries = Object.entries(options.query ?? {}).filter(
+      ([, value]) => value !== undefined && value !== null && value !== "",
+    );
+    const rawQuery = queryEntries.map(([key, value]) => `${key}=${value}`).join("&");
+    const encodedQuery = queryEntries.map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`).join("&");
+
+    // 飞牛客户端会给 POST/PUT 的请求体加一个随机数字段做防重放；服务端会忽略未知字段
+    let payload = options.data;
+    if (
+      method !== "GET" &&
+      payload !== undefined &&
+      payload !== null &&
+      typeof payload === "object" &&
+      !Array.isArray(payload)
+    ) {
+      payload = { ...(payload as Record<string, unknown>), nonce: randomNonce() };
+    }
+    const body = method !== "GET" && payload !== undefined ? JSON.stringify(payload) : "";
+    const token = options.token ?? (options.skipAuth ? undefined : this.session?.token);
+
+    const headers: Record<string, string> = {
+      "X-Trim-Client": "web",
+      "X-Trim-Client-Version": "631",
+      authx: this.sign(path, method === "GET" ? rawQuery : body),
+    };
+    if (token) {
+      headers["Authorization"] = token;
+    }
+    if (body) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    try {
+      const response = await axios.request<IFnOSApiResponse<T>>({
+        baseURL: this.origin,
+        url: `${path}${encodedQuery ? `?${encodedQuery}` : ""}`,
+        method,
+        data: body || undefined,
+        headers,
+        timeout: this.config.timeout,
+        // 访问码网关的会话在 Cookie 里，带凭据才能自动携带（没有访问码时无副作用）
+        withCredentials: true,
+      });
+
+      const data = response.data as unknown;
+      if (!data || typeof data !== "object" || typeof (data as IFnOSApiResponse<T>).code !== "number") {
+        // 地址指向了非影视服务（或被反向代理成前端页面）时，返回的会是 HTML 而不是业务 JSON
+        throw new FnOSApiError(-1, "飞牛影视接口返回格式异常，请检查地址是否为飞牛影视服务");
+      }
+
+      // 签名可能因设备与服务端时钟偏差、网关多节点时钟漂移而偶发失效，换一组 nonce/时间戳重试
+      const apiResponse = data as IFnOSApiResponse<T>;
+      if (apiResponse.code === 5000 && /invalid sign/i.test(apiResponse.msg ?? "") && attempt < 2) {
+        await sleep(100);
+        return await this.send<T>(options, attempt + 1);
+      }
+
+      return apiResponse;
+    } catch (e) {
+      // 令牌过期时飞牛可能直接回 HTTP 401：强制重新登录后重试
+      if (attempt < 2 && !options.skipAuth && e instanceof AxiosError && e.response?.status === 401) {
+        const refreshed = await this.login(true);
+        return await this.send<T>({ ...options, token: refreshed.token }, attempt + 1);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * 访问码网关校验。
+   *
+   * 0.9.x 使用 header 契约（`x-access-code` 为 UTF-8 访问码的 Base64、`x-access-source: web`），
+   * 校验通过后网关在浏览器 Cookie 罐里种下会话，后续 API/图片请求会自动携带；
+   * 旧版没有该接口时退回 `/c/{code}`。
+   */
+  private async verifyAccessCode(): Promise<void> {
+    const accessCode = this.config.auth.accessCode?.trim();
+    if (!accessCode) {
+      return;
+    }
+
+    const grantKey = JSON.stringify([this.origin, accessCode]);
+    if (FnOS.accessCodeGrants.has(grantKey)) {
+      return;
+    }
+
+    const inFlight = this.accessCodeInFlight;
+    if (inFlight && inFlight.key === grantKey) {
+      return await inFlight.promise;
+    }
+
+    const verifyPromise = (async () => {
+      const requestConfig = {
+        baseURL: this.origin,
+        method: "GET" as const,
+        timeout: this.config.timeout,
+        withCredentials: true,
+        validateStatus: () => true,
+      };
+
+      let response: AxiosResponse;
+      try {
+        response = await axios.request({
+          ...requestConfig,
+          url: FNOS_ACCESS_CODE_VERIFY_PATH,
+          headers: {
+            "x-access-code": toBase64Utf8(accessCode),
+            "x-access-source": "web",
+          },
+        });
+      } catch (e) {
+        throw new FnOSApiError(-2, `飞牛访问码校验失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      if ([401, 403, 429].includes(response.status)) {
+        throw new FnOSApiError(-2, "飞牛访问码错误或已失效");
+      }
+
+      // 旧版网关没有 header 校验接口，退回访问码路径
+      if (response.status === 404 || response.status === 405) {
+        try {
+          response = await axios.request({ ...requestConfig, url: `/c/${encodeURIComponent(accessCode)}` });
+        } catch (e) {
+          throw new FnOSApiError(-2, `飞牛访问码校验失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+        if (response.status === 404) {
+          throw new FnOSApiError(-2, "飞牛访问码错误或已失效");
+        }
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        throw new FnOSApiError(-2, `飞牛访问码校验失败（HTTP ${response.status}）`);
+      }
+
+      FnOS.accessCodeGrants.add(grantKey);
+    })();
+
+    this.accessCodeInFlight = { key: grantKey, promise: verifyPromise };
+    try {
+      return await verifyPromise;
+    } finally {
+      if (this.accessCodeInFlight?.promise === verifyPromise) {
+        this.accessCodeInFlight = undefined;
+      }
+    }
   }
 
   private async login(force = false): Promise<IFnOSSession> {
-    const sessionKey = this.sessionCacheKey;
-    const existingSession = this.session;
-    if (!force && existingSession) {
-      return existingSession;
+    const username = this.config.auth.username?.trim();
+    const password = this.config.auth.password ?? "";
+    if (!username || !password) {
+      throw new FnOSApiError(-2, "请先填写飞牛影视的用户名与密码");
     }
 
-    // C2-M-4：合并在途登录。一次搜索里 getViewIds/多条 queryItems/多张海报可能同时 401，
-    // 旧实现会让它们各自 AuthenticateByName（登录风暴），并把 N 个 token 依次写回缓存。
-    // 直接复用同凭据的在途登录 Promise：成功时共享新 session，失败时如实向上抛错而非返回过期 token。
+    const sessionKey = this.cacheKey;
+    const cachedSession = FnOS.sessionCache.get(sessionKey);
+    if (!force && cachedSession) {
+      return cachedSession;
+    }
+
+    // C2-M-4 / F0064：合并在途登录。并发首次登录或 401 时只发一次登录请求，
+    // 成功时共享新 session，失败时向所有调用方传播错误且不保留过期缓存。
     const inFlightLogin = this.loginInFlight;
     if (inFlightLogin && inFlightLogin.key === sessionKey) {
       return await inFlightLogin.promise;
@@ -333,32 +434,55 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
 
     if (force) {
       FnOS.sessionCache.delete(sessionKey);
-      this.configAuthInvalidated = true;
+      const accessCode = this.config.auth.accessCode?.trim();
+      if (accessCode) {
+        FnOS.accessCodeGrants.delete(JSON.stringify([this.origin, accessCode]));
+      }
     }
 
     const loginPromise = (async () => {
-      const response = await axios.request<IFnOSLoginResponse>({
-        baseURL: this.apiBaseUrl,
-        url: "/Users/AuthenticateByName",
-        method: "POST",
-        timeout: this.config.timeout,
-        responseType: "json",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Emby-Authorization": this.getAuthorizationHeader(),
-        },
-        data: {
-          Username: this.config.auth.username,
-          Pw: this.config.auth.password,
-        },
-      });
+      // v2 登录接口要求密码为 SHA-256 十六进制摘要
+      const passwordHash = bytesToHex(sha256(utf8ToBytes(password)));
+      let response: IFnOSApiResponse<{ token?: string }>;
+      try {
+        response = await this.send<{ token?: string }>({
+          path: "/user/loginByPassword",
+          basePath: FNOS_AUTH_PATH,
+          method: "POST",
+          data: { username, password: passwordHash, app_name: "trimemedia-web" },
+          skipAuth: true,
+        });
+      } catch (e) {
+        // 访问码/配置类错误不是「v2 接口不存在」，直接抛出，避免无意义地回退到 v1
+        if (e instanceof FnOSApiError) {
+          throw e;
+        }
+        // 仅当旧版服务端没有 v2 登录接口（404 / 405）时回退到 v1 明文登录，避免一般网络/凭据错误重复请求
+        if (e instanceof AxiosError && (e.response?.status === 404 || e.response?.status === 405)) {
+          response = await this.send<{ token?: string }>({
+            path: "/login",
+            method: "POST",
+            data: { username, password, app_name: "trimemedia-web" },
+            skipAuth: true,
+          });
+        } else {
+          throw e;
+        }
+      }
 
-      const session = {
-        apikey: response.data.AccessToken,
-        userId: response.data.User.Id,
-        sessionId: response.data.SessionInfo?.Id,
-      };
-      this.setSession(session, sessionKey);
+      const token = response.data?.token;
+      if (response.code !== 0 || !token) {
+        throw new FnOSApiError(response.code || -15, response.msg || "飞牛影视登录失败，请检查用户名与密码");
+      }
+
+      const userResponse = await this.send<IFnOSUserInfo>({ path: "/user/info", token });
+      if (userResponse.code !== 0 || !userResponse.data?.guid) {
+        throw new FnOSApiError(userResponse.code || -2, userResponse.msg || "飞牛影视登录状态校验失败");
+      }
+
+      // 不回写 this.config.auth，避免测试连接时把运行时 token 写入响应式配置并持久化（F0065）
+      const session: IFnOSSession = { token };
+      FnOS.sessionCache.set(sessionKey, session);
       return session;
     })();
 
@@ -372,132 +496,101 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     }
   }
 
-  protected async request<T = any, D = any>(
-    url: string,
-    config: AxiosRequestConfig<D> = {},
+  private async request<T>(
+    path: string,
+    options: {
+      method?: "GET" | "POST" | "DELETE";
+      data?: unknown;
+      query?: Record<string, string | number | undefined>;
+    } = {},
     retried = false,
-  ): Promise<AxiosResponse<T, D>> {
+  ): Promise<T> {
     const session = await this.login();
+    const response = await this.send<T>({ path, ...options, token: session.token });
 
-    config.baseURL = this.apiBaseUrl;
-    config.url = url;
-    config.timeout ??= this.config.timeout;
-    config.responseType ??= "json";
-    config.headers = {
-      ...(config.headers ?? {}),
-      "X-Emby-Token": session.apikey,
-      "X-Emby-Authorization": this.getAuthorizationHeader(session.userId),
-    };
-
-    try {
-      return await axios.request<T>(config);
-    } catch (e) {
-      if (!retried && e instanceof AxiosError && e.response?.status === 401) {
-        await this.login(true);
-        return await this.request(url, config, true);
-      }
-
-      throw e;
+    if (response.code === 0) {
+      return response.data as T;
     }
+
+    if (!retried && FNOS_AUTH_ERROR_CODES.has(response.code)) {
+      await this.login(true);
+      return await this.request<T>(path, options, true);
+    }
+
+    throw new FnOSApiError(response.code, response.msg || "飞牛影视接口请求失败");
   }
 
   public override async ping(): Promise<boolean> {
     try {
-      const response = await this.request<IFnOSSystemInfo>("/System/Info");
-      if (response.status === 200 && response.data?.Id) {
-        return true;
+      const version = await this.send<{ version?: string; mediasrvVersion?: string }>({
+        path: "/sys/version",
+        skipAuth: true,
+      });
+      if (version.code !== 0) {
+        return false;
       }
-    } catch (e) {
+      const userInfo = await this.request<IFnOSUserInfo>("/user/info");
+      return !!userInfo?.guid;
+    } catch {
       return false;
     }
-
-    return false;
   }
 
-  private async getViewIds(): Promise<string[]> {
-    const parentId = this.config.auth.parentId?.trim();
-    if (parentId) {
-      return [parentId];
-    }
-
-    // 视图列表在一次搜索会话内不会变化，按实例缓存 Promise，避免每次搜索都重新请求
-    this.viewIdsPromise ??= (async () => {
-      const session = await this.login();
-      const response = await this.request<IFnOSQueryResult<IFnOSViewItem>>(`/Users/${session.userId}/Views`, {
-        params: {
-          IncludeExternalContent: false,
-        },
-      });
-
-      return response.data.Items?.map((item) => item.Id).filter(Boolean) ?? [];
-    })();
-
-    try {
-      return await this.viewIdsPromise;
-    } catch (e) {
-      // 失败不缓存，下一次搜索重新拉取
-      this.viewIdsPromise = undefined;
-      throw e;
-    }
+  /** 按关键词搜索（飞牛的搜索接口不分页，取全量后由调用方切页） */
+  private async searchByKeyword(keywords: string): Promise<IFnOSNativeItem[]> {
+    // 兼容 `imdb|tt1234567` 这类高级搜索写法：飞牛搜索接口只认关键词，取竖线后的部分
+    const query = keywords.includes("|") ? keywords.split("|").pop()!.trim() : keywords;
+    const items = await this.request<IFnOSNativeItem[]>("/search/list", { query: { q: query } });
+    return Array.isArray(items) ? items : [];
   }
 
-  private async queryItems(
-    parentId: string,
-    keywords: string,
-    options: Pick<IMediaServerSearchOptions, "startIndex" | "limit">,
-    /** 只要这些类型（服务端过滤）；概览遍历用它跳过剧集下成千上万的单集 */
-    includeItemTypes?: string,
-  ): Promise<IFnOSQueryItem[]> {
-    return (await this.queryItemsResponse(parentId, keywords, options, includeItemTypes)).Items ?? [];
-  }
-
-  /** 带 TotalRecordCount 的查询：多视图分页先用它把全局 offset 映射到每个视图的窗口 */
-  private async queryItemsResponse(
-    parentId: string,
-    keywords: string,
-    options: Pick<IMediaServerSearchOptions, "startIndex" | "limit">,
-    includeItemTypes?: string,
-  ): Promise<IFnOSQueryResult> {
-    const session = await this.login();
-    const requestConfig: AxiosRequestConfig = {
-      params: {
-        ParentId: parentId,
-        Recursive: true,
-        IncludeItemTypes: includeItemTypes ?? "Movie,Series",
-        StartIndex: options.startIndex,
-        Limit: options.limit,
-        Fields: FNOS_SEARCH_FIELDS,
-      },
+  /** 按创建时间倒序分页浏览媒体库（无关键词时的默认行为） */
+  private async listItems(startIndex: number, limit: number): Promise<IFnOSNativeItem[]> {
+    const pageSize = Math.max(1, limit);
+    const page = Math.floor(startIndex / pageSize) + 1;
+    const offset = startIndex % pageSize;
+    const body: Record<string, unknown> = {
+      tags: { type: ["Movie", "TV", "Video"] },
+      sort_type: "DESC",
+      sort_column: "create_time",
+      page,
+      page_size: pageSize,
+      exclude_grouped_video: 1,
     };
 
-    if (keywords !== "") {
-      requestConfig.params.SearchTerm = keywords;
+    const parentId = this.config.auth.parentId?.trim();
+    if (parentId) {
+      body.ancestor_guid = parentId;
     }
 
-    const mergedConfig = toMerged(requestConfig, this.config.defaultSearchExtraRequestConfig ?? {});
-    const response = await this.request<IFnOSQueryResult>(`/Users/${session.userId}/Items`, mergedConfig);
-
-    return response.data;
+    const data = await this.request<IFnOSItemList>("/item/list", { method: "POST", data: body });
+    // startIndex 不一定是 pageSize 的整数倍时，从本页里裁掉已经展示过的条目
+    return (data?.list ?? []).slice(offset);
   }
 
-  /** 合并多视图结果：只保留影视条目，按 Id 去重 */
-  private dedupeSearchItems(items: IFnOSQueryItem[]): Map<string, IFnOSQueryItem> {
-    const deduped = new Map<string, IFnOSQueryItem>();
-    for (const item of items) {
-      if ((item.Type === "Movie" || item.Type === "Series") && !deduped.has(item.Id)) {
-        deduped.set(item.Id, item);
-      }
+  private getItemWebUrl(item: IFnOSNativeItem): string {
+    if (!this.webBaseUrl) return "";
+    switch (item.type) {
+      case "Movie":
+        return `${this.webBaseUrl}/movie/${item.guid}`;
+      case "TV":
+        return `${this.webBaseUrl}/tv/${item.guid}`;
+      case "Season":
+        return `${this.webBaseUrl}/tv/season/${item.guid}`;
+      case "Episode":
+        return `${this.webBaseUrl}/tv/episode/${item.guid}`;
+      default:
+        return `${this.webBaseUrl}/other/${item.guid}`;
     }
-    return deduped;
   }
 
-  private async getPoster(item: IFnOSQueryItem): Promise<string> {
-    const primaryTag = item.ImageTags?.Primary;
-    if (!primaryTag) {
+  private async getPoster(item: IFnOSNativeItem): Promise<string> {
+    const posterPath = item.poster || item.posters;
+    if (!posterPath) {
       return "";
     }
 
-    const cacheKey = [this.cacheKey, item.Id, primaryTag].join("|");
+    const cacheKey = `${this.cacheKey}|${posterPath}`;
     const cachedPosterUrl = FnOS.posterUrlCache.get(cacheKey);
     if (cachedPosterUrl) {
       return cachedPosterUrl;
@@ -505,29 +598,56 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
 
     try {
       const session = await this.login();
-
-      const response = await this.request<Blob>(`/Items/${item.Id}/Images/Primary`, {
-        // 列表只展示小图；不传 maxHeight 时服务器会返回原图
-        params: { tag: primaryTag, maxHeight: 400 },
+      await this.verifyAccessCode();
+      const normalizedPosterPath = posterPath.startsWith("/") ? posterPath : `/${posterPath}`;
+      const imagePath = `${FNOS_API_PATH}/sys/img${normalizedPosterPath}`;
+      const response = await axios.request<Blob | ArrayBuffer>({
+        baseURL: this.origin,
+        url: `${imagePath}?w=256`,
+        method: "GET",
         responseType: "blob",
+        timeout: this.config.timeout,
+        withCredentials: true,
+        headers: {
+          Authorization: session.token,
+          authx: this.sign(imagePath, ""),
+          "X-Trim-Client": "web",
+          "X-Trim-Client-Version": "631",
+        },
       });
+
+      const rawData = response.data as Blob | ArrayBuffer | { size?: number } | undefined;
+      const byteSize =
+        rawData instanceof Blob
+          ? rawData.size
+          : rawData instanceof ArrayBuffer
+            ? rawData.byteLength
+            : typeof (rawData as { size?: number } | undefined)?.size === "number"
+              ? (rawData as { size: number }).size
+              : 0;
       // 体积上限：与 emby 的 getPoster 保持一致，超大响应直接降级为空海报
-      if ((response.data?.size ?? 0) > MAX_POSTER_BYTES) {
+      if (byteSize > MAX_POSTER_BYTES) {
         return "";
       }
-      const posterDataUrl = await blobToDataUrl(response.data);
+
+      const contentType = (response.headers?.["content-type"] as string | undefined) ?? "image/webp";
+      const blob =
+        rawData instanceof Blob
+          ? rawData.type
+            ? rawData
+            : new Blob([rawData], { type: contentType })
+          : new Blob([rawData as BlobPart], { type: contentType });
+      const posterDataUrl = await blobToDataUrl(blob);
 
       this.setPosterCache(cacheKey, posterDataUrl);
       return posterDataUrl;
-    } catch (e) {
+    } catch {
       return "";
     }
   }
 
   private setPosterCache(cacheKey: string, posterUrl: string) {
-    // C2-M-5：旧实现只按「条目数 > 300 删 1 条」控制，data URL 单张可达数百 KB，
-    // 最坏情况常驻 tens-of-MB。这里同时按 UTF-16 字符数估算字节预算（约 2 字节/字符），
-    // 超预算时从最旧条目开始淘汰。
+    // C2-M-5：同时按条目数上限与 UTF-16 估算字节预算淘汰，避免 data URL 常驻过多内存
     const previous = FnOS.posterUrlCache.get(cacheKey);
     if (previous) {
       FnOS.posterUrlCacheBytes -= previous.length * 2;
@@ -553,182 +673,100 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     }
   }
 
-  /** 搜索结果：同步映射 + 带认证头拉取海报 */
-  private async buildMediaItem(item: IFnOSQueryItem): Promise<IMediaServerItem<IFnOSQueryItem>> {
-    const mediaItem = this.mapMediaItem(item);
-    mediaItem.poster = await this.getPoster(item);
-    return mediaItem;
+  private isPlayed(item: IFnOSNativeItem): boolean {
+    return item.watched === 1 || item.is_watched === 1 || (item.ts ?? 0) > 0 || (item.watched_ts ?? 0) > 0;
   }
 
-  /**
-   * 纯同步映射（不发请求）：概览遍历只做统计、详情弹窗沿用列表海报，都不需要再拉海报。
-   * 海报 / 演职人员头像由调用方按需补上。
-   */
-  private mapMediaItem(item: IFnOSQueryItem): IMediaServerItem<IFnOSQueryItem> {
-    const itemType = item.Type || item.MediaType || "";
-    const primaryMediaSource = item.MediaSources?.[0];
-    const mediaStreams = primaryMediaSource?.MediaStreams ?? [];
-    const videoStream = mediaStreams.find((stream) => stream.Type === "Video");
-    const streamTitle = (stream: IFnOSMediaStream) =>
-      stream.Title || stream.DisplayTitle || stream.Codec || stream.Type;
-    const userData = item.UserData;
+  /** 纯同步映射（不发请求）：概览遍历只做统计，不需要拉取海报 */
+  private mapMediaItem(item: IFnOSNativeItem): IMediaServerItem<IFnOSNativeItem> {
+    const duration =
+      item.duration && item.duration > 0
+        ? item.duration
+        : item.runtime && item.runtime > 0
+          ? item.runtime * 60
+          : undefined;
+    const position = item.ts || item.watched_ts || undefined;
+    const rating = Number(item.vote_average);
+    const year = getYear(item.release_date) ?? getYear(item.air_date);
+    const resolutions = item.media_stream?.resolutions ?? [];
+    const videoRange = item.media_stream?.color_range_type?.[0];
+
+    // 飞牛的 trim_id 形如 tt123 / tm456：前缀区分电影/剧集，前缀后的数字是 TMDB 标识
+    const tmdbId = item.trim_id?.match(/^(?:tt|tm)(\d+)$/)?.[1];
+
+    const providerIds: Record<string, string> = {};
+    if (item.imdb_id) providerIds.imdb = item.imdb_id;
+    if (tmdbId) providerIds.tmdb = tmdbId;
+    if (item.douban_id) providerIds.douban = String(item.douban_id);
 
     return {
       server: this.config.id!,
-      id: item.Id,
-      name: item.Name,
-      url: this.getItemUrl(item),
-      type: itemType,
-      description: item.Overview ?? "",
-      format: item.Container ?? primaryMediaSource?.Container ?? "",
-      size: primaryMediaSource?.Size ?? item.Size,
-      duration: item.RunTimeTicks ? item.RunTimeTicks / 10000000 : undefined,
+      id: item.guid,
+      name: item.title || item.original_title || item.guid,
+      url: this.getItemWebUrl(item),
+      type: item.type ?? "Video",
+      description: item.overview ?? "",
+      duration,
       poster: "",
-      tags: item.GenreItems?.map((tag) => ({
-        name: tag.Name,
-        url: "",
-      })),
-      rating: item.CommunityRating ?? "-",
-      streams: mediaStreams.map((stream) => ({
-        title: streamTitle(stream),
-        type: stream.Type,
-        format: stream.Codec ?? "",
-      })),
-      // 调研 A2：媒体详情结构化透出
-      mediaInfo: mediaStreams.length
-        ? {
-            video: videoStream
-              ? {
-                  width: videoStream.Width,
-                  height: videoStream.Height,
-                  resolution:
-                    parseResolutionFromTitle(videoStream.DisplayTitle) ??
-                    getResolutionLabel(videoStream.Width, videoStream.Height),
-                  codec: videoStream.Codec,
-                  profile: videoStream.Profile,
-                  videoRange: videoStream.VideoRangeType ?? videoStream.VideoRange,
-                  bitrate: videoStream.BitRate ?? primaryMediaSource?.Bitrate,
-                  frameRate: videoStream.AverageFrameRate,
-                }
-              : undefined,
-            audio: mediaStreams
-              .filter((stream) => stream.Type === "Audio")
-              .map((stream) => ({
-                title: streamTitle(stream),
-                codec: stream.Codec,
-                language: normalizeLanguage(stream.DisplayLanguage ?? stream.Language),
-                channels: stream.Channels,
-                channelLayout: stream.ChannelLayout,
-                isDefault: stream.IsDefault,
-              })),
-            subtitle: mediaStreams
-              .filter((stream) => stream.Type === "Subtitle")
-              .map((stream) => ({
-                title: streamTitle(stream),
-                codec: stream.Codec,
-                language: normalizeLanguage(stream.DisplayLanguage ?? stream.Language),
-                isExternal: stream.IsExternal,
-                isDefault: stream.IsDefault,
-              })),
-          }
-        : undefined,
-      // 调研 A3 / A4 / A5
-      path: primaryMediaSource?.Path ?? item.Path,
-      dateCreated: item.DateCreated,
-      externalUrls: item.ExternalUrls?.map((externalUrl) => ({ name: externalUrl.Name, url: externalUrl.Url })),
-      // 调研 B7–B12
-      providerIds: normalizeProviderIds(item.ProviderIds),
-      productionYear: item.ProductionYear,
-      premiereDate: item.PremiereDate,
-      officialRating: item.OfficialRating,
-      criticRating: item.CriticRating,
-      studios: item.Studios?.map((studio) => studio.Name),
-      mediaSourceCount: item.MediaSourceCount ?? item.MediaSources?.length,
-      childCount: item.ChildCount,
-      recursiveItemCount: item.RecursiveItemCount,
-      seriesName: item.SeriesName,
-      indexNumber: item.IndexNumber,
-      parentIndexNumber: item.ParentIndexNumber,
-      isHd: item.IsHd,
-      width: item.Width,
-      height: item.Height,
-      labels: item.TagItems?.length ? item.TagItems.map((tag) => tag.Name) : item.Tags,
-      taglines: item.Taglines,
-      // 头像由 getItemDetail 补上；fnOS 的 Web 端是自有应用，没有稳定的演员页路径 → 不给链接
-      people: item.People?.slice(0, 12).map((person) => ({
-        name: person.Name,
-        role: person.Role,
-        type: person.Type,
-        id: person.Id,
-      })),
+      rating: Number.isFinite(rating) && rating > 0 ? rating : "-",
+      mediaInfo:
+        resolutions.length || videoRange
+          ? {
+              video: {
+                resolution: resolutions[0],
+                videoRange,
+              },
+            }
+          : undefined,
+      // 调研 A4–A6 / B7–B12：飞牛原生接口能提供的字段
+      dateCreated: undefined,
+      externalUrls: undefined,
+      providerIds: Object.keys(providerIds).length > 0 ? providerIds : undefined,
+      productionYear: year,
+      premiereDate: item.release_date || item.air_date,
+      childCount: item.number_of_seasons,
+      recursiveItemCount: item.number_of_episodes,
+      seriesName: item.tv_title || undefined,
+      // 剧集条目：season_number 是季号，episode_number 是集号
+      indexNumber: item.episode_number || undefined,
+      parentIndexNumber: item.season_number || undefined,
       user: {
-        IsFavorite: userData?.IsFavorite ?? false,
-        IsPlayed: userData?.Played ?? false,
-        // 调研 A6：观看深度
-        playCount: userData?.PlayCount,
-        playbackPosition: userData?.PlaybackPositionTicks ? userData.PlaybackPositionTicks / 10000000 : undefined,
-        playedPercentage: getPlayedPercentage(userData?.PlaybackPositionTicks, item.RunTimeTicks, userData?.Played),
-        lastPlayedDate: userData?.LastPlayedDate,
+        IsFavorite: item.is_favorite === 1,
+        IsPlayed: this.isPlayed(item),
+        playbackPosition: position,
+        playedPercentage:
+          duration && position ? Math.min(100, Math.max(0, Math.round((position / duration) * 100))) : undefined,
       },
       raw: item,
     };
   }
 
-  private getItemUrl(item: IFnOSQueryItem) {
-    if (item.Type === "Movie") {
-      // C2-M-3：ImageTags.Primary 是封面图的 tag 哈希（换封面即变），不是影片主键；
-      // 与 Series 分支保持一致，优先用 item.Id，其余仅作兜底。
-      const movieId = item.Id || item.MediaSources?.[0]?.Id || item.ImageTags?.Primary || "";
-      return urlJoin(this.webBaseUrl, `/movie/${movieId}`);
+  private async buildMediaItem(
+    item: IFnOSNativeItem,
+    options: { withPoster?: boolean } = {},
+  ): Promise<IMediaServerItem<IFnOSNativeItem>> {
+    const mediaItem = this.mapMediaItem(item);
+    if (options.withPoster !== false) {
+      mediaItem.poster = await this.getPoster(item);
     }
-
-    if (item.Type === "Series") {
-      return urlJoin(this.webBaseUrl, `/tv/${item.Id}`);
-    }
-
-    return this.webBaseUrl;
+    return mediaItem;
   }
 
-  /** 详情接口额外要的重字段（列表刻意不含，调研 B12） */
-  private static readonly DETAIL_FIELDS = [FNOS_SEARCH_FIELDS, "People", "MediaStreams", "MediaSources"].join(",");
-
-  /**
-   * 调研 B12：详情弹窗按需拉取单条目，复用同一套映射。
-   * 与 Emby 同理：没有 /Items/{id}，走用户维度的单条目接口。
-   * 不支持的服务器（或 404）返回 undefined，UI 静默降级。
-   */
-  public override async getItemDetail(itemId: string): Promise<IMediaServerItem<IFnOSQueryItem> | undefined> {
+  public override async getItemDetail(itemId: string): Promise<IMediaServerItem<IFnOSNativeItem> | undefined> {
     try {
-      const session = await this.login();
-      const response = await this.request<IFnOSQueryItem>(
-        `/Users/${session.userId}/Items/${encodeURIComponent(itemId)}`,
-        { params: { Fields: FnOS.DETAIL_FIELDS } },
-      );
-      const item = response.data;
-      if (response.status === 200 && item?.Id) {
-        const mediaItem = this.mapMediaItem(item);
-        // 演职人员头像与海报同一个图片端点，同样带认证头拉成 data URL（令牌不进入 URL）
-        const rawPeople = item.People ?? [];
-        if (mediaItem.people?.length) {
-          mediaItem.people = await mapWithConcurrency(mediaItem.people, 4, async (person, index) => {
-            const tag = rawPeople[index]?.PrimaryImageTag;
-            if (!person.id || !tag) return person;
-            const imageUrl = await this.getPoster({ Id: person.id, ImageTags: { Primary: tag } } as IFnOSQueryItem);
-            return imageUrl ? { ...person, imageUrl } : person;
-          });
-        }
-        return mediaItem;
+      const item = await this.request<IFnOSNativeItem>(`/item/${encodeURIComponent(itemId)}`);
+      if (item?.guid) {
+        return await this.buildMediaItem(item);
       }
-    } catch (e) {
-      // 忽略：详情拿不到就只展示列表已有的信息
+    } catch {
+      // 详情拿不到就只展示列表已有的信息
     }
     return undefined;
   }
 
   /**
    * 调研 C14 / C20：**按需**生成媒体库概览。
-   * 复用本类已有的「按媒体库视图分页」机制（{@link getViewIds} + {@link queryItems}），
-   * 就地聚合后只返回 {@link IMediaServerOverview} 统计结果；只做统计，所以不抓海报。
+   * 通过 `/item/list` 分页遍历媒体库就地聚合，只为统计数字服务，因此不拉取海报。
    */
   public override async getLibraryOverview(
     options: IMediaServerOverviewOptions = {},
@@ -737,42 +775,40 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     const maxItems = Math.max(pageSize, options.maxItems ?? 20000);
     const accumulator = createOverviewAccumulator();
 
-    const viewIds = await this.getViewIds();
-    const dedupedItems = new Map<string, IFnOSQueryItem>();
-
+    let scanned = 0;
     let truncated = false;
-    const collect = (items: IFnOSQueryItem[]) => {
-      for (const item of items) {
-        if (dedupedItems.size >= maxItems) {
-          truncated = true;
-          return;
-        }
-        if ((item.Type === "Movie" || item.Type === "Series") && !dedupedItems.has(item.Id)) {
-          dedupedItems.set(item.Id, item);
-        }
-      }
-    };
+    let page = 1;
 
-    for (const viewId of viewIds) {
-      // 每个视图都按页拉取（multiViewMode=false 让后端正常分页）。上游在多视图时改为一次请求
-      // 「0 → maxItems」的大窗口，单个响应可能有上万条，这里统一分页，避免一次请求过大；
-      // 并在服务端只取 Movie/Series（空关键词时 queryItems 默认不过滤类型，会把所有单集也翻一遍）。
-      let startIndex = 0;
-      while (dedupedItems.size < maxItems) {
-        const items = await this.queryItems(viewId, "", { startIndex, limit: pageSize }, "Movie,Series");
-        if (items.length === 0) break;
-
-        collect(items);
-        startIndex += items.length;
-        if (items.length < pageSize) break;
+    while (scanned < maxItems) {
+      const size = Math.min(pageSize, maxItems - scanned);
+      const parentId = this.config.auth.parentId?.trim();
+      const body: Record<string, unknown> = {
+        tags: { type: ["Movie", "TV", "Video"] },
+        sort_type: "DESC",
+        sort_column: "create_time",
+        page,
+        page_size: size,
+        exclude_grouped_video: 1,
+      };
+      if (parentId) {
+        body.ancestor_guid = parentId;
       }
 
-      if (dedupedItems.size >= maxItems) truncated = true;
-      if (truncated) break;
-    }
+      const data = await this.request<IFnOSItemList>("/item/list", { method: "POST", data: body });
+      const items = data?.list ?? [];
+      if (items.length === 0) break;
 
-    for (const item of dedupedItems.values()) {
-      accumulator.add(this.mapMediaItem(item));
+      for (const rawItem of items) {
+        accumulator.add(this.mapMediaItem(rawItem));
+      }
+      scanned += items.length;
+      if (data?.total && scanned >= data.total) break;
+      if (items.length < size) break;
+
+      page += 1;
+      if (scanned >= maxItems) {
+        truncated = true;
+      }
     }
 
     return accumulator.build(this.config.id!, truncated);
@@ -782,7 +818,7 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     keywords: string = "",
     config: IMediaServerSearchOptions = {},
   ): Promise<IMediaServerSearchResult> {
-    const result: IMediaServerSearchResult<IFnOSQueryItem> = {
+    const result: IMediaServerSearchResult<IFnOSNativeItem> = {
       status: EResultParseStatus.unknownError,
       items: [],
     };
@@ -791,68 +827,36 @@ export default class FnOS extends AbstractMediaServer<IFnOSConfig> {
     config.limit = config.limit ?? 50;
 
     try {
-      const viewIds = await this.getViewIds();
-      if (viewIds.length === 0) {
-        // 没有可见媒体库：旧实现返回空列表并标记成功，这里保持一致
-        result.options = config;
-        result.status = EResultParseStatus.success;
-        return result;
-      }
-      const multiViewMode = viewIds.length > 1;
-      const startIndex = config.startIndex ?? 0;
-      const limit = config.limit ?? 50;
-
-      let mergedItems: IFnOSQueryItem[];
-      if (multiViewMode) {
-        // 每个视图先取总数，把全局 offset 映射成各视图自己的窗口：旧实现每次都请求
-        // 0..startIndex+limit，翻到第 N 页会把前 N-1 页重复传输一遍（O(N²)）。
-        const totals = await Promise.all(
-          viewIds.map(async (viewId) => {
-            const response = await this.queryItemsResponse(viewId, keywords, { startIndex: 0, limit: 1 });
-            return { viewId, total: Number(response.TotalRecordCount) };
-          }),
-        );
-
-        if (totals.some(({ total }) => !Number.isFinite(total) || total < 0)) {
-          // 服务端没给总数：退回旧行为（多取一点再切片），至少结果正确
-          const responses = await Promise.all(
-            viewIds.map((viewId) => this.queryItems(viewId, keywords, { startIndex: 0, limit: startIndex + limit })),
-          );
-          mergedItems = [...this.dedupeSearchItems(responses.flat()).values()].slice(startIndex, startIndex + limit);
-        } else {
-          let viewOffset = 0;
-          const windows = totals
-            .map(({ viewId, total }) => {
-              const from = Math.max(0, startIndex - viewOffset);
-              const to = Math.min(total, startIndex + limit - viewOffset);
-              viewOffset += total;
-              return { viewId, from, to };
-            })
-            .filter(({ from, to }) => to > from);
-
-          const responses = await Promise.all(
-            windows.map(({ viewId, from, to }) =>
-              this.queryItems(viewId, keywords, { startIndex: from, limit: to - from }),
-            ),
-          );
-          mergedItems = responses.flat();
-        }
+      let items: IFnOSNativeItem[];
+      if (keywords.trim() !== "") {
+        // 搜索接口一次返回全部结果，这里按 startIndex/limit 切页
+        items = await this.searchByKeyword(keywords.trim());
+        items = items.slice(config.startIndex, config.startIndex + config.limit);
       } else {
-        mergedItems = await this.queryItems(viewIds[0], keywords, { startIndex, limit });
+        items = await this.listItems(config.startIndex, config.limit);
       }
 
-      const items = Array.from(this.dedupeSearchItems(mergedItems).values());
-      // 海报需要带认证头逐张拉取，限并发（4）避免一次搜索同时打出数十个图片请求
-      result.items = await mapWithConcurrency(items, 4, (item) => this.buildMediaItem(item));
+      const dedupedItems = new Map<string, IFnOSNativeItem>();
+      for (const item of items) {
+        if (["Movie", "TV", "Video"].includes(item.type ?? "") && !dedupedItems.has(item.guid)) {
+          dedupedItems.set(item.guid, item);
+        }
+      }
+
+      // 海报抓取保持有界并发（最多 4 路），避免多条目搜索时同时拉数十张图打爆浏览器连接池
+      result.items = await mapWithConcurrency(Array.from(dedupedItems.values()), 4, (item) =>
+        this.buildMediaItem(item),
+      );
       result.options = config;
       result.status = EResultParseStatus.success;
     } catch (e) {
-      if (e instanceof AxiosError && [400, 401, 403].includes(e.response?.status ?? 0)) {
+      if (e instanceof FnOSApiError && FNOS_AUTH_ERROR_CODES.has(e.code)) {
+        result.status = EResultParseStatus.needLogin;
+      } else if (e instanceof AxiosError && e.response?.status === 401) {
         result.status = EResultParseStatus.needLogin;
       } else {
         result.status = EResultParseStatus.parseError;
       }
-      // M-17：只置 parseError 不给原因时 UI 会落回「未知错误」（#1437 要消灭的现象）
       result.errorMessage = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
 

@@ -140,6 +140,120 @@ onMessage("getMediaServerOverview", async ({ data: { mediaServerId, maxItems } }
   return (await mediaServer.getLibraryOverview({ maxItems })) ?? null;
 });
 
+type TSanitizedMediaMatch = {
+  serverName: string;
+  serverType: string;
+  itemName: string;
+  year?: string | number;
+  played?: boolean;
+  videoQuality?: string;
+};
+
+const SOCIAL_MEDIA_CHECK_CACHE_TTL = 2 * 60 * 1000;
+const socialMediaCheckCache = new Map<string, { at: number; matches: TSanitizedMediaMatch[] }>();
+
+function normalizeSocialTitle(raw: string | undefined): string {
+  return String(raw ?? "")
+    .toLowerCase()
+    .replace(/[\s:：·\-—_,.!?'"()（）[\]【】/\\]+/g, "")
+    .trim();
+}
+
+onMessage("checkMediaServerBySocialInfo", async ({ data }) => {
+  const title = typeof data?.title === "string" ? data.title.trim() : "";
+  const altTitles = Array.isArray(data?.altTitles)
+    ? data.altTitles.filter((t): t is string => typeof t === "string" && t.trim().length > 0).map((t) => t.trim())
+    : [];
+  const imdbId = typeof data?.imdbId === "string" ? data.imdbId.trim().toLowerCase() : "";
+  const doubanId = typeof data?.doubanId === "string" ? data.doubanId.trim() : "";
+  const targetYear = data?.year ? Number(String(data.year).slice(0, 4)) : undefined;
+
+  const queryKeywords = uniqBy([title, ...altTitles].filter(Boolean), (k) => k.toLowerCase()).slice(0, 2);
+  if (queryKeywords.length === 0 && !imdbId) {
+    return [];
+  }
+
+  const cacheKey = JSON.stringify({ queryKeywords, imdbId, doubanId, targetYear });
+  const cached = socialMediaCheckCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SOCIAL_MEDIA_CHECK_CACHE_TTL) {
+    return cached.matches;
+  }
+
+  const mediaServers =
+    ((await sendMessage("getExtStoragePath", {
+      key: "metadata",
+      path: ["mediaServers"],
+      defaultValue: {},
+    })) as IMetadataPiniaStorageSchema["mediaServers"]) ?? {};
+
+  const enabledServers = Object.values(mediaServers).filter((s) => s?.enabled && s?.id);
+  if (enabledServers.length === 0) {
+    return [];
+  }
+
+  const targetTitles = new Set([title, ...altTitles].map(normalizeSocialTitle).filter((t) => t.length >= 2));
+  const matches: TSanitizedMediaMatch[] = [];
+
+  await Promise.allSettled(
+    enabledServers.map(async (serverConfig) => {
+      try {
+        const instance = await getMediaServer(serverConfig);
+        for (const keyword of queryKeywords) {
+          const result = await instance.getSearchResult(keyword, { limit: 12 });
+          const items = Array.isArray(result?.items) ? result.items : [];
+          for (const item of items) {
+            const providerEntries = Object.entries(item.providerIds ?? {});
+            const itemImdb = String(providerEntries.find(([k]) => k.toLowerCase() === "imdb")?.[1] ?? "")
+              .trim()
+              .toLowerCase();
+            const itemDouban = String(providerEntries.find(([k]) => k.toLowerCase() === "douban")?.[1] ?? "").trim();
+            const normItemName = normalizeSocialTitle(item.name);
+            const rawOriginalTitle = item.raw as { OriginalTitle?: string; originalTitle?: string } | undefined;
+            const normOrigName = normalizeSocialTitle(
+              rawOriginalTitle?.OriginalTitle || rawOriginalTitle?.originalTitle,
+            );
+
+            const idMatched = (imdbId !== "" && itemImdb === imdbId) || (doubanId !== "" && itemDouban === doubanId);
+            const titleMatched =
+              targetTitles.has(normItemName) || (normOrigName.length >= 2 && targetTitles.has(normOrigName));
+            const itemYear = item.productionYear ? Number(String(item.productionYear).slice(0, 4)) : undefined;
+            const yearCompatible =
+              !targetYear ||
+              !itemYear ||
+              !Number.isFinite(targetYear) ||
+              !Number.isFinite(itemYear) ||
+              Math.abs(targetYear - itemYear) <= 1;
+
+            if (idMatched || (titleMatched && yearCompatible)) {
+              const videoQuality =
+                item.mediaInfo?.video?.resolution || item.streams?.find((s) => s.type === "Video")?.title || undefined;
+              // 严格脱敏：绝不向内容脚本回传服务器 URL、API Key、内部 itemId 或用户 Token
+              matches.push({
+                serverName: serverConfig.name || serverConfig.type,
+                serverType: serverConfig.type,
+                itemName: item.name,
+                year: item.productionYear,
+                played: item.user?.IsPlayed,
+                videoQuality: typeof videoQuality === "string" ? videoQuality.slice(0, 40) : undefined,
+              });
+              break;
+            }
+          }
+          if (matches.some((m) => m.serverName === (serverConfig.name || serverConfig.type))) {
+            break;
+          }
+        }
+      } catch {
+        // 单个媒体服务器不可达不影响其它服务器
+      }
+    }),
+  );
+
+  const deduped = uniqBy(matches, (m) => `${m.serverName}|${m.itemName}`);
+  socialMediaCheckCache.set(cacheKey, { at: Date.now(), matches: deduped });
+  return deduped;
+});
+
 /**
  * 搜索快照按 snapshotId 独立读写（见 docs/performance-audit.md P1-4）：
  * 早期实现每次保存/删除都要整份读取并写回 Record<snapshotId, ISearchData>，

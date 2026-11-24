@@ -6,7 +6,9 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { EJobType } from "@/shared/types/jobs.ts";
+import { sendMessage } from "@/messages.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
+import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { formatDate } from "@/options/utils.ts";
 
 import { useSetBaseConfigDraft } from "./configDraft.ts";
@@ -14,6 +16,42 @@ import { useSetBaseConfigDraft } from "./configDraft.ts";
 const { t } = useI18n();
 const config = useSetBaseConfigDraft();
 const metadataStore = useMetadataStore();
+const runtimeStore = useRuntimeStore();
+
+const testingWebhook = ref(false);
+const webhookTypeOptions = computed(() => [
+  { label: t("SetBase.userInfo.alerts.webhookTypes.none"), value: "none" },
+  { label: t("SetBase.userInfo.alerts.webhookTypes.generic"), value: "generic" },
+  { label: t("SetBase.userInfo.alerts.webhookTypes.telegram"), value: "telegram" },
+  { label: t("SetBase.userInfo.alerts.webhookTypes.bark"), value: "bark" },
+]);
+
+async function testWebhook() {
+  if (testingWebhook.value) return;
+  testingWebhook.value = true;
+  try {
+    const res = await sendMessage("sendAlertWebhook", {
+      title: "chenbinPT 测试通知",
+      message: t("SetBase.userInfo.alerts.webhookTestBody"),
+      webhook: config.value.alerts.webhook,
+    });
+    if (res.ok) {
+      runtimeStore.showSnackbar(t("SetBase.userInfo.alerts.webhookTestSuccess"), { color: "success" });
+    } else {
+      runtimeStore.showSnackbar(
+        t("SetBase.userInfo.alerts.webhookTestFailed", { error: res.error || "Unknown error" }),
+        { color: "error" },
+      );
+    }
+  } catch (e) {
+    runtimeStore.showSnackbar(
+      t("SetBase.userInfo.alerts.webhookTestFailed", { error: e instanceof Error ? e.message : String(e) }),
+      { color: "error" },
+    );
+  } finally {
+    testingWebhook.value = false;
+  }
+}
 
 const nextFlushUserInfoAt = ref<number>(0);
 
@@ -174,5 +212,128 @@ onMounted(async () => {
         <a-switch v-model:checked="config.userInfo.showPassedSiteInOverview" />
       </div>
     </section>
+
+    <!-- 账号健康监控、保号倒计时与主动通知中心 -->
+    <section class="ptd-settings-section">
+      <div class="ptd-settings-row ptd-settings-row--title">
+        <a-typography-text strong>{{ t("SetBase.userInfo.alerts.title") }}</a-typography-text>
+        <a-switch v-model:checked="config.alerts.enabled" />
+      </div>
+
+      <template v-if="config.alerts.enabled">
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.userInfo.alerts.notifyUnreadMessage") }}</a-typography-text>
+          <a-switch v-model:checked="config.alerts.notifyUnreadMessage" />
+        </div>
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.userInfo.alerts.notifyHnRWarning") }}</a-typography-text>
+          <a-switch v-model:checked="config.alerts.notifyHnRWarning" />
+        </div>
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.userInfo.alerts.notifyNeedLogin") }}</a-typography-text>
+          <a-switch v-model:checked="config.alerts.notifyNeedLogin" />
+        </div>
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.userInfo.alerts.notifyLevelUp") }}</a-typography-text>
+          <a-switch v-model:checked="config.alerts.notifyLevelUp" />
+        </div>
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.userInfo.alerts.notifyLowRatio") }}</a-typography-text>
+          <a-flex align="center" :gap="8">
+            <a-input-number
+              v-if="config.alerts.notifyLowRatio"
+              v-model:value="config.alerts.lowRatioThreshold"
+              :min="0.1"
+              :max="10"
+              :step="0.1"
+              size="small"
+              class="alerts-input-sm"
+            />
+            <a-switch v-model:checked="config.alerts.notifyLowRatio" />
+          </a-flex>
+        </div>
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.userInfo.alerts.notifyInactivity") }}</a-typography-text>
+          <a-switch v-model:checked="config.alerts.notifyInactivity" />
+        </div>
+        <div v-if="config.alerts.notifyInactivity" class="ptd-setting-note">
+          <a-flex align="center" :gap="8" wrap>
+            <span>{{ t("SetBase.userInfo.alerts.defaultSiteMaxInactiveDays") }}</span>
+            <a-input-number
+              v-model:value="config.alerts.defaultSiteMaxInactiveDays"
+              :min="7"
+              :max="365"
+              size="small"
+              class="alerts-input-sm"
+            />
+            <span>{{ t("SetBase.userInfo.alerts.inactivityWarningDays") }}</span>
+            <a-input-number
+              v-model:value="config.alerts.inactivityWarningDays"
+              :min="1"
+              :max="60"
+              size="small"
+              class="alerts-input-sm"
+            />
+          </a-flex>
+        </div>
+
+        <div class="ptd-setting-group">
+          <div class="ptd-setting-group__title">{{ t("SetBase.userInfo.alerts.webhookTitle") }}</div>
+          <div class="ptd-settings-row">
+            <a-typography-text>{{ t("SetBase.userInfo.alerts.webhookType") }}</a-typography-text>
+            <a-select
+              v-model:value="config.alerts.webhook.type"
+              :options="webhookTypeOptions"
+              style="width: min(100%, 420px)"
+            />
+          </div>
+
+          <template v-if="config.alerts.webhook.type !== 'none'">
+            <div class="ptd-settings-row">
+              <a-typography-text>{{ t("SetBase.userInfo.alerts.webhookUrl") }}</a-typography-text>
+              <a-input
+                v-model:value="config.alerts.webhook.url"
+                :placeholder="t(`SetBase.userInfo.alerts.webhookUrlPlaceholder.${config.alerts.webhook.type}`)"
+                style="width: min(100%, 420px)"
+              />
+            </div>
+            <div class="ptd-settings-row">
+              <a-typography-text>{{ t("SetBase.userInfo.alerts.webhookSecret") }}</a-typography-text>
+              <a-input
+                v-model:value="config.alerts.webhook.secret"
+                type="password"
+                :placeholder="t('SetBase.userInfo.alerts.webhookSecretPlaceholder')"
+                style="width: min(100%, 420px)"
+              />
+            </div>
+            <div v-if="config.alerts.webhook.type === 'telegram'" class="ptd-settings-row">
+              <a-typography-text>{{ t("SetBase.userInfo.alerts.telegramChatId") }}</a-typography-text>
+              <a-input
+                v-model:value="config.alerts.webhook.chatId"
+                :placeholder="t('SetBase.userInfo.alerts.telegramChatIdPlaceholder')"
+                style="width: min(100%, 420px)"
+              />
+            </div>
+            <div class="alerts-webhook-actions">
+              <a-button size="small" :loading="testingWebhook" @click="testWebhook">
+                {{ t("SetBase.userInfo.alerts.sendTestWebhook") }}
+              </a-button>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
   </div>
 </template>
+
+<style scoped>
+.alerts-input-sm {
+  width: 88px;
+}
+
+.alerts-webhook-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+</style>

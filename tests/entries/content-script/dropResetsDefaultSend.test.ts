@@ -49,6 +49,7 @@ vi.mock("@/content-script/app/pages/SiteDetailPage.vue", () => ({ default: { ren
 vi.mock("@/content-script/app/pages/SocialSitePage.vue", () => ({ default: { render: () => null } }));
 
 const { default: App } = await import("@/content-script/app/App.vue");
+const { PTD_DATA_KEY, REMOTE_DOWNLOAD_DIALOG_DATA_KEY } = await import("@/content-script/app/injectionKeys.ts");
 const { CUSTOM_DRAG_MIME } = await import("@/content-script/app/utils.ts");
 const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 const { useMetadataStore } = await import("@/options/stores/metadata.ts");
@@ -79,10 +80,10 @@ describe("内容脚本拖拽投放（M-20）", () => {
       .use(pinia)
       .use(i18nInstance)
       .use(Antd as any);
-    app.provide("ptd_data", { siteId: "pt" });
+    app.provide(PTD_DATA_KEY, { siteId: "pt" });
     app.mixin({
       mounted(this: any) {
-        dialogData ??= this.$?.provides?.remoteDownloadDialogData;
+        dialogData ??= this.$?.provides?.[REMOTE_DOWNLOAD_DIALOG_DATA_KEY as any];
       },
     });
     app.mount(host);

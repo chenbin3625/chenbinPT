@@ -8,6 +8,7 @@ import {
   getHostFromUrl,
   getDefinedSiteMetadata,
   isIndexedMetadataField,
+  syncCustomSites,
   type ISearchCategories,
   type ISearchEntryRequestConfig,
   type ISiteMetadata,
@@ -20,9 +21,14 @@ import { siteMetadataIndex } from "@ptd/site/metadataIndex";
 
 import {
   IBackupServerMetadata,
+  ICustomSiteDefinition,
   IDownloaderMetadata,
+  IKeywordWatchRule,
   IMediaServerMetadata,
   IMetadataPiniaStorageSchema,
+  IPushRoutingRule,
+  ISearchFilterPreset,
+  ISearchHistoryItem,
   ISearchSolution,
   TDownloaderKey,
   TMediaServerKey,
@@ -469,7 +475,32 @@ function reportUnavailableSiteIds(store: object, failedSiteIds: TSiteID[]): void
 }
 
 export const useMetadataStore = defineStore("metadata", {
-  persistWebExt: true,
+  persistWebExt: {
+    afterRestore: (context) => {
+      try {
+        const state = context.store.$state as IMetadataPiniaStorageSchema;
+        if (!Array.isArray(state.searchHistory)) state.searchHistory = [];
+        if (!Array.isArray(state.searchFilterPresets)) state.searchFilterPresets = [];
+        if (!Array.isArray(state.pushRoutingRules)) state.pushRoutingRules = [];
+        if (!state.customSites || typeof state.customSites !== "object" || Array.isArray(state.customSites)) {
+          state.customSites = {};
+        }
+        if (!state.keywordWatches || typeof state.keywordWatches !== "object" || Array.isArray(state.keywordWatches)) {
+          state.keywordWatches = {};
+        }
+        if (
+          !state.siteInactivityDays ||
+          typeof state.siteInactivityDays !== "object" ||
+          Array.isArray(state.siteInactivityDays)
+        ) {
+          state.siteInactivityDays = {};
+        }
+        syncCustomSites(state.customSites);
+      } catch {
+        // never break hydration
+      }
+    },
+  },
   state: (): IMetadataPiniaStorageSchema => ({
     sites: {},
     solutions: {},
@@ -489,6 +520,13 @@ export const useMetadataStore = defineStore("metadata", {
 
     siteHostMap: {},
     siteNameMap: {},
+
+    searchHistory: [],
+    searchFilterPresets: [],
+    pushRoutingRules: [],
+    customSites: {},
+    keywordWatches: {},
+    siteInactivityDays: {},
   }),
 
   getters: {
@@ -578,7 +616,7 @@ export const useMetadataStore = defineStore("metadata", {
           return siteConfig.url;
         }
         // urls 是索引固定字段：直接取，不再为第一个地址解析整份站点定义
-        return siteMetadataIndex[siteId]?.urls?.[0] ?? "#";
+        return siteMetadataIndex[siteId]?.urls?.[0] ?? state.customSites?.[siteId]?.urls?.[0] ?? "#";
       };
     },
 
@@ -1274,6 +1312,163 @@ export const useMetadataStore = defineStore("metadata", {
 
     async removeBackupServer(backupServerId: string) {
       delete this.backupServers[backupServerId];
+      scheduleMetadataSave(this);
+    },
+
+    // ─── 搜索历史 ───
+    addSearchHistory(keyword: string, planId?: string) {
+      const normalized = keyword.trim();
+      if (!normalized) return;
+      const list = Array.isArray(this.searchHistory) ? [...this.searchHistory] : [];
+      const existingIndex = list.findIndex((item) => item.keyword === normalized);
+      const now = Date.now();
+      if (existingIndex >= 0) {
+        const existing = list[existingIndex];
+        list.splice(existingIndex, 1);
+        list.unshift({
+          ...existing,
+          planId: planId ?? existing.planId,
+          updatedAt: now,
+          count: (existing.count ?? 1) + 1,
+        });
+      } else {
+        list.unshift({
+          id: nanoid(8),
+          keyword: normalized,
+          planId,
+          pinned: false,
+          updatedAt: now,
+          count: 1,
+        });
+      }
+      // 保留所有置顶项 + 最近 30 条未置顶项
+      const pinned = list.filter((item) => item.pinned);
+      const unpinned = list.filter((item) => !item.pinned).slice(0, 30);
+      this.searchHistory = [...pinned, ...unpinned];
+      scheduleMetadataSave(this);
+    },
+
+    togglePinSearchHistory(id: string) {
+      const item = (this.searchHistory ?? []).find((x) => x.id === id);
+      if (!item) return;
+      item.pinned = !item.pinned;
+      this.searchHistory = [
+        ...this.searchHistory.filter((x) => x.pinned),
+        ...this.searchHistory.filter((x) => !x.pinned),
+      ];
+      scheduleMetadataSave(this);
+    },
+
+    removeSearchHistory(id: string) {
+      this.searchHistory = (this.searchHistory ?? []).filter((x) => x.id !== id);
+      scheduleMetadataSave(this);
+    },
+
+    clearSearchHistory(keepPinned: boolean = true) {
+      this.searchHistory = keepPinned ? (this.searchHistory ?? []).filter((x) => x.pinned) : [];
+      scheduleMetadataSave(this);
+    },
+
+    // ─── 搜索结果筛选预设 ───
+    saveSearchFilterPreset(
+      preset: Omit<ISearchFilterPreset, "id" | "createdAt"> & { id?: string; createdAt?: number },
+    ) {
+      const name = preset.name.trim();
+      const filter = preset.filter.trim();
+      if (!name || !filter) return;
+      const list = Array.isArray(this.searchFilterPresets) ? [...this.searchFilterPresets] : [];
+      const id = preset.id || nanoid(8);
+      const idx = list.findIndex((x) => x.id === id);
+      const item: ISearchFilterPreset = {
+        id,
+        name,
+        filter,
+        createdAt: preset.createdAt ?? Date.now(),
+      };
+      if (idx >= 0) {
+        list[idx] = item;
+      } else {
+        list.push(item);
+      }
+      this.searchFilterPresets = list;
+      scheduleMetadataSave(this);
+    },
+
+    removeSearchFilterPreset(id: string) {
+      this.searchFilterPresets = (this.searchFilterPresets ?? []).filter((x) => x.id !== id);
+      scheduleMetadataSave(this);
+    },
+
+    // ─── 智能推送路由规则 ───
+    savePushRoutingRule(rule: IPushRoutingRule) {
+      const next = cloneDeep(toRaw(rule));
+      if (!next.id) next.id = nanoid(10);
+      const list = Array.isArray(this.pushRoutingRules) ? [...this.pushRoutingRules] : [];
+      const idx = list.findIndex((x) => x.id === next.id);
+      if (idx >= 0) {
+        list[idx] = next;
+      } else {
+        list.push(next);
+      }
+      this.pushRoutingRules = list;
+      scheduleMetadataSave(this);
+    },
+
+    removePushRoutingRule(id: string) {
+      this.pushRoutingRules = (this.pushRoutingRules ?? []).filter((x) => x.id !== id);
+      scheduleMetadataSave(this);
+    },
+
+    // ─── 自定义站点（Torznab / Prowlarr / Jackett / NexusPHP / Unit3D）───
+    async saveCustomSite(def: ICustomSiteDefinition, siteUserConfig?: ISiteUserConfig) {
+      const nextDef = cloneDeep(toRaw(def));
+      this.customSites = { ...(this.customSites ?? {}), [nextDef.id]: nextDef };
+      syncCustomSites(this.customSites);
+      await this.$save();
+      if (siteUserConfig) {
+        await this.addSite(nextDef.id, siteUserConfig);
+      } else if (this.sites[nextDef.id]) {
+        await this.buildSiteMapCache(true);
+      }
+    },
+
+    async removeCustomSite(siteId: TSiteID) {
+      const next = { ...(this.customSites ?? {}) };
+      delete next[siteId];
+      this.customSites = next;
+      syncCustomSites(this.customSites);
+      if (this.sites[siteId]) {
+        await this.removeSite(siteId);
+      } else {
+        await this.$save();
+      }
+    },
+
+    // ─── 关键词定时监控 ───
+    saveKeywordWatch(rule: IKeywordWatchRule) {
+      const next = cloneDeep(toRaw(rule));
+      if (!next.id) next.id = nanoid(10);
+      next.intervalMinutes = Math.max(30, Math.floor(Number(next.intervalMinutes) || 60));
+      this.keywordWatches = { ...(this.keywordWatches ?? {}), [next.id]: next };
+      scheduleMetadataSave(this);
+    },
+
+    removeKeywordWatch(id: string) {
+      const next = { ...(this.keywordWatches ?? {}) };
+      delete next[id];
+      this.keywordWatches = next;
+      scheduleMetadataSave(this);
+    },
+
+    // ─── 站点保号不活跃阈值天数 ───
+    setSiteInactivityDays(siteId: TSiteID, days: number | undefined) {
+      const next = { ...(this.siteInactivityDays ?? {}) };
+      if (typeof days === "number" && Number.isFinite(days) && days > 0) {
+        next[siteId] = Math.floor(days);
+      } else {
+        delete next[siteId];
+      }
+      this.siteInactivityDays = next;
       scheduleMetadataSave(this);
     },
   },

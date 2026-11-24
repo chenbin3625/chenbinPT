@@ -72,6 +72,12 @@ export const clientMetaData: TorrentClientMetaData = {
     TrackerManage: {
       allowed: false,
     },
+    Reannounce: {
+      allowed: false,
+    },
+    SetLocation: {
+      allowed: false,
+    },
   },
 };
 

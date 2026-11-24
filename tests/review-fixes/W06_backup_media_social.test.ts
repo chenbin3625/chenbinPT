@@ -537,7 +537,7 @@ describe("F0062, F0064, F0065, F0066: FnOS URL, filtering, session isolation, an
     type: "fnos",
     name: "fnOS",
     address: "https://fnos.example",
-    auth: { username: "alice", password: "secret-password-1", parentId: "", apikey: "", userId: "", sessionId: "" },
+    auth: { username: "alice", password: "secret-password-1", accessCode: "", parentId: "" },
     timeout: 5000,
     ...overrides,
   });
@@ -546,38 +546,36 @@ describe("F0062, F0064, F0065, F0066: FnOS URL, filtering, session isolation, an
     (FnOS as any).sessionCache.clear();
     (FnOS as any).posterUrlCache.clear();
     (FnOS as any).posterUrlCacheBytes = 0;
+    (FnOS as any).accessCodeGrants.clear();
   });
 
-  it("F0066: strips hash fragments from baseUrl before deriving API root", () => {
+  it("F0066: normalizes origin by stripping /v, /emby, paths, and hash fragments", () => {
     const client1 = new FnOSCtor(fnosConfig({ address: "http://nas.local:5666/v#/home" }));
-    const client2 = new FnOSCtor(fnosConfig({ address: "https://nas.local/media/#/login" }));
+    const client2 = new FnOSCtor(fnosConfig({ address: "https://nas.local/emby/#/login" }));
+    const client3 = new FnOSCtor(fnosConfig({ address: "192.168.1.2:5666/v" }));
 
-    expect((client1 as any).baseUrl).toBe("http://nas.local:5666");
-    expect((client2 as any).baseUrl).toBe("https://nas.local/media");
+    expect((client1 as any).origin).toBe("http://nas.local:5666");
+    expect((client2 as any).origin).toBe("https://nas.local");
+    expect((client3 as any).origin).toBe("http://192.168.1.2:5666");
   });
 
-  it("F0062: includes IncludeItemTypes='Movie,Series' on empty-keyword search", async () => {
+  it("F0062: queries native /v/api/v1/item/list with Movie/TV/Video filter on empty-keyword search", async () => {
     const client = new FnOSCtor(fnosConfig());
-    vi.spyOn(client as any, "login").mockResolvedValue({
-      apikey: "tok",
-      userId: "u1",
-      sessionId: "s1",
-    });
+    vi.spyOn(client as any, "login").mockResolvedValue({ token: "native-tok" });
 
-    const requestSpy = vi.spyOn(axios, "request").mockImplementation(async (cfg: any) => {
-      if (String(cfg.url).includes("/Views")) {
-        return { status: 200, data: { Items: [{ Id: "view-1" }] } } as any;
-      }
-      return { status: 200, data: { Items: [], TotalRecordCount: 0 } } as any;
+    const requestSpy = vi.spyOn(axios, "request").mockImplementation(async () => {
+      return { status: 200, data: { code: 0, data: { list: [], total: 0 } } } as any;
     });
 
     await client.getSearchResult("");
-    const itemsCall = requestSpy.mock.calls.find(([cfg]: any) => String(cfg.url).includes("/Items"));
+    const itemsCall = requestSpy.mock.calls.find(([cfg]: any) => String(cfg.url).includes("/v/api/v1/item/list"));
     expect(itemsCall).toBeDefined();
-    expect((itemsCall![0] as any).params.IncludeItemTypes).toBe("Movie,Series");
+    const sentBody = JSON.parse((itemsCall![0] as any).data);
+    expect(sentBody.tags.type).toEqual(["Movie", "TV", "Video"]);
+    expect(sentBody.nonce).toMatch(/^\d{6}$/);
   });
 
-  it("F0065: does not mutate config.auth, isolates sessions by password, and excludes password from deviceId", async () => {
+  it("F0065: does not mutate config.auth and isolates sessions by password/accessCode", async () => {
     const cfg1 = fnosConfig();
     const client1 = new FnOSCtor(cfg1);
     const client2 = new FnOSCtor(
@@ -585,47 +583,37 @@ describe("F0062, F0064, F0065, F0066: FnOS URL, filtering, session isolation, an
         auth: {
           username: "alice",
           password: "different-password-2",
+          accessCode: "",
           parentId: "",
-          apikey: "",
-          userId: "",
-          sessionId: "",
         },
       }),
     );
 
     let authCalls = 0;
-    vi.spyOn(axios, "request").mockImplementation(async () => {
-      authCalls++;
-      return {
-        status: 200,
-        data: {
-          AccessToken: `token-${authCalls}`,
-          User: { Id: `user-${authCalls}` },
-          SessionInfo: { Id: `sess-${authCalls}` },
-        },
-      } as any;
+    vi.spyOn(axios, "request").mockImplementation(async (cfg: any) => {
+      if (String(cfg.url).includes("/v/api/v2/user/loginByPassword")) {
+        authCalls++;
+        return { status: 200, data: { code: 0, data: { token: `token-${authCalls}` } } } as any;
+      }
+      if (String(cfg.url).includes("/v/api/v1/user/info")) {
+        return { status: 200, data: { code: 0, data: { guid: `user-${authCalls}` } } } as any;
+      }
+      throw new Error(`unexpected request: ${cfg.url}`);
     });
 
     const s1 = await (client1 as any).login();
     const s2 = await (client2 as any).login();
 
     expect(authCalls).toBe(2);
-    expect(s1.apikey).toBe("token-1");
-    expect(s2.apikey).toBe("token-2");
-    expect(cfg1.auth.apikey).toBe("");
-    expect(cfg1.auth.userId).toBe("");
-    expect(cfg1.auth.sessionId).toBe("");
-    expect((client1 as any).deviceId).not.toContain("secret-password-1");
+    expect(s1.token).toBe("token-1");
+    expect(s2.token).toBe("token-2");
+    expect((cfg1.auth as any).token).toBeUndefined();
   });
 
   it("F0064: concurrent login(true) callers propagate auth failure instead of returning stale expired token", async () => {
     const client = new FnOSCtor(fnosConfig());
-    const sessionKey = (client as any).sessionCacheKey;
-    (FnOS as any).sessionCache.set(sessionKey, {
-      apikey: "expired-token",
-      userId: "u1",
-      sessionId: "s1",
-    });
+    const sessionKey = (client as any).cacheKey;
+    (FnOS as any).sessionCache.set(sessionKey, { token: "expired-token" });
 
     let rejectAuth!: (err: Error) => void;
     const authSpy = vi.spyOn(axios, "request").mockImplementation(
@@ -644,6 +632,48 @@ describe("F0062, F0064, F0065, F0066: FnOS URL, filtering, session isolation, an
     await expect(p2).rejects.toThrow("Invalid credentials");
     expect(authSpy).toHaveBeenCalledTimes(1);
     expect((FnOS as any).sessionCache.has(sessionKey)).toBe(false);
+  });
+
+  it("supports accessCode gateway verification, invalid sign retry, and native ping", async () => {
+    const client = new FnOSCtor(
+      fnosConfig({
+        auth: { username: "alice", password: "secret-password-1", accessCode: "my-code", parentId: "" },
+      }),
+    );
+
+    let versionAttempts = 0;
+    const seenUrls: string[] = [];
+    vi.spyOn(axios, "request").mockImplementation(async (cfg: any) => {
+      seenUrls.push(String(cfg.url));
+      if (cfg.url === "/access_code_verify") {
+        expect(cfg.headers["x-access-source"]).toBe("web");
+        expect(cfg.headers["x-access-code"]).toBe(btoa("my-code"));
+        return { status: 200, data: {} } as any;
+      }
+      if (cfg.url === "/v/api/v1/sys/version") {
+        versionAttempts += 1;
+        if (versionAttempts === 1) {
+          return { status: 200, data: { code: 5000, msg: "invalid sign", data: null } } as any;
+        }
+        return { status: 200, data: { code: 0, data: { version: "1.0.0" } } } as any;
+      }
+      if (cfg.url === "/v/api/v2/user/loginByPassword") {
+        const body = JSON.parse(cfg.data);
+        // Password must be SHA-256 hex digest, not plaintext
+        expect(body.password).toMatch(/^[0-9a-f]{64}$/);
+        expect(body.password).not.toBe("secret-password-1");
+        return { status: 200, data: { code: 0, data: { token: "tok-1" } } } as any;
+      }
+      if (cfg.url === "/v/api/v1/user/info") {
+        return { status: 200, data: { code: 0, data: { guid: "u-guid" } } } as any;
+      }
+      throw new Error(`unexpected request: ${cfg.url}`);
+    });
+
+    await expect(client.ping()).resolves.toBe(true);
+    expect(versionAttempts).toBe(2);
+    // Access code gateway verified only once across multiple requests
+    expect(seenUrls.filter((u) => u === "/access_code_verify")).toHaveLength(1);
   });
 });
 

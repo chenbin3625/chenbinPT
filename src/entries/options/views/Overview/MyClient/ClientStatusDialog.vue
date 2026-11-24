@@ -29,8 +29,19 @@ const { enabledDownloaders, resumeDownloaderRefresh, clearDownloaderTimer } = us
 
 const clientStatuses = ref<Record<string, TorrentClientStatus>>({});
 const clientVersions = ref<Record<string, string>>({});
+const clientFreeSpaces = ref<Record<string, number | "N/A">>({});
 const clientLoading = ref<Record<string, boolean>>({});
 const fetchSeq = new Map<string, number>();
+
+const LOW_SPACE_DANGER_BYTES = 20 * 1024 ** 3;
+const LOW_SPACE_WARN_BYTES = 50 * 1024 ** 3;
+
+function freeSpaceTagColor(bytes: number | "N/A" | undefined): string | undefined {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return undefined;
+  if (bytes < LOW_SPACE_DANGER_BYTES) return "error";
+  if (bytes < LOW_SPACE_WARN_BYTES) return "warning";
+  return "default";
+}
 
 /** Returns true when the downloader's torrents are included in the current filter. */
 function isDownloaderActive(id: string) {
@@ -66,11 +77,13 @@ async function fetchStatusFor(id: string) {
       ? Promise.resolve(undefined)
       : sendMessage("getDownloaderVersion", id).catch(() => undefined);
     const statusPromise = sendMessage("getDownloaderStatus", id).catch(() => undefined);
+    const freeSpacePromise = sendMessage("getDownloaderFreeSpace", id).catch(() => "N/A" as const);
 
-    const [version, status] = await Promise.all([versionPromise, statusPromise]);
+    const [version, status, freeSpace] = await Promise.all([versionPromise, statusPromise, freeSpacePromise]);
     if (fetchSeq.get(id) !== seq) return;
     if (version) clientVersions.value[id] = version;
     if (status) clientStatuses.value[id] = status;
+    clientFreeSpaces.value[id] = freeSpace;
   } finally {
     if (fetchSeq.get(id) === seq) {
       clientLoading.value[id] = false;
@@ -170,6 +183,13 @@ watch(showDialog, (open) => {
             </a-flex>
             <div class="client-status__muted">
               {{ t("MyClient.clientStatusDialog.torrentCount", { count: torrentCountFor(d.id) }) }}
+              <a-tag
+                v-if="typeof clientFreeSpaces[d.id] === 'number'"
+                :color="freeSpaceTagColor(clientFreeSpaces[d.id])"
+                class="client-status__free-space"
+              >
+                {{ t("MyClient.clientStatusDialog.freeSpace", { size: formatSize(clientFreeSpaces[d.id] as number) }) }}
+              </a-tag>
             </div>
           </div>
         </template>
@@ -260,6 +280,11 @@ watch(showDialog, (open) => {
 
 .client-status__muted {
   color: var(--ptd-text-tertiary);
+}
+
+.client-status__free-space {
+  margin-left: 6px;
+  margin-inline-end: 0;
 }
 
 .client-status__divider {

@@ -2,9 +2,11 @@ import { cloneDeep } from "es-toolkit";
 
 export * from "./types";
 export * from "./utils";
+export * from "./customSiteRegistry";
 
 import { restoreSecureLink } from "./utils/html.ts";
 import { checkSiteMetadataAllow } from "./utils/helper.ts";
+import { buildCustomSiteMetadata, getCustomSiteDefinition } from "./customSiteRegistry.ts";
 import type { ISiteMetadata, ISiteUserConfig, TSiteID } from "./types";
 import type BittorrentSite from "./schemas/AbstractBittorrentSite";
 import type PrivateSite from "./schemas/AbstractPrivateSite";
@@ -46,6 +48,14 @@ async function getDefinitionModule(definition: string): Promise<definitionEntity
 }
 
 export async function getDefinedSiteMetadata(definition: string): Promise<ISiteMetadata> {
+  if (!definitionList.includes(definition)) {
+    const customDef = getCustomSiteDefinition(definition);
+    if (customDef) {
+      const schemaModule = await getSchemaModule(customDef.schema);
+      return buildCustomSiteMetadata(customDef, schemaModule.SchemaMetadata ?? {});
+    }
+  }
+
   const { siteMetadata: definedSiteMetadata } = await getDefinitionModule(definition);
 
   const siteMetadata = cloneDeep(definedSiteMetadata);
@@ -79,6 +89,8 @@ export async function getSite<TYPE extends "private" | "public">(
     if (DefinitionClass) {
       SiteClass = DefinitionClass;
     }
+  } else if (getCustomSiteDefinition(siteId)) {
+    siteMetadata = await getDefinedSiteMetadata(siteId);
   } else {
     throw new Error(`siteMetadata ${siteId} not found in build, skip creating siteInstance`);
   }

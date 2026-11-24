@@ -81,6 +81,12 @@ export const clientMetaData: TorrentClientMetaData = {
     TrackerManage: {
       allowed: true,
     },
+    Reannounce: {
+      allowed: true,
+    },
+    SetLocation: {
+      allowed: true,
+    },
   },
   // refs: https://github.com/deluge-torrent/deluge/blob/6ec1479cdbbfed269844041d1001de657594d6da/deluge/core/torrent.py#L121-L148
   advanceAddTorrentOptions: [
@@ -169,6 +175,8 @@ type DelugeMethod =
   | "core.add_torrent_magnet"
   | "core.add_torrent_file"
   | "core.get_free_space"
+  | "core.force_reannounce"
+  | "core.move_storage"
   | "core.get_session_status"
   | "core.remove_torrent"
   | "core.pause_torrent"
@@ -912,6 +920,56 @@ export default class Deluge extends AbstractBittorrentClient {
     } catch (e) {
       return false;
     }
+  }
+
+  // 强制重新汇报 Tracker: core.force_reannounce
+  override async reannounceTorrent(id: any): Promise<boolean> {
+    try {
+      await this.request("core.force_reannounce", [[id]]);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 迁移存储目录: core.move_storage
+  override async setTorrentLocation(id: any, location: string): Promise<boolean> {
+    const trimmed = location.trim();
+    if (!trimmed) return false;
+    try {
+      await this.request("core.move_storage", [[id], trimmed]);
+      this.invalidateSuggestListCache();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 原子替换 Tracker URL: core.set_torrent_trackers
+  override async replaceTorrentTracker(
+    torrent: string | CTorrent,
+    search: string,
+    replacement: string,
+  ): Promise<{ replaced: number; total: number }> {
+    const trimmedSearch = search.trim();
+    if (!trimmedSearch) return { replaced: 0, total: 0 };
+    const hash = this.getTorrentHash(torrent);
+    const current = await this.getTorrentTrackersDetail(hash);
+    let replaced = 0;
+    const next = current.map((t) => {
+      if (t.url && t.url.includes(trimmedSearch)) {
+        const updated = t.url.split(trimmedSearch).join(replacement);
+        if (updated !== t.url) {
+          replaced += 1;
+          return { url: updated, tier: t.tier };
+        }
+      }
+      return { url: t.url, tier: t.tier };
+    });
+    if (replaced > 0) {
+      await this.request("core.set_torrent_trackers", [hash, next]);
+    }
+    return { replaced, total: current.length };
   }
 
   /**

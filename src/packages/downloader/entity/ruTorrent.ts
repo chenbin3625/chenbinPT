@@ -78,6 +78,12 @@ export const clientMetaData: TorrentClientMetaData = {
     TrackerManage: {
       allowed: false,
     },
+    Reannounce: {
+      allowed: true,
+    },
+    SetLocation: {
+      allowed: false,
+    },
   },
 };
 
@@ -667,6 +673,17 @@ export default class RuTorrent extends AbstractBittorrentClient<TorrentClientCon
   override async recheckTorrent(id: any): Promise<boolean> {
     try {
       const postData = buildRequestXML([["d.check_hash", [id.toUpperCase()]]]);
+      const { data } = await this.requestHttpRpc(postData);
+      return this.isHttpRpcSuccess(data);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 强制重新汇报 Tracker（rTorrent: d.tracker_announce）
+  override async reannounceTorrent(id: any): Promise<boolean> {
+    try {
+      const postData = buildRequestXML([["d.tracker_announce", [String(id).toUpperCase()]]]);
       const { data } = await this.requestHttpRpc(postData);
       return this.isHttpRpcSuccess(data);
     } catch (e) {

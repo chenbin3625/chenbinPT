@@ -354,6 +354,7 @@ describe("F0119: App.vue unmounting before dataReady does not install URL watche
     });
 
     const { default: App } = await import("@/content-script/app/App.vue");
+    const { PTD_DATA_KEY, PTD_DATA_READY_KEY } = await import("@/content-script/app/injectionKeys.ts");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
 
     const pinia = createPinia();
@@ -366,8 +367,8 @@ describe("F0119: App.vue unmounting before dataReady does not install URL watche
       .use(pinia)
       .use(i18nInstance)
       .use(Antd as any);
-    app.provide("ptd_data", { siteId: "testsite" });
-    app.provide("ptd_data_ready", dataReady.promise);
+    app.provide(PTD_DATA_KEY, { siteId: "testsite" });
+    app.provide(PTD_DATA_READY_KEY, dataReady.promise);
     app.mount(host);
 
     // Unmount before dataReady resolves
@@ -419,6 +420,7 @@ describe("F0117: SiteListPage.vue counts resolved { downloadStatus: 'failed' } i
     }));
 
     const { default: SiteListPage } = await import("@/content-script/app/pages/SiteListPage.vue");
+    const { PTD_DATA_KEY, REMOTE_DOWNLOAD_DIALOG_DATA_KEY } = await import("@/content-script/app/injectionKeys.ts");
     const { useConfigStore } = await import("@/options/stores/config.ts");
     const { useRuntimeStore } = await import("@/options/stores/runtime.ts");
     const { i18nInstance } = await import("@/options/plugins/i18n.ts");
@@ -437,8 +439,8 @@ describe("F0117: SiteListPage.vue counts resolved { downloadStatus: 'failed' } i
       .use(pinia)
       .use(i18nInstance)
       .use(Antd as any);
-    app.provide("ptd_data", { siteId: "testsite" });
-    app.provide("remoteDownloadDialogData", { show: false, torrents: [], isDefaultSend: false });
+    app.provide(PTD_DATA_KEY, { siteId: "testsite" });
+    app.provide(REMOTE_DOWNLOAD_DIALOG_DATA_KEY, { show: false, torrents: [], isDefaultSend: false });
     app.mount(host);
     await flushAsync();
 

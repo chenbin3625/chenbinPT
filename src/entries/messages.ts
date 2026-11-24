@@ -47,6 +47,7 @@ export interface ITorrentInfoForVerification {
 
 import type { TExtensionStorageKey, IExtensionStorageSchema } from "@/storage.ts";
 import {
+  IAlertWebhookConfig,
   ILoggerItem,
   IRestoreOptions,
   IRestoreReport,
@@ -66,6 +67,9 @@ import {
   ITorrentFavoriteStatus,
   TTorrentFavoriteKey,
   BridgeStatus,
+  IDownloadUpdateResult,
+  IOpenExtensionsPageResult,
+  IUpdateCheckState,
 } from "@/shared/types.ts";
 
 import { isDebug } from "~/helper.ts";
@@ -168,6 +172,19 @@ interface ProtocolMap {
   removeContextMenu(data: string): void;
   clearContextMenus(): void;
 
+  // 1.8 告警 Webhook & 工具栏弹窗同步
+  sendAlertWebhook(data: { title: string; message: string; webhook?: IAlertWebhookConfig }): {
+    ok: boolean;
+    error?: string;
+  };
+  syncToolbarPopup(): boolean;
+
+  // 1.9 扩展版本更新检测与下载引导
+  getUpdateCheckState(): IUpdateCheckState;
+  checkExtensionUpdate(data?: { force?: boolean }): IUpdateCheckState;
+  downloadExtensionUpdate(data?: { url?: string; filename?: string }): IDownloadUpdateResult;
+  openBrowserExtensionsPage(): IOpenExtensionsPageResult;
+
   // 2. 在 offscreen 中注册，涉及页面解析等功能，主要供 options 使用
   logger(data: ILoggerItem): void;
   getLogger(): ILoggerItem[];
@@ -177,6 +194,13 @@ interface ProtocolMap {
   getSiteUserConfig(data: { siteId: TSiteID; flush?: boolean }): ISiteUserConfig;
   getSiteFavicon(data: { site: TSiteID | getFaviconMetadata; flush?: boolean }): string;
   clearSiteFaviconCache(): void;
+  testSiteUrlsLatency(data: { siteId?: TSiteID; urls: string[]; timeoutMs?: number }): Array<{
+    url: string;
+    ok: boolean;
+    status?: number;
+    latencyMs: number;
+    error?: string;
+  }>;
 
   // 2.2 站点搜索、搜索快照 ( utils/search )
   getSiteSearchResult(data: {
@@ -194,6 +218,21 @@ interface ProtocolMap {
   getMediaServerItemDetail(data: { mediaServerId: IMediaServerId; itemId: string }): IMediaServerItem | null;
   /** 调研 C14 / C20：按需生成媒体库概览（整库遍历与聚合都在 offscreen 里完成，只回传统计结果） */
   getMediaServerOverview(data: { mediaServerId: IMediaServerId; maxItems?: number }): IMediaServerOverview | null;
+  /** 内容脚本社交页查重：只返回脱敏后的库内命中摘要，不暴露媒体服务器地址与凭据 */
+  checkMediaServerBySocialInfo(data: {
+    title?: string;
+    altTitles?: string[];
+    imdbId?: string;
+    doubanId?: string;
+    year?: string | number;
+  }): Array<{
+    serverName: string;
+    serverType: string;
+    itemName: string;
+    year?: string | number;
+    played?: boolean;
+    videoQuality?: string;
+  }>;
   getSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): ISearchData | null;
   saveSearchResultSnapshotData(data: { snapshotId: TSearchSnapshotKey; data: ISearchData }): void;
   removeSearchResultSnapshotData(snapshotId: TSearchSnapshotKey): void;
@@ -202,6 +241,7 @@ interface ProtocolMap {
   getDownloaderConfig(downloaderId: string): IDownloaderMetadata;
   getDownloaderVersion(downloaderId: string): string;
   getDownloaderStatus(downloaderId: string): TorrentClientStatus;
+  getDownloaderFreeSpace(downloaderId: string): number | "N/A";
   getTorrentDownloadLink(torrent: ITorrent): string;
   getTorrentInfoForVerification(torrent: ITorrent): ITorrentInfoForVerification;
 
@@ -229,6 +269,24 @@ interface ProtocolMap {
   getClientTorrentTrackersDetail(data: { downloaderId: string; torrent: CTorrent }): CTorrentTracker[];
   addClientTorrentTracker(data: { downloaderId: string; torrent: CTorrent; url: string }): boolean;
   removeClientTorrentTracker(data: { downloaderId: string; torrent: CTorrent; url: string }): boolean;
+  reannounceClientTorrent(data: { downloaderId: string; id: any }): boolean;
+  setClientTorrentLocation(data: { downloaderId: string; id: any; location: string; moveData?: boolean }): boolean;
+  replaceClientTorrentTracker(data: { downloaderId: string; torrent: CTorrent; search: string; replacement: string }): {
+    replaced: number;
+    total: number;
+  };
+  /** 站点页面种子状态（已收藏/已下载/做种中/下载中），内容脚本调用时强绑定站点 */
+  getSiteTorrentStatuses(data: {
+    siteId: TSiteID;
+    torrents: Array<{
+      key: string;
+      id?: string | number;
+      title?: string;
+      url?: string;
+      link?: string;
+      size?: number;
+    }>;
+  }): Record<string, { favorited?: boolean; downloaded?: boolean; seeding?: boolean; downloading?: boolean }>;
 
   downloadTorrent(data: IDownloadTorrentOption): IDownloadTorrentResult;
 
@@ -253,6 +311,7 @@ interface ProtocolMap {
   setSiteLastUserInfo(userInfo: IUserInfo): void;
   cancelUserInfoQueue(): void;
   getSiteUserInfo(siteId: TSiteID): Record<string, IUserInfo>;
+  getAllSitesPreviousUserInfo(): Record<TSiteID, IUserInfo>;
   removeSiteUserInfo(data: { siteId: TSiteID; date: string[] }): void;
 
   // 2.5 社交信息 ( utils/socialInformation )
@@ -304,6 +363,13 @@ interface ProtocolMap {
   getSiteList(): Array<{ id: string; name: string; url: string; offline: boolean }>;
   getDownloaderList(): Array<{ id: string; name: string; type: string; enabled: boolean; address: string }>;
 
+  // 2.8.1 关键词定时监控
+  runKeywordWatchRule(ruleId: string): {
+    matchedCount: number;
+    newMatches: Array<{ site: TSiteID; title: string; size?: number; url?: string }>;
+    error?: string;
+  };
+
   // 2.9 Native messaging bridge control
   nativeBridgeGetStatus(): BridgeStatus;
   nativeBridgeSetEnabled(data: boolean): BridgeStatus;
@@ -324,16 +390,19 @@ export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "getSiteUserConfig",
   "getSiteFavicon",
   "clearSiteFaviconCache",
+  "testSiteUrlsLatency",
   "getSiteSearchResult",
   "getMediaServerSearchResult",
   "getMediaServerItemDetail",
   "getMediaServerOverview",
+  "checkMediaServerBySocialInfo",
   "getSearchResultSnapshotData",
   "saveSearchResultSnapshotData",
   "removeSearchResultSnapshotData",
   "getDownloaderConfig",
   "getDownloaderVersion",
   "getDownloaderStatus",
+  "getDownloaderFreeSpace",
   "getTorrentDownloadLink",
   "getTorrentInfoForVerification",
   "getClientTorrents",
@@ -352,6 +421,10 @@ export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "getClientTorrentTrackersDetail",
   "addClientTorrentTracker",
   "removeClientTorrentTracker",
+  "reannounceClientTorrent",
+  "setClientTorrentLocation",
+  "replaceClientTorrentTracker",
+  "getSiteTorrentStatuses",
   "downloadTorrent",
   "settleBrowserDownload",
   "releaseBrowserDownloadBlob",
@@ -364,6 +437,7 @@ export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "setSiteLastUserInfo",
   "cancelUserInfoQueue",
   "getSiteUserInfo",
+  "getAllSitesPreviousUserInfo",
   "removeSiteUserInfo",
   "getSocialInformation",
   "matchSocialPage",
@@ -388,6 +462,7 @@ export const offscreenMessageTypes = new Set<keyof ProtocolMap>([
   "deleteTorrentFavorites",
   "getSiteList",
   "getDownloaderList",
+  "runKeywordWatchRule",
 ]);
 
 // 全局消息处理函数映射
@@ -430,6 +505,18 @@ export const extensionPageOnlyMessages = new Set<keyof ProtocolMap>([
   "clearDownloadHistory",
   "clearLogger",
   "deleteClientTorrent",
+  "reannounceClientTorrent",
+  "setClientTorrentLocation",
+  "replaceClientTorrentTracker",
+  "getAllSitesPreviousUserInfo",
+  "testSiteUrlsLatency",
+  "runKeywordWatchRule",
+  "sendAlertWebhook",
+  "syncToolbarPopup",
+  "getUpdateCheckState",
+  "checkExtensionUpdate",
+  "downloadExtensionUpdate",
+  "openBrowserExtensionsPage",
   "createKeepUploadTask",
   "updateKeepUploadTask",
   "deleteKeepUploadTask",
@@ -465,6 +552,9 @@ export const contentScriptAllowedMessages = new Set<keyof ProtocolMap>([
   // 种子收藏：offscreen 侧要求每个 torrent.site 与发送页面绑定（utils/torrentFavorite.ts）
   "createTorrentFavorites",
   "getTorrentFavoriteStatus",
+  // 社交页媒体库查重（仅返回脱敏摘要）& PT 页种子状态（强绑定站点）
+  "checkMediaServerBySocialInfo",
+  "getSiteTorrentStatuses",
 ]);
 
 /**
@@ -596,11 +686,13 @@ export const retryableOffscreenMessageTypes = new Set<keyof ProtocolMap>([
   // 媒体库条目详情是只读查询；媒体库概览（getMediaServerOverview）虽然也只读，但它是用户显式确认后
   // 才发起的整库遍历（有被服务器判定为滥用的风险），静默重发会让遍历再跑一遍，因此不在白名单内
   "getMediaServerItemDetail",
+  "checkMediaServerBySocialInfo",
   "getSearchResultSnapshotData",
   // 2.3 下载器 / 下载历史的只读查询（所有 set/pause/resume/recheck/move/delete/add/remove 都不在此列）
   "getDownloaderConfig",
   "getDownloaderVersion",
   "getDownloaderStatus",
+  "getDownloaderFreeSpace",
   "getTorrentDownloadLink",
   "getTorrentInfoForVerification",
   "getClientTorrents",
@@ -609,12 +701,14 @@ export const retryableOffscreenMessageTypes = new Set<keyof ProtocolMap>([
   "getClientTorrentFiles",
   "getClientTorrentPeers",
   "getClientTorrentTrackersDetail",
+  "getSiteTorrentStatuses",
   "getDownloadHistory",
   "getDownloadHistoryById",
   // 2.4 用户信息：getSiteUserInfoResult 会向站点重新取一次数据并做幂等写回，
   // 但重复执行只等于「再刷新一次」，没有额外的用户可见副作用
   "getSiteUserInfoResult",
   "getSiteUserInfo",
+  "getAllSitesPreviousUserInfo",
   // 2.5 社交信息只读查询（clearSocialInformationCache 是写，不在此列）
   "getSocialInformation",
   "matchSocialPage",

@@ -27,6 +27,7 @@ describe("媒体海报令牌不进入 URL", () => {
     (FnOS as any).sessionCache?.clear();
     (FnOS as any).posterUrlCache?.clear();
     (FnOS as any).posterUrlCacheBytes = 0;
+    (FnOS as any).accessCodeGrants?.clear();
   });
 
   afterEach(() => {
@@ -53,7 +54,7 @@ describe("媒体海报令牌不进入 URL", () => {
     expect(request.headers["X-Plex-Token"]).toBe("private-plex-token");
   });
 
-  it("fnOS 海报 URL 不含 AccessToken，通过真实 request() 附加认证头拉取", async () => {
+  it("fnOS 海报 URL 不含 token，通过原生 /v/api/v1/sys/img 与认证头拉取", async () => {
     const client = new FnOSCtor({
       id: "fnos-1",
       type: "fnos",
@@ -62,34 +63,40 @@ describe("媒体海报令牌不进入 URL", () => {
       auth: { username: "user", password: "password" },
     });
     axiosMock.request.mockImplementation(async (config: any) => {
-      if (config.url === "/Users/AuthenticateByName") {
+      if (config.url === "/v/api/v2/user/loginByPassword") {
         return {
           status: 200,
           data: {
-            AccessToken: "private-fnos-token",
-            User: { Id: "user-1" },
-            SessionInfo: { Id: "session-1" },
+            code: 0,
+            data: { token: "private-fnos-token" },
           },
         };
       }
-      if (config.url === "/Items/movie-1/Images/Primary") {
-        return { status: 200, data: poster };
+      if (config.url === "/v/api/v1/user/info") {
+        return {
+          status: 200,
+          data: {
+            code: 0,
+            data: { guid: "user-1" },
+          },
+        };
+      }
+      if (config.url === "/v/api/v1/sys/img/posters/movie-1.png?w=256") {
+        return { status: 200, data: poster, headers: { "content-type": "image/png" } };
       }
       throw new Error(`unexpected request: ${config.url}`);
     });
 
-    const url = await (client as any).getPoster({ Id: "movie-1", ImageTags: { Primary: "tag-1" } });
+    const url = await (client as any).getPoster({ guid: "movie-1", poster: "/posters/movie-1.png" });
 
     expect(url).toMatch(/^data:image\/png;base64,/);
-    expect(axiosMock.request).toHaveBeenCalledTimes(2);
-    const posterRequest = axiosMock.request.mock.calls[1]![0];
-    expect(posterRequest.url).toBe("/Items/movie-1/Images/Primary");
-    expect(posterRequest.params).toEqual({ tag: "tag-1", maxHeight: 400 });
-    expect(posterRequest.headers["X-Emby-Token"]).toBe("private-fnos-token");
-    expect(posterRequest.headers["X-Emby-Authorization"]).toContain('UserId="user-1"');
-    expect(`${posterRequest.baseURL}${posterRequest.url}${JSON.stringify(posterRequest.params)}`).not.toContain(
-      "private-fnos-token",
-    );
+    expect(axiosMock.request).toHaveBeenCalledTimes(3);
+    const posterRequest = axiosMock.request.mock.calls[2]![0];
+    expect(posterRequest.url).toBe("/v/api/v1/sys/img/posters/movie-1.png?w=256");
+    expect(posterRequest.headers["Authorization"]).toBe("private-fnos-token");
+    expect(posterRequest.headers["authx"]).toMatch(/^nonce=\d{6}&timestamp=\d+&sign=[0-9a-f]{32}$/);
+    expect(posterRequest.withCredentials).toBe(true);
+    expect(`${posterRequest.baseURL}${posterRequest.url}`).not.toContain("private-fnos-token");
   });
 
   it("Plex 搜索海报以有界并发抓取，而不是逐张串行等待", async () => {

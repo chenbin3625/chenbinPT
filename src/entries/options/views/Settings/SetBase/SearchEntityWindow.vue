@@ -153,6 +153,16 @@ const hiddenTagNamesText = computed({
           <a-typography-text>{{ t("SetBase.searchEntity.showHotRecommendations") }}</a-typography-text>
           <a-switch v-model:checked="config.searchEntity.showHotRecommendations" />
         </div>
+
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.searchEntity.enableMediaServerCrossCheck") }}</a-typography-text>
+          <a-switch v-model:checked="config.searchEntity.enableMediaServerCrossCheck" />
+        </div>
+
+        <div class="ptd-settings-row">
+          <a-typography-text>{{ t("SetBase.searchEntity.enableDownloaderCrossCheck") }}</a-typography-text>
+          <a-switch v-model:checked="config.searchEntity.enableDownloaderCrossCheck" />
+        </div>
       </div>
 
       <div class="ptd-setting-group">

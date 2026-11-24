@@ -244,8 +244,6 @@ export const siteMetadata: ISiteMetadata = {
         // 不是斜杠后的总页数（3），多页做种体积只统计第一页；改为取 `/` 后的总页数。
         filters: [(query: string) => parseInt(query?.match(/Page\s+\d+\s*\/\s*(\d+)/)?.[1] ?? "0")],
       },
-      // 没有积分系统
-      bonus: { text: "0" },
       seedingSize: {
         selector: ":self",
         elementProcess: (element: any) => {

@@ -8,11 +8,16 @@ import {
   DoubleRightOutlined,
   DeleteOutlined,
   DownOutlined,
+  ExclamationCircleOutlined,
   FieldTimeOutlined,
   FileSearchOutlined,
+  FolderOpenOutlined,
+  LinkOutlined,
+  MergeCellsOutlined,
   PauseOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  RetweetOutlined,
   SettingOutlined,
   StopOutlined,
   SwapOutlined,
@@ -37,6 +42,7 @@ import type { DataTableHeader } from "@/options/types/dataTable.ts";
 
 import {
   CTorrentState,
+  CTrackerState,
   getDownloaderIcon,
   getDownloaderMetaData,
   type CTorrent,
@@ -61,6 +67,9 @@ import TorrentDetailDialog from "./TorrentDetailDialog.vue";
 import SpeedLimitDialog from "./SpeedLimitDialog.vue";
 import LabelDialog from "./LabelDialog.vue";
 import RecheckConfirmDialog from "./RecheckConfirmDialog.vue";
+import MoveLocationDialog from "./MoveLocationDialog.vue";
+import ReplaceTrackerDialog from "./ReplaceTrackerDialog.vue";
+import { getCachedTorrentSiteMatch } from "./torrentSite.ts";
 
 import {
   torrents,
@@ -137,8 +146,136 @@ const toLabelTorrents = ref<CTorrent[]>([]);
 const showRecheckDialog = ref(false);
 const toRecheckTorrents = ref<CTorrent[]>([]);
 
+// move location dialog
+const showMoveLocationDialog = ref(false);
+const toMoveLocationTorrents = ref<CTorrent[]>([]);
+
+// replace tracker dialog
+const showReplaceTrackerDialog = ref(false);
+const toReplaceTrackerTorrents = ref<CTorrent[]>([]);
+
 // client status dialog
 const showClientStatusDialog = ref(false);
+
+// 多维快捷筛选条状态（Feature #2）
+type TQuickStateFilter = "all" | "seeding" | "downloading" | "paused" | "checking" | "error" | "trackerError";
+const quickStateFilter = ref<TQuickStateFilter>("all");
+const quickSiteFilter = ref<string | undefined>(undefined);
+const quickLabelFilter = ref<string | undefined>(undefined);
+const scanningTrackers = ref(false);
+const trackerErrorMap = ref<Record<string, string>>({});
+
+const stateFilterCounts = computed(() => {
+  const counts = {
+    all: allTorrents.value.length,
+    seeding: 0,
+    downloading: 0,
+    paused: 0,
+    checking: 0,
+    error: 0,
+    trackerError: 0,
+  };
+  for (const item of allTorrents.value) {
+    if (item.state === CTorrentState.seeding) counts.seeding += 1;
+    else if (item.state === CTorrentState.downloading) counts.downloading += 1;
+    else if (item.state === CTorrentState.paused) counts.paused += 1;
+    else if (item.state === CTorrentState.checking || item.state === CTorrentState.queued) counts.checking += 1;
+    else if (item.state === CTorrentState.error) counts.error += 1;
+
+    if (trackerErrorMap.value[torrentKey(item)]) {
+      counts.trackerError += 1;
+    }
+  }
+  return counts;
+});
+
+const siteFilterOptions = computed(() => {
+  const counts = new Map<string, number>();
+  for (const item of allTorrents.value) {
+    const match = getCachedTorrentSiteMatch(item);
+    if (!match) continue;
+    const key = match.type === "site" ? match.siteId : match.type === "public" ? "__public__" : "__unmatched__";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([value, count]) => {
+      const label =
+        value === "__public__"
+          ? t("MyClient.site.public")
+          : value === "__unmatched__"
+            ? t("MyClient.site.unmatched")
+            : metadataStore.siteNameMap[value] || value;
+      return { value, label: `${label} (${count})` };
+    });
+});
+
+const labelFilterOptions = computed(() => {
+  const counts = new Map<string, number>();
+  for (const item of allTorrents.value) {
+    const lbl = item.label?.trim();
+    if (!lbl) continue;
+    counts.set(lbl, (counts.get(lbl) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([value, count]) => ({ value, label: `${value} (${count})` }));
+});
+
+const hasActiveQuickFilters = computed(
+  () =>
+    quickStateFilter.value !== "all" ||
+    Boolean(quickSiteFilter.value) ||
+    Boolean(quickLabelFilter.value) ||
+    Boolean(searchText.value.trim()),
+);
+
+function resetQuickFilters() {
+  quickStateFilter.value = "all";
+  quickSiteFilter.value = undefined;
+  quickLabelFilter.value = undefined;
+  searchText.value = "";
+}
+
+async function scanTrackerErrors() {
+  if (scanningTrackers.value || allTorrents.value.length === 0) return;
+  scanningTrackers.value = true;
+  const targetList = allTorrents.value.filter((item) => isFeatureAllowed(item.clientId, "TrackerList"));
+  const nextErrors: Record<string, string> = {};
+  let cursor = 0;
+  const concurrency = 4;
+
+  try {
+    const worker = async () => {
+      while (cursor < targetList.length) {
+        const item = targetList[cursor++];
+        try {
+          const trackers = await sendMessage("getClientTorrentTrackersDetail", {
+            downloaderId: item.clientId,
+            torrent: item,
+          });
+          const errTracker = trackers.find((tr) => tr.status === CTrackerState.error);
+          if (errTracker) {
+            nextErrors[torrentKey(item)] = errTracker.statusMessage || errTracker.url || "Tracker error";
+          }
+        } catch {
+          // 忽略单个种子查询失败
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, targetList.length) }, worker));
+    trackerErrorMap.value = nextErrors;
+    const count = Object.keys(nextErrors).length;
+    if (count > 0) {
+      quickStateFilter.value = "trackerError";
+      runtimeStore.showSnackbar(t("MyClient.quickFilter.scanFound", { count }), { color: "warning" });
+    } else {
+      runtimeStore.showSnackbar(t("MyClient.quickFilter.scanClean"), { color: "success" });
+    }
+  } finally {
+    scanningTrackers.value = false;
+  }
+}
 
 const totalUpSpeed = computed(() => allTorrents.value.reduce((acc, t) => acc + (t.uploadSpeed ?? 0), 0));
 const totalDlSpeed = computed(() => allTorrents.value.reduce((acc, t) => acc + (t.downloadSpeed ?? 0), 0));
@@ -181,7 +318,40 @@ function onTableChange(_pagination: unknown, _filters: unknown, sorter: unknown)
 
 const filteredTorrents = computed(() => {
   const active = activeDownloaderIds.value;
-  const base = active.flatMap((id) => torrents.value[id] ?? []);
+  let base = active.flatMap((id) => torrents.value[id] ?? []);
+
+  // 状态快捷筛选
+  if (quickStateFilter.value !== "all") {
+    const sf = quickStateFilter.value;
+    base = base.filter((t) => {
+      if (sf === "seeding") return t.state === CTorrentState.seeding;
+      if (sf === "downloading") return t.state === CTorrentState.downloading;
+      if (sf === "paused") return t.state === CTorrentState.paused;
+      if (sf === "checking") return t.state === CTorrentState.checking || t.state === CTorrentState.queued;
+      if (sf === "error") return t.state === CTorrentState.error;
+      if (sf === "trackerError") return Boolean(trackerErrorMap.value[torrentKey(t)]);
+      return true;
+    });
+  }
+
+  // 站点筛选
+  if (quickSiteFilter.value) {
+    const targetSite = quickSiteFilter.value;
+    base = base.filter((t) => {
+      const match = getCachedTorrentSiteMatch(t);
+      if (!match) return false;
+      if (targetSite === "__public__") return match.type === "public";
+      if (targetSite === "__unmatched__") return match.type === "unmatched";
+      return match.type === "site" && match.siteId === targetSite;
+    });
+  }
+
+  // 标签筛选
+  if (quickLabelFilter.value) {
+    const targetLabel = quickLabelFilter.value;
+    base = base.filter((t) => (t.label ?? "").trim() === targetLabel);
+  }
+
   if (!searchTextDebounced.value) return base;
   const q = searchTextDebounced.value.toLowerCase();
   return base.filter(
@@ -523,6 +693,52 @@ function openLabelDialog() {
   showLabelDialog.value = true;
 }
 
+function openMoveLocationDialog(torrentList: CTorrent[]) {
+  if (torrentList.length === 0 || !isFeatureAllowedForAll(torrentList, "SetLocation")) return;
+  toMoveLocationTorrents.value = [...torrentList];
+  showMoveLocationDialog.value = true;
+}
+
+function openReplaceTrackerDialog(torrentList: CTorrent[]) {
+  if (torrentList.length === 0 || !isFeatureAllowedForAll(torrentList, "TrackerManage")) return;
+  toReplaceTrackerTorrents.value = [...torrentList];
+  showReplaceTrackerDialog.value = true;
+}
+
+async function reannounceTorrents(torrentList: CTorrent[]) {
+  if (torrentList.length === 0 || pendingCommand.value) return;
+  pendingCommand.value = "queue";
+  try {
+    const results = await Promise.allSettled(
+      torrentList.map((item) => sendMessage("reannounceClientTorrent", { downloaderId: item.clientId, id: item.id })),
+    );
+    showBatchResult(results, "MyClient.action.reannounceSuccess");
+  } finally {
+    pendingCommand.value = null;
+  }
+}
+
+/** 从下载器种子名构造适合聚搜的关键词，并携带反向辅种上下文跳转 SearchEntity */
+function searchCrossSeedForTorrent(record: CTorrent) {
+  const cleaned = record.name
+    .replace(/\.(mkv|mp4|avi|ts|iso|m2ts|flac|mp3|rar|zip)$/i, "")
+    .replace(/[._]+/g, " ")
+    .trim();
+  void router.push({
+    name: "SearchEntity",
+    query: {
+      search: cleaned || record.name,
+      flush: "1",
+      crossSeedClient: record.clientId,
+      crossSeedId: String(record.id),
+      crossSeedSize: String(record.totalSize ?? 0),
+      crossSeedName: record.name,
+      crossSeedHash: record.infoHash ?? "",
+      crossSeedPath: record.savePath ?? "",
+    },
+  });
+}
+
 /**
  * Aria2 的 `aria2.remove` 不支持同时删除数据（`Aria2.removeTorrent` 在 `removeData=true` 时按契约
  * 返回 false），因此勾选「同时删除数据」后必然整批失败且没有可读原因（N17）。
@@ -652,6 +868,9 @@ const toolbarSecondaryItems = computed<ToolbarAction[]>(() => {
   const recheckUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "Recheck");
   const speedLimitUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "SpeedLimit");
   const labelUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "Label");
+  const reannounceUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "Reannounce");
+  const setLocationUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "SetLocation");
+  const replaceTrackerUnsupported = !noSelection && !isFeatureAllowedForAll(selectedTorrents.value, "TrackerManage");
 
   return [
     {
@@ -660,6 +879,27 @@ const toolbarSecondaryItems = computed<ToolbarAction[]>(() => {
       icon: ReloadOutlined,
       disabled: !!pendingCommand.value || noSelection || recheckUnsupported,
       title: recheckUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.recheckSelected"),
+    },
+    {
+      key: "reannounce",
+      label: t("MyClient.action.reannounce"),
+      icon: RetweetOutlined,
+      disabled: !!pendingCommand.value || noSelection || reannounceUnsupported,
+      title: reannounceUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.action.reannounce"),
+    },
+    {
+      key: "setLocation",
+      label: t("MyClient.moveLocation.btn"),
+      icon: FolderOpenOutlined,
+      disabled: !!pendingCommand.value || noSelection || setLocationUnsupported,
+      title: setLocationUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.moveLocation.btn"),
+    },
+    {
+      key: "replaceTracker",
+      label: t("MyClient.replaceTracker.btn"),
+      icon: LinkOutlined,
+      disabled: !!pendingCommand.value || noSelection || replaceTrackerUnsupported,
+      title: replaceTrackerUnsupported ? t("MyClient.batch.unsupported") : t("MyClient.replaceTracker.btn"),
     },
     {
       key: "speedLimit",
@@ -687,6 +927,15 @@ function onToolbarSecondaryAction(key: string) {
   switch (key) {
     case "recheck":
       openRecheckDialog(selectedTorrents.value);
+      break;
+    case "reannounce":
+      void reannounceTorrents(selectedTorrents.value);
+      break;
+    case "setLocation":
+      openMoveLocationDialog(selectedTorrents.value);
+      break;
+    case "replaceTracker":
+      openReplaceTrackerDialog(selectedTorrents.value);
       break;
     case "speedLimit":
       openSpeedLimitDialog();
@@ -841,6 +1090,98 @@ function onToolbarSecondaryAction(key: string) {
       </div>
     </div>
 
+    <!-- 多维快捷筛选条：状态 chips + 站点 + 标签 + 红种扫描 -->
+    <div v-if="allTorrents.length > 0" class="my-client-quick-filters">
+      <div class="my-client-quick-filters__chips">
+        <a-tag
+          :color="quickStateFilter === 'all' ? 'blue' : undefined"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = 'all'"
+        >
+          {{ t("MyClient.quickFilter.all") }} ({{ stateFilterCounts.all }})
+        </a-tag>
+        <a-tag
+          :color="quickStateFilter === 'seeding' ? 'green' : undefined"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = quickStateFilter === 'seeding' ? 'all' : 'seeding'"
+        >
+          {{ t("MyClient.state.seeding") }} ({{ stateFilterCounts.seeding }})
+        </a-tag>
+        <a-tag
+          :color="quickStateFilter === 'downloading' ? 'processing' : undefined"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = quickStateFilter === 'downloading' ? 'all' : 'downloading'"
+        >
+          {{ t("MyClient.state.downloading") }} ({{ stateFilterCounts.downloading }})
+        </a-tag>
+        <a-tag
+          :color="quickStateFilter === 'paused' ? 'orange' : undefined"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = quickStateFilter === 'paused' ? 'all' : 'paused'"
+        >
+          {{ t("MyClient.state.paused") }} ({{ stateFilterCounts.paused }})
+        </a-tag>
+        <a-tag
+          v-if="stateFilterCounts.checking > 0"
+          :color="quickStateFilter === 'checking' ? 'cyan' : undefined"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = quickStateFilter === 'checking' ? 'all' : 'checking'"
+        >
+          {{ t("MyClient.quickFilter.checking") }} ({{ stateFilterCounts.checking }})
+        </a-tag>
+        <a-tag
+          v-if="stateFilterCounts.error > 0"
+          :color="quickStateFilter === 'error' ? 'red' : undefined"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = quickStateFilter === 'error' ? 'all' : 'error'"
+        >
+          {{ t("MyClient.state.error") }} ({{ stateFilterCounts.error }})
+        </a-tag>
+        <a-tag
+          v-if="stateFilterCounts.trackerError > 0"
+          :color="quickStateFilter === 'trackerError' ? 'error' : 'volcano'"
+          class="my-client-filter-chip"
+          @click="quickStateFilter = quickStateFilter === 'trackerError' ? 'all' : 'trackerError'"
+        >
+          <ExclamationCircleOutlined /> {{ t("MyClient.quickFilter.trackerError") }} ({{
+            stateFilterCounts.trackerError
+          }})
+        </a-tag>
+      </div>
+
+      <div class="my-client-quick-filters__controls">
+        <a-select
+          v-if="siteFilterOptions.length > 0"
+          v-model:value="quickSiteFilter"
+          :options="siteFilterOptions"
+          :placeholder="t('MyClient.quickFilter.sitePlaceholder')"
+          allow-clear
+          show-search
+          option-filter-prop="label"
+          size="small"
+          class="my-client-quick-filters__select"
+        />
+        <a-select
+          v-if="labelFilterOptions.length > 0"
+          v-model:value="quickLabelFilter"
+          :options="labelFilterOptions"
+          :placeholder="t('MyClient.quickFilter.labelPlaceholder')"
+          allow-clear
+          show-search
+          option-filter-prop="label"
+          size="small"
+          class="my-client-quick-filters__select"
+        />
+        <a-button size="small" :loading="scanningTrackers" @click="scanTrackerErrors">
+          <template #icon><ExclamationCircleOutlined /></template>
+          {{ t("MyClient.quickFilter.scanTrackerErrors") }}
+        </a-button>
+        <a-button v-if="hasActiveQuickFilters" size="small" type="link" @click="resetQuickFilters">
+          {{ t("MyClient.quickFilter.reset") }}
+        </a-button>
+      </div>
+    </div>
+
     <a-table
       :sticky="mainTableSticky"
       :columns="tableColumns"
@@ -873,8 +1214,15 @@ function onToolbarSecondaryAction(key: string) {
         <template v-else-if="column.key === 'name'">
           <div>
             <span class="ptd-cell-ellipsis my-client-name" :title="String(record.name ?? '')">{{ record.name }}</span>
-            <div v-if="record.label" class="ptd-cell-ellipsis my-client-label" :title="String(record.label)">
-              <TagOutlined class="ptd-icon-sm" /> {{ record.label }}
+            <div v-if="record.label || trackerErrorMap[torrentKey(record)]" class="my-client-name-meta">
+              <span v-if="record.label" class="ptd-cell-ellipsis my-client-label" :title="String(record.label)">
+                <TagOutlined class="ptd-icon-sm" /> {{ record.label }}
+              </span>
+              <a-tooltip v-if="trackerErrorMap[torrentKey(record)]" :title="trackerErrorMap[torrentKey(record)]">
+                <a-tag color="error" class="my-client-tracker-err-tag">
+                  {{ t("MyClient.quickFilter.trackerError") }}
+                </a-tag>
+              </a-tooltip>
             </div>
           </div>
         </template>
@@ -1019,6 +1367,14 @@ function onToolbarSecondaryAction(key: string) {
               </template>
             </a-dropdown>
 
+            <!-- 反向搜辅种 -->
+            <a-button
+              :title="t('MyClient.action.searchCrossSeed')"
+              @click="() => searchCrossSeedForTorrent(record)"
+              size="small"
+              ><template #icon><MergeCellsOutlined /></template
+            ></a-button>
+
             <!-- 详情 -->
             <a-button :title="t('MyClient.action.detail')" @click="() => openDetailDialog(record)" size="small"
               ><template #icon><FileSearchOutlined /></template
@@ -1090,6 +1446,14 @@ function onToolbarSecondaryAction(key: string) {
     :torrents="toRecheckTorrents"
     :torrent-count="toRecheckTorrents.length"
     :confirm-fn="recheckTorrents"
+  />
+
+  <MoveLocationDialog v-model="showMoveLocationDialog" :torrents="toMoveLocationTorrents" @done="onBatchDialogDone" />
+
+  <ReplaceTrackerDialog
+    v-model="showReplaceTrackerDialog"
+    :torrents="toReplaceTrackerTorrents"
+    @done="onBatchDialogDone"
   />
 </template>
 
@@ -1253,6 +1617,49 @@ function onToolbarSecondaryAction(key: string) {
 
 .my-client-menu-icon {
   margin-right: 4px;
+}
+
+.my-client-quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--ptd-border, rgba(5, 5, 5, 0.08));
+  border-radius: var(--ptd-radius, 6px);
+  background: var(--ptd-surface-soft, rgba(0, 0, 0, 0.02));
+}
+
+.my-client-quick-filters__chips,
+.my-client-quick-filters__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.my-client-filter-chip {
+  cursor: pointer;
+  user-select: none;
+  margin-inline-end: 0;
+}
+
+.my-client-quick-filters__select {
+  min-width: 140px;
+  max-width: 220px;
+}
+
+.my-client-name-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.my-client-tracker-err-tag {
+  margin-inline-end: 0;
 }
 
 @media (max-width: 839px) {

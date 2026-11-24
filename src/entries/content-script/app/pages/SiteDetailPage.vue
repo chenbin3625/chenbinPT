@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, inject, ref, shallowRef } from "vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import {
+  CloseOutlined,
   CloudDownloadOutlined,
   CopyOutlined,
   DownloadOutlined,
@@ -11,28 +12,74 @@ import {
 import type { ITorrent } from "@ptd/site";
 
 import { sendMessage } from "@/messages.ts";
+import { useConfigStore } from "@/options/stores/config.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 
-import type { IRemoteDownloadDialogData } from "../types.ts";
-import {
-  copyTextToClipboard,
-  doKeywordSearch,
-  ensureTrustedTorrentLink,
-  siteInstance,
-  type IPtdData,
-} from "../utils.ts";
+import { usePtdData, useRemoteDownloadDialogData } from "../injectionKeys.ts";
+import { copyTextToClipboard, doKeywordSearch, ensureTrustedTorrentLink, siteInstance } from "../utils.ts";
 
 import SpeedDialBtn from "../components/SpeedDialBtn.vue";
 import TorrentFavoriteDialog from "@/options/components/TorrentFavoriteDialog.vue";
 
+const configStore = useConfigStore();
 const metadataStore = useMetadataStore();
 const runtimeStore = useRuntimeStore();
 const { t } = useI18n();
 
-const ptdData = inject<IPtdData>("ptd_data", {});
+const ptdData = usePtdData();
 const enabledDownloadersBySite = computed(() => {
   return metadataStore.getEnabledDownloadersBySite(ptdData.siteId ?? "");
+});
+
+interface IDetailTorrentStatus {
+  favorited?: boolean;
+  downloaded?: boolean;
+  seeding?: boolean;
+  downloading?: boolean;
+}
+
+const detailStatus = ref<IDetailTorrentStatus | null>(null);
+const dismissedStatus = ref<boolean>(false);
+const hasDetailStatus = computed(() => {
+  const s = detailStatus.value;
+  return Boolean(s && (s.seeding || s.downloading || s.downloaded || s.favorited));
+});
+let detailUnmounted = false;
+
+async function checkDetailTorrentStatus() {
+  if (configStore.contentScript?.showSiteTorrentStatusBadge === false) return;
+  if (!ptdData.siteId || !siteInstance.value) return;
+  try {
+    const parsed = await siteInstance.value.transformDetailPage(document.cloneNode(true) as Document);
+    if (!parsed || detailUnmounted) return;
+    const result = await sendMessage("getSiteTorrentStatuses", {
+      siteId: ptdData.siteId,
+      torrents: [
+        {
+          key: "detail",
+          id: parsed.id,
+          title: parsed.title,
+          url: parsed.url,
+          link: parsed.link,
+          size: parsed.size,
+        },
+      ],
+    });
+    if (!detailUnmounted && result?.detail) {
+      detailStatus.value = result.detail;
+    }
+  } catch {
+    // 静默忽略，不影响详情页核心操作
+  }
+}
+
+onMounted(() => {
+  void checkDetailTorrentStatus();
+});
+
+onUnmounted(() => {
+  detailUnmounted = true;
 });
 
 /**
@@ -65,7 +112,7 @@ async function parseDetailPage(options: { requireLink?: boolean } = {}) {
   return parsedResult;
 }
 
-const remoteDownloadDialogData = inject<IRemoteDownloadDialogData>("remoteDownloadDialogData")!;
+const remoteDownloadDialogData = useRemoteDownloadDialogData();
 
 /**
  * 解析详情页 + 校验链接来源，供「拿链接去发请求」的动作（复制链接 / 推送到下载器）使用。
@@ -179,6 +226,25 @@ function handleSearch() {
     :label="t('contentScript.speedDial.quickSearch')"
     @click="handleSearch"
   />
+
+  <div v-if="hasDetailStatus && !dismissedStatus" class="ptd-cs-badge-float" @click.stop>
+    <div class="ptd-cs-badge-pill ptd-cs-badge-pill--static">
+      <a-tag v-if="detailStatus?.seeding" color="success">{{ t("contentScript.torrentStatus.seeding") }}</a-tag>
+      <a-tag v-if="detailStatus?.downloading" color="processing">{{
+        t("contentScript.torrentStatus.downloading")
+      }}</a-tag>
+      <a-tag v-if="detailStatus?.downloaded" color="blue">{{ t("contentScript.torrentStatus.downloaded") }}</a-tag>
+      <a-tag v-if="detailStatus?.favorited" color="gold">{{ t("contentScript.torrentStatus.favorited") }}</a-tag>
+      <button
+        type="button"
+        class="ptd-cs-badge-close"
+        :title="t('common.dialog.close')"
+        @click.stop="dismissedStatus = true"
+      >
+        <CloseOutlined />
+      </button>
+    </div>
+  </div>
 
   <TorrentFavoriteDialog v-model="showFavoriteDialog" :torrent-items="favoriteTorrents" />
 </template>

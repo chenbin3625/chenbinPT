@@ -21,7 +21,7 @@ import {
   TagOutlined,
   UpOutlined,
 } from "@ant-design/icons-vue";
-import { computed, nextTick, ref, watch, type Component } from "vue";
+import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type {
@@ -73,18 +73,18 @@ const createGuard = () =>
     () => torrent,
   );
 
-// 文件
-const files = ref<CTorrentFile[]>([]);
+// 文件（整批加载 / 不可变更新，用 shallowRef 省去大列表深层代理）
+const files = shallowRef<CTorrentFile[]>([]);
 const filesLoading = ref(false);
 const filesGuard = createGuard();
 
 // peers
-const peers = ref<CTorrentPeer[]>([]);
+const peers = shallowRef<CTorrentPeer[]>([]);
 const peersLoading = ref(false);
 const peersGuard = createGuard();
 
 // trackers
-const trackers = ref<CTorrentTracker[]>([]);
+const trackers = shallowRef<CTorrentTracker[]>([]);
 const trackersLoading = ref(false);
 const trackersGuard = createGuard();
 const trackerInput = ref("");
@@ -166,8 +166,9 @@ async function updateFilePriority(file: CTorrentFile, priority: TorrentFilePrior
     filesGuard.commit(
       requestKey,
       () => {
-        file.priority = priority;
-        file.wanted = priority !== "skip";
+        files.value = files.value.map((item) =>
+          item === file || item.index === file.index ? { ...item, priority, wanted: priority !== "skip" } : item,
+        );
       },
       false,
     );

@@ -2,10 +2,12 @@
 import { nextTick, provide, ref, useTemplateRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { cloneDeep } from "es-toolkit";
-import { type ISiteUserConfig, type TSiteID } from "@ptd/site";
+import { type TSiteID } from "@ptd/site";
 
 import { useMetadataStore } from "@/options/stores/metadata.ts";
 import { useRuntimeStore } from "@/options/stores/runtime.ts";
+
+import { STORED_SITE_USER_CONFIG_KEY, type TStoredSiteUserConfig } from "./injectionKeys.ts";
 
 import Editor from "./Editor.vue";
 
@@ -21,8 +23,8 @@ const runtimeStore = useRuntimeStore();
 const isFormValid = ref<boolean>(false);
 const isSaving = ref(false);
 
-const storedSiteUserConfig = ref<ISiteUserConfig & { valid?: boolean }>({ valid: false });
-provide("storedSiteUserConfig", storedSiteUserConfig);
+const storedSiteUserConfig = ref<TStoredSiteUserConfig>({ valid: false });
+provide(STORED_SITE_USER_CONFIG_KEY, storedSiteUserConfig);
 
 const editorRef = useTemplateRef<{ resetLocalState?: () => void }>("editor");
 

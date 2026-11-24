@@ -101,6 +101,7 @@ beforeEach(() => {
   (FnOS as any).sessionCache.clear();
   (FnOS as any).posterUrlCache.clear();
   (FnOS as any).posterUrlCacheBytes = 0;
+  (FnOS as any).accessCodeGrants.clear();
 });
 
 afterEach(() => {
@@ -445,37 +446,39 @@ describe("Plex", () => {
 });
 
 describe("fnOS 概览", () => {
-  it("多视图也按页拉取，并在服务端只取 Movie/Series；不抓海报", async () => {
+  it("通过原生 /item/list 分页拉取，并在服务端只取 Movie/TV/Video；不抓海报", async () => {
     const client = new FnOSCtor({
       id: "fnos-1",
       type: "fnos",
       name: "fnOS",
       address: "https://fnos.example",
-      auth: { username: "user", password: "password", parentId: "", apikey: "token", userId: "user-1" },
+      auth: { username: "user", password: "password", accessCode: "", parentId: "lib-guid" },
       timeout: 5000,
     });
-    (client as any).getViewIds = vi.fn(async () => ["view-a", "view-b"]);
-    const request = vi.fn(async (_url: string, config: any) => {
-      const { ParentId, StartIndex, Limit } = config.params;
-      const total = ParentId === "view-a" ? 3 : 1;
-      const Items = Array.from({ length: Math.max(0, Math.min(Limit, total - StartIndex)) }, (_, i) => ({
-        Id: `${ParentId}-${StartIndex + i}`,
-        Name: "x",
-        Type: "Movie",
-        MediaSources: [{ Size: 10 }],
+    const getPosterSpy = vi.spyOn(client as any, "getPoster");
+    const request = vi.fn(async (path: string, options: any) => {
+      expect(path).toBe("/item/list");
+      const { page, page_size, ancestor_guid, tags } = options.data;
+      expect(ancestor_guid).toBe("lib-guid");
+      expect(tags.type).toEqual(["Movie", "TV", "Video"]);
+      const total = 4;
+      const start = (page - 1) * page_size;
+      const list = Array.from({ length: Math.max(0, Math.min(page_size, total - start)) }, (_, i) => ({
+        guid: `guid-${start + i}`,
+        title: `Item ${start + i}`,
+        type: (start + i) % 2 === 0 ? "Movie" : "TV",
+        poster: `/posters/${start + i}.webp`,
+        runtime: 120,
+        trim_id: `tt${100 + start + i}`,
       }));
-      return { status: 200, data: { Items } };
+      return { list, total };
     });
     (client as any).request = request;
 
     const overview = await client.getLibraryOverview({ pageSize: 2 });
 
     expect(overview?.totalItems).toBe(4);
-    expect(overview?.totalSize).toBe(40);
-    for (const [, config] of request.mock.calls) {
-      expect(config.params.IncludeItemTypes).toBe("Movie,Series");
-      expect(config.params.Limit).toBe(2);
-      expect(config.responseType).not.toBe("blob");
-    }
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(getPosterSpy).not.toHaveBeenCalled();
   });
 });

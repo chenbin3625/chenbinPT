@@ -314,6 +314,31 @@ onMessage("getSiteUserInfo", async ({ data: siteId }) => {
   );
 });
 
+onMessage("getAllSitesPreviousUserInfo", async () => {
+  const allUserInfo = ((await sendMessage("getExtStorage", "userInfo")) as TUserInfoStorageSchema | null) ?? {};
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const result: Record<string, IUserInfo> = {};
+
+  for (const [siteId, history] of Object.entries(allUserInfo)) {
+    if (!history || typeof history !== "object") continue;
+    let bestDate = "";
+    let bestInfo: IUserInfo | undefined;
+    for (const [dateStr, info] of Object.entries(history)) {
+      if (!info || info.status !== EResultParseStatus.success) continue;
+      // 只取早于今天的最近一条有效快照用于对比日增量
+      if (dateStr < todayStr && dateStr > bestDate) {
+        bestDate = dateStr;
+        bestInfo = info;
+      }
+    }
+    if (bestInfo) {
+      result[siteId] = bestInfo;
+    }
+  }
+
+  return result;
+});
+
 onMessage("removeSiteUserInfo", async ({ data: { siteId, date } }) => {
   if (date.length === 0) return;
   // 一次读改写删完所有日期：逐天 patch 会重写整份 userInfo（6.89 MB 时每天约 1s，删一年要几分钟）

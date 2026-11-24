@@ -102,6 +102,10 @@ defineExpose({
         <a-typography-text>{{ t("SetBase.download.allowDirectSendToClient") }}</a-typography-text>
         <a-switch v-model:checked="config.download.allowDirectSendToClient" />
       </div>
+      <div class="ptd-settings-row">
+        <a-typography-text>{{ t("SetBase.download.enableRoutingRulesOnDefaultSend") }}</a-typography-text>
+        <a-switch v-model:checked="config.download.enableRoutingRulesOnDefaultSend" />
+      </div>
     </section>
   </div>
 </template>

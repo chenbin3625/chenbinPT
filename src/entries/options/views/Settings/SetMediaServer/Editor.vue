@@ -68,7 +68,7 @@ watch(
   { immediate: true, deep: false },
 );
 
-const SECRET_AUTH_FIELD_PATTERN = /passw|passwd|password|pwd|apikey|api[_-]?key|token|cookie|secret/i;
+const SECRET_AUTH_FIELD_PATTERN = /passw|passwd|password|pwd|apikey|api[_-]?key|token|cookie|secret|access[_-]?code/i;
 
 function isSecretAuthField(authField: string | { name: string }): boolean {
   return SECRET_AUTH_FIELD_PATTERN.test(authFieldName(authField));

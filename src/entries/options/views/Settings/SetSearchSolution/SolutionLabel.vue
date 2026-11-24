@@ -15,7 +15,9 @@ const {
   column?: boolean;
 }>();
 
-const emit = defineEmits(["remove:solution"]);
+const emit = defineEmits<{
+  "remove:solution": [solution: ISearchSolution];
+}>();
 
 function removeSolution(solution: ISearchSolution, event?: MouseEvent) {
   event?.preventDefault?.();

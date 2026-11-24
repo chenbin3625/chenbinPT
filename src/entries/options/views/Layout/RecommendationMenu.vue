@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, shallowRef, triggerRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { FireOutlined, ReloadOutlined, StarFilled } from "@ant-design/icons-vue";
 import type { ISocialRecommendationItem, TSocialRecommendationCategory } from "@ptd/social";
@@ -26,7 +26,8 @@ const { t } = useI18n();
 const isRecommendationMenuOpen = ref(false);
 const isLoadingRecommendations = ref(false);
 const recommendationError = ref("");
-const recommendationItems = ref<ISocialRecommendationItem[]>([]);
+// 推荐项仅整批替换或按索引批量富化后 triggerRef，无需对每条推荐对象建立深层代理
+const recommendationItems = shallowRef<ISocialRecommendationItem[]>([]);
 let recommendationRequestId = 0;
 
 const recommendationCategories: TSocialRecommendationCategory[] = ["movie", "tv", "variety", "anime"];
@@ -122,13 +123,18 @@ function flushEnrichedRecommendationItems() {
   }
   if (pendingEnrichedItems.size === 0) return;
 
+  let mutated = false;
   for (const [key, item] of pendingEnrichedItems) {
     const index = recommendationItemIndex.get(key);
     if (index !== undefined) {
       recommendationItems.value[index] = item;
+      mutated = true;
     }
   }
   pendingEnrichedItems.clear();
+  if (mutated) {
+    triggerRef(recommendationItems);
+  }
 }
 
 function scheduleEnrichedRecommendationItemsFlush() {

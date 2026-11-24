@@ -56,9 +56,22 @@ export const allAddedSiteInfo = computed<ISiteTableItem[]>(() => {
   const sitesReturn: ISiteTableItem[] = [];
   for (const [siteId, siteUserConfig] of Object.entries(metadataStore.sites)) {
     const indexEntry = siteMetadataIndex[siteId];
+    const customDef = metadataStore.customSites?.[siteId];
+    const fallbackMeta: ISiteMetadataIndexEntry = customDef
+      ? {
+          name: customDef.name,
+          description: customDef.description,
+          tags: customDef.tags,
+          type: customDef.type,
+          schema: customDef.schema,
+          urls: customDef.urls as ISiteMetadataIndexEntry["urls"],
+          hasSearch: true,
+          ...(customDef.schema !== "Torznab" ? { hasUserInfo: true as const } : {}),
+        }
+      : { ...UNAVAILABLE_SITE_INDEX_ENTRY, name: siteId };
     sitesReturn.push({
       id: siteId,
-      metadata: indexEntry ?? { ...UNAVAILABLE_SITE_INDEX_ENTRY, name: siteId },
+      metadata: indexEntry ?? fallbackMeta,
       userConfig: siteUserConfig,
     });
   }

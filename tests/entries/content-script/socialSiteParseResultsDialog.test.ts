@@ -71,12 +71,13 @@ const t = (await import("@/options/plugins/i18n.ts")).i18nInstance.global.t;
 
 async function mountDialog(parseResults: ParseResult[], socialSite: string) {
   const { default: Dialog } = await import("@/content-script/app/components/SocialSiteParseResultsDialog.vue");
+  const { PTD_DATA_KEY } = await import("@/content-script/app/injectionKeys.ts");
   const view = mountOptionsView(Dialog, {
     props: { modelValue: true, parseResults, searchPlan: "default" },
     plugins: [
       {
         install(app) {
-          app.provide("ptd_data", { socialSite });
+          app.provide(PTD_DATA_KEY, { socialSite: socialSite as any });
         },
       },
     ],
